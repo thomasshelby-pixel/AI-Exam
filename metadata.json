@@ -1,0 +1,6 @@
+{
+  "name": "CA Exam Checker AI",
+  "description": "Professional AI-powered examination evaluation platform for CA Foundation, Intermediate, and Final answer sheets with step marking, standards audit compliance, and institute management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
