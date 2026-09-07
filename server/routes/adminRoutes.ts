@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { extractMaterialFromPDF } from '../gemini.js';
 
 const router = Router();
 
@@ -251,18 +252,88 @@ router.delete('/free-access/:id', (req: AuthRequest, res: Response) => {
 // 4. Reference Evaluation Materials Management
 router.get('/materials', (req: AuthRequest, res: Response) => {
   try {
-    const materials = db.prepare(`
+    const { level, materialType, subjectKey, status, search } = req.query;
+    let query = `
       SELECT id, level, material_type, model_group, subject_key, subject_name,
-             attempt, question_paper_title, uploaded_by, created_at,
-             LENGTH(question_paper_text) as qp_chars,
-             LENGTH(suggested_answers_text) as sa_chars
+             paper, attempt, syllabus_version, chapter_topic,
+             question_paper_title, effective_date, version, status,
+             uploaded_by, created_at, updated_at,
+             LENGTH(COALESCE(question_paper_text, '')) as qp_chars,
+             LENGTH(COALESCE(suggested_answers_text, '')) as sa_chars,
+             LENGTH(COALESCE(marking_scheme_text, '')) as ms_chars,
+             LENGTH(COALESCE(reference_guidance_text, '')) as rg_chars,
+             LENGTH(COALESCE(amendments_provisions_text, '')) as ap_chars
       FROM evaluation_materials
-      ORDER BY created_at DESC
-    `).all();
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (level && level !== 'ALL') {
+      query += ' AND level = ?';
+      params.push(level);
+    }
+    if (materialType && materialType !== 'ALL') {
+      query += ' AND material_type = ?';
+      params.push(materialType);
+    }
+    if (subjectKey && subjectKey !== 'ALL') {
+      query += ' AND subject_key = ?';
+      params.push(subjectKey);
+    }
+    if (status && status !== 'ALL') {
+      query += ' AND status = ?';
+      params.push(status);
+    }
+    if (search) {
+      query += ' AND (question_paper_title LIKE ? OR subject_name LIKE ? OR attempt LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    query += ' ORDER BY created_at DESC';
+    const materials = db.prepare(query).all(...params);
     return res.json({ materials });
   } catch (error: unknown) {
     console.error('Get materials error:', error);
     return res.status(500).json({ error: 'Failed to load reference materials' });
+  }
+});
+
+router.post('/materials/extract-pdf', async (req: AuthRequest, res: Response) => {
+  try {
+    const { fileBase64, mimeType, documentRole } = req.body;
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'Please provide base64 document data' });
+    }
+
+    const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const extracted = await extractMaterialFromPDF(
+      cleanBase64,
+      mimeType || 'application/pdf',
+      documentRole || 'COMPLETE_SUITE'
+    );
+
+    return res.json({ success: true, extracted });
+  } catch (error: unknown) {
+    console.error('PDF extraction error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to extract text from document';
+    return res.status(500).json({ error: msg });
+  }
+});
+
+router.get('/materials/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const material = db.prepare(`
+      SELECT * FROM evaluation_materials WHERE id = ?
+    `).get(req.params.id);
+
+    if (!material) {
+      return res.status(404).json({ error: 'Evaluation material not found' });
+    }
+
+    return res.json({ material });
+  } catch (error: unknown) {
+    console.error('Get single material error:', error);
+    return res.status(500).json({ error: 'Failed to load material details' });
   }
 });
 
@@ -274,24 +345,34 @@ router.post('/materials', (req: AuthRequest, res: Response) => {
       modelGroup,
       subjectKey,
       subjectName,
+      paper,
       attempt,
+      syllabusVersion,
+      chapterTopic,
       questionPaperTitle,
       questionPaperText,
       suggestedAnswersText,
       markingSchemeText,
+      referenceGuidanceText,
+      amendmentsProvisionsText,
+      effectiveDate,
+      version,
+      status,
     } = req.body;
 
     if (!level || !materialType || !subjectKey || !subjectName || !questionPaperTitle || !questionPaperText || !suggestedAnswersText) {
-      return res.status(400).json({ error: 'Please provide all material fields including Question Paper and Suggested Answers text.' });
+      return res.status(400).json({ error: 'Please provide required fields: level, materialType, subjectKey, subjectName, title, question paper text, and suggested answers text.' });
     }
 
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
       INSERT INTO evaluation_materials (
         id, level, material_type, model_group, subject_key, subject_name,
-        attempt, question_paper_title, question_paper_text, suggested_answers_text,
-        marking_scheme_text, uploaded_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        paper, attempt, syllabus_version, chapter_topic,
+        question_paper_title, question_paper_text, suggested_answers_text,
+        marking_scheme_text, reference_guidance_text, amendments_provisions_text,
+        effective_date, version, status, uploaded_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       materialId,
       level,
@@ -299,28 +380,254 @@ router.post('/materials', (req: AuthRequest, res: Response) => {
       modelGroup || null,
       subjectKey,
       subjectName,
+      paper || 'Paper 1',
       attempt || 'Current',
+      syllabusVersion || 'New Scheme 2024',
+      chapterTopic || null,
       questionPaperTitle.trim(),
       questionPaperText.trim(),
       suggestedAnswersText.trim(),
       markingSchemeText?.trim() || '',
+      referenceGuidanceText?.trim() || '',
+      amendmentsProvisionsText?.trim() || '',
+      effectiveDate || new Date().toISOString().split('T')[0],
+      version || '1.0',
+      status || 'ACTIVE',
       req.user!.email
     );
 
-    return res.status(201).json({ success: true, materialId, message: 'Reference material uploaded successfully.' });
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'UPLOAD_MATERIAL', 'MATERIAL', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      materialId,
+      `Uploaded ${materialType} for ${subjectName} (${attempt || 'Current'}) v${version || '1.0'}`
+    );
+
+    return res.status(201).json({ success: true, materialId, message: 'Evaluation material uploaded successfully.' });
   } catch (error: unknown) {
     console.error('Upload material error:', error);
     return res.status(500).json({ error: 'Failed to save evaluation material' });
   }
 });
 
+router.put('/materials/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const existing = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    if (!existing) {
+      return res.status(404).json({ error: 'Material not found' });
+    }
+
+    const {
+      level,
+      materialType,
+      modelGroup,
+      subjectKey,
+      subjectName,
+      paper,
+      attempt,
+      syllabusVersion,
+      chapterTopic,
+      questionPaperTitle,
+      questionPaperText,
+      suggestedAnswersText,
+      markingSchemeText,
+      referenceGuidanceText,
+      amendmentsProvisionsText,
+      effectiveDate,
+      version,
+      status,
+    } = req.body;
+
+    db.prepare(`
+      UPDATE evaluation_materials
+      SET level = COALESCE(?, level),
+          material_type = COALESCE(?, material_type),
+          model_group = COALESCE(?, model_group),
+          subject_key = COALESCE(?, subject_key),
+          subject_name = COALESCE(?, subject_name),
+          paper = COALESCE(?, paper),
+          attempt = COALESCE(?, attempt),
+          syllabus_version = COALESCE(?, syllabus_version),
+          chapter_topic = COALESCE(?, chapter_topic),
+          question_paper_title = COALESCE(?, question_paper_title),
+          question_paper_text = COALESCE(?, question_paper_text),
+          suggested_answers_text = COALESCE(?, suggested_answers_text),
+          marking_scheme_text = COALESCE(?, marking_scheme_text),
+          reference_guidance_text = COALESCE(?, reference_guidance_text),
+          amendments_provisions_text = COALESCE(?, amendments_provisions_text),
+          effective_date = COALESCE(?, effective_date),
+          version = COALESCE(?, version),
+          status = COALESCE(?, status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      level || null,
+      materialType || null,
+      modelGroup || null,
+      subjectKey || null,
+      subjectName || null,
+      paper || null,
+      attempt || null,
+      syllabusVersion || null,
+      chapterTopic || null,
+      questionPaperTitle || null,
+      questionPaperText || null,
+      suggestedAnswersText || null,
+      markingSchemeText || null,
+      referenceGuidanceText || null,
+      amendmentsProvisionsText || null,
+      effectiveDate || null,
+      version || null,
+      status || null,
+      req.params.id
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'UPDATE_MATERIAL', 'MATERIAL', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      req.params.id,
+      `Updated material ${existing.question_paper_title} (v${version || 'updated'})`
+    );
+
+    return res.json({ success: true, message: 'Evaluation material updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update material error:', error);
+    return res.status(500).json({ error: 'Failed to update evaluation material' });
+  }
+});
+
+router.put('/materials/:id/status', (req: AuthRequest, res: Response) => {
+  try {
+    const { status } = req.body;
+    if (!status || !['ACTIVE', 'INACTIVE'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be ACTIVE or INACTIVE' });
+    }
+
+    const material = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    if (!material) {
+      return res.status(404).json({ error: 'Material not found' });
+    }
+
+    db.prepare('UPDATE evaluation_materials SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id);
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'CHANGE_MATERIAL_STATUS', 'MATERIAL', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      req.params.id,
+      `Set status of material ${material.question_paper_title} to ${status}`
+    );
+
+    return res.json({ success: true, message: `Material status changed to ${status}` });
+  } catch (error: unknown) {
+    console.error('Toggle material status error:', error);
+    return res.status(500).json({ error: 'Failed to update material status' });
+  }
+});
+
 router.delete('/materials/:id', (req: AuthRequest, res: Response) => {
   try {
+    const material = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    if (!material) {
+      return res.status(404).json({ error: 'Material not found' });
+    }
+
     db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(req.params.id);
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'DELETE_MATERIAL', 'MATERIAL', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      req.params.id,
+      `Deleted material: ${material.question_paper_title}`
+    );
+
     return res.json({ success: true, message: 'Material deleted successfully' });
   } catch (error: unknown) {
     console.error('Delete material error:', error);
     return res.status(500).json({ error: 'Failed to delete material' });
+  }
+});
+
+// 4B. Evaluation Controls & Rules Configuration (Section 18)
+router.get('/evaluation-controls', (req: AuthRequest, res: Response) => {
+  try {
+    const keys = [
+      'EVAL_CHECKING_MODE',
+      'EVAL_MODEL_PROVIDER',
+      'EVAL_CONFIDENCE_THRESHOLD',
+      'EVAL_STEP_MARKING_ENABLED',
+      'EVAL_CONSEQUENTIAL_ERROR_ENABLED',
+      'EVAL_MCQ_NEGATIVE_MARKING',
+      'EVAL_EQUIVALENT_ANSWER_DETECTION',
+      'EVAL_MATERIAL_PRIORITY',
+    ];
+
+    const placeholders = keys.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT key, value, description FROM pricing_settings WHERE key IN (${placeholders})`).all(...keys) as Array<{ key: string; value: string; description: string }>;
+
+    const settingsMap: Record<string, string> = {};
+    for (const r of rows) {
+      settingsMap[r.key] = r.value;
+    }
+
+    return res.json({
+      settings: settingsMap,
+      definitions: rows,
+    });
+  } catch (error: unknown) {
+    console.error('Get evaluation controls error:', error);
+    return res.status(500).json({ error: 'Failed to load evaluation controls' });
+  }
+});
+
+router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
+  try {
+    const settings = req.body;
+    if (!settings || typeof settings !== 'object') {
+      return res.status(400).json({ error: 'Invalid settings object' });
+    }
+
+    const updateStmt = db.prepare(`
+      INSERT INTO pricing_settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `);
+
+    for (const [key, value] of Object.entries(settings)) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        updateStmt.run(key, String(value));
+      }
+    }
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+      VALUES (?, ?, 'UPDATE_EVALUATION_CONTROLS', 'SYSTEM', ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      `Admin updated evaluation rules: ${Object.keys(settings).join(', ')}`
+    );
+
+    return res.json({ success: true, message: 'Evaluation controls updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update evaluation controls error:', error);
+    return res.status(500).json({ error: 'Failed to update evaluation controls' });
   }
 });
 
@@ -896,6 +1203,436 @@ router.get('/settings', (req: AuthRequest, res: Response) => {
     console.error('Get settings error:', error);
     return res.status(500).json({ error: 'Failed to load system settings' });
   }
+});
+
+// 21. Exam Attempts Management (/admin/attempts)
+router.get('/attempts', (req: AuthRequest, res: Response) => {
+  try {
+    const attempts = db.prepare(`
+      SELECT * FROM exam_attempts ORDER BY year DESC, course ASC, id ASC
+    `).all() as any[];
+
+    return res.json({
+      attempts: attempts.map((a) => ({
+        id: a.id,
+        course: a.course,
+        month: a.month,
+        year: a.year,
+        displayName: a.display_name,
+        syllabusVersion: a.syllabus_version,
+        applicableMaterialVersion: a.applicable_material_version,
+        isActive: Boolean(a.is_active),
+        startDate: a.start_date,
+        endDate: a.end_date,
+      })),
+    });
+  } catch (error: unknown) {
+    console.error('Get admin attempts error:', error);
+    return res.status(500).json({ error: 'Failed to load attempts' });
+  }
+});
+
+router.post('/attempts', (req: AuthRequest, res: Response) => {
+  try {
+    const { id, course, month, year, displayName, syllabusVersion, applicableMaterialVersion, isActive, startDate, endDate } = req.body;
+
+    if (!id || !course || !month || !year || !displayName) {
+      return res.status(400).json({ error: 'Please provide required fields: id, course, month, year, displayName.' });
+    }
+
+    db.prepare(`
+      INSERT INTO exam_attempts (
+        id, course, month, year, display_name, syllabus_version,
+        applicable_material_version, is_active, start_date, end_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id.trim(),
+      course.toUpperCase(),
+      month.trim(),
+      Number(year),
+      displayName.trim(),
+      syllabusVersion || 'New Scheme 2024',
+      applicableMaterialVersion || '1.0',
+      isActive !== undefined ? (isActive ? 1 : 0) : 1,
+      startDate || null,
+      endDate || null
+    );
+
+    return res.status(201).json({ success: true, message: 'Exam attempt created successfully' });
+  } catch (error: unknown) {
+    console.error('Create attempt error:', error);
+    return res.status(500).json({ error: 'Failed to create attempt' });
+  }
+});
+
+router.put('/attempts/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { course, month, year, displayName, syllabusVersion, applicableMaterialVersion, isActive, startDate, endDate } = req.body;
+
+    db.prepare(`
+      UPDATE exam_attempts
+      SET course = COALESCE(?, course),
+          month = COALESCE(?, month),
+          year = COALESCE(?, year),
+          display_name = COALESCE(?, display_name),
+          syllabus_version = COALESCE(?, syllabus_version),
+          applicable_material_version = COALESCE(?, applicable_material_version),
+          is_active = COALESCE(?, is_active),
+          start_date = COALESCE(?, start_date),
+          end_date = COALESCE(?, end_date)
+      WHERE id = ?
+    `).run(
+      course ? course.toUpperCase() : null,
+      month || null,
+      year ? Number(year) : null,
+      displayName || null,
+      syllabusVersion || null,
+      applicableMaterialVersion || null,
+      isActive !== undefined ? (isActive ? 1 : 0) : null,
+      startDate || null,
+      endDate || null,
+      req.params.id
+    );
+
+    return res.json({ success: true, message: 'Exam attempt updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update attempt error:', error);
+    return res.status(500).json({ error: 'Failed to update attempt' });
+  }
+});
+
+router.delete('/attempts/:id', (req: AuthRequest, res: Response) => {
+  try {
+    db.prepare('DELETE FROM exam_attempts WHERE id = ?').run(req.params.id);
+    return res.json({ success: true, message: 'Attempt removed successfully' });
+  } catch (error: unknown) {
+    console.error('Delete attempt error:', error);
+    return res.status(500).json({ error: 'Failed to delete attempt' });
+  }
+});
+
+// 22. AI Configuration Settings (/admin/ai-settings)
+router.get('/ai-settings', (req: AuthRequest, res: Response) => {
+  try {
+    const settings = db.prepare('SELECT key, value FROM pricing_settings').all() as Array<{ key: string; value: string }>;
+    const map = Object.fromEntries(settings.map((s) => [s.key, s.value]));
+
+    return res.json({
+      settings: {
+        primaryModel: map.EVAL_MODEL_PROVIDER || 'gemini-3.8-flash',
+        fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-2.5-flash',
+        maxRetries: Number(map.EVAL_MAX_RETRIES) || 3,
+        strictnessMode: map.EVAL_STRICTNESS_MODE || 'BALANCED',
+        confidenceThreshold: Number(map.CONFIDENCE_THRESHOLD) || 85,
+        geminiConfigured: !!process.env.GEMINI_API_KEY,
+        availableModels: [
+          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Recommended - Fastest & ICAI Step-marking Optimized)' },
+          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Ultra-stable High Throughput Fallback)' },
+          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Deep Complex Reasoning & Advanced Cases)' },
+        ],
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Get AI settings error:', error);
+    return res.status(500).json({ error: 'Failed to load AI settings' });
+  }
+});
+
+router.put('/ai-settings', (req: AuthRequest, res: Response) => {
+  try {
+    const { primaryModel, fallbackModel, maxRetries, strictnessMode, confidenceThreshold } = req.body;
+
+    const upsertStmt = db.prepare(`
+      INSERT INTO pricing_settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `);
+
+    if (primaryModel) upsertStmt.run('EVAL_MODEL_PROVIDER', primaryModel);
+    if (fallbackModel) upsertStmt.run('EVAL_FALLBACK_MODEL', fallbackModel);
+    if (maxRetries !== undefined) upsertStmt.run('EVAL_MAX_RETRIES', String(maxRetries));
+    if (strictnessMode) upsertStmt.run('EVAL_STRICTNESS_MODE', strictnessMode);
+    if (confidenceThreshold !== undefined) upsertStmt.run('CONFIDENCE_THRESHOLD', String(confidenceThreshold));
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+      VALUES (?, ?, 'UPDATE_AI_SETTINGS', 'SYSTEM', ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      `AI Settings updated: Primary=${primaryModel}, Fallback=${fallbackModel}, Retries=${maxRetries}`
+    );
+
+    return res.json({ success: true, message: 'AI configuration updated successfully.' });
+  } catch (error: unknown) {
+    console.error('Update AI settings error:', error);
+    return res.status(500).json({ error: 'Failed to update AI settings' });
+  }
+});
+
+// 23. Institute Pricing Plans Management (/admin/institute-plans)
+router.get('/institute-plans', (req: AuthRequest, res: Response) => {
+  try {
+    const rawPlans = db.prepare('SELECT * FROM institute_plans ORDER BY sort_order ASC').all() as any[];
+    const plans = rawPlans.map((p) => ({
+      id: p.id,
+      name: p.name,
+      priceInr: p.price_inr,
+      billingPeriod: p.billing_period,
+      studentQuota: p.student_quota,
+      evaluationCredits: p.evaluation_credits,
+      features: JSON.parse(p.features_json || '[]'),
+      assignmentsEnabled: Boolean(p.assignments_enabled),
+      testsEnabled: Boolean(p.tests_enabled),
+      analyticsEnabled: Boolean(p.analytics_enabled),
+      supportTier: p.support_tier,
+      isActive: Boolean(p.is_active),
+      sortOrder: p.sort_order,
+    }));
+    return res.json({ plans });
+  } catch (error: unknown) {
+    console.error('Get admin institute plans error:', error);
+    return res.status(500).json({ error: 'Failed to load institute plans' });
+  }
+});
+
+router.post('/institute-plans', (req: AuthRequest, res: Response) => {
+  try {
+    const { id, name, priceInr, billingPeriod, studentQuota, evaluationCredits, features, assignmentsEnabled, testsEnabled, analyticsEnabled, supportTier, isActive, sortOrder } = req.body;
+
+    if (!id || !name || priceInr === undefined) {
+      return res.status(400).json({ error: 'Please provide required fields: id, name, priceInr.' });
+    }
+
+    db.prepare(`
+      INSERT INTO institute_plans (
+        id, name, price_inr, billing_period, student_quota, evaluation_credits,
+        features_json, assignments_enabled, tests_enabled, analytics_enabled,
+        support_tier, is_active, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id.trim(),
+      name.trim(),
+      Number(priceInr),
+      billingPeriod || 'ANNUAL',
+      Number(studentQuota) || 100,
+      Number(evaluationCredits) || 500,
+      JSON.stringify(Array.isArray(features) ? features : []),
+      assignmentsEnabled ? 1 : 0,
+      testsEnabled ? 1 : 0,
+      analyticsEnabled ? 1 : 0,
+      supportTier || 'Standard',
+      isActive !== undefined ? (isActive ? 1 : 0) : 1,
+      Number(sortOrder) || 1
+    );
+
+    return res.status(201).json({ success: true, message: 'Institute plan created successfully' });
+  } catch (error: unknown) {
+    console.error('Create institute plan error:', error);
+    return res.status(500).json({ error: 'Failed to create plan' });
+  }
+});
+
+router.put('/institute-plans/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { name, priceInr, billingPeriod, studentQuota, evaluationCredits, features, assignmentsEnabled, testsEnabled, analyticsEnabled, supportTier, isActive, sortOrder } = req.body;
+
+    db.prepare(`
+      UPDATE institute_plans
+      SET name = COALESCE(?, name),
+          price_inr = COALESCE(?, price_inr),
+          billing_period = COALESCE(?, billing_period),
+          student_quota = COALESCE(?, student_quota),
+          evaluation_credits = COALESCE(?, evaluation_credits),
+          features_json = COALESCE(?, features_json),
+          assignments_enabled = COALESCE(?, assignments_enabled),
+          tests_enabled = COALESCE(?, tests_enabled),
+          analytics_enabled = COALESCE(?, analytics_enabled),
+          support_tier = COALESCE(?, support_tier),
+          is_active = COALESCE(?, is_active),
+          sort_order = COALESCE(?, sort_order)
+      WHERE id = ?
+    `).run(
+      name || null,
+      priceInr !== undefined ? Number(priceInr) : null,
+      billingPeriod || null,
+      studentQuota !== undefined ? Number(studentQuota) : null,
+      evaluationCredits !== undefined ? Number(evaluationCredits) : null,
+      features ? JSON.stringify(features) : null,
+      assignmentsEnabled !== undefined ? (assignmentsEnabled ? 1 : 0) : null,
+      testsEnabled !== undefined ? (testsEnabled ? 1 : 0) : null,
+      analyticsEnabled !== undefined ? (analyticsEnabled ? 1 : 0) : null,
+      supportTier || null,
+      isActive !== undefined ? (isActive ? 1 : 0) : null,
+      sortOrder !== undefined ? Number(sortOrder) : null,
+      req.params.id
+    );
+
+    return res.json({ success: true, message: 'Institute plan updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update institute plan error:', error);
+    return res.status(500).json({ error: 'Failed to update plan' });
+  }
+});
+
+router.delete('/institute-plans/:id', (req: AuthRequest, res: Response) => {
+  try {
+    db.prepare('DELETE FROM institute_plans WHERE id = ?').run(req.params.id);
+    return res.json({ success: true, message: 'Plan deleted successfully' });
+  } catch (error: unknown) {
+    console.error('Delete plan error:', error);
+    return res.status(500).json({ error: 'Failed to delete plan' });
+  }
+});
+
+// 24. Referral Campaigns & Redemptions (/admin/referrals)
+router.get('/referrals', (req: AuthRequest, res: Response) => {
+  try {
+    const campaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all();
+    const redemptions = db.prepare(`
+      SELECT r.*, u.full_name as user_name
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      ORDER BY r.redeemed_at DESC
+    `).all();
+
+    return res.json({ campaigns, redemptions });
+  } catch (error: unknown) {
+    console.error('Get referrals error:', error);
+    return res.status(500).json({ error: 'Failed to load referral data' });
+  }
+});
+
+router.put('/referrals/campaigns/:code', (req: AuthRequest, res: Response) => {
+  try {
+    const { maxRedemptions, isActive, benefitDurationDays } = req.body;
+    db.prepare(`
+      UPDATE referral_campaigns
+      SET max_redemptions = COALESCE(?, max_redemptions),
+          is_active = COALESCE(?, is_active),
+          benefit_duration_days = COALESCE(?, benefit_duration_days)
+      WHERE code = ?
+    `).run(
+      maxRedemptions !== undefined ? Number(maxRedemptions) : null,
+      isActive !== undefined ? (isActive ? 1 : 0) : null,
+      benefitDurationDays !== undefined ? Number(benefitDurationDays) : null,
+      req.params.code.toUpperCase()
+    );
+
+    return res.json({ success: true, message: 'Referral campaign updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update campaign error:', error);
+    return res.status(500).json({ error: 'Failed to update campaign' });
+  }
+});
+
+// 25. Support Tickets Management (/admin/support-tickets)
+router.get('/support-tickets', (req: AuthRequest, res: Response) => {
+  try {
+    const { status, priority, role, search } = req.query;
+    let query = 'SELECT * FROM support_tickets WHERE 1=1';
+    const params: any[] = [];
+
+    if (status && status !== 'ALL') {
+      query += ' AND status = ?';
+      params.push(status);
+    }
+    if (priority && priority !== 'ALL') {
+      query += ' AND priority = ?';
+      params.push(priority);
+    }
+    if (role && role !== 'ALL') {
+      query += ' AND role = ?';
+      params.push(role);
+    }
+    if (search) {
+      query += ' AND (ticket_number LIKE ? OR name LIKE ? OR email LIKE ? OR subject LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    query += ' ORDER BY created_at DESC';
+    const tickets = db.prepare(query).all(...params);
+
+    return res.json({ tickets });
+  } catch (error: unknown) {
+    console.error('Get support tickets error:', error);
+    return res.status(500).json({ error: 'Failed to load support tickets' });
+  }
+});
+
+router.get('/support-tickets/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const ticket = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(req.params.id);
+    if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+    return res.json({ ticket });
+  } catch (error: unknown) {
+    console.error('Get ticket error:', error);
+    return res.status(500).json({ error: 'Failed to load ticket' });
+  }
+});
+
+router.put('/support-tickets/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { status, adminReply, resolutionNote, priority } = req.body;
+
+    const existing = db.prepare('SELECT * FROM support_tickets WHERE id = ?').get(req.params.id) as any;
+    if (!existing) return res.status(404).json({ error: 'Ticket not found' });
+
+    const isResolved = status === 'RESOLVED' || status === 'CLOSED';
+    const resolvedAt = isResolved ? new Date().toISOString() : existing.resolved_at;
+
+    db.prepare(`
+      UPDATE support_tickets
+      SET status = COALESCE(?, status),
+          admin_reply = COALESCE(?, admin_reply),
+          resolution_note = COALESCE(?, resolution_note),
+          priority = COALESCE(?, priority),
+          resolved_at = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      status || null,
+      adminReply || null,
+      resolutionNote || null,
+      priority || null,
+      resolvedAt,
+      req.params.id
+    );
+
+    // Notify user if ticket is tied to a user account
+    if (existing.user_id && (adminReply || isResolved)) {
+      const notifMessage = isResolved
+        ? `Your support ticket #${existing.ticket_number || req.params.id.slice(0, 8)} has been marked as ${status}. Resolution: ${resolutionNote || adminReply || 'Your issue has been resolved by our support team.'}`
+        : `Admin reply on ticket #${existing.ticket_number || req.params.id.slice(0, 8)}: ${adminReply}`;
+
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, ?, ?, 'SYSTEM')
+      `).run(
+        `notif_${crypto.randomBytes(8).toString('hex')}`,
+        existing.user_id,
+        `Support Ticket Update (#${existing.ticket_number || 'Support'})`,
+        notifMessage
+      );
+    }
+
+    return res.json({ success: true, message: 'Ticket updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update ticket error:', error);
+    return res.status(500).json({ error: 'Failed to update ticket' });
+  }
+});
+
+// Support route aliases
+router.get('/support', (req: AuthRequest, res: Response, next) => {
+  req.url = '/support-tickets';
+  (router as any).handle(req, res, next);
+});
+
+router.put('/support/:id', (req: AuthRequest, res: Response, next) => {
+  req.url = `/support-tickets/${req.params.id}`;
+  (router as any).handle(req, res, next);
 });
 
 export default router;

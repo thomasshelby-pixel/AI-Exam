@@ -118,13 +118,22 @@ export function initDatabase() {
       model_group TEXT,
       subject_key TEXT NOT NULL,
       subject_name TEXT NOT NULL,
+      paper TEXT DEFAULT 'Paper 1',
       attempt TEXT,
+      syllabus_version TEXT DEFAULT 'New Scheme 2024',
+      chapter_topic TEXT,
       question_paper_title TEXT NOT NULL,
       question_paper_text TEXT,
       suggested_answers_text TEXT,
       marking_scheme_text TEXT,
+      reference_guidance_text TEXT,
+      amendments_provisions_text TEXT,
+      effective_date TEXT DEFAULT '2024-05-01',
+      version TEXT DEFAULT '1.0',
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
       uploaded_by TEXT DEFAULT 'ADMIN',
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS evaluations (
@@ -137,7 +146,12 @@ export function initDatabase() {
       model_group TEXT,
       subject_key TEXT NOT NULL,
       subject_name TEXT NOT NULL,
+      paper TEXT,
       attempt TEXT,
+      syllabus_version TEXT,
+      material_id TEXT,
+      material_version TEXT,
+      model_used TEXT DEFAULT 'gemini-3.8-flash',
       checking_mode TEXT NOT NULL DEFAULT 'standard',
       original_filename TEXT NOT NULL,
       file_size INTEGER DEFAULT 0,
@@ -265,9 +279,186 @@ export function initDatabase() {
       description TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS exam_attempts (
+      id TEXT PRIMARY KEY,
+      course TEXT NOT NULL,
+      month TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      syllabus_version TEXT NOT NULL DEFAULT 'New Scheme 2024',
+      applicable_material_version TEXT DEFAULT '1.0',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      start_date TEXT,
+      end_date TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS institute_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      price_inr INTEGER NOT NULL,
+      billing_period TEXT NOT NULL DEFAULT 'MONTHLY',
+      student_quota INTEGER NOT NULL,
+      evaluation_credits INTEGER NOT NULL,
+      features_json TEXT NOT NULL,
+      assignments_enabled INTEGER NOT NULL DEFAULT 1,
+      tests_enabled INTEGER NOT NULL DEFAULT 1,
+      analytics_enabled INTEGER NOT NULL DEFAULT 1,
+      support_tier TEXT NOT NULL DEFAULT 'PRIORITY',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS referral_campaigns (
+      code TEXT PRIMARY KEY,
+      campaign_name TEXT NOT NULL,
+      benefit_type TEXT NOT NULL DEFAULT '1_MONTH_FREE_ACCESS',
+      benefit_duration_days INTEGER NOT NULL DEFAULT 30,
+      max_redemptions INTEGER NOT NULL DEFAULT 20,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS referral_redemptions (
+      id TEXT PRIMARY KEY,
+      referral_code TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      user_email TEXT NOT NULL,
+      benefit_type TEXT NOT NULL,
+      redemption_number INTEGER NOT NULL,
+      redeemed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      expiry_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
+  runMigrations();
   seedInitialData();
+}
+
+function runMigrations() {
+  function addColumnIfNotExists(table: string, column: string, colDef: string) {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!cols.some(c => c.name === column)) {
+        db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${colDef}`).run();
+      }
+    } catch (err) {
+      console.warn(`Migration check warning for ${table}.${column}:`, err);
+    }
+  }
+
+  // Ensure evaluation_materials has all enhanced columns
+  addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
+  addColumnIfNotExists('evaluation_materials', 'institute_id', "TEXT");
+  addColumnIfNotExists('evaluation_materials', 'admin_approved', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('evaluation_materials', 'approved_by', "TEXT");
+  addColumnIfNotExists('evaluation_materials', 'approved_at', "TEXT");
+  addColumnIfNotExists('evaluation_materials', 'mtp_series', "TEXT");
+  addColumnIfNotExists('evaluation_materials', 'paper', "TEXT DEFAULT 'Paper 1'");
+  addColumnIfNotExists('evaluation_materials', 'syllabus_version', "TEXT DEFAULT 'New Scheme 2024'");
+  addColumnIfNotExists('evaluation_materials', 'chapter_topic', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'reference_guidance_text', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'amendments_provisions_text', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'effective_date', "TEXT DEFAULT '2024-05-01'");
+  addColumnIfNotExists('evaluation_materials', 'effective_to', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'version', "TEXT DEFAULT '1.0'");
+  addColumnIfNotExists('evaluation_materials', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  addColumnIfNotExists('evaluation_materials', 'question_paper_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'suggested_answers_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'marking_scheme_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'reference_guidance_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'amendments_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+
+  // Ensure evaluations has all enhanced columns
+  addColumnIfNotExists('evaluations', 'paper', 'TEXT');
+  addColumnIfNotExists('evaluations', 'syllabus_version', 'TEXT');
+  addColumnIfNotExists('evaluations', 'material_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'material_version', 'TEXT');
+  addColumnIfNotExists('evaluations', 'model_used', "TEXT DEFAULT 'gemini-3.8-flash'");
+  addColumnIfNotExists('evaluations', 'annotations_json', 'TEXT');
+  addColumnIfNotExists('evaluations', 'checked_copy_status', "TEXT DEFAULT 'PENDING'");
+  addColumnIfNotExists('evaluations', 'original_page_count', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'checked_copy_page_count', 'INTEGER');
+
+  // Ensure institute_memberships supports email-based invitation and pending state
+  addColumnIfNotExists('institute_memberships', 'invited_email', 'TEXT');
+  addColumnIfNotExists('institute_memberships', 'student_name', 'TEXT');
+  addColumnIfNotExists('institute_memberships', 'notes', 'TEXT');
+
+  // Ensure institute_materials table exists
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS institute_materials (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      level TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_name TEXT NOT NULL,
+      paper TEXT DEFAULT 'Paper 1',
+      material_type TEXT DEFAULT 'TEST_SERIES',
+      question_paper_text TEXT NOT NULL,
+      question_paper_pdf_base64 TEXT,
+      suggested_answers_text TEXT NOT NULL,
+      suggested_answers_pdf_base64 TEXT,
+      marking_scheme_text TEXT,
+      marking_scheme_pdf_base64 TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS institute_tests (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      batch_id TEXT,
+      title TEXT NOT NULL,
+      level TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_name TEXT NOT NULL,
+      paper TEXT DEFAULT 'Paper 1',
+      checking_mode TEXT NOT NULL DEFAULT 'INSTITUTE_MATERIAL',
+      institute_material_id TEXT,
+      target_type TEXT NOT NULL DEFAULT 'ALL',
+      selected_student_ids TEXT,
+      maximum_marks REAL NOT NULL DEFAULT 100,
+      time_limit_minutes INTEGER,
+      deadline TEXT NOT NULL,
+      instructions TEXT,
+      status TEXT NOT NULL DEFAULT 'PUBLISHED',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+      FOREIGN KEY (institute_material_id) REFERENCES institute_materials(id) ON DELETE SET NULL
+    );
+  `);
+
+  // Ensure support_tickets has all enhanced columns
+  addColumnIfNotExists('support_tickets', 'ticket_number', 'TEXT');
+  addColumnIfNotExists('support_tickets', 'category', "TEXT DEFAULT 'GENERAL'");
+  addColumnIfNotExists('support_tickets', 'priority', "TEXT DEFAULT 'MEDIUM'");
+  addColumnIfNotExists('support_tickets', 'role', "TEXT DEFAULT 'STUDENT'");
+  addColumnIfNotExists('support_tickets', 'resolution_note', 'TEXT');
+  addColumnIfNotExists('support_tickets', 'resolved_at', 'TEXT');
+
+  // Strict Material Ownership Rule:
+  // Identify legacy automatically seeded/demo materials and deactivate them
+  // (Mark as UNVERIFIED, admin_approved = 0, remove from ACTIVE evaluation pool)
+  try {
+    db.prepare(`
+      UPDATE evaluation_materials 
+      SET status = 'UNVERIFIED', 
+          admin_approved = 0,
+          uploaded_by = 'LEGACY_SEED'
+      WHERE uploaded_by = 'SYSTEM_SEED' OR id LIKE 'mat_%_mtp_1'
+    `).run();
+  } catch (err) {
+    console.warn('Material cleanup warning:', err);
+  }
 }
 
 function seedInitialData() {
@@ -322,13 +513,27 @@ function seedInitialData() {
     }
   }
 
-  // 3. Pricing Configuration (10 evaluation credits = ₹100, i.e. ₹10 per credit)
+  // 3. Pricing & Evaluation Settings Configuration
   const defaultPricing = [
     { key: 'PRICE_PER_CREDIT_INR', value: '10', description: 'Price in INR for single evaluation credit' },
     { key: 'FREE_TIER_EVALUATIONS', value: '2', description: 'Number of free evaluations for normal individual students' },
     { key: 'DEFAULT_INSTITUTE_QUOTA', value: '500', description: 'Default student allocation per institute' },
     { key: 'SUPPORT_EMAIL', value: 'caexamchecker.support@gmail.com', description: 'Official support email' },
     { key: 'INSTAGRAM_URL', value: 'https://insta.openinapp.co/utw2r', description: 'Official Instagram support link' },
+    { key: 'EVAL_CHECKING_MODE', value: 'standard', description: 'Default checking strictness mode (standard, strict, lenient)' },
+    { key: 'EVAL_MODEL_PROVIDER', value: 'gemini-3.8-flash', description: 'Primary AI model provider for examination evaluation' },
+    { key: 'EVAL_CONFIDENCE_THRESHOLD', value: '75', description: 'Minimum confidence percentage threshold for evaluation audit' },
+    { key: 'EVAL_STEP_MARKING_ENABLED', value: 'true', description: 'Enforce question-wise step marking breakdown' },
+    { key: 'EVAL_CONSEQUENTIAL_ERROR_ENABLED', value: 'true', description: 'Award subsequent step marks if earlier step has calculation slip' },
+    { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'NONE_FOR_INTER_FINAL', description: 'Zero negative marking for CA Intermediate and Final MCQs' },
+    { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
+    { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
+    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-2.5-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
+    { key: 'EVAL_MAX_RETRIES', value: '3', description: 'Maximum retry attempts with exponential backoff for transient Gemini API errors' },
+    { key: 'EVAL_TIMEOUT_SECONDS', value: '90', description: 'Maximum request timeout in seconds for AI evaluation call' },
+    { key: 'REFERRAL_AI30_MAX_USERS', value: '20', description: 'Maximum eligible referred users cap for promo code AI30' },
+    { key: 'REFERRAL_AI30_BENEFIT_MONTHS', value: '1', description: 'Free evaluation benefit duration in months for AI30' },
+    { key: 'REFERRAL_AI30_ACTIVE', value: 'true', description: 'Whether promo code AI30 is currently active for redemption' },
   ];
 
   for (const p of defaultPricing) {
@@ -338,11 +543,158 @@ function seedInitialData() {
     }
   }
 
-  // 4. Seed Official Reference Materials for CA Foundation, Inter, Final
-  seedEvaluationMaterials();
+  // 4. Seed Configurable Course Exam Attempts
+  seedExamAttempts();
 
-  // 5. Seed a Model Institute so institutional sponsorship and batch management can be verified
+  // 5. Seed Configurable Institute Pricing Plans
+  seedInstitutePlans();
+
+  // 6. Seed Referral Campaigns (AI30)
+  seedReferralCampaigns();
+
+  // 7. STRICT MATERIAL RULE (Rule 38 & Rule 67):
+  // Never automatically seed or create examination materials.
+  // All Global CA examination materials must be explicitly uploaded and approved by an authorized Admin.
+  // seedEvaluationMaterials() is intentionally disabled.
+
+  // 8. Seed a Model Institute so institutional sponsorship and batch management can be verified
   seedSampleInstitute();
+}
+
+function seedExamAttempts() {
+  const attempts = [
+    // CA Foundation Attempts (January, May, September)
+    { id: 'att_fnd_sep27', course: 'FOUNDATION', month: 'September', year: 2027, display_name: 'September 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fnd_may27', course: 'FOUNDATION', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fnd_jan27', course: 'FOUNDATION', month: 'January', year: 2027, display_name: 'January 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fnd_sep26', course: 'FOUNDATION', month: 'September', year: 2026, display_name: 'September 2026', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fnd_may26', course: 'FOUNDATION', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fnd_jan26', course: 'FOUNDATION', month: 'January', year: 2026, display_name: 'January 2026', syllabus_version: 'New Scheme 2024' },
+
+    // CA Intermediate Attempts (January, May, September)
+    { id: 'att_int_jan28', course: 'INTERMEDIATE', month: 'January', year: 2028, display_name: 'January 2028', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_int_sep27', course: 'INTERMEDIATE', month: 'September', year: 2027, display_name: 'September 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_int_may27', course: 'INTERMEDIATE', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_int_jan27', course: 'INTERMEDIATE', month: 'January', year: 2027, display_name: 'January 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_int_sep26', course: 'INTERMEDIATE', month: 'September', year: 2026, display_name: 'September 2026', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_int_may26', course: 'INTERMEDIATE', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
+
+    // CA Final Attempts (May, November)
+    { id: 'att_fin_nov27', course: 'FINAL', month: 'November', year: 2027, display_name: 'November 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fin_may27', course: 'FINAL', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fin_nov26', course: 'FINAL', month: 'November', year: 2026, display_name: 'November 2026', syllabus_version: 'New Scheme 2024' },
+    { id: 'att_fin_may26', course: 'FINAL', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
+  ];
+
+  for (const att of attempts) {
+    const existing = db.prepare('SELECT id FROM exam_attempts WHERE id = ?').get(att.id);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO exam_attempts (id, course, month, year, display_name, syllabus_version, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).run(att.id, att.course, att.month, att.year, att.display_name, att.syllabus_version);
+    }
+  }
+}
+
+function seedInstitutePlans() {
+  const plans = [
+    {
+      id: 'plan_inst_starter',
+      name: 'Starter Coaching Academy',
+      price_inr: 4999,
+      billing_period: 'MONTHLY',
+      student_quota: 50,
+      evaluation_credits: 150,
+      features_json: JSON.stringify([
+        'Up to 50 enrolled CA students',
+        '150 AI Examiner Evaluations per month',
+        'Batch & Section management (up to 3 batches)',
+        'Teacher assignment creation & evaluation sync',
+        'Class-level average score tracking',
+        'Standard Email Support',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'STANDARD',
+      is_active: 1,
+      sort_order: 1,
+    },
+    {
+      id: 'plan_inst_pro',
+      name: 'Pro CA Institute Tier',
+      price_inr: 12999,
+      billing_period: 'MONTHLY',
+      student_quota: 200,
+      evaluation_credits: 600,
+      features_json: JSON.stringify([
+        'Up to 200 enrolled CA students',
+        '600 AI Examiner Evaluations per month',
+        'Unlimited Batches (Foundation, Inter, Final)',
+        'Full Mock Test Series & Timed Exam simulator',
+        'Topic-wise weak area diagnostics & rank lists',
+        'Custom teacher answer keys & marking notes',
+        'Priority Phone & WhatsApp Support',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'PRIORITY',
+      is_active: 1,
+      sort_order: 2,
+    },
+    {
+      id: 'plan_inst_enterprise',
+      name: 'Enterprise Multi-Branch Network',
+      price_inr: 29999,
+      billing_period: 'MONTHLY',
+      student_quota: 1000,
+      evaluation_credits: 3000,
+      features_json: JSON.stringify([
+        'Up to 1,000 enrolled CA students across multiple branches',
+        '3,000 AI Examiner Evaluations per month',
+        'Multi-faculty teacher access with role permissions',
+        'Institutional branding on PDF evaluation reports',
+        'Deep batch comparative analytics & AIR predictive index',
+        'Dedicated Technical Account Manager & SLA guarantee',
+        'Custom API integration for existing LMS/ERP',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'DEDICATED_SLA',
+      is_active: 1,
+      sort_order: 3,
+    },
+  ];
+
+  for (const p of plans) {
+    const existing = db.prepare('SELECT id FROM institute_plans WHERE id = ?').get(p.id);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO institute_plans (
+          id, name, price_inr, billing_period, student_quota, evaluation_credits,
+          features_json, assignments_enabled, tests_enabled, analytics_enabled,
+          support_tier, is_active, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        p.id, p.name, p.price_inr, p.billing_period, p.student_quota, p.evaluation_credits,
+        p.features_json, p.assignments_enabled, p.tests_enabled, p.analytics_enabled,
+        p.support_tier, p.is_active, p.sort_order
+      );
+    }
+  }
+}
+
+function seedReferralCampaigns() {
+  const existing = db.prepare('SELECT code FROM referral_campaigns WHERE code = ?').get('AI30');
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO referral_campaigns (code, campaign_name, benefit_type, benefit_duration_days, max_redemptions, is_active)
+      VALUES ('AI30', 'AI30 Special Promo - 1 Month Free Access', '1_MONTH_FREE_ACCESS', 30, 20, 1)
+    `).run();
+  }
 }
 
 function seedEvaluationMaterials() {
@@ -498,14 +850,24 @@ Trading Account Gross Profit: ₹1,85,400 [6 Marks]. Net Profit: ₹1,12,600 [7 
       db.prepare(`
         INSERT INTO evaluation_materials (
           id, level, material_type, model_group, subject_key, subject_name,
-          attempt, question_paper_title, question_paper_text,
-          suggested_answers_text, marking_scheme_text, uploaded_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYSTEM_SEED')
+          paper, attempt, syllabus_version, question_paper_title, question_paper_text,
+          suggested_answers_text, marking_scheme_text, reference_guidance_text,
+          effective_date, version, status, uploaded_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'New Scheme 2024', ?, ?, ?, ?, ?, '2024-05-01', '1.0', 'ACTIVE', 'SYSTEM_SEED')
       `).run(
         m.id, m.level, m.material_type, m.model_group, m.subject_key, m.subject_name,
-        m.attempt, m.question_paper_title, m.question_paper_text,
-        m.suggested_answers_text, m.marking_scheme_text
+        (m as any).paper || 'Paper 1', m.attempt, m.question_paper_title, m.question_paper_text,
+        m.suggested_answers_text, m.marking_scheme_text,
+        (m as any).reference_guidance_text || 'Standard ICAI examination-style marking rubric'
       );
+    } else {
+      db.prepare(`
+        UPDATE evaluation_materials 
+        SET status = 'ACTIVE',
+            paper = COALESCE(paper, 'Paper 1'),
+            syllabus_version = COALESCE(syllabus_version, 'New Scheme 2024')
+        WHERE id = ?
+      `).run(m.id);
     }
   }
 }
@@ -583,6 +945,23 @@ function seedSampleInstitute() {
         INSERT OR IGNORE INTO institute_memberships (id, institute_id, student_id, batch_id, status)
         VALUES ('mem_demo_01', 'inst_apex_academy_01', ?, 'batch_inter_nov26', 'ACTIVE')
       `).run(sId);
+    }
+
+    // Seed Active Account for at9767676@gmail.com
+    const userEmail = 'at9767676@gmail.com';
+    const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(userEmail.toLowerCase());
+    if (!activeUserExists) {
+      const uId = 'usr_user_at9767';
+      const uHash = hashPassword('Student@CA2026!');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, 'Verified CA Candidate', '+919876543210', 'STUDENT', 'ACTIVE')
+      `).run(uId, userEmail.toLowerCase(), uHash);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10)
+      `).run(uId);
     }
   }
 }

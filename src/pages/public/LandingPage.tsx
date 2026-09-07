@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  FileCheck2,
   CheckCircle2,
   Scale,
   Sparkles,
@@ -8,11 +7,8 @@ import {
   ShieldCheck,
   Zap,
   BookOpen,
-  Award,
-  Clock,
-  Layers,
-  HelpCircle,
 } from 'lucide-react';
+import { BrandLogo } from '../../components/common/BrandLogo';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
@@ -23,7 +19,6 @@ interface LandingPageProps {
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateRegister,
-  onNavigateLogin,
   onNavigatePricing,
   onNavigateHowItWorks,
 }) => {
@@ -31,18 +26,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     <div className="text-slate-800 space-y-16 py-8">
       {/* Hero Section */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold">
+        <div className="flex justify-center mb-1">
+          <BrandLogo variant="full" size="md" />
+        </div>
+
+        <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold shadow-2xs">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>India&apos;s Dedicated ICAI Step-Marking AI Engine</span>
+          <span>India&apos;s Dedicated CA Examination-Style AI Evaluation Platform</span>
         </div>
 
         <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-slate-900 max-w-4xl mx-auto leading-[1.2]">
-          Evaluate Handwritten <span className="text-blue-600">CA Answer Sheets</span> with Real ICAI Step Marking
+          Evaluate Handwritten <span className="text-blue-600">CA Answer Sheets</span> with Examination-Style AI Step Marking
         </h1>
 
         <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto leading-relaxed">
           Stop waiting 2 weeks for test series checking. Upload your handwritten mock answers and get rigorous, line-by-line
-          ICAI step marking, working notes evaluation, and examiner deduction remarks in under 60 seconds.
+          examination-style step marking, working notes evaluation, and examiner deduction remarks in under 60 seconds.
         </p>
 
         {/* CTA Buttons */}
@@ -83,7 +82,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="text-center space-y-1.5">
           <h2 className="text-xl sm:text-2xl font-black text-slate-900">Engineered Exclusively for CA Aspirants</h2>
           <p className="text-xs sm:text-sm text-slate-500 max-w-xl mx-auto">
-            Unlike generic AI tools, CA Exam Checker AI is programmed with the exact examination patterns, suggested answers, and marking rubrics of ICAI.
+            Unlike generic AI tools, CA Exam Checker AI is tuned to CA examination standards, suggested answers, and structured marking rubrics.
           </p>
         </div>
 
@@ -118,7 +117,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
             <h3 className="text-base font-bold text-slate-900">Zero MCQ Negative Marking Rule</h3>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              Strict compliance with ICAI exam bylaws: CA Intermediate and CA Final 30-mark case scenarios feature strictly zero negative marking, while Foundation follows the 0.25 rule.
+              Strict compliance with CA examination guidelines: CA Intermediate and CA Final 30-mark case scenarios feature strictly zero negative marking, while Foundation follows the 0.25 rule.
             </p>
           </div>
         </div>

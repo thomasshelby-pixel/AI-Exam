@@ -114,12 +114,23 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const { search, batchId, status } = req.query;
 
     let query = `
-      SELECT u.id, u.full_name, u.email, u.phone, p.icai_registration_number, p.ca_level,
-             m.status as membership_status, m.joined_at, b.name as batch_name, b.id as batch_id,
-             COUNT(e.id) as evaluations_count, AVG(e.percentage) as average_score
+      SELECT COALESCE(u.id, m.id) as id,
+             u.id as user_id,
+             COALESCE(u.full_name, m.student_name, 'Invited Student') as full_name,
+             COALESCE(u.email, m.invited_email) as email,
+             u.phone,
+             p.icai_registration_number,
+             p.ca_level,
+             m.status as membership_status,
+             m.joined_at,
+             m.invited_email,
+             b.name as batch_name,
+             b.id as batch_id,
+             COUNT(e.id) as evaluations_count,
+             AVG(e.percentage) as average_score
       FROM institute_memberships m
-      JOIN users u ON u.id = m.student_id
-      JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN users u ON u.id = m.student_id
+      LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN batches b ON b.id = m.batch_id
       LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
       WHERE m.institute_id = ?
@@ -135,11 +146,11 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       params.push(status);
     }
     if (search) {
-      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR p.icai_registration_number LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR m.invited_email LIKE ? OR p.icai_registration_number LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    query += ' GROUP BY u.id ORDER BY m.joined_at DESC';
+    query += ' GROUP BY COALESCE(u.id, m.id) ORDER BY m.joined_at DESC';
 
     const students = db.prepare(query).all(...params);
     return res.json({ students });
@@ -149,62 +160,84 @@ router.get('/students', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 3. Add / Enroll Student to Institute
+// 3. Add / Enroll Student to Institute (Direct or Pending Email Invitation)
 router.post('/students', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
-    const { email, batchId } = req.body;
+    const { email, batchId, studentName, notes } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Student email is required.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+
+    // Check institute capacity
+    const countRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
+    const inst = db.prepare('SELECT max_students FROM institutes WHERE id = ?').get(instituteId) as { max_students: number };
+    if (countRow.count >= inst.max_students) {
+      return res.status(403).json({ error: `Institute student limit (${inst.max_students}) reached. Contact super admin to upgrade capacity.` });
+    }
+
     const user = db.prepare('SELECT id, full_name, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
       id: string;
       full_name: string;
       role: string;
     } | undefined;
 
-    if (!user) {
-      return res.status(404).json({
-        error: `No registered student found with email ${normalizedEmail}. Please ask the student to create a normal account first.`,
+    if (user) {
+      if (user.role !== 'STUDENT') {
+        return res.status(400).json({ error: 'Specified account is not a student.' });
+      }
+
+      // Existing user -> activate membership immediately
+      const existingMembership = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, user.id) as { id: string } | undefined;
+      
+      if (existingMembership) {
+        db.prepare("UPDATE institute_memberships SET batch_id = ?, status = 'ACTIVE' WHERE id = ?").run(batchId || null, existingMembership.id);
+      } else {
+        const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes)
+          VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+        `).run(membershipId, instituteId, user.id, batchId || null, normalizedEmail, user.full_name, notes || null);
+      }
+
+      // Link in student profile
+      db.prepare(`
+        UPDATE student_profiles SET institute_id = ?, batch_id = ? WHERE user_id = ?
+      `).run(instituteId, batchId || null, user.id);
+
+      // Notify student
+      const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Institute Membership Activated', 'You have been enrolled under your coaching institute. Your evaluations are now sponsored.', 'INSTITUTE')
+      `).run(notifId, user.id);
+
+      return res.status(201).json({ success: true, message: `Student ${user.full_name} enrolled successfully with full institute sponsorship.` });
+    } else {
+      // User has not registered yet -> record pending enrollment by email (Rule 42-44)
+      const existingInvite = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string } | undefined;
+
+      if (existingInvite) {
+        db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
+          .run(batchId || null, studentName || null, notes || null, existingInvite.id);
+      } else {
+        const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes)
+          VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, ?)
+        `).run(membershipId, instituteId, batchId || null, normalizedEmail, studentName || 'Invited Student', notes || null);
+      }
+
+      return res.status(201).json({
+        success: true,
+        pending: true,
+        message: `Student invitation recorded for ${normalizedEmail}. When the student registers or logs in, their account will be automatically enrolled with institute sponsorship.`,
       });
     }
-
-    if (user.role !== 'STUDENT') {
-      return res.status(400).json({ error: 'Specified account is not a student.' });
-    }
-
-    // Check institute capacity
-    const countRow = db.prepare('SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = "ACTIVE"').get(instituteId) as { count: number };
-    const inst = db.prepare('SELECT max_students FROM institutes WHERE id = ?').get(instituteId) as { max_students: number };
-    if (countRow.count >= inst.max_students) {
-      return res.status(403).json({ error: `Institute student limit (${inst.max_students}) reached. Contact super admin to upgrade capacity.` });
-    }
-
-    // Insert or update membership
-    const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-    db.prepare(`
-      INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status)
-      VALUES (?, ?, ?, ?, 'ACTIVE')
-      ON CONFLICT(institute_id, student_id) DO UPDATE SET batch_id = excluded.batch_id, status = 'ACTIVE'
-    `).run(membershipId, instituteId, user.id, batchId || null);
-
-    // Link in student profile
-    db.prepare(`
-      UPDATE student_profiles SET institute_id = ?, batch_id = ? WHERE user_id = ?
-    `).run(instituteId, batchId || null, user.id);
-
-    // Notify student
-    const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Institute Membership Activated', 'You have been enrolled under your coaching institute. Your evaluations are now sponsored.', 'INSTITUTE')
-    `).run(notifId, user.id);
-
-    return res.status(201).json({ success: true, message: `Student ${user.full_name} enrolled successfully.` });
   } catch (error: unknown) {
     console.error('Enroll student error:', error);
     return res.status(500).json({ error: 'Failed to enroll student' });
@@ -648,7 +681,7 @@ router.get('/subscription', (req: AuthRequest, res: Response) => {
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
     const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
-    const activeMembers = (db.prepare('SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = "ACTIVE"').get(instituteId) as any).count;
+    const activeMembers = (db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as any).count;
 
     return res.json({
       plan: inst.subscription_plan || 'INSTITUTIONAL_PARTNER',
@@ -679,6 +712,77 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
   }
 });
 
+router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
+  try {
+    db.prepare('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.user!.id);
+    return res.json({ success: true });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: 'Failed to mark notification read' });
+  }
+});
+
+router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
+  try {
+    db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.user!.id);
+    return res.json({ success: true });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: 'Failed to mark all notifications read' });
+  }
+});
+
+// 16. Institute Support Tickets
+router.get('/tickets', (req: AuthRequest, res: Response) => {
+  try {
+    const tickets = db.prepare(`
+      SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC
+    `).all(req.user!.id);
+    return res.json({ tickets });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: 'Failed to load support tickets' });
+  }
+});
+
+router.post('/tickets', (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { subject, message, category, priority } = req.body;
+
+    if (!subject || !message) {
+      return res.status(400).json({ error: 'Subject and message are required.' });
+    }
+
+    const ticketId = `tkt_${crypto.randomBytes(8).toString('hex')}`;
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const ticketNumber = `CEC-INS-${randomNum}`;
+
+    db.prepare(`
+      INSERT INTO support_tickets (
+        id, ticket_number, user_id, name, email, subject, message,
+        category, priority, role, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INSTITUTE', 'OPEN')
+    `).run(
+      ticketId,
+      ticketNumber,
+      user.id,
+      user.fullName,
+      user.email,
+      subject.trim(),
+      message.trim(),
+      category || 'INSTITUTE_ACCOUNT',
+      priority || 'HIGH'
+    );
+
+    return res.json({
+      success: true,
+      ticketId,
+      ticketNumber,
+      message: 'Support ticket submitted successfully.',
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: 'Failed to submit support ticket' });
+  }
+});
+
 // 16. Institute Settings
 router.get('/settings', (req: AuthRequest, res: Response) => {
   try {
@@ -705,6 +809,282 @@ router.put('/settings', (req: AuthRequest, res: Response) => {
     return res.json({ success: true, message: 'Settings saved successfully.' });
   } catch (error: unknown) {
     return res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// 17. Institute Materials Management (Rule 57: Institute Uploads its own material)
+router.get('/materials', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const materials = db.prepare(`
+      SELECT id, institute_id, title, level, subject_key, subject_name, paper,
+             material_type, created_at, updated_at,
+             length(question_paper_text) as qp_len,
+             length(suggested_answers_text) as sa_len
+      FROM institute_materials
+      WHERE institute_id = ?
+      ORDER BY created_at DESC
+    `).all(instituteId);
+
+    return res.json({ materials });
+  } catch (error: unknown) {
+    console.error('Get institute materials error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve institute materials' });
+  }
+});
+
+router.post('/materials', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const {
+      title,
+      level,
+      subjectKey,
+      subjectName,
+      paper,
+      materialType,
+      questionPaperText,
+      suggestedAnswersText,
+      markingSchemeText,
+      questionPaperPdfBase64,
+      suggestedAnswersPdfBase64,
+      markingSchemePdfBase64,
+    } = req.body;
+
+    if (!title || !level || !subjectKey || !subjectName || !questionPaperText || !suggestedAnswersText) {
+      return res.status(400).json({
+        error: 'Please provide required material fields: Title, Level, Subject, Question Paper text, and Suggested Answers text.',
+      });
+    }
+
+    const materialId = `inst_mat_${crypto.randomBytes(8).toString('hex')}`;
+
+    db.prepare(`
+      INSERT INTO institute_materials (
+        id, institute_id, title, level, subject_key, subject_name, paper,
+        material_type, question_paper_text, question_paper_pdf_base64,
+        suggested_answers_text, suggested_answers_pdf_base64,
+        marking_scheme_text, marking_scheme_pdf_base64
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      materialId,
+      instituteId,
+      title.trim(),
+      level,
+      subjectKey,
+      subjectName,
+      paper || 'Paper 1',
+      materialType || 'TEST_SERIES',
+      questionPaperText.trim(),
+      questionPaperPdfBase64 || null,
+      suggestedAnswersText.trim(),
+      suggestedAnswersPdfBase64 || null,
+      markingSchemeText?.trim() || '',
+      markingSchemePdfBase64 || null
+    );
+
+    return res.status(201).json({
+      success: true,
+      materialId,
+      message: 'Institute test material uploaded successfully.',
+    });
+  } catch (error: unknown) {
+    console.error('Upload institute material error:', error);
+    return res.status(500).json({ error: 'Failed to upload institute material' });
+  }
+});
+
+router.put('/materials/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const existing = db.prepare('SELECT id FROM institute_materials WHERE id = ? AND institute_id = ?').get(req.params.id, instituteId);
+    if (!existing) return res.status(404).json({ error: 'Material not found or access denied.' });
+
+    const {
+      title,
+      level,
+      subjectKey,
+      subjectName,
+      paper,
+      questionPaperText,
+      suggestedAnswersText,
+      markingSchemeText,
+    } = req.body;
+
+    db.prepare(`
+      UPDATE institute_materials
+      SET title = COALESCE(?, title),
+          level = COALESCE(?, level),
+          subject_key = COALESCE(?, subject_key),
+          subject_name = COALESCE(?, subject_name),
+          paper = COALESCE(?, paper),
+          question_paper_text = COALESCE(?, question_paper_text),
+          suggested_answers_text = COALESCE(?, suggested_answers_text),
+          marking_scheme_text = COALESCE(?, marking_scheme_text),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND institute_id = ?
+    `).run(
+      title || null,
+      level || null,
+      subjectKey || null,
+      subjectName || null,
+      paper || null,
+      questionPaperText || null,
+      suggestedAnswersText || null,
+      markingSchemeText || null,
+      req.params.id,
+      instituteId
+    );
+
+    return res.json({ success: true, message: 'Institute material updated successfully.' });
+  } catch (error: unknown) {
+    console.error('Update institute material error:', error);
+    return res.status(500).json({ error: 'Failed to update institute material' });
+  }
+});
+
+router.delete('/materials/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    db.prepare('DELETE FROM institute_materials WHERE id = ? AND institute_id = ?').run(req.params.id, instituteId);
+    return res.json({ success: true, message: 'Institute material deleted.' });
+  } catch (error: unknown) {
+    console.error('Delete institute material error:', error);
+    return res.status(500).json({ error: 'Failed to delete institute material' });
+  }
+});
+
+// 18. Institute Tests Management (Custom Tests with Institute or ICAI Checking Mode)
+router.get('/tests', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const tests = db.prepare(`
+      SELECT t.*, b.name as batch_name,
+             m.title as material_title,
+             COUNT(e.id) as submission_count,
+             AVG(e.percentage) as average_score
+      FROM institute_tests t
+      LEFT JOIN batches b ON b.id = t.batch_id
+      LEFT JOIN institute_materials m ON m.id = t.institute_material_id
+      LEFT JOIN evaluations e ON e.material_id = t.id AND e.status = 'COMPLETED'
+      WHERE t.institute_id = ?
+      GROUP BY t.id
+      ORDER BY t.created_at DESC
+    `).all(instituteId);
+
+    return res.json({ tests });
+  } catch (error: unknown) {
+    console.error('Get institute tests error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve institute tests' });
+  }
+});
+
+router.post('/tests', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const {
+      title,
+      level,
+      subjectKey,
+      subjectName,
+      paper,
+      checkingMode,
+      instituteMaterialId,
+      targetType,
+      batchId,
+      selectedStudentIds,
+      maximumMarks,
+      timeLimitMinutes,
+      deadline,
+      instructions,
+    } = req.body;
+
+    if (!title || !level || !subjectKey || !subjectName || !deadline) {
+      return res.status(400).json({ error: 'Please provide test title, level, subject, and submission deadline.' });
+    }
+
+    const testId = `test_${crypto.randomBytes(8).toString('hex')}`;
+
+    db.prepare(`
+      INSERT INTO institute_tests (
+        id, institute_id, batch_id, title, level, subject_key, subject_name,
+        paper, checking_mode, institute_material_id, target_type, selected_student_ids,
+        maximum_marks, time_limit_minutes, deadline, instructions, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED')
+    `).run(
+      testId,
+      instituteId,
+      batchId || null,
+      title.trim(),
+      level,
+      subjectKey,
+      subjectName,
+      paper || 'Paper 1',
+      checkingMode || 'INSTITUTE_MATERIAL',
+      instituteMaterialId || null,
+      targetType || 'ALL',
+      selectedStudentIds ? JSON.stringify(selectedStudentIds) : null,
+      maximumMarks || 100,
+      timeLimitMinutes || 180,
+      deadline,
+      instructions || null
+    );
+
+    return res.status(201).json({
+      success: true,
+      testId,
+      message: 'Test created and published to students.',
+    });
+  } catch (error: unknown) {
+    console.error('Create institute test error:', error);
+    return res.status(500).json({ error: 'Failed to create test' });
+  }
+});
+
+router.delete('/tests/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    db.prepare('DELETE FROM institute_tests WHERE id = ? AND institute_id = ?').run(req.params.id, instituteId);
+    return res.json({ success: true, message: 'Test deleted.' });
+  } catch (error: unknown) {
+    console.error('Delete test error:', error);
+    return res.status(500).json({ error: 'Failed to delete test' });
+  }
+});
+
+router.get('/tests/:id/submissions', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const submissions = db.prepare(`
+      SELECT e.id as evaluation_id, e.student_id, u.full_name as student_name, u.email as student_email,
+             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.completed_at, e.created_at,
+             e.checked_copy_status, e.original_page_count, e.checked_copy_page_count
+      FROM evaluations e
+      JOIN users u ON u.id = e.student_id
+      WHERE e.material_id = ? AND e.institute_id = ?
+      ORDER BY e.created_at DESC
+    `).all(req.params.id, instituteId);
+
+    return res.json({ submissions });
+  } catch (error: unknown) {
+    console.error('Get test submissions error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve submissions' });
   }
 });
 

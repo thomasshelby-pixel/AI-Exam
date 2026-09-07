@@ -30,38 +30,117 @@ import { apiRequest } from './api/client.js';
 // Wrapper for Evaluation Report that fetches data if directly navigated
 const EvaluationReportWrapper: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
-  const [report, setReport] = useState<EvaluationResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+
+  // If result was already passed directly via navigation state, initialize with it
+  const passedResult = (location.state as any)?.result as EvaluationResult | undefined;
+  const [report, setReport] = useState<EvaluationResult | null>(passedResult || null);
+  const [loading, setLoading] = useState<boolean>(!passedResult);
+  const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
     if (!id) return;
+    if (passedResult) {
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    let pollCount = 0;
+    const maxPolls = 20;
+
     const fetchReport = async () => {
       try {
-        setLoading(true);
-        const res = await apiRequest<{ evaluation: { raw_result_json: string } }>(
-          `/api/student/evaluations/${id}`
-        );
-        if (res.evaluation?.raw_result_json) {
-          setReport(JSON.parse(res.evaluation.raw_result_json));
-        } else {
-          setError('Evaluation report not found.');
+        const res = await apiRequest<{
+          evaluation: {
+            status?: string;
+            error_message?: string;
+            raw_result_json?: string;
+            resultJson?: EvaluationResult;
+          };
+        }>(`/api/student/evaluations/${id}`);
+
+        if (!isMounted) return;
+
+        const evalData = res.evaluation;
+        if (evalData?.resultJson) {
+          setReport(evalData.resultJson);
+          setLoading(false);
+          return;
         }
+
+        if (evalData?.raw_result_json) {
+          try {
+            setReport(JSON.parse(evalData.raw_result_json));
+            setLoading(false);
+            return;
+          } catch {
+            // continue
+          }
+        }
+
+        if (evalData?.status === 'FAILED') {
+          setError(
+            evalData.error_message ||
+              'Evaluation could not be completed. No credits were deducted. Please retry your upload.'
+          );
+          setLoading(false);
+          return;
+        }
+
+        // If in progress, show progress and poll
+        if (
+          evalData?.status === 'PENDING' ||
+          evalData?.status === 'UPLOADING' ||
+          evalData?.status === 'READING_ANSWER_SHEET' ||
+          evalData?.status === 'EVALUATING_ANSWERS' ||
+          evalData?.status === 'PROCESSING'
+        ) {
+          setProcessingStatus(
+            evalData.status === 'READING_ANSWER_SHEET'
+              ? 'Analyzing handwritten pages and optical handwriting...'
+              : evalData.status === 'EVALUATING_ANSWERS'
+              ? 'Executing ICAI step-by-step mark allocation...'
+              : 'Synthesizing verified evaluation report...'
+          );
+
+          if (pollCount < maxPolls) {
+            pollCount++;
+            setTimeout(fetchReport, 2500);
+            return;
+          }
+        }
+
+        setError('Evaluation report not found or still generating. Please check My Evaluations in a moment.');
+        setLoading(false);
       } catch (err: unknown) {
+        if (!isMounted) return;
         setError(err instanceof Error ? err.message : 'Failed to load report');
-      } finally {
         setLoading(false);
       }
     };
+
     fetchReport();
-  }, [id]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id, passedResult]);
 
   if (loading) {
     return (
-      <div className="py-20 flex flex-col items-center justify-center gap-3">
-        <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-sm font-semibold text-slate-600">Loading verified evaluation report...</p>
+      <div className="py-24 flex flex-col items-center justify-center gap-4 text-center px-4">
+        <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <div>
+          <p className="text-sm font-bold text-slate-800">
+            {processingStatus || 'Loading verified evaluation report...'}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            Validating step marks, working notes calculations, and examiner remarks.
+          </p>
+        </div>
       </div>
     );
   }
@@ -70,12 +149,20 @@ const EvaluationReportWrapper: React.FC = () => {
     return (
       <div className="max-w-md mx-auto my-20 p-6 bg-white border border-rose-200 rounded-xl text-center space-y-4 shadow-sm">
         <p className="text-sm font-bold text-rose-600">{error || 'Report not available'}</p>
-        <button
-          onClick={() => navigate('/student/dashboard')}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold"
-        >
-          Return to Student Dashboard
-        </button>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={() => navigate('/student/dashboard')}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => navigate('/student/upload')}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+          >
+            Upload Answer Sheet
+          </button>
+        </div>
       </div>
     );
   }
@@ -359,7 +446,9 @@ const AppRoutes: React.FC = () => {
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
                 <UploadEvaluation
-                  onEvaluationComplete={(id) => navigate(`/student/evaluations/${id}`)}
+                  onEvaluationComplete={(id, result) =>
+                    navigate(`/student/evaluations/${id}`, { state: { result } })
+                  }
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                 />
               </PublicAndStudentLayout>

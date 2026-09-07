@@ -1,10 +1,50 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db, hashPassword, verifyPassword } from '../db.js';
-import { generateToken, authenticateToken, AuthRequest, checkPermanentFreeAccess } from '../auth.js';
+import { generateToken, authenticateToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess } from '../auth.js';
 import { UserRole } from '../../src/types/index.js';
 
 const router = Router();
+
+// Helper: Automatically link pending institute invitations when user registers or signs in
+function syncPendingInstituteEnrollments(userId: string, email: string) {
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+    const pendingInvites = db.prepare(`
+      SELECT id, institute_id, batch_id 
+      FROM institute_memberships 
+      WHERE lower(invited_email) = ? AND (student_id IS NULL OR status = 'PENDING')
+    `).all(normalizedEmail) as Array<{ id: string; institute_id: string; batch_id: string | null }>;
+
+    for (const invite of pendingInvites) {
+      db.prepare(`
+        UPDATE institute_memberships 
+        SET student_id = ?, status = 'ACTIVE' 
+        WHERE id = ?
+      `).run(userId, invite.id);
+
+      db.prepare(`
+        UPDATE student_profiles 
+        SET institute_id = ?, batch_id = COALESCE(?, batch_id) 
+        WHERE user_id = ?
+      `).run(invite.institute_id, invite.batch_id, userId);
+
+      const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(invite.institute_id) as { name: string } | undefined;
+      const instituteName = inst?.name || 'Your Coaching Institute';
+
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Institute Sponsorship Activated', ?, 'INSTITUTE')
+      `).run(
+        `notif_${crypto.randomBytes(8).toString('hex')}`,
+        userId,
+        `You have been enrolled under ${instituteName}. All your exam evaluations are 100% sponsored.`
+      );
+    }
+  } catch (err) {
+    console.warn('syncPendingInstituteEnrollments error:', err);
+  }
+}
 
 // Student Registration
 router.post('/register', (req: Request, res: Response) => {
@@ -42,6 +82,9 @@ router.post('/register', (req: Request, res: Response) => {
       INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
       VALUES (?, ?, ?, 0, 0)
     `).run(userId, icaiRegistrationNumber.trim().toUpperCase(), caLevel || 'INTERMEDIATE');
+
+    // Auto-link any pending coaching institute enrollment for this email
+    syncPendingInstituteEnrollments(userId, normalizedEmail);
 
     // Welcome Notification
     db.prepare(`
@@ -105,6 +148,10 @@ router.post('/login', (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Your account has been suspended or blocked. Please contact support.' });
     }
 
+    if (user.role === 'STUDENT') {
+      syncPendingInstituteEnrollments(user.id, user.email);
+    }
+
     const token = generateToken({
       id: user.id,
       email: user.email,
@@ -138,10 +185,93 @@ router.post('/login', (req: Request, res: Response) => {
   }
 });
 
-// Get Current User Profile & Entitlements
-router.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
+// Quick Demo Login for instant testing and frictionless access
+router.post('/demo-login', (req: Request, res: Response) => {
   try {
-    const userId = req.user!.id;
+    const { role } = req.body;
+    let targetEmail = 'student@caexamchecker.ai';
+
+    if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
+      targetEmail = 'admin@caexamchecker.ai';
+    } else if (role === 'INSTITUTE_ADMIN' || role === 'INSTITUTE') {
+      targetEmail = 'institute@apexca.edu';
+    } else if (role === 'CURRENT_USER' || role === 'STUDENT_USER') {
+      targetEmail = 'at9767676@gmail.com';
+    }
+
+    let user = db.prepare(`
+      SELECT id, email, password_hash, full_name, role, status FROM users WHERE lower(email) = ?
+    `).get(targetEmail.toLowerCase()) as {
+      id: string;
+      email: string;
+      password_hash: string;
+      full_name: string;
+      role: UserRole;
+      status: string;
+    } | undefined;
+
+    if (!user) {
+      // Auto-provision if missing (e.g. for user email at9767676@gmail.com)
+      const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+      const defaultPwdHash = hashPassword('Student@CA2026!');
+      const assignedRole: UserRole = 'STUDENT';
+      const fullName = targetEmail === 'at9767676@gmail.com' ? 'Verified CA Student' : 'Demo Student';
+
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, ?, '+919876543210', ?, 'ACTIVE')
+      `).run(userId, targetEmail.toLowerCase(), defaultPwdHash, fullName, assignedRole);
+
+      db.prepare(`
+        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10)
+      `).run(userId);
+
+      user = {
+        id: userId,
+        email: targetEmail.toLowerCase(),
+        password_hash: defaultPwdHash,
+        full_name: fullName,
+        role: assignedRole,
+        status: 'ACTIVE',
+      };
+    }
+
+    const token = generateToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+    });
+
+    const isPermanentFree = checkPermanentFreeAccess(user.email);
+
+    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role,
+        hasPermanentFreeAccess: isPermanentFree,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Demo login error:', error);
+    return res.status(500).json({ error: 'Failed to complete demo login' });
+  }
+});
+
+// Get Current User Profile & Entitlements (Returns { user: null } gracefully if unauthenticated)
+router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.json({ user: null, profile: null });
+    }
+
+    const userId = req.user.id;
     const user = db.prepare(`
       SELECT id, email, full_name, phone, role, status, created_at FROM users WHERE id = ?
     `).get(userId) as {
@@ -155,7 +285,7 @@ router.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
     } | undefined;
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.json({ user: null, profile: null });
     }
 
     const isPermanentFree = checkPermanentFreeAccess(user.email);

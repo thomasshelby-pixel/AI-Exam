@@ -90,6 +90,13 @@ export interface QuestionEvaluation {
   status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear';
   reasonForDeduction: string;
   detailedFeedback: string;
+  confidence?: number;
+  technicalEvaluation?: string;
+  missingRequirements?: string[];
+  validAlternativeRecognition?: string;
+  examinerComment?: string;
+  consequentialErrorDetected?: boolean;
+  consequentialErrorNotes?: string;
   stepMarkingBreakdown?: {
     step: string;
     marksAwarded: number;
@@ -139,6 +146,65 @@ export interface EvaluationResult {
   recommendations: string[];
   questions: QuestionEvaluation[];
   isMcqPaper?: boolean;
+  modelUsed?: string;
+}
+
+export interface ExamAttempt {
+  id: string;
+  course: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
+  month: string;
+  year: number;
+  displayName: string;
+  syllabusVersion: string;
+  applicableMaterialVersion?: string;
+  isActive: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface InstitutePlan {
+  id: string;
+  name: string;
+  priceInr: number;
+  billingPeriod: 'MONTHLY' | 'ANNUAL';
+  studentQuota: number;
+  evaluationCredits: number;
+  features: string[];
+  assignmentsEnabled: boolean;
+  testsEnabled: boolean;
+  analyticsEnabled: boolean;
+  supportTier: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface ReferralCampaign {
+  code: string;
+  campaignName: string;
+  benefitType: string;
+  benefitDurationDays: number;
+  maxRedemptions: number;
+  currentRedemptions: number;
+  isActive: boolean;
+}
+
+export interface SupportTicketItem {
+  id: string;
+  ticketNumber?: string;
+  userId?: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  category?: string;
+  priority?: string;
+  role?: string;
+  status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+  adminReply?: string;
+  resolutionNote?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
 }
 
 export interface EvaluationRecord {
@@ -151,7 +217,12 @@ export interface EvaluationRecord {
   modelGroup?: ModelGroup;
   subjectKey: string;
   subjectName: string;
+  paper?: string;
   attempt?: string;
+  syllabusVersion?: string;
+  materialId?: string;
+  materialVersion?: string;
+  modelUsed?: string;
   checkingMode: CheckingMode;
   originalFilename: string;
   status: EvaluationStatus;
@@ -197,12 +268,24 @@ export interface EvaluationMaterial {
   modelGroup?: ModelGroup;
   subjectKey: string;
   subjectName: string;
+  paper?: string;
   attempt?: string;
+  syllabusVersion?: string;
+  chapterTopic?: string;
   questionPaperTitle: string;
-  hasQuestionPaper: boolean;
-  hasSuggestedAnswer: boolean;
+  questionPaperText?: string;
+  suggestedAnswersText?: string;
+  markingSchemeText?: string;
+  referenceGuidanceText?: string;
+  amendmentsProvisionsText?: string;
+  effectiveDate?: string;
+  version?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  hasQuestionPaper?: boolean;
+  hasSuggestedAnswer?: boolean;
   uploadedBy: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface InstituteAssignment {

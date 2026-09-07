@@ -12,16 +12,30 @@ router.get('/pricing', (req: Request, res: Response) => {
   const pricePerCreditINR = Number(settingsMap.PRICE_PER_CREDIT_INR) || 10;
   const freeTierEvaluations = Number(settingsMap.FREE_TIER_EVALUATIONS) || 2;
 
+  // Load active Institute Plans from database
+  let institutePlans: any[] = [];
+  try {
+    const rawInstPlans = db.prepare(`
+      SELECT * FROM institute_plans WHERE is_active = 1 ORDER BY sort_order ASC
+    `).all() as any[];
+    institutePlans = rawInstPlans.map((p) => ({
+      ...p,
+      features: JSON.parse(p.features_json || '[]'),
+    }));
+  } catch (err) {
+    console.warn('Load institute plans warning:', err);
+  }
+
   const plans = [
     {
       id: 'free_starter',
       name: 'Free Trial',
       priceINR: 0,
       credits: freeTierEvaluations,
-      description: 'Ideal for trying your first two ICAI mock test papers',
+      description: 'Ideal for trying your first two CA exam answer sheets',
       features: [
         '2 Full-Length Answer Sheet Evaluations',
-        'Official ICAI Step-Marking Breakdown',
+        'Examiner-Grade Step-Marking Breakdown',
         'Question-wise feedback and provisions analysis',
         'Detailed PDF performance report',
         'No credit card required',
@@ -61,21 +75,6 @@ router.get('/pricing', (req: Request, res: Response) => {
       ],
       popular: false,
     },
-    {
-      id: 'institute_plan',
-      name: 'CA Coaching Institute Tier',
-      priceINR: null, // Custom
-      customQuote: true,
-      description: 'Custom bulk evaluation and batch management for top CA coaching academies',
-      features: [
-        'Up to 500+ student sponsored accounts',
-        'Batch & class assignment management',
-        'Teacher dashboard with batch analytics',
-        'Custom institute question papers & answer keys',
-        'Dedicated account manager & support',
-      ],
-      popular: false,
-    },
   ];
 
   return res.json({
@@ -84,54 +83,198 @@ router.get('/pricing', (req: Request, res: Response) => {
     supportEmail: settingsMap.SUPPORT_EMAIL || 'caexamchecker.support@gmail.com',
     instagramUrl: settingsMap.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
     plans,
+    institutePlans,
   });
 });
 
-// Check whether reference material exists for a given subject
+// Dynamic Exam Attempts lookup from database
+router.get('/attempts', (req: Request, res: Response) => {
+  try {
+    const { course, level } = req.query;
+    const targetCourse = (course || level || '').toString().toUpperCase();
+
+    let query = 'SELECT * FROM exam_attempts WHERE is_active = 1';
+    const params: any[] = [];
+
+    if (targetCourse && ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(targetCourse)) {
+      query += ' AND course = ?';
+      params.push(targetCourse);
+    }
+
+    query += ' ORDER BY year DESC, id ASC';
+    const attempts = db.prepare(query).all(...params) as any[];
+
+    return res.json({
+      attempts: attempts.map((a) => ({
+        id: a.id,
+        course: a.course,
+        month: a.month,
+        year: a.year,
+        displayName: a.display_name,
+        syllabusVersion: a.syllabus_version,
+        applicableMaterialVersion: a.applicable_material_version,
+        isActive: Boolean(a.is_active),
+      })),
+    });
+  } catch (error: unknown) {
+    console.error('Get attempts error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve exam attempts' });
+  }
+});
+
+// Institute Pricing Plans
+router.get('/institute-plans', (req: Request, res: Response) => {
+  try {
+    const rawPlans = db.prepare(`
+      SELECT * FROM institute_plans WHERE is_active = 1 ORDER BY sort_order ASC
+    `).all() as any[];
+
+    const plans = rawPlans.map((p) => ({
+      id: p.id,
+      name: p.name,
+      priceInr: p.price_inr,
+      billingPeriod: p.billing_period,
+      studentQuota: p.student_quota,
+      evaluationCredits: p.evaluation_credits,
+      features: JSON.parse(p.features_json || '[]'),
+      assignmentsEnabled: Boolean(p.assignments_enabled),
+      testsEnabled: Boolean(p.tests_enabled),
+      analyticsEnabled: Boolean(p.analytics_enabled),
+      supportTier: p.support_tier,
+      isActive: Boolean(p.is_active),
+      sortOrder: p.sort_order,
+    }));
+
+    return res.json({ plans });
+  } catch (error: unknown) {
+    console.error('Get institute plans error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve institute plans' });
+  }
+});
+
+// Referral Code Validation (e.g. AI30)
+router.post('/referral/validate', (req: Request, res: Response) => {
+  try {
+    const { code } = req.body;
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({ error: 'Please enter a referral code.' });
+    }
+
+    const cleanCode = code.trim().toUpperCase();
+    const campaign = db.prepare(`
+      SELECT * FROM referral_campaigns WHERE code = ? AND is_active = 1
+    `).get(cleanCode) as any;
+
+    if (!campaign) {
+      return res.status(404).json({
+        valid: false,
+        error: `Promo code "${cleanCode}" is not recognized or has expired.`,
+      });
+    }
+
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as total FROM referral_redemptions WHERE referral_code = ?
+    `).get(cleanCode) as { total: number };
+
+    const remainingSlots = Math.max(0, campaign.max_redemptions - countRow.total);
+    if (remainingSlots <= 0) {
+      return res.status(400).json({
+        valid: false,
+        error: `Promo code "${cleanCode}" has reached its maximum quota of ${campaign.max_redemptions} redemptions.`,
+      });
+    }
+
+    return res.json({
+      valid: true,
+      code: cleanCode,
+      campaignName: campaign.campaign_name,
+      benefitDurationDays: campaign.benefit_duration_days,
+      remainingSlots,
+      maxRedemptions: campaign.max_redemptions,
+      message: `Valid code! Unlocks ${campaign.benefit_duration_days} days of free evaluation access (${remainingSlots} slots left).`,
+    });
+  } catch (error: unknown) {
+    console.error('Validate referral error:', error);
+    return res.status(500).json({ error: 'Failed to validate referral code' });
+  }
+});
+
+// Check whether reference material exists for a given subject, paper, and attempt
 router.get('/materials-check', (req: Request, res: Response) => {
-  const { level, subjectKey } = req.query;
+  const { level, subjectKey, attempt, paper, materialType } = req.query;
   if (!level || !subjectKey) {
     return res.status(400).json({ error: 'Level and subjectKey are required.' });
   }
 
-  const material = db.prepare(`
-    SELECT id, question_paper_title, attempt, material_type
+  let query = `
+    SELECT id, question_paper_title, attempt, paper, material_type
     FROM evaluation_materials
-    WHERE level = ? AND subject_key = ?
-    ORDER BY created_at DESC LIMIT 1
-  `).get(String(level), String(subjectKey));
+    WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
+    AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
+    AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
+  `;
+  const params: any[] = [String(level), String(subjectKey)];
+
+  if (attempt && attempt !== 'Current' && attempt !== 'All') {
+    query += " AND (attempt = ? OR attempt = 'All')";
+    params.push(String(attempt));
+  }
+
+  if (paper && paper !== 'All') {
+    query += " AND (paper = ? OR paper = 'All')";
+    params.push(String(paper));
+  }
+
+  if (materialType && materialType !== 'ALL') {
+    query += " AND (material_type = ? OR material_type = 'ALL')";
+    params.push(String(materialType));
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT 1';
+  const material = db.prepare(query).get(...params);
 
   return res.json({
     available: !!material,
     material: material || null,
+    message: material
+      ? 'Matching evaluation material loaded'
+      : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.',
   });
 });
 
 // Public Contact / Support Form
 router.post('/contact', (req: Request, res: Response) => {
   try {
-    const { name, email, subject, message, evaluationId } = req.body;
+    const { name, email, subject, message, evaluationId, category } = req.body;
     if (!name || !email || !subject || !message) {
       return res.status(400).json({ error: 'Name, email, subject, and message are required.' });
     }
 
     const ticketId = `tkt_${crypto.randomBytes(8).toString('hex')}`;
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const ticketNumber = `CEC-${randomNum}`;
+
     db.prepare(`
-      INSERT INTO support_tickets (id, name, email, subject, message, evaluation_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'OPEN')
+      INSERT INTO support_tickets (
+        id, ticket_number, name, email, subject, message,
+        category, role, evaluation_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'GUEST', ?, 'OPEN')
     `).run(
       ticketId,
+      ticketNumber,
       name.trim(),
       email.trim().toLowerCase(),
       subject.trim(),
       message.trim(),
+      category || 'GENERAL_QUERY',
       evaluationId || null
     );
 
     return res.status(201).json({
       success: true,
       ticketId,
-      message: 'Your inquiry has been submitted. Our CA support team will respond within 24 hours at ' + email,
+      ticketNumber,
+      message: `Your inquiry has been submitted (Ticket #${ticketNumber}). Our CA support team will respond within 24 hours at ${email}.`,
     });
   } catch (error: unknown) {
     console.error('Contact form error:', error);

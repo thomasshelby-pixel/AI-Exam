@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
+import { BrandLogo } from '../common/BrandLogo';
 import {
   FileCheck2,
   Sparkles,
@@ -55,17 +56,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
             }}
             className="flex items-center gap-2.5 cursor-pointer select-none group"
           >
-            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-base shadow-sm group-hover:bg-blue-700 transition">
-              <span>CA</span>
-            </div>
-            <div>
-              <div className="font-bold text-base sm:text-lg leading-tight tracking-tight flex items-center gap-1.5 text-slate-900">
-                <span>ExamChecker AI</span>
-                <span className="hidden sm:inline-block ml-1 px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded uppercase tracking-wider border border-blue-100">
-                  v2.0
-                </span>
-              </div>
-            </div>
+            <BrandLogo size="sm" showSubtitle={true} />
           </div>
 
           {/* Desktop Nav Items */}

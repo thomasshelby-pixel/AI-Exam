@@ -59,7 +59,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
               </div>
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>ICAI Official Step Marking Breakdown</span>
+                <span>ICAI-Pattern Step Marking Breakdown</span>
               </div>
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />

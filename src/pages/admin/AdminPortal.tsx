@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { MaterialManagement } from '../../components/admin/MaterialManagement.js';
+import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
 import {
   LayoutDashboard,
   Users,
@@ -125,6 +127,11 @@ export const AdminPortal: React.FC = () => {
       setErrorMsg('');
 
       switch (activeSection) {
+        case 'materials':
+        case 'rules': {
+          // Handled self-contained within dedicated components
+          break;
+        }
         case 'dashboard': {
           const res = await apiRequest<any>('/api/admin/dashboard');
           setDashboardData(res);
@@ -437,6 +444,8 @@ export const AdminPortal: React.FC = () => {
   // Navigation Items for Admin Sidebar
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'materials', label: 'Material Management', icon: FileCheck2 },
+    { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'students', label: 'Students', icon: GraduationCap },
     { id: 'institutes', label: 'Institutes', icon: Building2 },
@@ -586,6 +595,26 @@ export const AdminPortal: React.FC = () => {
 
           {!loadingData && (
             <>
+              {/* MATERIAL MANAGEMENT */}
+              {activeSection === 'materials' && (
+                <MaterialManagement
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                />
+              )}
+
+              {/* EVALUATION CONTROLS & RULES */}
+              {activeSection === 'rules' && (
+                <EvaluationControls
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                />
+              )}
+
               {/* 1. DASHBOARD */}
               {activeSection === 'dashboard' && dashboardData && (
                 <div className="space-y-6">

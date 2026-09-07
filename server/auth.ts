@@ -41,6 +41,11 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     token = parseCookie(req.headers['cookie'], 'ca_token');
   }
 
+  // Also support token passed in query parameter for direct PDF and file downloads
+  if (!token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  }
+
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. Please log in.' });
   }
@@ -79,6 +84,53 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
   }
 }
 
+export function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token && req.headers['cookie']) {
+    token = parseCookie(req.headers['cookie'], 'ca_token');
+  }
+
+  if (!token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      id: string;
+      email: string;
+      role: UserRole;
+      fullName: string;
+    };
+
+    const user = db.prepare('SELECT id, email, role, full_name, status FROM users WHERE id = ?').get(decoded.id) as {
+      id: string;
+      email: string;
+      role: UserRole;
+      full_name: string;
+      status: string;
+    } | undefined;
+
+    if (user && user.status === 'ACTIVE') {
+      req.user = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.full_name,
+      };
+    }
+  } catch {
+    // Stale or invalid token - silently leave unauthenticated
+  }
+
+  next();
+}
+
 export function requireRole(...allowedRoles: UserRole[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
@@ -113,6 +165,8 @@ export interface StudentEntitlement {
   instituteSponsored: boolean;
   instituteName?: string;
   hasPermanentFreeAccess: boolean;
+  referralCode?: string;
+  referralExpiry?: string;
   reason?: string;
 }
 
@@ -141,6 +195,32 @@ export function getStudentEntitlement(userId: string): StudentEntitlement {
       hasPermanentFreeAccess: true,
       reason: 'Permanent Free Entitlement Active',
     };
+  }
+
+  // Check active promotional referral code redemption (e.g. AI30 1-Month Free Access)
+  try {
+    const activeReferral = db.prepare(`
+      SELECT referral_code, expiry_date, benefit_type
+      FROM referral_redemptions
+      WHERE user_id = ? AND status = 'ACTIVE' AND datetime(expiry_date) > datetime('now')
+      ORDER BY expiry_date DESC LIMIT 1
+    `).get(userId) as { referral_code: string; expiry_date: string; benefit_type: string } | undefined;
+
+    if (activeReferral) {
+      return {
+        canEvaluate: true,
+        tier: 'PERMANENT_FREE',
+        freeEvaluationsRemaining: 999,
+        purchasedCredits: 999,
+        instituteSponsored: false,
+        hasPermanentFreeAccess: true,
+        referralCode: activeReferral.referral_code,
+        referralExpiry: activeReferral.expiry_date,
+        reason: `Promotional Code Active (${activeReferral.referral_code} 1-Month Free Access)`,
+      };
+    }
+  } catch (err) {
+    console.warn('Referral check warning:', err);
   }
 
   const profile = db.prepare(`

@@ -100,19 +100,19 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         const res = await apiRequest<{
           available: boolean;
           material?: { question_paper_title: string; attempt: string };
-        }>(`/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}`);
+        }>(`/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(attempt)}&materialType=${materialType}`);
 
         setMaterialAvailable(res.available);
         setMaterialTitle(res.material?.question_paper_title || '');
       } catch {
-        setMaterialAvailable(true); // Fallback to allow evaluation
+        setMaterialAvailable(false);
       } finally {
         setCheckingMaterial(false);
       }
     };
 
     checkMaterial();
-  }, [level, selectedSubjectKey]);
+  }, [level, selectedSubjectKey, attempt, materialType]);
 
   // Handle file drop & selection
   const processFile = (selectedFile: File) => {
@@ -146,6 +146,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const handleStartEvaluation = async () => {
     if (!file || !fileBase64) {
       setErrorMessage('Please upload your handwritten CA answer sheet file (PDF or image).');
+      return;
+    }
+
+    if (!materialAvailable) {
+      setErrorMessage(
+        'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.'
+      );
       return;
     }
 
@@ -557,12 +564,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               )}
             </div>
 
+            {/* Material Unavailable Alert */}
+            {!materialAvailable && !checkingMaterial && (
+              <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <div>
+                  <p className="font-bold text-rose-900">Evaluation Material Not Uploaded Yet</p>
+                  <p className="mt-0.5 leading-relaxed">
+                    Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Action CTA Button */}
             <div className="pt-2">
               <button
                 id="start-evaluation-btn"
                 onClick={handleStartEvaluation}
-                disabled={evalStep !== 'IDLE' || !file}
+                disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
                 className="w-full py-3.5 px-6 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
               >
                 {evalStep !== 'IDLE' ? (

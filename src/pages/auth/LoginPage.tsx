@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
+import { BrandLogo } from '../../components/common/BrandLogo';
 import { FileCheck2, Lock, Mail, User, Phone, BookOpen, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 
 interface LoginPageProps {
@@ -9,7 +10,7 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onSuccess, onNavigateHome }) => {
-  const { login, register } = useAuth();
+  const { login, register, demoLogin } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
 
   // Form states
@@ -95,20 +96,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   return (
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-8 bg-[#f1f5f9] text-slate-800">
       <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl p-6 sm:p-7 shadow-sm relative">
-        {/* Header */}
+        {/* Header with Official Brand Logo */}
         <div className="text-center mb-6">
-          <div
-            onClick={onNavigateHome}
-            className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 mb-3 cursor-pointer hover:scale-105 transition"
-          >
-            <FileCheck2 className="w-5 h-5 stroke-[2.2]" />
+          <div className="flex justify-center mb-3">
+            <BrandLogo variant="full" size="sm" onClick={onNavigateHome} />
           </div>
-          <h2 className="text-xl font-black tracking-tight text-slate-900">
-            {mode === 'login' ? 'Sign in to CA Exam Checker' : 'Create Student Account'}
+          <h2 className="text-lg font-black tracking-tight text-slate-900 mt-2">
+            {mode === 'login' ? 'Sign in to Your Account' : 'Create Student Account'}
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {mode === 'login'
-              ? 'Access your ICAI answer sheet evaluations and step-marking reports'
+              ? 'Access your CA answer sheet evaluations and step-marking reports'
               : 'Sign up today and get your first 2 answer sheets evaluated free'}
           </p>
         </div>
@@ -228,6 +226,91 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 </>
               )}
             </button>
+
+            {/* 1-Click Fast Access for Evaluators / Testers */}
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider text-center mb-2">
+                1-Click Quick Access
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  id="btn-demo-student"
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true);
+                      setErrorMessage('');
+                      const loggedIn = await demoLogin('STUDENT');
+                      onSuccess(loggedIn);
+                    } catch (err: unknown) {
+                      setErrorMessage(err instanceof Error ? err.message : 'Demo login failed');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50/70 hover:bg-blue-100 text-blue-800 text-[11px] font-bold text-center transition cursor-pointer"
+                >
+                  🎓 Demo Student
+                </button>
+                <button
+                  type="button"
+                  id="btn-demo-user"
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true);
+                      setErrorMessage('');
+                      const loggedIn = await demoLogin('CURRENT_USER');
+                      onSuccess(loggedIn);
+                    } catch (err: unknown) {
+                      setErrorMessage(err instanceof Error ? err.message : 'Login failed');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold text-center transition cursor-pointer"
+                >
+                  ⚡ Active Account
+                </button>
+                <button
+                  type="button"
+                  id="btn-demo-admin"
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true);
+                      setErrorMessage('');
+                      const loggedIn = await demoLogin('SUPER_ADMIN');
+                      onSuccess(loggedIn);
+                    } catch (err: unknown) {
+                      setErrorMessage(err instanceof Error ? err.message : 'Admin login failed');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-purple-200 bg-purple-50/70 hover:bg-purple-100 text-purple-800 text-[11px] font-bold text-center transition cursor-pointer"
+                >
+                  🛡️ Super Admin
+                </button>
+                <button
+                  type="button"
+                  id="btn-demo-institute"
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true);
+                      setErrorMessage('');
+                      const loggedIn = await demoLogin('INSTITUTE');
+                      onSuccess(loggedIn);
+                    } catch (err: unknown) {
+                      setErrorMessage(err instanceof Error ? err.message : 'Institute login failed');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50/70 hover:bg-amber-100 text-amber-800 text-[11px] font-bold text-center transition cursor-pointer"
+                >
+                  🏛️ Institute Admin
+                </button>
+              </div>
+            </div>
           </form>
         )}
 

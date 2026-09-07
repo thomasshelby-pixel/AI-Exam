@@ -40,6 +40,11 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
   const priceInINR = currentQuantity * 10; // ₹10 per credit
 
   const handleCheckout = async () => {
+    if (!user) {
+      setErrorMsg('Please sign in or create a student account to purchase evaluation credits.');
+      return;
+    }
+
     try {
       setIsLoading(true);
       setErrorMsg('');
@@ -154,7 +159,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
           </div>
           <div>
             <h3 className="text-base font-bold text-slate-900">Add Evaluation Credits</h3>
-            <p className="text-xs text-slate-500">Official ICAI Step-Marking & Answer Sheet Checks</p>
+            <p className="text-xs text-slate-500">ICAI-Aligned Step-Marking & Answer Sheet Checks</p>
           </div>
         </div>
 

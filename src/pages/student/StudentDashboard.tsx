@@ -220,7 +220,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
             <div>
               <h2 className="font-bold text-slate-800 text-base">Recent Evaluations</h2>
-              <p className="text-xs text-slate-500">Official ICAI step-marked answer papers</p>
+              <p className="text-xs text-slate-500">ICAI-aligned step-marked answer papers</p>
             </div>
             {data?.recentEvaluations && data.recentEvaluations.length > 0 && (
               <button

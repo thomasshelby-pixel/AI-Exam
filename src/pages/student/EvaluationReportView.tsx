@@ -15,7 +15,11 @@ import {
   ChevronUp,
   Percent,
   Sparkles,
+  Download,
+  FileText,
+  RefreshCw,
 } from 'lucide-react';
+import { BrandLogo } from '../../components/common/BrandLogo.js';
 
 interface EvaluationReportViewProps {
   evaluationResult: EvaluationResult;
@@ -28,6 +32,54 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
+  const [downloadingType, setDownloadingType] = useState<string | null>(null);
+
+  const handleDownload = async (type: 'report' | 'checked-copy' | 'original') => {
+    try {
+      setDownloadingType(type);
+      const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+      const evalId = evaluationResult.evaluationId;
+      const url = `/api/student/evaluations/${evalId}/download-${type}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+
+      const response = await fetch(url, {
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Failed to download ${type.replace('-', ' ')}`);
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      const prefix = evaluationResult.subjectName.replace(/[^a-zA-Z0-9]/g, '_');
+      const filename =
+        type === 'checked-copy'
+          ? `${prefix}_Checked_Copy.pdf`
+          : type === 'report'
+          ? `${prefix}_Evaluation_Report.pdf`
+          : `${prefix}_Original_Answer_Sheet.pdf`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error(err);
+      if (type === 'report') {
+        window.print();
+      } else {
+        alert(err.message || 'Download failed. Please try again.');
+      }
+    } finally {
+      setDownloadingType(null);
+    }
+  };
 
   const {
     studentName,
@@ -64,31 +116,88 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 text-slate-800 space-y-6 print:p-0 print:text-black">
       {/* Top Controls (Hidden when printing) */}
-      <div className="flex items-center justify-between print:hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <button
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition shadow-sm"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700 transition shadow-sm"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Back to Evaluations
         </button>
 
-        <button
-          onClick={() => window.print()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-sm"
-        >
-          <Printer className="w-3.5 h-3.5" />
-          Print / Download PDF Report
-        </button>
+        {/* Download Actions Toolbar */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 1. Download Checked Copy (Annotated PDF) */}
+          <button
+            id="download-checked-copy-btn"
+            onClick={() => handleDownload('checked-copy')}
+            disabled={downloadingType !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Download your original answer sheet annotated with examiner red-pen step marks, ticks, and examiner stamps"
+          >
+            {downloadingType === 'checked-copy' ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <FileCheck2 className="w-3.5 h-3.5" />
+            )}
+            <span>Download Checked Copy (Annotated)</span>
+          </button>
+
+          {/* 2. Download Detailed Report (PDF) */}
+          <button
+            id="download-report-btn"
+            onClick={() => handleDownload('report')}
+            disabled={downloadingType !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Download comprehensive performance scorecard, step breakdown, and audit report"
+          >
+            {downloadingType === 'report' ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            <span>Download Detailed Report</span>
+          </button>
+
+          {/* 3. Download Original Answer Sheet */}
+          <button
+            id="download-original-btn"
+            onClick={() => handleDownload('original')}
+            disabled={downloadingType !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Download the raw submitted answer sheet"
+          >
+            {downloadingType === 'original' ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-slate-500" />
+            )}
+            <span>Original Sheet</span>
+          </button>
+
+          {/* 4. Print */}
+          <button
+            id="print-report-btn"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition shadow-sm"
+            title="Print report using browser print layout"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Print</span>
+          </button>
+        </div>
       </div>
 
-      {/* Official ICAI Report Header Card */}
+      {/* Official ICAI Pattern Report Header Card */}
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-200 print:border-gray-300">
           <div>
+            <div className="mb-3">
+              <BrandLogo variant="horizontal" size="sm" />
+            </div>
             <div className="flex items-center gap-2 text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">
-              <FileCheck2 className="w-4 h-4" />
-              <span>Certified ICAI Step-Marking Evaluation</span>
+              <FileCheck2 className="w-4 h-4 text-blue-600" />
+              <span>Verified ICAI-Pattern Step-Marking Evaluation</span>
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 print:text-black">{subjectName}</h1>
             <p className="text-xs text-slate-500 mt-1 print:text-gray-600">
@@ -359,6 +468,16 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             </li>
           ))}
         </ul>
+      </div>
+
+      {/* Advisory & Compliance Disclaimer */}
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-500 leading-relaxed print:bg-white print:border-gray-200 print:text-gray-500">
+        <p className="font-semibold text-slate-700 print:text-gray-700 mb-1">
+          Academic Benchmark & Verification Notice
+        </p>
+        <p>
+          This evaluation is an AI-powered diagnostic benchmark generated according to published ICAI Suggested Answers, Marking Schemes, and Accounting/Tax Standards. CA Exam Checker is an independent educational technology platform and is not affiliated with, authorized, or endorsed by the Institute of Chartered Accountants of India (ICAI). Official marks are awarded exclusively by ICAI-appointed examiners during examination sessions.
+        </p>
       </div>
     </div>
   );

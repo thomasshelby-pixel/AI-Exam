@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="favBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="60%" stop-color="#0256cc" />
+      <stop offset="100%" stop-color="#00358e" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#favBg)" />
+  <!-- CA stylized monogram with paper and checkmark -->
+  <!-- Letter C -->
+  <path d="M 52 24 C 42 22, 28 26, 22 36 C 14 48, 16 66, 26 74 C 36 82, 48 80, 56 75 L 53 67 C 46 71, 37 70, 31 64 C 24 57, 23 45, 29 38 C 34 31, 44 29, 50 31 Z" fill="#ffffff" />
+  <!-- Answer Sheet inside C -->
+  <rect x="36" y="36" width="22" height="28" rx="3" fill="#ffffff" stroke="#38bdf8" stroke-width="2" />
+  <line x1="42" y1="43" x2="52" y2="43" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" />
+  <line x1="42" y1="49" x2="52" y2="49" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" />
+  <!-- Green Checkmark -->
+  <circle cx="40" cy="43" r="2.5" fill="#10b981" />
+  <circle cx="40" cy="49" r="2.5" fill="#f59e0b" />
+  <!-- Letter A / Pen Swoop -->
+  <path d="M 56 26 L 68 26 L 78 74 L 69 74 L 66 61 L 57 61 L 55 68 C 52 69, 49 69, 46 68 Z" fill="#38bdf8" />
+  <path d="M 64 51 L 62 40 L 59 51 Z" fill="#00358e" />
+  <!-- Pen Stylus accent -->
+  <polygon points="68,36 78,44 73,48 64,40" fill="#ffffff" />
+  <!-- Sparkle star -->
+  <polygon points="80,18 82,23 87,25 82,27 80,32 78,27 73,25 78,23" fill="#ffffff" />
+</svg>

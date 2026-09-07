@@ -1,4 +1,5 @@
 import React from 'react';
+import { BrandLogo } from '../common/BrandLogo';
 import { FileCheck2, ShieldCheck, Mail, Instagram, ExternalLink, Award } from 'lucide-react';
 
 interface FooterProps {
@@ -12,15 +13,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-8 mb-8">
           {/* Brand & Mission */}
           <div className="md:col-span-2 space-y-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
-                <span>CA</span>
-              </div>
-              <span className="font-bold text-base text-slate-900">CA Exam Checker AI</span>
-            </div>
+            <BrandLogo size="md" showSubtitle={true} onClick={() => onNavigate('landing')} />
             <p className="text-slate-600 text-xs leading-relaxed max-w-md">
               India&apos;s dedicated AI evaluation and step-marking platform built for Chartered Accountancy candidates.
-              Evaluates handwritten answer sheets against official ICAI suggested answers, accounting standards, and statutory provisions.
+              Evaluates handwritten answer sheets against ICAI-aligned suggested answers, accounting standards, and statutory provisions.
             </p>
             <div className="flex flex-wrap items-center gap-4 pt-1">
               <a

@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult, QuestionEvaluation } from '../src/types/index.js';
+import { db } from './db.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -17,10 +18,40 @@ export function getGemini(): GoogleGenAI {
   return aiClient;
 }
 
+export function getAISettings() {
+  try {
+    const rows = db.prepare("SELECT key, value FROM pricing_settings WHERE key LIKE 'EVAL_%'").all() as { key: string; value: string }[];
+    const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    return {
+      primaryModel: map.EVAL_MODEL_PROVIDER || 'gemini-3.8-flash',
+      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-2.5-flash',
+      maxRetries: parseInt(map.EVAL_MAX_RETRIES || '3', 10),
+      timeoutSeconds: parseInt(map.EVAL_TIMEOUT_SECONDS || '90', 10),
+      confidenceThreshold: parseFloat(map.EVAL_CONFIDENCE_THRESHOLD || '75'),
+      checkingMode: map.EVAL_CHECKING_MODE || 'standard',
+      stepMarkingEnabled: map.EVAL_STEP_MARKING_ENABLED !== 'false',
+      consequentialErrorEnabled: map.EVAL_CONSEQUENTIAL_ERROR_ENABLED !== 'false',
+      equivalentAnswerDetection: map.EVAL_EQUIVALENT_ANSWER_DETECTION !== 'false',
+    };
+  } catch {
+    return {
+      primaryModel: 'gemini-3.8-flash',
+      fallbackModel: 'gemini-2.5-flash',
+      maxRetries: 3,
+      timeoutSeconds: 90,
+      confidenceThreshold: 75,
+      checkingMode: 'standard',
+      stepMarkingEnabled: true,
+      consequentialErrorEnabled: true,
+      equivalentAnswerDetection: true,
+    };
+  }
+}
+
 /**
- * Executes Gemini content generation with automated exponential backoff retry
- * and fallback to an alternate high-availability model (gemini-3.1-flash-lite)
- * when gemini-3.8-flash experiences temporary high demand (HTTP 503 / 429).
+ * Robust Gemini generation with dynamic database-configured primary model,
+ * automatic fallback model (e.g. gemini-2.5-flash) on transient errors (503 / 429),
+ * and exponential backoff with random jitter.
  */
 export async function generateContentWithResilience(
   ai: GoogleGenAI,
@@ -28,47 +59,86 @@ export async function generateContentWithResilience(
     contents: any;
     config?: any;
   },
-  primaryModel: string = 'gemini-3.8-flash',
-  fallbackModel: string = 'gemini-3.1-flash-lite',
-  maxRetriesPerModel: number = 1
+  options?: {
+    primaryModel?: string;
+    fallbackModel?: string;
+    maxRetriesPerModel?: number;
+  }
 ) {
-  const models = [primaryModel, fallbackModel];
-  let lastError: unknown = null;
+  const settings = getAISettings();
+  const primaryModel = options?.primaryModel || settings.primaryModel || 'gemini-3.8-flash';
+  const fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-2.5-flash';
+  const maxRetries = options?.maxRetriesPerModel ?? settings.maxRetries ?? 3;
 
-  for (const model of models) {
-    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+  // Build unique sequence of candidate models
+  const candidateModels = [primaryModel];
+  if (fallbackModel && fallbackModel !== primaryModel) {
+    candidateModels.push(fallbackModel);
+  }
+
+  let lastError: any = null;
+
+  for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+    const model = candidateModels[mIdx];
+    const isPrimary = mIdx === 0;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const response = await ai.models.generateContent({
           model,
           contents: params.contents,
           config: params.config,
         });
-        return response;
+
+        // Return augmented response with the model that actually succeeded
+        return Object.assign(response, { modelUsed: model });
       } catch (err: any) {
         lastError = err;
-        const errMsg = err?.message || String(err);
+        const errMsg = (err?.message || String(err)).toLowerCase();
         const isTransient =
           errMsg.includes('503') ||
           errMsg.includes('high demand') ||
-          errMsg.includes('UNAVAILABLE') ||
+          errMsg.includes('unavailable') ||
           errMsg.includes('429') ||
-          errMsg.includes('RESOURCE_EXHAUSTED');
+          errMsg.includes('resource_exhausted') ||
+          errMsg.includes('overloaded') ||
+          errMsg.includes('econnreset') ||
+          errMsg.includes('etimedout') ||
+          errMsg.includes('fetch failed');
 
-        console.warn(`[Gemini API] Model ${model} (attempt ${attempt + 1}/${maxRetriesPerModel + 1}) encountered error: ${errMsg.slice(0, 160)}`);
+        console.warn(
+          `[Gemini Resilience] ${model} (attempt ${attempt + 1}/${maxRetries + 1}) failed: ${err?.message?.slice(0, 150) || err}`
+        );
 
-        if (isTransient && attempt < maxRetriesPerModel) {
-          const delayMs = (attempt + 1) * 1000;
+        if (isTransient && attempt < maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s, etc. with up to 700ms random jitter
+          const baseDelay = Math.min(1000 * Math.pow(2, attempt), 8000);
+          const jitter = Math.floor(Math.random() * 700);
+          const delayMs = baseDelay + jitter;
+          console.info(`[Gemini Resilience] Backing off for ${delayMs}ms before retrying with ${model}...`);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
 
-        // If exhausted for this model or non-transient, try next model in pool
+        // If non-transient or exhausted for this model, break inner loop to try fallback model
+        if (candidateModels.length > 1 && isPrimary) {
+          console.warn(`[Gemini Resilience] Switching to fallback model (${fallbackModel}) due to error on ${primaryModel}`);
+        }
         break;
       }
     }
   }
 
-  throw lastError;
+  // Format final error
+  const finalMessage = lastError?.message || 'Gemini API call failed after multiple retries';
+  const enhancedErr = new Error(
+    finalMessage.includes('503') || finalMessage.includes('high demand')
+      ? 'The AI evaluation service is experiencing temporary high demand. Please try evaluating again in a moment. No credits have been deducted.'
+      : `AI Evaluation encountered an error: ${finalMessage}. No credits have been deducted.`
+  );
+  (enhancedErr as any).originalError = lastError;
+  (enhancedErr as any).isTransient = true;
+  throw enhancedErr;
 }
 
 export interface DocumentValidationResult {
@@ -224,20 +294,20 @@ DO NOT penalize wrong MCQs under any circumstances for Intermediate or Final pap
 For Foundation Objective papers: Correct = +1 mark, Incorrect = -0.25 marks, Unattempted = 0 marks.`;
 
   const checkingStrictness = params.checkingMode === 'strict'
-    ? 'Strict ICAI Head Examiner Standard: Be conservative. Require precise statutory section numbers, exact accounting standard steps, and complete working notes before awarding full marks.'
+    ? 'Strict ICAI Head Examiner Standard: Rigorous examination. Require correct statutory section numbers, accounting standard steps, and complete working notes before awarding full marks.'
     : params.checkingMode === 'lenient'
     ? 'Moderate Guidance Standard: Emphasize step marking generously. Award credit where conceptual understanding is visible even if minor calculation or presentation flaws exist.'
-    : 'Standard ICAI Evaluator Standard: Balanced, realistic evaluation following official ICAI guideline answers and marking schemes.';
+    : 'Standard ICAI Examination Evaluator: Balanced, realistic CA examination-style evaluation following official guideline answers and marking schemes.';
 
   const evaluationPrompt = `
-You are a Senior ICAI Central Examination Evaluator evaluating a student's answer sheet.
+You are an expert Senior CA Examination Evaluator conducting comprehensive evaluation of a student's answer sheet.
 
 EVALUATION PARAMETERS:
-- Level: ${params.level}
+- Level: CA ${params.level}
 - Subject: ${params.subjectName}
 - Paper Type: ${params.materialType}
 - Attempt: ${params.attempt || 'Current Attempt'}
-- Checking Mode: ${checkingStrictness}
+- Evaluation Standard: ${checkingStrictness}
 
 ${mcqInstruction}
 
@@ -251,22 +321,24 @@ MARKING SCHEME GUIDELINES:
 ${params.markingSchemeText.slice(0, 5000)}
 
 EVALUATION MANDATES:
-1. QUESTION-WISE STEP MARKING:
-   - Break down every attempted question and subquestion (e.g. Q1(a), Q1(b), Q2, etc.).
-   - Specify: Maximum Marks, Marks Awarded, Marks Lost, Reason for Deduction, Detailed Feedback.
-   - For accounting & financial problems: Check Working Notes, Balance Sheet/P&L ledger formats, Journal Entries with narrations.
-   - For Law & Tax problems: Check quoting of Sections (Companies Act, Income Tax Act, CGST Act), Legal Analysis, Application of Law to Facts, and Final Conclusion.
-   - For Audit problems: Check Standards on Auditing (SA numbers), Audit Procedures, Assertions, Reporting requirements (CARO 2020).
-   - DO NOT require word-for-word replication of suggested answers. Accept valid alternative interpretations and working methods!
+1. SUBSTANTIVE HUMAN-LIKE REASONING (NO SIMPLE KEYWORD MATCHING):
+   - Reason about the actual meaning, technical accuracy, and legal/accounting logic of the student's answer.
+   - Do NOT deduct marks merely because the student did not use the exact phrasing of the suggested answer.
+   - For Law & Tax: Verify if the student correctly identified the legal issue, cited the relevant provision (or explained the principle accurately), analyzed the facts, and arrived at a sound conclusion.
+   - For Accounting & Financial Management: Verify the methodology, account heads, adjustments, journal entries, and working notes.
+   - For Audit: Verify the audit procedures, relevant Standards on Auditing (SAs), assertion testing, and reporting implications.
 
-2. MATHEMATICAL INTEGRITY (CRITICAL):
-   - The sum of marks awarded for each individual question/subquestion MUST EXACTLY equal the Total Marks!
-   - Support decimal marks (e.g., 0.5, 1.5, 2.5, 3.5, 4.0).
-   - Never award more than the maximum marks allocated to a question.
+2. EQUIVALENT ANSWER DETECTION:
+   - Recognize when a student uses different phrasing, structure, terminology, or valid alternative working methods that achieve the correct technical conclusion.
+   - Award full credit for equivalent correct solutions, valid alternate statutory interpretations recognized by courts/ICAI, or valid alternative computational routes.
 
-3. CONFIDENCE SCORE & OCR/HANDWRITING ASSESSMENT:
-   - Rate the overall handwriting legibility and scan quality (confidence score between 70 and 99).
-   - If a particular answer is barely legible, mark status as 'unclear' and provide constructive feedback.
+3. STEP-MARKING BREAKDOWN & CONSEQUENTIAL ERROR TOLERANCE:
+   - Break down every attempted question and subquestion into discrete steps (e.g., Step 1: Computation of Consideration, Step 2: NCI calculation, etc.).
+   - Consequential Error Rule: If a student makes an arithmetic slip in Step 1, deduct marks for Step 1 ONLY. If subsequent steps (Step 2, 3, etc.) are conceptually and logically correct using the erroneous Step 1 figure, AWARD full step marks for subsequent steps! Never penalize multiple times for one arithmetic mistake.
+
+4. MATHEMATICAL INTEGRITY:
+   - The sum of marks awarded across all questions MUST EXACTLY equal totalMarks.
+   - Support standard decimal marks (e.g., 0.5, 1.0, 1.5, 2.0, etc.). Never award more than maximumMarks for any question.
 
 Return a detailed JSON response strictly adhering to the schema.
 `;
@@ -371,6 +443,22 @@ Return a detailed JSON response strictly adhering to the schema.
                 },
                 reasonForDeduction: { type: Type.STRING },
                 detailedFeedback: { type: Type.STRING },
+                technicalEvaluation: { type: Type.STRING },
+                validAlternativeRecognition: { type: Type.STRING },
+                consequentialErrorDetected: { type: Type.BOOLEAN },
+                stepMarkingBreakdown: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      step: { type: Type.STRING },
+                      marksAwarded: { type: Type.NUMBER },
+                      maximumMarks: { type: Type.NUMBER },
+                      remarks: { type: Type.STRING },
+                    },
+                    required: ['step', 'marksAwarded', 'maximumMarks', 'remarks'],
+                  },
+                },
                 applicableProvisions: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
@@ -477,7 +565,68 @@ Return a detailed JSON response strictly adhering to the schema.
     ],
     questions,
     isMcqPaper: isMcqOnly,
+    modelUsed: (response as any).modelUsed || 'gemini-3.8-flash',
   };
 
   return evaluationResult;
 }
+
+export async function extractMaterialFromPDF(
+  fileBase64: string,
+  mimeType: string = 'application/pdf',
+  documentRole: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'COMPLETE_SUITE' = 'COMPLETE_SUITE'
+): Promise<{
+  questionPaperText?: string;
+  suggestedAnswersText?: string;
+  markingSchemeText?: string;
+  extractedTitle?: string;
+  detectedAttempt?: string;
+  detectedSubject?: string;
+  detectedLevel?: string;
+}> {
+  const ai = getGemini();
+
+  const prompt = `You are a Chartered Accountant Examination Material Digitizer.
+Analyze this official examination reference document (Target Category: ${documentRole}).
+Extract the exact, complete, high-fidelity ground truth text:
+1. Question Paper text (all questions, sub-parts, tables, and marks allocation).
+2. Suggested Answers text (comprehensive model answers, journal entries, working notes, balance sheets, statutory references).
+3. Marking Scheme text (step-by-step mark allocations and examiner guidance).
+4. Document title, detected CA subject name, detected level (FOUNDATION, INTERMEDIATE, or FINAL), and exam attempt (e.g. May 2026).
+
+Provide comprehensive text without truncating important steps or figures.`;
+
+  const response = await generateContentWithResilience(ai, {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { data: fileBase64, mimeType } },
+          { text: prompt },
+        ],
+      },
+    ],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          questionPaperText: { type: Type.STRING },
+          suggestedAnswersText: { type: Type.STRING },
+          markingSchemeText: { type: Type.STRING },
+          extractedTitle: { type: Type.STRING },
+          detectedAttempt: { type: Type.STRING },
+          detectedSubject: { type: Type.STRING },
+          detectedLevel: { type: Type.STRING },
+        },
+      },
+    },
+  });
+
+  try {
+    return JSON.parse(response.text || '{}');
+  } catch {
+    return { questionPaperText: response.text || '' };
+  }
+}
+

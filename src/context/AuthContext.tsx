@@ -9,6 +9,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<User>;
+  demoLogin: (role?: string) => Promise<User>;
   register: (data: {
     email: string;
     password: string;
@@ -31,15 +32,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUser = useCallback(async () => {
     try {
+      const storedToken = localStorage.getItem('ca_exam_checker_token');
+      const hasCookie = typeof document !== 'undefined' && document.cookie.includes('ca_token=');
+      if (!storedToken && !hasCookie) {
+        setUser(null);
+        setProfile(null);
+        setToken(null);
+        setIsLoading(false);
+        return;
+      }
+
       const response = await apiRequest<{
-        user: User;
-        profile: Record<string, unknown>;
+        user: User | null;
+        profile: Record<string, unknown> | null;
       }>('/api/auth/me');
 
       if (response && response.user) {
         setUser(response.user);
         setProfile(response.profile || null);
-        const storedToken = localStorage.getItem('ca_exam_checker_token');
         if (storedToken) {
           setToken(storedToken);
         } else {
@@ -76,6 +86,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(res.user);
 
     // Refresh profile in background without blocking immediate navigation
+    refreshUser().catch(() => {});
+
+    return res.user;
+  };
+
+  const demoLogin = async (role: string = 'STUDENT'): Promise<User> => {
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/demo-login', {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    });
+
+    localStorage.setItem('ca_exam_checker_token', res.token);
+    setToken(res.token);
+    setUser(res.user);
+
     refreshUser().catch(() => {});
 
     return res.user;
