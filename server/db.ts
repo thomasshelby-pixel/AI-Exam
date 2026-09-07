@@ -373,7 +373,7 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'marking_scheme_pdf_base64', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'reference_guidance_pdf_base64', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'amendments_pdf_base64', 'TEXT');
-  addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT');
 
   // Ensure evaluations has all enhanced columns
   addColumnIfNotExists('evaluations', 'paper', 'TEXT');
