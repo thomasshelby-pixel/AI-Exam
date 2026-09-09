@@ -316,7 +316,11 @@ export interface StudentEntitlement {
   reason?: string;
 }
 
-export function getStudentEntitlement(userId: string): StudentEntitlement {
+export function getStudentEntitlement(
+  userId: string,
+  evaluationSource?: 'PUBLIC' | 'INSTITUTE',
+  targetInstituteId?: string
+): StudentEntitlement {
   const user = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as { email: string } | undefined;
   if (!user) {
     return {
@@ -330,6 +334,69 @@ export function getStudentEntitlement(userId: string): StudentEntitlement {
     };
   }
 
+  // If user explicitly requests INSTITUTE evaluation
+  if (evaluationSource === 'INSTITUTE') {
+    let instQuery = `
+      SELECT i.name, i.status, i.subscription_expires_at, i.id as institute_id, m.id as membership_id, m.batch_id
+      FROM institutes i
+      JOIN institute_memberships m ON m.institute_id = i.id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+    `;
+    const instParams: any[] = [userId];
+    if (targetInstituteId) {
+      instQuery += ' AND i.id = ?';
+      instParams.push(targetInstituteId);
+    }
+    instQuery += ' LIMIT 1';
+
+    const inst = db.prepare(instQuery).get(...instParams) as {
+      name: string;
+      status: string;
+      subscription_expires_at?: string;
+      institute_id: string;
+      membership_id: string;
+      batch_id?: string;
+    } | undefined;
+
+    if (inst) {
+      const notExpired = !inst.subscription_expires_at || new Date(inst.subscription_expires_at) > new Date();
+      if (notExpired) {
+        return {
+          canEvaluate: true,
+          tier: 'INSTITUTE_SPONSORED',
+          freeEvaluationsRemaining: 9999,
+          purchasedCredits: 9999,
+          instituteSponsored: true,
+          instituteName: inst.name,
+          hasPermanentFreeAccess: false,
+          reason: `Sponsored by ${inst.name}`,
+        };
+      } else {
+        return {
+          canEvaluate: false,
+          tier: 'EXHAUSTED',
+          freeEvaluationsRemaining: 0,
+          purchasedCredits: 0,
+          instituteSponsored: false,
+          hasPermanentFreeAccess: false,
+          reason: `Coaching institute subscription for ${inst.name} is currently expired. Please contact institute administration or use Public Evaluation.`,
+        };
+      }
+    } else {
+      return {
+        canEvaluate: false,
+        tier: 'EXHAUSTED',
+        freeEvaluationsRemaining: 0,
+        purchasedCredits: 0,
+        instituteSponsored: false,
+        hasPermanentFreeAccess: false,
+        reason: 'You do not have an active enrollment in this coaching institute.',
+      };
+    }
+  }
+
+  // Otherwise, evaluationSource is PUBLIC or unspecified.
+  // Evaluate personal student access:
   const isPermanentFree = checkPermanentFreeAccess(user.email);
   if (isPermanentFree) {
     return {
@@ -396,38 +463,35 @@ export function getStudentEntitlement(userId: string): StudentEntitlement {
   const purchased = getValidStudentCreditBalance(userId);
   const freeRemaining = Math.max(0, 2 - freeUsed);
 
-  // Check if student belongs to an ACTIVE institute with an active subscription
-  let instituteSponsored = false;
-  let instituteName: string | undefined;
+  // If evaluationSource is not explicitly set to PUBLIC (unspecified fallback), check institute sponsorship
+  if (!evaluationSource) {
+    const inst = db.prepare(`
+      SELECT i.name, i.status, i.subscription_expires_at, i.id as institute_id
+      FROM institutes i
+      JOIN institute_memberships m ON m.institute_id = i.id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+      LIMIT 1
+    `).get(userId) as {
+      name: string;
+      status: string;
+      subscription_expires_at?: string;
+      institute_id: string;
+    } | undefined;
 
-  const inst = db.prepare(`
-    SELECT i.name, i.status, i.subscription_expires_at, i.id as institute_id
-    FROM institutes i
-    JOIN institute_memberships m ON m.institute_id = i.id
-    WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
-    LIMIT 1
-  `).get(userId) as {
-    name: string;
-    status: string;
-    subscription_expires_at?: string;
-    institute_id: string;
-  } | undefined;
-
-  if (inst) {
-    const notExpired = !inst.subscription_expires_at || new Date(inst.subscription_expires_at) > new Date();
-    if (notExpired) {
-      instituteSponsored = true;
-      instituteName = inst.name;
-      return {
-        canEvaluate: true,
-        tier: 'INSTITUTE_SPONSORED',
-        freeEvaluationsRemaining: 9999,
-        purchasedCredits: 9999,
-        instituteSponsored: true,
-        instituteName,
-        hasPermanentFreeAccess: false,
-        reason: `Sponsored by ${instituteName}`,
-      };
+    if (inst) {
+      const notExpired = !inst.subscription_expires_at || new Date(inst.subscription_expires_at) > new Date();
+      if (notExpired) {
+        return {
+          canEvaluate: true,
+          tier: 'INSTITUTE_SPONSORED',
+          freeEvaluationsRemaining: 9999,
+          purchasedCredits: 9999,
+          instituteSponsored: true,
+          instituteName: inst.name,
+          hasPermanentFreeAccess: false,
+          reason: `Sponsored by ${inst.name}`,
+        };
+      }
     }
   }
 
@@ -459,9 +523,9 @@ export function getStudentEntitlement(userId: string): StudentEntitlement {
     canEvaluate: false,
     tier: 'EXHAUSTED',
     freeEvaluationsRemaining: 0,
-    purchasedCredits: 0,
+    purchasedCredits: purchased,
     instituteSponsored: false,
     hasPermanentFreeAccess: false,
-    reason: 'Free evaluations exhausted. Please purchase evaluation credits.',
+    reason: 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
   };
 }

@@ -407,49 +407,21 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       fileBase64,
       mimeType,
       filename,
+      evaluationSource,
+      instituteId,
+      instituteMaterialId,
     } = req.body;
 
-    if (!fileBase64 || !level || !materialType || !subjectKey || !subjectName) {
+    if (!fileBase64 || !level || !subjectKey || !subjectName) {
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });
     }
 
-    // Step A: Entitlement Check
-    const entitlement = getStudentEntitlement(studentId);
-    if (!entitlement.canEvaluate) {
-      return res.status(402).json({
-        error: entitlement.reason || 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
-      });
-    }
+    const isInstituteMode = evaluationSource === 'INSTITUTE' || (!!instituteId && evaluationSource !== 'PUBLIC');
 
-    // Step B: Material Validation (Verify active reference material exists)
-    // CRITICAL EVALUATION SAFETY RULE: Exact matching on Level, Subject, Attempt, Paper, Material Type
-    // STRICT MATERIAL OWNERSHIP (Rules 38, 55, 61): Only ADMIN uploaded & approved materials are used for global CA evaluations
-    let materialQuery = `
-      SELECT * FROM evaluation_materials
-      WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
-      AND source_type = 'ADMIN' AND admin_approved = 1
-      AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
-      AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
-    `;
-    const materialParams: any[] = [level, subjectKey];
-
-    if (attempt && attempt !== 'Current' && attempt !== 'All') {
-      materialQuery += " AND (attempt = ? OR attempt = 'All')";
-      materialParams.push(attempt);
-    }
-
-    if (req.body.paper && req.body.paper !== 'All') {
-      materialQuery += " AND (paper = ? OR paper = 'All')";
-      materialParams.push(req.body.paper);
-    }
-
-    if (materialType && materialType !== 'ALL') {
-      materialQuery += " AND (material_type = ? OR material_type = 'ALL')";
-      materialParams.push(materialType);
-    }
-
-    materialQuery += ' ORDER BY created_at DESC LIMIT 1';
-    const referenceMaterial = db.prepare(materialQuery).get(...materialParams) as {
+    let resolvedInstituteId: string | null = null;
+    let resolvedEnrollmentId: string | null = null;
+    let resolvedBatchId: string | null = null;
+    let referenceMaterial: {
       id: string;
       version: string;
       paper: string;
@@ -460,13 +432,117 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       marking_scheme_text: string;
       reference_guidance_text?: string;
       amendments_provisions_text?: string;
-    } | undefined;
+    };
 
-    if (!referenceMaterial || !referenceMaterial.question_paper_text || !referenceMaterial.suggested_answers_text) {
-      // STOP evaluation immediately without consuming any credit
-      return res.status(400).json({
-        error: `Evaluation material is not available for the selected paper and attempt (${level} – ${subjectName} – ${attempt || 'Selected Attempt'}) yet. Please try again once the required material has been uploaded.`,
-      });
+    let entitlement: any;
+
+    if (isInstituteMode) {
+      // Step A (Institute): Enforce active membership in target institute
+      if (!instituteId) {
+        return res.status(400).json({ error: 'Please select a coaching institute for Institute Evaluation.' });
+      }
+
+      const membership = db.prepare(`
+        SELECT m.id as membership_id, m.batch_id, m.status, i.id as institute_id, i.name as institute_name, i.status as institute_status, i.subscription_expires_at
+        FROM institute_memberships m
+        JOIN institutes i ON i.id = m.institute_id
+        WHERE m.student_id = ? AND m.institute_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+      `).get(studentId, instituteId) as any;
+
+      if (!membership) {
+        return res.status(403).json({
+          error: 'Access denied: You do not have an active enrollment in this coaching institute.',
+        });
+      }
+
+      if (membership.subscription_expires_at && new Date(membership.subscription_expires_at) < new Date()) {
+        return res.status(402).json({
+          error: `Coaching institute subscription for ${membership.institute_name} has expired. Please use Public Evaluation or contact your academy coordinator.`,
+        });
+      }
+
+      resolvedInstituteId = membership.institute_id;
+      resolvedEnrollmentId = membership.membership_id;
+      resolvedBatchId = membership.batch_id || null;
+
+      entitlement = getStudentEntitlement(studentId, 'INSTITUTE', instituteId);
+
+      // Step B (Institute): Verify approved institute reference material
+      let instMat: any = null;
+      if (instituteMaterialId) {
+        instMat = db.prepare(`
+          SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
+                 '1.0' as version, 'Institute Curriculum' as syllabus_version,
+                 question_paper_text, suggested_answers_text, marking_scheme_text
+          FROM institute_materials
+          WHERE id = ? AND institute_id = ?
+        `).get(instituteMaterialId, resolvedInstituteId);
+      }
+
+      if (!instMat) {
+        instMat = db.prepare(`
+          SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
+                 '1.0' as version, 'Institute Curriculum' as syllabus_version,
+                 question_paper_text, suggested_answers_text, marking_scheme_text
+          FROM institute_materials
+          WHERE institute_id = ? AND level = ? AND subject_key = ?
+            AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
+            AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
+          ORDER BY created_at DESC LIMIT 1
+        `).get(resolvedInstituteId, level, subjectKey);
+      }
+
+      if (!instMat || !instMat.question_paper_text || !instMat.suggested_answers_text) {
+        return res.status(400).json({
+          error: `No approved question paper and suggested answers found for ${membership.institute_name} for this subject (${subjectName}). Please ensure your faculty has uploaded materials for your batch.`,
+        });
+      }
+
+      referenceMaterial = instMat;
+    } else {
+      // Step A (Public): Personal Entitlement Check
+      entitlement = getStudentEntitlement(studentId, 'PUBLIC');
+      if (!entitlement.canEvaluate) {
+        return res.status(402).json({
+          error: entitlement.reason || 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
+        });
+      }
+
+      // Step B (Public): Material Validation (Official ICAI Admin Materials)
+      let materialQuery = `
+        SELECT * FROM evaluation_materials
+        WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
+        AND source_type = 'ADMIN' AND admin_approved = 1
+        AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
+        AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
+      `;
+      const materialParams: any[] = [level, subjectKey];
+
+      if (attempt && attempt !== 'Current' && attempt !== 'All') {
+        materialQuery += " AND (attempt = ? OR attempt = 'All')";
+        materialParams.push(attempt);
+      }
+
+      if (req.body.paper && req.body.paper !== 'All') {
+        materialQuery += " AND (paper = ? OR paper = 'All')";
+        materialParams.push(req.body.paper);
+      }
+
+      if (materialType && materialType !== 'ALL') {
+        materialQuery += " AND (material_type = ? OR material_type = 'ALL')";
+        materialParams.push(materialType);
+      }
+
+      materialQuery += ' ORDER BY created_at DESC LIMIT 1';
+      const globalMaterial = db.prepare(materialQuery).get(...materialParams) as any;
+
+      if (!globalMaterial || !globalMaterial.question_paper_text || !globalMaterial.suggested_answers_text) {
+        return res.status(400).json({
+          error: `Evaluation material is not available for the selected paper and attempt (${level} – ${subjectName} – ${attempt || 'Selected Attempt'}) yet. Please try again once the required material has been uploaded.`,
+        });
+      }
+
+      referenceMaterial = globalMaterial;
     }
 
     // Save uploaded file to uploads directory for original & checked copy generation
@@ -511,20 +587,25 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
     // Step C: Initialize Evaluation Record with initial state and material tracking
     db.prepare(`
       INSERT INTO evaluations (
-        id, student_id, level, material_type, model_group, subject_key, subject_name,
+        id, student_id, evaluation_source, institute_id, institute_enrollment_id, batch_id,
+        level, material_type, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', 'VALID')
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', 'VALID')
     `).run(
       evaluationId,
       studentId,
+      isInstituteMode ? 'INSTITUTE' : 'PUBLIC',
+      resolvedInstituteId,
+      resolvedEnrollmentId,
+      resolvedBatchId,
       level,
-      materialType,
+      materialType || (isInstituteMode ? 'MOCK_EXAM' : 'MTP'),
       modelGroup || null,
       subjectKey,
       subjectName,
       referenceMaterial.paper || 'Paper 1',
-      attempt || 'May 2026',
+      attempt || (isInstituteMode ? 'Institute Series' : 'May 2026'),
       referenceMaterial.syllabus_version || 'New Scheme 2024',
       referenceMaterial.id,
       referenceMaterial.version || '1.0',
@@ -753,31 +834,43 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
 router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { search, subject, status } = req.query;
+    const { search, subject, status, evaluationSource, instituteId } = req.query;
 
     let query = `
-      SELECT id, level, material_type, subject_key, subject_name, attempt, checking_mode,
-             total_marks, maximum_marks, percentage, grade, confidence_score, status,
-             rejection_reason, created_at, completed_at
-      FROM evaluations
-      WHERE student_id = ?
+      SELECT e.id, e.level, e.material_type, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
+             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
+             e.rejection_reason, e.created_at, e.completed_at,
+             e.evaluation_source, e.institute_id, e.batch_id,
+             i.name as institute_name, b.name as batch_name
+      FROM evaluations e
+      LEFT JOIN institutes i ON i.id = e.institute_id
+      LEFT JOIN batches b ON b.id = e.batch_id
+      WHERE e.student_id = ?
     `;
     const params: any[] = [studentId];
 
+    if (evaluationSource) {
+      query += ' AND e.evaluation_source = ?';
+      params.push(evaluationSource);
+    }
+    if (instituteId) {
+      query += ' AND e.institute_id = ?';
+      params.push(instituteId);
+    }
     if (subject) {
-      query += ' AND subject_key = ?';
+      query += ' AND e.subject_key = ?';
       params.push(subject);
     }
     if (status) {
-      query += ' AND status = ?';
+      query += ' AND e.status = ?';
       params.push(status);
     }
     if (search) {
-      query += ' AND (subject_name LIKE ? OR original_filename LIKE ?)';
+      query += ' AND (e.subject_name LIKE ? OR e.original_filename LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY e.created_at DESC';
 
     const records = db.prepare(query).all(...params);
     return res.json({ evaluations: records });
@@ -822,9 +915,26 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
     }
 
     let resultJson: EvaluationResult | null = null;
+    let instituteName: string | null = null;
+    let batchName: string | null = null;
+
+    if (record.institute_id) {
+      const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(record.institute_id as string) as { name: string } | undefined;
+      instituteName = inst?.name || null;
+    }
+    if (record.batch_id) {
+      const b = db.prepare('SELECT name FROM batches WHERE id = ?').get(record.batch_id as string) as { name: string } | undefined;
+      batchName = b?.name || null;
+    }
+
     if (record.result_json) {
       try {
         resultJson = JSON.parse(record.result_json);
+        if (resultJson) {
+          resultJson.evaluationSource = (record.evaluation_source as any) || (record.institute_id ? 'INSTITUTE' : 'PUBLIC');
+          resultJson.instituteName = instituteName || undefined;
+          resultJson.batchName = batchName || undefined;
+        }
       } catch {
         // ignore
       }
@@ -833,6 +943,8 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
     return res.json({
       evaluation: {
         ...record,
+        institute_name: instituteName,
+        batch_name: batchName,
         resultJson,
         raw_result_json: record.result_json,
       },
@@ -918,6 +1030,17 @@ router.get(
 
       const studentRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(record.student_id) as any;
 
+      let instName: string | undefined;
+      let bName: string | undefined;
+      if (record.institute_id) {
+        const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(record.institute_id) as any;
+        instName = inst?.name;
+      }
+      if (record.batch_id) {
+        const b = db.prepare('SELECT name FROM batches WHERE id = ?').get(record.batch_id) as any;
+        bName = b?.name;
+      }
+
       const checkedCopyBuffer = await generateCheckedCopyPdf(
         {
           id: record.id,
@@ -932,6 +1055,9 @@ router.get(
           percentage: record.percentage,
           grade: record.grade,
           createdAt: record.created_at,
+          evaluationSource: record.evaluation_source || (record.institute_id ? 'INSTITUTE' : 'PUBLIC'),
+          instituteName: instName,
+          batchName: bName,
         },
         resultJson,
         originalPdfBuffer
@@ -987,6 +1113,17 @@ router.get(
 
       const studentRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(record.student_id) as any;
 
+      let reportInstName: string | undefined;
+      let reportBName: string | undefined;
+      if (record.institute_id) {
+        const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(record.institute_id) as any;
+        reportInstName = inst?.name;
+      }
+      if (record.batch_id) {
+        const b = db.prepare('SELECT name FROM batches WHERE id = ?').get(record.batch_id) as any;
+        reportBName = b?.name;
+      }
+
       const reportBuffer = await generateDetailedReportPdf(
         {
           id: record.id,
@@ -1001,6 +1138,9 @@ router.get(
           percentage: record.percentage,
           grade: record.grade,
           createdAt: record.created_at,
+          evaluationSource: record.evaluation_source || (record.institute_id ? 'INSTITUTE' : 'PUBLIC'),
+          instituteName: reportInstName,
+          batchName: reportBName,
         },
         resultJson
       );
@@ -1264,7 +1404,7 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
       }
     }
 
-    if (phone !== undefined && phone !== null && phone.trim() !== '') {
+    if (phone !== undefined && phone !== null && typeof phone === 'string' && phone.trim() !== '') {
       const cleanPhone = phone.replace(/[\s\-\+]/g, '');
       if (cleanPhone.length < 8 || cleanPhone.length > 15) {
         return res.status(400).json({ error: 'Please enter a valid phone number (8-15 digits).' });
@@ -1280,39 +1420,89 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
     if (fullName !== undefined || phone !== undefined) {
       db.prepare(`
         UPDATE users
-        SET full_name = COALESCE(?, full_name),
-            phone = COALESCE(?, phone),
+        SET full_name = CASE WHEN ? = 1 THEN ? ELSE full_name END,
+            phone = CASE WHEN ? = 1 THEN ? ELSE phone END,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
-        fullName ? fullName.trim() : null,
-        phone !== undefined ? (phone ? phone.trim() : null) : null,
+        fullName !== undefined ? 1 : 0,
+        fullName !== undefined ? fullName.trim() : null,
+        phone !== undefined ? 1 : 0,
+        phone !== undefined ? (phone && phone.trim() ? phone.trim() : null) : null,
         studentId
       );
     }
 
-    // Update student_profiles table (ONLY city, ca_level, preferred_subjects, avatar_url - never credits, role, institute, etc.)
+    // Update or insert student_profiles table
     const preferredSubjectsJson = preferredSubjects !== undefined
       ? JSON.stringify(Array.isArray(preferredSubjects) ? preferredSubjects : [preferredSubjects])
       : null;
 
-    db.prepare(`
-      UPDATE student_profiles
-      SET city = COALESCE(?, city),
-          ca_level = COALESCE(?, ca_level),
-          preferred_subjects = COALESCE(?, preferred_subjects),
-          avatar_url = COALESCE(?, avatar_url),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).run(
-      city !== undefined ? (city ? city.trim() : '') : null,
-      caLevel || null,
-      preferredSubjectsJson,
-      avatarUrl !== undefined ? avatarUrl : null,
-      studentId
-    );
+    const existingProfile = db.prepare('SELECT user_id FROM student_profiles WHERE user_id = ?').get(studentId);
+    if (!existingProfile) {
+      db.prepare(`
+        INSERT INTO student_profiles (
+          user_id, ca_level, city, preferred_subjects, avatar_url,
+          free_evaluations_used, purchased_credits, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        studentId,
+        caLevel || 'INTERMEDIATE',
+        city !== undefined ? (city ? city.trim() : '') : '',
+        preferredSubjectsJson || '[]',
+        avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : ''
+      );
+    } else {
+      db.prepare(`
+        UPDATE student_profiles
+        SET city = CASE WHEN ? = 1 THEN ? ELSE city END,
+            ca_level = COALESCE(?, ca_level),
+            preferred_subjects = CASE WHEN ? = 1 THEN ? ELSE preferred_subjects END,
+            avatar_url = CASE WHEN ? = 1 THEN ? ELSE avatar_url END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(
+        city !== undefined ? 1 : 0,
+        city !== undefined ? (city ? city.trim() : '') : '',
+        caLevel || null,
+        preferredSubjects !== undefined ? 1 : 0,
+        preferredSubjectsJson || '[]',
+        avatarUrl !== undefined ? 1 : 0,
+        avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
+        studentId
+      );
+    }
 
-    return res.json({ success: true, message: 'Profile updated successfully' });
+    const updatedUser = db.prepare('SELECT id, full_name, email, phone, role FROM users WHERE id = ?').get(studentId) as any;
+    const updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+
+    let parsedSubjects: string[] = [];
+    if (updatedProfile?.preferred_subjects) {
+      try {
+        parsedSubjects = JSON.parse(updatedProfile.preferred_subjects);
+      } catch {
+        parsedSubjects = [updatedProfile.preferred_subjects];
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully.',
+      user: {
+        id: updatedUser?.id,
+        fullName: updatedUser?.full_name,
+        email: updatedUser?.email,
+        phone: updatedUser?.phone || '',
+        role: updatedUser?.role,
+      },
+      profile: {
+        caLevel: updatedProfile?.ca_level || 'INTERMEDIATE',
+        city: updatedProfile?.city || '',
+        preferredSubjects: parsedSubjects,
+        avatarUrl: updatedProfile?.avatar_url || '',
+        icaiRegistrationNumber: updatedProfile?.icai_registration_number || '',
+      }
+    });
   } catch (error: unknown) {
     console.error('Update profile error:', error);
     return res.status(500).json({ error: 'Failed to update profile' });
@@ -1686,20 +1876,23 @@ router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
 });
 
 // 10. Student's Enrolled Institutes (Multi-Institute Supported)
-router.get(['/institutes', '/my-institutes'], (req: AuthRequest, res: Response) => {
+router.get(['/institutes', '/my-institutes', '/enrollments'], (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const institutes = db.prepare(`
+    const enrollments = db.prepare(`
       SELECT m.id as membership_id,
              m.institute_id,
              i.name as institute_name,
              i.code as institute_code,
+             i.logo_url as institute_logo,
+             i.email as institute_email,
              i.status as institute_status,
              m.batch_id,
              b.name as batch_name,
              b.course_level as batch_level,
              b.target_attempt as batch_target_attempt,
              m.status as membership_status,
+             m.sponsored_access,
              m.joined_at
       FROM institute_memberships m
       JOIN institutes i ON i.id = m.institute_id
@@ -1708,10 +1901,106 @@ router.get(['/institutes', '/my-institutes'], (req: AuthRequest, res: Response) 
       ORDER BY m.joined_at DESC
     `).all(studentId) as any[];
 
-    return res.json({ institutes });
+    // Enrich each enrollment with test and material counts
+    const enrichedEnrollments = enrollments.map((enr: any) => {
+      const matCount = db.prepare(`
+        SELECT COUNT(*) as count FROM institute_materials
+        WHERE institute_id = ? AND status = 'ACTIVE'
+      `).get(enr.institute_id) as any;
+
+      const testCount = db.prepare(`
+        SELECT COUNT(*) as count FROM institute_assignments
+        WHERE institute_id = ?
+      `).get(enr.institute_id) as any;
+
+      const recentMaterials = db.prepare(`
+        SELECT id, title, level, subject_name, paper, material_type, created_at
+        FROM institute_materials
+        WHERE institute_id = ? AND status = 'ACTIVE'
+        ORDER BY created_at DESC LIMIT 6
+      `).all(enr.institute_id) as any[];
+
+      const recentTests = db.prepare(`
+        SELECT id, title, subject_name, maximum_marks, deadline
+        FROM institute_assignments
+        WHERE institute_id = ?
+        ORDER BY created_at DESC LIMIT 6
+      `).all(enr.institute_id) as any[];
+
+      return {
+        ...enr,
+        materials_count: matCount?.count || 0,
+        tests_count: testCount?.count || 0,
+        recentMaterials,
+        recentTests,
+      };
+    });
+
+    return res.json({
+      success: true,
+      institutes: enrichedEnrollments,
+      enrollments: enrichedEnrollments,
+    });
   } catch (error: unknown) {
     console.error('Fetch student institutes error:', error);
     return res.status(500).json({ error: 'Failed to fetch enrolled institutes' });
+  }
+});
+
+// Join Institute using Institute Code
+router.post('/join-institute', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { instituteCode } = req.body;
+    if (!instituteCode || typeof instituteCode !== 'string') {
+      return res.status(400).json({ error: 'Please enter a valid institute code.' });
+    }
+
+    const trimmedCode = instituteCode.trim().toUpperCase();
+    const institute = db.prepare('SELECT * FROM institutes WHERE UPPER(code) = ? AND status = "ACTIVE"').get(trimmedCode) as any;
+    if (!institute) {
+      return res.status(404).json({ error: 'No active coaching institute found with this code. Please verify the code with your institute administration.' });
+    }
+
+    // Check if already enrolled
+    const existing = db.prepare('SELECT id, status FROM institute_memberships WHERE student_id = ? AND institute_id = ?').get(studentId, institute.id) as any;
+    if (existing) {
+      if (existing.status === 'ACTIVE') {
+        return res.status(400).json({ error: `You are already actively enrolled in ${institute.name}.` });
+      } else {
+        // Reactivate membership
+        db.prepare('UPDATE institute_memberships SET status = "ACTIVE", joined_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?').run(existing.id);
+        return res.json({
+          success: true,
+          message: `Successfully reactivated your enrollment with ${institute.name}.`,
+          institute: { id: institute.id, name: institute.name, code: institute.code },
+        });
+      }
+    }
+
+    // Create new membership
+    const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, sponsored_access, joined_at)
+      VALUES (?, ?, ?, NULL, 'ACTIVE', 1, CURRENT_TIMESTAMP)
+    `).run(membershipId, institute.id, studentId);
+
+    // Also if student_profiles doesn't have an institute_id, set it as default
+    db.prepare(`
+      UPDATE student_profiles
+      SET institute_id = COALESCE(institute_id, ?),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(institute.id, studentId);
+
+    return res.json({
+      success: true,
+      message: `Successfully enrolled in ${institute.name}! You now have access to their verified tests and materials.`,
+      institute: { id: institute.id, name: institute.name, code: institute.code },
+    });
+  } catch (error: unknown) {
+    console.error('Join institute error:', error);
+    return res.status(500).json({ error: 'Failed to process institute enrollment' });
   }
 });
 

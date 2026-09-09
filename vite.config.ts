@@ -4,9 +4,11 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  // GitHub Pages serves this project from /AI-Exam/ in CI/GitHub Actions, while local dev & AI Studio preview run at /
+  const isGitHubPages = process.env.GITHUB_ACTIONS === 'true' || process.env.GITHUB_PAGES === 'true';
+
   return {
-    // GitHub Pages serves this project from /AI-Exam/ rather than /
-    base: '/AI-Exam/',
+    base: isGitHubPages ? '/AI-Exam/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

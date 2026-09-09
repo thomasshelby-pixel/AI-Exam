@@ -32,6 +32,7 @@ import {
   BookOpen,
   Upload,
   Download,
+  ArrowLeft,
 } from 'lucide-react';
 
 export const InstitutePortal: React.FC = () => {
@@ -89,6 +90,14 @@ export const InstitutePortal: React.FC = () => {
     targetAttempt: 'May 2026',
     description: '',
   });
+  const [selectedBatchDetail, setSelectedBatchDetail] = useState<any>(null);
+  const [showAddStudentToBatchModal, setShowAddStudentToBatchModal] = useState<boolean>(false);
+  const [studentToAddId, setStudentToAddId] = useState<string>('');
+  const [isAddingStudentToBatch, setIsAddingStudentToBatch] = useState<boolean>(false);
+  const [showMoveStudentModal, setShowMoveStudentModal] = useState<{ student: any; targetBatchId: string } | null>(null);
+  const [isMovingStudent, setIsMovingStudent] = useState<boolean>(false);
+  const [showEditBatchModal, setShowEditBatchModal] = useState<any | null>(null);
+  const [isUpdatingBatch, setIsUpdatingBatch] = useState<boolean>(false);
 
   // Assignments & Tests
   const [assignmentsList, setAssignmentsList] = useState<any[]>([]);
@@ -180,6 +189,12 @@ export const InstitutePortal: React.FC = () => {
           break;
         }
         case 'batches': {
+          if (subId) {
+            const detailRes = await apiRequest<any>(`/api/institute/batches/${subId}`);
+            setSelectedBatchDetail(detailRes);
+          } else {
+            setSelectedBatchDetail(null);
+          }
           const res = await apiRequest<{ batches: any[] }>('/api/institute/batches');
           setBatchesList(res.batches || []);
           break;
@@ -316,6 +331,33 @@ export const InstitutePortal: React.FC = () => {
     }
   };
 
+  // Update Batch Details
+  const handleUpdateBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditBatchModal) return;
+    try {
+      setIsUpdatingBatch(true);
+      await apiRequest(`/api/institute/batches/${showEditBatchModal.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: showEditBatchModal.name,
+          courseLevel: showEditBatchModal.course_level || showEditBatchModal.courseLevel,
+          targetAttempt: showEditBatchModal.target_attempt || showEditBatchModal.targetAttempt,
+          description: showEditBatchModal.description,
+          capacity: showEditBatchModal.capacity ? Number(showEditBatchModal.capacity) : 100,
+          status: showEditBatchModal.status || 'ACTIVE',
+        }),
+      });
+      setSuccessMsg('Batch updated successfully.');
+      setShowEditBatchModal(null);
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update batch');
+    } finally {
+      setIsUpdatingBatch(false);
+    }
+  };
+
   // Assign or Update Student Batch
   const handleAssignStudentBatch = async (studentId: string, batchId: string | null) => {
     try {
@@ -369,6 +411,71 @@ export const InstitutePortal: React.FC = () => {
       loadSectionData();
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to delete batch');
+    }
+  };
+
+  // Add Student to Batch
+  const handleAddStudentToBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subId || !studentToAddId) {
+      setErrorMsg('Please select a student to add to this batch.');
+      return;
+    }
+    try {
+      setIsAddingStudentToBatch(true);
+      await apiRequest(`/api/institute/batches/${subId}/students`, {
+        method: 'POST',
+        body: JSON.stringify({ studentId: studentToAddId }),
+      });
+      setSuccessMsg('Student successfully added to batch.');
+      setShowAddStudentToBatchModal(false);
+      setStudentToAddId('');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to add student to batch');
+    } finally {
+      setIsAddingStudentToBatch(false);
+    }
+  };
+
+  // Remove Student from Batch
+  const handleRemoveStudentFromBatch = async (studentId: string, studentName: string) => {
+    if (!subId) return;
+    const confirmed = window.confirm(
+      `Remove "${studentName}" from this batch?\n\nThe student will remain enrolled in your institute with active sponsored evaluation benefits.`
+    );
+    if (!confirmed) return;
+    try {
+      await apiRequest(`/api/institute/batches/${subId}/students/${studentId}`, {
+        method: 'DELETE',
+      });
+      setSuccessMsg('Student removed from batch successfully.');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to remove student from batch');
+    }
+  };
+
+  // Move Student to Another Batch
+  const handleMoveStudentBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subId || !showMoveStudentModal) return;
+    try {
+      setIsMovingStudent(true);
+      await apiRequest(`/api/institute/batches/${subId}/move-student`, {
+        method: 'POST',
+        body: JSON.stringify({
+          studentId: showMoveStudentModal.student.id,
+          targetBatchId: showMoveStudentModal.targetBatchId || null,
+        }),
+      });
+      setSuccessMsg('Student successfully moved to new batch.');
+      setShowMoveStudentModal(null);
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to move student');
+    } finally {
+      setIsMovingStudent(false);
     }
   };
 
@@ -1094,7 +1201,167 @@ export const InstitutePortal: React.FC = () => {
               )}
 
               {/* 4. BATCHES */}
-              {activeSection === 'batches' && (
+              {activeSection === 'batches' && subId && selectedBatchDetail && (
+                <div className="space-y-6">
+                  {/* Back Link */}
+                  <button
+                    onClick={() => navigate('/institute/batches')}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to All Batches
+                  </button>
+
+                  {/* Batch Info Card */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h2 className="text-xl font-black text-slate-900">{selectedBatchDetail.batch.name}</h2>
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {selectedBatchDetail.batch.course_level}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {selectedBatchDetail.batch.status || 'ACTIVE'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Target Attempt: <span className="font-semibold text-slate-700">{selectedBatchDetail.batch.target_attempt || 'General'}</span>
+                          {selectedBatchDetail.batch.description && ` • ${selectedBatchDetail.batch.description}`}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="text-lg font-black text-slate-900">
+                            {selectedBatchDetail.students?.length || 0}
+                            <span className="text-xs font-medium text-slate-400"> / {selectedBatchDetail.batch.capacity || 100}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Enrolled Students</span>
+                        </div>
+                        <button
+                          onClick={() => setShowEditBatchModal({ ...selectedBatchDetail.batch })}
+                          className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-indigo-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          Edit Batch
+                        </button>
+                        <button
+                          onClick={() => setShowAddStudentToBatchModal(true)}
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Student
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Students in this Batch Table */}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                    <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">Students in this Batch</h3>
+                        <p className="text-xs text-slate-500">All registered students receiving syllabus assignments and batch tests</p>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-slate-600">
+                        Total: {selectedBatchDetail.students?.length || 0}
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                          <tr>
+                            <th className="py-3 px-4">Student Name</th>
+                            <th className="py-3 px-4">Email & Phone</th>
+                            <th className="py-3 px-4">ICAI Reg. No.</th>
+                            <th className="py-3 px-4">CA Level</th>
+                            <th className="py-3 px-4">Joined On</th>
+                            <th className="py-3 px-4">Evaluations</th>
+                            <th className="py-3 px-4">Avg. Score</th>
+                            <th className="py-3 px-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selectedBatchDetail.students?.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="py-8 text-center text-slate-400 italic">
+                                No students assigned to this batch yet. Click "+ Add Student" to assign enrolled students.
+                              </td>
+                            </tr>
+                          ) : (
+                            selectedBatchDetail.students.map((st: any) => (
+                              <tr key={st.membership_id || st.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-3.5 px-4 font-bold text-slate-900">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                                      {st.full_name?.charAt(0) || 'S'}
+                                    </div>
+                                    <span>{st.full_name}</span>
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-4 text-slate-600">
+                                  <div>{st.email}</div>
+                                  {st.phone && <div className="text-[10px] text-slate-400">{st.phone}</div>}
+                                </td>
+                                <td className="py-3.5 px-4 font-mono text-slate-700">
+                                  {st.icai_registration_number || <span className="text-slate-400 italic">Not set</span>}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                                    {st.ca_level || 'INTER'}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4 text-slate-500">
+                                  {st.joined_at ? new Date(st.joined_at).toLocaleDateString() : 'N/A'}
+                                </td>
+                                <td className="py-3.5 px-4 font-bold text-slate-800">
+                                  {st.evaluations_count || 0}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  {st.average_percentage !== null && st.average_percentage !== undefined ? (
+                                    <span className="font-bold text-emerald-600">{Number(st.average_percentage).toFixed(1)}%</span>
+                                  ) : (
+                                    <span className="text-slate-400">N/A</span>
+                                  )}
+                                </td>
+                                <td className="py-3.5 px-4 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => navigate(`/institute/students/${st.id}`)}
+                                      className="px-2.5 py-1 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded text-[11px] font-semibold transition-colors"
+                                      title="View Student Full Profile"
+                                    >
+                                      View
+                                    </button>
+                                    <button
+                                      onClick={() => setShowMoveStudentModal({ student: st, targetBatchId: '' })}
+                                      className="px-2.5 py-1 text-indigo-600 hover:bg-indigo-50 border border-indigo-100 rounded text-[11px] font-semibold transition-colors"
+                                      title="Move to another batch"
+                                    >
+                                      Move
+                                    </button>
+                                    <button
+                                      onClick={() => handleRemoveStudentFromBatch(st.id, st.full_name)}
+                                      className="px-2 py-1 text-rose-600 hover:bg-rose-50 rounded text-[11px] font-semibold transition-colors"
+                                      title="Remove from batch"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeSection === 'batches' && !subId && (
                 <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
                   <div className="flex items-center justify-between mb-5">
                     <div>
@@ -1117,15 +1384,20 @@ export const InstitutePortal: React.FC = () => {
                       </div>
                     ) : (
                       batchesList.map((b) => (
-                        <div key={b.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 shadow-xs flex flex-col justify-between">
+                        <div key={b.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 shadow-xs flex flex-col justify-between hover:border-indigo-300 transition-colors">
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <h4 className="font-bold text-xs text-slate-900">{b.name}</h4>
+                              <h4
+                                onClick={() => navigate(`/institute/batches/${b.id}`)}
+                                className="font-bold text-xs text-slate-900 hover:text-indigo-600 cursor-pointer"
+                              >
+                                {b.name}
+                              </h4>
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700">
                                 {b.course_level}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-500 mb-3">{b.description || 'Target Attempt: ' + b.target_attempt}</p>
+                            <p className="text-[11px] text-slate-500 mb-3">{b.description || 'Target Attempt: ' + (b.target_attempt || 'May 2026')}</p>
                           </div>
                           
                           <div className="pt-3 border-t border-slate-200 space-y-2.5">
@@ -1135,13 +1407,26 @@ export const InstitutePortal: React.FC = () => {
                             </div>
                             <div className="flex items-center justify-between pt-1 gap-2">
                               <button
+                                onClick={() => navigate(`/institute/batches/${b.id}`)}
+                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold flex-1 text-center transition-colors"
+                              >
+                                Batch Details
+                              </button>
+                              <button
                                 onClick={() => {
                                   setBatchFilter(b.id);
                                   navigate('/institute/students');
                                 }}
-                                className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 text-indigo-700 rounded text-[11px] font-semibold flex-1 text-center"
+                                className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 text-indigo-700 rounded text-[11px] font-semibold text-center"
                               >
-                                View Students
+                                Filter Students
+                              </button>
+                              <button
+                                onClick={() => setShowEditBatchModal({ ...b })}
+                                className="p-1 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-200 rounded"
+                                title="Edit Batch"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDeleteBatch(b.id, b.name)}
@@ -1630,12 +1915,231 @@ export const InstitutePortal: React.FC = () => {
                 </button>
                 <button
                   onClick={handleCreateBatch}
-                  className="px-3 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
+                  className="px-3 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700 cursor-pointer"
                 >
                   Create Batch
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Batch Modal */}
+      {showEditBatchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl text-slate-800 animate-in fade-in zoom-in duration-150">
+            <h3 className="text-base font-bold text-slate-900 mb-1">Edit Batch Details</h3>
+            <p className="text-xs text-slate-500 mb-4">Update batch configuration, target attempt, and capacity</p>
+
+            <form onSubmit={handleUpdateBatch} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Batch Name</label>
+                <input
+                  type="text"
+                  required
+                  value={showEditBatchModal.name || ''}
+                  onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, name: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Course Level</label>
+                  <select
+                    value={showEditBatchModal.course_level || showEditBatchModal.courseLevel || 'INTERMEDIATE'}
+                    onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, course_level: e.target.value, courseLevel: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    <option value="FOUNDATION">Foundation</option>
+                    <option value="INTERMEDIATE">Intermediate</option>
+                    <option value="FINAL">Final</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Target Attempt</label>
+                  <input
+                    type="text"
+                    value={showEditBatchModal.target_attempt || showEditBatchModal.targetAttempt || ''}
+                    onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, target_attempt: e.target.value, targetAttempt: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Capacity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={showEditBatchModal.capacity || 100}
+                    onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, capacity: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Status</label>
+                  <select
+                    value={showEditBatchModal.status || 'ACTIVE'}
+                    onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, status: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    <option value="ACTIVE">Active</option>
+                    <option value="INACTIVE">Inactive / Archived</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Description / Notes</label>
+                <textarea
+                  rows={2}
+                  value={showEditBatchModal.description || ''}
+                  onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, description: e.target.value })}
+                  placeholder="Optional notes or batch schedule"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditBatchModal(null)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingBatch}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 cursor-pointer shadow-sm"
+                >
+                  {isUpdatingBatch ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Student to Batch Modal */}
+      {showAddStudentToBatchModal && selectedBatchDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl text-slate-800 animate-in fade-in zoom-in duration-150">
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Add Student to {selectedBatchDetail.batch.name}
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Select an enrolled student in your institute to assign them to this syllabus batch.
+            </p>
+
+            <form onSubmit={handleAddStudentToBatch} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5 uppercase tracking-wider text-[10px]">
+                  Select Enrolled Student
+                </label>
+                {selectedBatchDetail.availableStudents && selectedBatchDetail.availableStudents.length > 0 ? (
+                  <select
+                    value={studentToAddId}
+                    onChange={(e) => setStudentToAddId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    required
+                  >
+                    <option value="">-- Choose an active student --</option>
+                    {selectedBatchDetail.availableStudents.map((st: any) => (
+                      <option key={st.id} value={st.id}>
+                        {st.full_name} ({st.email}) {st.current_batch_name ? `• Currently in: ${st.current_batch_name}` : '• Unassigned'}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs">
+                    All enrolled students in your institute are already assigned to this batch. To enroll new students, invite them via Students &gt; Add Student.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddStudentToBatchModal(false);
+                    setStudentToAddId('');
+                  }}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAddingStudentToBatch || !studentToAddId}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isAddingStudentToBatch ? 'Assigning...' : 'Assign to Batch'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Move Student Modal */}
+      {showMoveStudentModal && selectedBatchDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-xl text-slate-800 animate-in fade-in zoom-in duration-150">
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Move Student to Another Batch
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Moving <strong className="text-slate-800">{showMoveStudentModal.student.full_name}</strong> will update their syllabus tests while preserving their account and past evaluations.
+            </p>
+
+            <form onSubmit={handleMoveStudentBatch} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5 uppercase tracking-wider text-[10px]">
+                  Target Destination Batch
+                </label>
+                <select
+                  value={showMoveStudentModal.targetBatchId}
+                  onChange={(e) =>
+                    setShowMoveStudentModal({
+                      ...showMoveStudentModal,
+                      targetBatchId: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  required
+                >
+                  <option value="">-- Select Destination Batch --</option>
+                  {selectedBatchDetail.otherBatches &&
+                    selectedBatchDetail.otherBatches.map((b: any) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.course_level} • {b.target_attempt || 'General'})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowMoveStudentModal(null)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isMovingStudent || !showMoveStudentModal.targetBatchId}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isMovingStudent ? 'Moving...' : 'Confirm Move'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

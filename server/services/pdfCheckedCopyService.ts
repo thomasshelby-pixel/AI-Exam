@@ -15,6 +15,9 @@ export interface EvaluationData {
   percentage?: number;
   grade?: string;
   createdAt?: string;
+  evaluationSource?: string;
+  instituteName?: string;
+  batchName?: string;
 }
 
 export interface DetailedQuestionResult {

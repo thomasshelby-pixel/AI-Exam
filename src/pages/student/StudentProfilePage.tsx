@@ -266,6 +266,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         setUser({
           ...authUser,
           fullName: fullName.trim(),
+          phone: phone.trim(),
         });
       }
 

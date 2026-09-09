@@ -122,6 +122,11 @@ export interface EvaluationResult {
   percentage: number;
   grade: string;
   confidenceScore: number;
+  evaluationSource?: 'PUBLIC' | 'INSTITUTE';
+  instituteId?: string;
+  instituteName?: string;
+  batchId?: string;
+  batchName?: string;
   overallSummary: string;
   strengths: string[];
   weaknesses: string[];

@@ -23,6 +23,7 @@ import { StudentDashboard } from './pages/student/StudentDashboard.js';
 import { UploadEvaluation } from './pages/student/UploadEvaluation.js';
 import { MyEvaluations } from './pages/student/MyEvaluations.js';
 import { StudentProfilePage } from './pages/student/StudentProfilePage.js';
+import { StudentEnrollmentsPage } from './pages/student/StudentEnrollmentsPage.js';
 import { EvaluationReportView } from './pages/student/EvaluationReportView.js';
 import { InstitutePortal } from './pages/institute/InstitutePortal.js';
 import { AdminPortal } from './pages/admin/AdminPortal.js';
@@ -442,6 +443,29 @@ const AppRoutes: React.FC = () => {
                   onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                   onNavigateProfile={() => navigate('/student/profile')}
+                  onNavigateEnrollments={() => navigate('/student/enrollments')}
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/enrollments"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudentEnrollmentsPage
+                  onNavigateUpload={(instituteId, materialId) =>
+                    navigate('/student/upload', {
+                      state: {
+                        initialEvaluationType: 'INSTITUTE',
+                        instituteId,
+                        materialId,
+                      },
+                    })
+                  }
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
@@ -518,8 +542,9 @@ const AppRoutes: React.FC = () => {
 };
 
 export default function App() {
+  const baseUrl = (import.meta as any).env?.BASE_URL || '/';
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={baseUrl}>
       <AuthProvider>
         <AppRoutes />
       </AuthProvider>

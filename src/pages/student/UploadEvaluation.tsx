@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { CA_SUBJECTS, CASubject } from '../../data/caCurriculum.js';
@@ -16,6 +17,9 @@ import {
   ArrowRight,
   RefreshCw,
   Scale,
+  Building2,
+  Globe,
+  BookOpen,
 } from 'lucide-react';
 
 interface UploadEvaluationProps {
@@ -38,11 +42,31 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   onOpenCreditsModal,
 }) => {
   const { user, profile, refreshUser } = useAuth();
+  const location = useLocation();
+  const navState = (location.state || {}) as {
+    initialEvaluationType?: 'PUBLIC' | 'INSTITUTE';
+    instituteId?: string;
+    materialId?: string;
+    subjectKey?: string;
+    level?: CALevel;
+  };
+
+  // Dual Evaluation state
+  const [evaluationSource, setEvaluationSource] = useState<'PUBLIC' | 'INSTITUTE'>(
+    navState.initialEvaluationType || 'PUBLIC'
+  );
+  const [enrolledInstitutes, setEnrolledInstitutes] = useState<any[]>([]);
+  const [selectedInstituteId, setSelectedInstituteId] = useState<string>(navState.instituteId || '');
+  const [instituteMaterials, setInstituteMaterials] = useState<any[]>([]);
+  const [selectedInstituteMaterialId, setSelectedInstituteMaterialId] = useState<string>(navState.materialId || '');
+  const [loadingEnrollments, setLoadingEnrollments] = useState<boolean>(true);
 
   // Form states
-  const [level, setLevel] = useState<CALevel>('INTERMEDIATE');
+  const [level, setLevel] = useState<CALevel>(navState.level || 'INTERMEDIATE');
   const [selectedGroup, setSelectedGroup] = useState<'GROUP_1' | 'GROUP_2' | 'ALL'>('GROUP_1');
-  const [selectedSubjectKey, setSelectedSubjectKey] = useState<string>('inter_advanced_accounting');
+  const [selectedSubjectKey, setSelectedSubjectKey] = useState<string>(
+    navState.subjectKey || 'inter_advanced_accounting'
+  );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
@@ -71,7 +95,64 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   const freeRemaining = Math.max(0, 2 - (studentProfile?.free_evaluations_used || 0));
   const purchasedCredits = studentProfile?.purchased_credits || 0;
-  const hasAccess = user?.hasPermanentFreeAccess || !!studentProfile?.institute_name || freeRemaining > 0 || purchasedCredits > 0;
+
+  // Active membership check
+  const activeInstitute = enrolledInstitutes.find((inst) => inst.institute_id === selectedInstituteId);
+  const isInstituteEnrolled = enrolledInstitutes.length > 0;
+  const hasAccess =
+    evaluationSource === 'INSTITUTE'
+      ? !!activeInstitute
+      : user?.hasPermanentFreeAccess || freeRemaining > 0 || purchasedCredits > 0;
+
+  // Fetch student enrollments
+  useEffect(() => {
+    const fetchEnrollments = async () => {
+      try {
+        setLoadingEnrollments(true);
+        const res = await apiRequest<{ enrollments: any[] }>('/api/student/enrollments');
+        const active = (res.enrollments || []).filter((e: any) => e.status === 'ACTIVE');
+        setEnrolledInstitutes(active);
+        if (active.length > 0 && !selectedInstituteId) {
+          setSelectedInstituteId(navState.instituteId || active[0].institute_id);
+        }
+        if (navState.initialEvaluationType === 'INSTITUTE' && active.length > 0) {
+          setEvaluationSource('INSTITUTE');
+        }
+      } catch (err) {
+        console.warn('Could not load student enrollments:', err);
+      } finally {
+        setLoadingEnrollments(false);
+      }
+    };
+    fetchEnrollments();
+  }, []);
+
+  // Fetch materials for selected institute
+  useEffect(() => {
+    if (evaluationSource !== 'INSTITUTE' || !selectedInstituteId) {
+      setInstituteMaterials([]);
+      return;
+    }
+    const fetchInstMaterials = async () => {
+      try {
+        const res = await apiRequest<{ materials: any[] }>(
+          `/api/student/institute-materials?instituteId=${selectedInstituteId}`
+        );
+        const mats = res.materials || [];
+        setInstituteMaterials(mats);
+        if (mats.length > 0) {
+          const match = navState.materialId ? mats.find((m: any) => m.id === navState.materialId) : null;
+          const chosen = match || mats[0];
+          setSelectedInstituteMaterialId(chosen.id);
+          if (chosen.level) setLevel(chosen.level as CALevel);
+          if (chosen.subject_key) setSelectedSubjectKey(chosen.subject_key);
+        }
+      } catch (err) {
+        console.warn('Could not load institute materials:', err);
+      }
+    };
+    fetchInstMaterials();
+  }, [evaluationSource, selectedInstituteId]);
 
   // Filter subjects based on level and group
   const filteredSubjects = CA_SUBJECTS.filter((s) => {
@@ -86,13 +167,32 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Auto update selected subject when level/group changes
   useEffect(() => {
-    if (filteredSubjects.length > 0 && !filteredSubjects.some((s) => s.id === selectedSubjectKey)) {
+    if (evaluationSource === 'PUBLIC' && filteredSubjects.length > 0 && !filteredSubjects.some((s) => s.id === selectedSubjectKey)) {
       setSelectedSubjectKey(filteredSubjects[0].id);
     }
-  }, [level, selectedGroup, filteredSubjects, selectedSubjectKey]);
+  }, [level, selectedGroup, filteredSubjects, selectedSubjectKey, evaluationSource]);
 
   // Check material availability from server
   useEffect(() => {
+    if (evaluationSource === 'INSTITUTE') {
+      if (selectedInstituteMaterialId) {
+        const sel = instituteMaterials.find((m: any) => m.id === selectedInstituteMaterialId);
+        if (sel) {
+          setMaterialAvailable(true);
+          setMaterialTitle(sel.title || sel.subject_name);
+          return;
+        }
+      }
+      if (instituteMaterials.length > 0) {
+        setMaterialAvailable(true);
+        setMaterialTitle(instituteMaterials[0].title || 'Institute Test Series Paper');
+      } else {
+        setMaterialAvailable(false);
+        setMaterialTitle('');
+      }
+      return;
+    }
+
     const checkMaterial = async () => {
       if (!selectedSubjectKey) return;
       setCheckingMaterial(true);
@@ -100,7 +200,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         const res = await apiRequest<{
           available: boolean;
           material?: { question_paper_title: string; attempt: string };
-        }>(`/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(attempt)}&materialType=${materialType}`);
+        }>(
+          `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
+            attempt
+          )}&materialType=${materialType}`
+        );
 
         setMaterialAvailable(res.available);
         setMaterialTitle(res.material?.question_paper_title || '');
@@ -112,7 +216,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     };
 
     checkMaterial();
-  }, [level, selectedSubjectKey, attempt, materialType]);
+  }, [
+    evaluationSource,
+    selectedInstituteMaterialId,
+    instituteMaterials,
+    level,
+    selectedSubjectKey,
+    attempt,
+    materialType,
+  ]);
 
   // Handle file drop & selection
   const processFile = (selectedFile: File) => {
@@ -151,13 +263,19 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
     if (!materialAvailable) {
       setErrorMessage(
-        'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.'
+        evaluationSource === 'INSTITUTE'
+          ? 'No test materials are available for this coaching institute. Please contact your faculty to upload test questions.'
+          : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.'
       );
       return;
     }
 
     if (!hasAccess) {
-      onOpenCreditsModal();
+      if (evaluationSource === 'INSTITUTE') {
+        setErrorMessage('You are not actively enrolled in this coaching institute.');
+      } else {
+        onOpenCreditsModal();
+      }
       return;
     }
 
@@ -166,7 +284,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       setRejectionDetails('');
       setEvalStep('UPLOADING');
 
-      // Simulate realistic step state transitions
+      // Step state transitions
       setTimeout(() => setEvalStep('VALIDATING_DOCUMENT'), 1000);
       setTimeout(() => setEvalStep('READING_SOLUTIONS'), 2500);
       setTimeout(() => setEvalStep('IDENTIFYING_QUESTIONS'), 4000);
@@ -184,15 +302,18 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           studentName: user?.fullName,
           icaiRegistrationNumber: studentProfile?.icai_registration_number || 'N/A',
           level,
-          materialType,
+          materialType: evaluationSource === 'INSTITUTE' ? 'MOCK_EXAM' : materialType,
           modelGroup: selectedGroup !== 'ALL' ? selectedGroup : undefined,
           subjectKey: selectedSubjectKey,
           subjectName: currentSubject?.name || 'CA Subject',
-          attempt,
+          attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : attempt,
           checkingMode,
           fileBase64,
           mimeType: file.type || 'application/pdf',
           filename: file.name,
+          evaluationSource,
+          instituteId: evaluationSource === 'INSTITUTE' ? selectedInstituteId : undefined,
+          instituteMaterialId: evaluationSource === 'INSTITUTE' ? selectedInstituteMaterialId : undefined,
         }),
       });
 
@@ -323,109 +444,273 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         </div>
       )}
 
+      {/* Dual Evaluation Mode Selector Card */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+            <Scale className="w-4 h-4 text-indigo-600" />
+            Evaluation Benchmark Mode
+          </h3>
+          <span className="text-[11px] font-semibold text-slate-500">
+            {evaluationSource === 'INSTITUTE' ? 'Sponsored by Coaching Academy' : 'Standard ICAI Public Model'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Public AI Evaluation Option */}
+          <button
+            type="button"
+            onClick={() => setEvaluationSource('PUBLIC')}
+            className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
+              evaluationSource === 'PUBLIC'
+                ? 'bg-blue-50/70 border-blue-500 shadow-xs ring-1 ring-blue-500/20'
+                : 'bg-white border-slate-200 hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-blue-600" />
+                Public AI Evaluation
+              </span>
+              {evaluationSource === 'PUBLIC' && (
+                <span className="w-2 h-2 rounded-full bg-blue-600" />
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Checked against official ICAI MTP, RTP & Suggested Answers. Uses personal evaluation credits.
+            </p>
+            <div className="mt-2 text-[10px] font-bold text-blue-700 bg-blue-100/60 rounded px-2 py-0.5 inline-block">
+              {user?.hasPermanentFreeAccess
+                ? 'Unlimited Access'
+                : freeRemaining > 0
+                ? `${freeRemaining} Free Left`
+                : `${purchasedCredits} Credits Available`}
+            </div>
+          </button>
+
+          {/* Institute Sponsored Evaluation Option */}
+          <button
+            type="button"
+            onClick={() => {
+              if (enrolledInstitutes.length > 0) {
+                setEvaluationSource('INSTITUTE');
+                if (!selectedInstituteId && enrolledInstitutes[0]) {
+                  setSelectedInstituteId(enrolledInstitutes[0].institute_id);
+                }
+              }
+            }}
+            disabled={enrolledInstitutes.length === 0}
+            className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
+              evaluationSource === 'INSTITUTE'
+                ? 'bg-indigo-50/70 border-indigo-500 shadow-xs ring-1 ring-indigo-500/20'
+                : enrolledInstitutes.length === 0
+                ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
+                : 'bg-white border-slate-200 hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                Institute Evaluation
+              </span>
+              {evaluationSource === 'INSTITUTE' && (
+                <span className="w-2 h-2 rounded-full bg-indigo-600" />
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Checked against your enrolled coaching academy's custom test papers & approved marking schemes.
+            </p>
+            <div className="mt-2 text-[10px] font-bold text-indigo-700 bg-indigo-100/60 rounded px-2 py-0.5 inline-block">
+              {enrolledInstitutes.length > 0
+                ? `100% Institute Sponsored (${enrolledInstitutes.length} ${
+                    enrolledInstitutes.length === 1 ? 'Academy' : 'Academies'
+                  })`
+                : 'Not Enrolled in any Academy'}
+            </div>
+          </button>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Paper & Subject Configuration */}
         <div className="lg:col-span-1 space-y-5">
           <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
               <Layers className="w-4 h-4 text-blue-600" />
-              1. Paper Specification
+              {evaluationSource === 'INSTITUTE' ? '1. Institute Paper Selection' : '1. Paper Specification'}
             </h3>
 
-            {/* Level selection */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">CA Examination Level</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {(['FOUNDATION', 'INTERMEDIATE', 'FINAL'] as CALevel[]).map((lvl) => (
-                  <button
-                    key={lvl}
-                    type="button"
-                    onClick={() => setLevel(lvl)}
-                    className={`py-1.5 px-1 text-xs font-bold rounded-lg border transition text-center ${
-                      level === lvl
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {lvl === 'FOUNDATION' ? 'Foundation' : lvl === 'INTERMEDIATE' ? 'Inter' : 'Final'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Group selection (if Inter or Final) */}
-            {level !== 'FOUNDATION' && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Group</label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {[
-                    { id: 'GROUP_1', label: 'Group 1' },
-                    { id: 'GROUP_2', label: 'Group 2' },
-                    { id: 'ALL', label: 'All Papers' },
-                  ].map((grp) => (
-                    <button
-                      key={grp.id}
-                      type="button"
-                      onClick={() => setSelectedGroup(grp.id as 'GROUP_1' | 'GROUP_2' | 'ALL')}
-                      className={`py-1.5 text-xs font-bold rounded-lg border transition ${
-                        selectedGroup === grp.id
-                          ? 'bg-blue-50 border-blue-600 text-blue-700'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
-                      }`}
+            {evaluationSource === 'INSTITUTE' ? (
+              <div className="space-y-3.5">
+                {/* Institute Selector */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                    Enrolled Coaching Academy
+                  </label>
+                  {enrolledInstitutes.length > 0 ? (
+                    <select
+                      value={selectedInstituteId}
+                      onChange={(e) => setSelectedInstituteId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white font-medium"
                     >
-                      {grp.label}
-                    </button>
-                  ))}
+                      {enrolledInstitutes.map((inst) => (
+                        <option key={inst.institute_id} value={inst.institute_id}>
+                          {inst.institute_name} {inst.batch_name ? `(${inst.batch_name})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                      You are not currently enrolled in any coaching academy. Please join an institute using an invite code.
+                    </div>
+                  )}
                 </div>
+
+                {/* Test Paper / Material Selector */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                    Institute Test Paper / Mock Series
+                  </label>
+                  {instituteMaterials.length > 0 ? (
+                    <select
+                      value={selectedInstituteMaterialId}
+                      onChange={(e) => {
+                        setSelectedInstituteMaterialId(e.target.value);
+                        const sel = instituteMaterials.find((m) => m.id === e.target.value);
+                        if (sel) {
+                          if (sel.level) setLevel(sel.level as CALevel);
+                          if (sel.subject_key) setSelectedSubjectKey(sel.subject_key);
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white font-medium"
+                    >
+                      {instituteMaterials.map((mat) => (
+                        <option key={mat.id} value={mat.id}>
+                          {mat.title} ({mat.level} • {mat.subject_name})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500">
+                      No test papers uploaded by this institute yet. Please contact your coordinator.
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected Paper Details Preview */}
+                {selectedInstituteMaterialId && (
+                  <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg text-[11px] space-y-1 text-slate-600">
+                    <div className="font-bold text-indigo-900 flex items-center justify-between">
+                      <span>Curriculum: CA {level}</span>
+                      <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded font-bold">
+                        Sponsored
+                      </span>
+                    </div>
+                    <p className="text-slate-500 font-medium">Subject: {currentSubject?.name || 'Selected Paper'}</p>
+                    <p className="text-[10px] text-indigo-700">Evaluated using verified faculty marking scheme</p>
+                  </div>
+                )}
               </div>
+            ) : (
+              <>
+                {/* Level selection */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">CA Examination Level</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(['FOUNDATION', 'INTERMEDIATE', 'FINAL'] as CALevel[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => setLevel(lvl)}
+                        className={`py-1.5 px-1 text-xs font-bold rounded-lg border transition text-center ${
+                          level === lvl
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {lvl === 'FOUNDATION' ? 'Foundation' : lvl === 'INTERMEDIATE' ? 'Inter' : 'Final'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Group selection (if Inter or Final) */}
+                {level !== 'FOUNDATION' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Group</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { id: 'GROUP_1', label: 'Group 1' },
+                        { id: 'GROUP_2', label: 'Group 2' },
+                        { id: 'ALL', label: 'All Papers' },
+                      ].map((grp) => (
+                        <button
+                          key={grp.id}
+                          type="button"
+                          onClick={() => setSelectedGroup(grp.id as 'GROUP_1' | 'GROUP_2' | 'ALL')}
+                          className={`py-1.5 text-xs font-bold rounded-lg border transition ${
+                            selectedGroup === grp.id
+                              ? 'bg-blue-50 border-blue-600 text-blue-700'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {grp.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Subject Dropdown */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject & Paper</label>
+                  <select
+                    value={selectedSubjectKey}
+                    onChange={(e) => setSelectedSubjectKey(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                  >
+                    {filteredSubjects.map((subj) => (
+                      <option key={subj.id} value={subj.id}>
+                        Paper {subj.paperNumber}: {subj.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Paper Type & Attempt */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Paper Type</label>
+                    <select
+                      value={materialType}
+                      onChange={(e) => setMaterialType(e.target.value as MaterialType)}
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                    >
+                      <option value="MTP">ICAI MTP Series</option>
+                      <option value="RTP">ICAI RTP Series</option>
+                      <option value="PAST_EXAM">Past Exam Paper</option>
+                      <option value="MODEL">Model Test Paper</option>
+                      <option value="CUSTOM">Test Series Answer</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Target Attempt</label>
+                    <select
+                      value={attempt}
+                      onChange={(e) => setAttempt(e.target.value)}
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                    >
+                      <option value="May 2026">May 2026</option>
+                      <option value="Nov 2026">Nov 2026</option>
+                      <option value="Jan 2027">Jan 2027</option>
+                    </select>
+                  </div>
+                </div>
+              </>
             )}
-
-            {/* Subject Dropdown */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject & Paper</label>
-              <select
-                value={selectedSubjectKey}
-                onChange={(e) => setSelectedSubjectKey(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
-              >
-                {filteredSubjects.map((subj) => (
-                  <option key={subj.id} value={subj.id}>
-                    Paper {subj.paperNumber}: {subj.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Paper Type & Attempt */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Paper Type</label>
-                <select
-                  value={materialType}
-                  onChange={(e) => setMaterialType(e.target.value as MaterialType)}
-                  className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
-                >
-                  <option value="MTP">ICAI MTP Series</option>
-                  <option value="RTP">ICAI RTP Series</option>
-                  <option value="PAST_EXAM">Past Exam Paper</option>
-                  <option value="MODEL">Model Test Paper</option>
-                  <option value="CUSTOM">Test Series Answer</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Target Attempt</label>
-                <select
-                  value={attempt}
-                  onChange={(e) => setAttempt(e.target.value)}
-                  className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
-                >
-                  <option value="May 2026">May 2026</option>
-                  <option value="Nov 2026">Nov 2026</option>
-                  <option value="Jan 2027">Jan 2027</option>
-                </select>
-              </div>
-            </div>
 
             {/* Checking Mode */}
             <div>
@@ -449,17 +734,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               {checkingMaterial ? (
                 <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  Verifying ICAI Reference Material...
+                  Verifying Reference Material...
                 </p>
               ) : materialAvailable ? (
                 <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg font-medium">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-                  <span className="truncate">ICAI Suggested Answers & Marking Scheme Loaded</span>
+                  <span className="truncate">
+                    {evaluationSource === 'INSTITUTE'
+                      ? 'Institute Question Paper & Model Answers Loaded'
+                      : 'ICAI Suggested Answers & Marking Scheme Loaded'}
+                  </span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 p-2.5 rounded-lg">
                   <Info className="w-4 h-4 shrink-0 text-amber-600" />
-                  <span>Evaluation material is pending upload for this paper.</span>
+                  <span>
+                    {evaluationSource === 'INSTITUTE'
+                      ? 'Test material pending upload by academy.'
+                      : 'Evaluation material is pending upload for this paper.'}
+                  </span>
                 </div>
               )}
             </div>
@@ -583,7 +876,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 id="start-evaluation-btn"
                 onClick={handleStartEvaluation}
                 disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
-                className="w-full py-3.5 px-6 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                  evaluationSource === 'INSTITUTE'
+                    ? 'bg-indigo-600 hover:bg-indigo-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
               >
                 {evalStep !== 'IDLE' ? (
                   <>
@@ -593,7 +890,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Start ICAI Step Evaluation</span>
+                    <span>
+                      {evaluationSource === 'INSTITUTE'
+                        ? 'Start Institute Evaluation (0 Credits)'
+                        : 'Start ICAI Step Evaluation'}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

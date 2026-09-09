@@ -30,6 +30,7 @@ interface StudentDashboardProps {
   onViewReport: (evaluationId: string) => void;
   onOpenCreditsModal: () => void;
   onNavigateProfile?: () => void;
+  onNavigateEnrollments?: () => void;
 }
 
 export interface CreditLotSummary {
@@ -106,6 +107,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onViewReport,
   onOpenCreditsModal,
   onNavigateProfile,
+  onNavigateEnrollments,
 }) => {
   const { user, profile } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -576,9 +578,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <p className="text-xs text-slate-500">Practice custom question papers with 100% sponsored ICAI step-marking evaluations</p>
               </div>
             </div>
-            {onNavigateProfile && (
+            {(onNavigateEnrollments || onNavigateProfile) && (
               <button
-                onClick={onNavigateProfile}
+                onClick={onNavigateEnrollments || onNavigateProfile}
                 className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1"
               >
                 Manage Enrollments

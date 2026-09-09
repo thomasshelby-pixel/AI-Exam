@@ -456,6 +456,10 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT');
 
   // Ensure evaluations has all enhanced columns
+  addColumnIfNotExists('evaluations', 'evaluation_source', "TEXT DEFAULT 'PUBLIC'");
+  addColumnIfNotExists('evaluations', 'institute_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'institute_enrollment_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'batch_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'paper', 'TEXT');
   addColumnIfNotExists('evaluations', 'syllabus_version', 'TEXT');
   addColumnIfNotExists('evaluations', 'material_id', 'TEXT');
@@ -484,6 +488,15 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'original_model', 'TEXT');
   addColumnIfNotExists('evaluations', 'fallback_model', 'TEXT');
   addColumnIfNotExists('evaluations', 'audit_metadata_json', 'TEXT');
+
+  // Ensure institute_memberships columns
+  addColumnIfNotExists('institute_memberships', 'removed_at', 'TEXT');
+  addColumnIfNotExists('institute_memberships', 'sponsored_access', 'INTEGER DEFAULT 1');
+
+  // Ensure student_profiles columns
+  addColumnIfNotExists('student_profiles', 'city', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'preferred_subjects', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'avatar_url', 'TEXT');
 
   // Ensure model_configs table exists for Super Admin dynamic AI model controls
   db.exec(`

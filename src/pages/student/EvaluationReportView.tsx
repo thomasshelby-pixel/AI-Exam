@@ -18,6 +18,8 @@ import {
   Download,
   FileText,
   RefreshCw,
+  Building2,
+  Globe,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo.js';
 
@@ -195,9 +197,25 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <div className="mb-3">
               <BrandLogo variant="horizontal" size="sm" />
             </div>
-            <div className="flex items-center gap-2 text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">
-              <FileCheck2 className="w-4 h-4 text-blue-600" />
-              <span>Verified ICAI-Pattern Step-Marking Evaluation</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider mb-1">
+              <div className="flex items-center gap-1.5 text-blue-600">
+                <FileCheck2 className="w-4 h-4 text-blue-600" />
+                <span>Verified ICAI-Pattern Step-Marking Evaluation</span>
+              </div>
+              {evaluationResult.evaluationSource === 'INSTITUTE' ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                  <Building2 className="w-3 h-3" />
+                  <span>{evaluationResult.instituteName || 'Institute Evaluation'}</span>
+                  {evaluationResult.batchName && (
+                    <span className="text-indigo-500 font-normal">({evaluationResult.batchName})</span>
+                  )}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                  <Globe className="w-3 h-3" />
+                  <span>Public AI Evaluation</span>
+                </span>
+              )}
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 print:text-black">{subjectName}</h1>
             <p className="text-xs text-slate-500 mt-1 print:text-gray-600">
