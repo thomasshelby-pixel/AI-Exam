@@ -379,6 +379,24 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
 
+    CREATE TABLE IF NOT EXISTS mcq_scoring_rules (
+      id TEXT PRIMARY KEY,
+      course_level TEXT NOT NULL,
+      paper_number TEXT NOT NULL DEFAULT 'ALL',
+      paper_name TEXT NOT NULL,
+      attempt TEXT NOT NULL DEFAULT 'ALL',
+      syllabus_version TEXT NOT NULL DEFAULT 'ALL',
+      wrong_penalty REAL NOT NULL DEFAULT 0,
+      correct_score_rule TEXT NOT NULL DEFAULT 'FULL_MARKS',
+      unattempted_score_rule TEXT NOT NULL DEFAULT 'ZERO',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      description TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcq_scoring_rules_lookup ON mcq_scoring_rules(course_level, is_active);
+
     CREATE TABLE IF NOT EXISTS pricing_plans (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -838,7 +856,7 @@ function seedInitialData() {
     { key: 'EVAL_CONFIDENCE_THRESHOLD', value: '75', description: 'Minimum confidence percentage threshold for evaluation audit' },
     { key: 'EVAL_STEP_MARKING_ENABLED', value: 'true', description: 'Enforce question-wise step marking breakdown' },
     { key: 'EVAL_CONSEQUENTIAL_ERROR_ENABLED', value: 'true', description: 'Award subsequent step marks if earlier step has calculation slip' },
-    { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'ZERO_FOR_ALL', description: 'Zero negative marking for all CA MCQs (Foundation, Intermediate, Final)' },
+    { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'PAPER_SPECIFIC_CONFIGURED', description: 'Paper-specific MCQ negative marking rules configured in mcq_scoring_rules table' },
     { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
     { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
     { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-3.6-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
@@ -876,6 +894,116 @@ function seedInitialData() {
 
   // 8. Seed a Model Institute so institutional sponsorship and batch management can be verified
   seedSampleInstitute();
+
+  // 9. Seed Official ICAI Configurable MCQ Scoring Rules
+  seedMcqScoringRules();
+}
+
+function seedMcqScoringRules() {
+  const defaultRules = [
+    {
+      id: 'mcq_rule_found_paper_1',
+      course_level: 'FOUNDATION',
+      paper_number: 'Paper 1',
+      paper_name: 'Accounting',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: 0,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Foundation Paper 1 Accounting: Correct = full marks, Wrong = 0 marks, Unattempted = 0 marks',
+    },
+    {
+      id: 'mcq_rule_found_paper_2',
+      course_level: 'FOUNDATION',
+      paper_number: 'Paper 2',
+      paper_name: 'Business Laws',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: 0,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Foundation Paper 2 Business Laws: Correct = full marks, Wrong = 0 marks, Unattempted = 0 marks',
+    },
+    {
+      id: 'mcq_rule_found_paper_3',
+      course_level: 'FOUNDATION',
+      paper_number: 'Paper 3',
+      paper_name: 'Quantitative Aptitude',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: -0.25,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Foundation Paper 3 Quantitative Aptitude: Correct = full marks, Wrong = -0.25 marks, Unattempted = 0 marks',
+    },
+    {
+      id: 'mcq_rule_found_paper_4',
+      course_level: 'FOUNDATION',
+      paper_number: 'Paper 4',
+      paper_name: 'Business Economics',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: -0.25,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Foundation Paper 4 Business Economics: Correct = full marks, Wrong = -0.25 marks, Unattempted = 0 marks',
+    },
+    {
+      id: 'mcq_rule_inter_all',
+      course_level: 'INTERMEDIATE',
+      paper_number: 'ALL',
+      paper_name: 'All Intermediate MCQ Papers',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: 0,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Intermediate MCQs: Correct = full marks, Wrong = 0 marks (No negative marking), Unattempted = 0 marks',
+    },
+    {
+      id: 'mcq_rule_final_all',
+      course_level: 'FINAL',
+      paper_number: 'ALL',
+      paper_name: 'All Final MCQ Papers',
+      attempt: 'ALL',
+      syllabus_version: 'ALL',
+      wrong_penalty: 0,
+      correct_score_rule: 'FULL_MARKS',
+      unattempted_score_rule: 'ZERO',
+      is_active: 1,
+      description: 'CA Final MCQs: Correct = full marks, Wrong = 0 marks (No negative marking), Unattempted = 0 marks',
+    },
+  ];
+
+  for (const r of defaultRules) {
+    const existing = db.prepare('SELECT id FROM mcq_scoring_rules WHERE id = ?').get(r.id);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO mcq_scoring_rules (
+          id, course_level, paper_number, paper_name, attempt, syllabus_version,
+          wrong_penalty, correct_score_rule, unattempted_score_rule, is_active, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        r.id,
+        r.course_level,
+        r.paper_number,
+        r.paper_name,
+        r.attempt,
+        r.syllabus_version,
+        r.wrong_penalty,
+        r.correct_score_rule,
+        r.unattempted_score_rule,
+        r.is_active,
+        r.description
+      );
+    }
+  }
 }
 
 function seedExamAttempts() {
@@ -1824,7 +1952,8 @@ function seedModelConfigs() {
 
   db.prepare(`
     UPDATE pricing_settings
-    SET value = 'ZERO_FOR_ALL'
+    SET value = 'PAPER_SPECIFIC_CONFIGURED',
+        description = 'Paper-specific MCQ negative marking rules configured in mcq_scoring_rules table'
     WHERE key = 'EVAL_MCQ_NEGATIVE_MARKING'
   `).run();
 

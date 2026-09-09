@@ -651,6 +651,7 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       subjectKey,
       subjectName,
       attempt,
+      syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
       mimeType: mimeType || 'application/pdf',
@@ -820,7 +821,9 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       WHERE id = ?
     `).run(errMsg.slice(0, 500), evaluationId);
 
-    const userFacingMsg = errMsg.includes('503') || errMsg.includes('high demand')
+    const userFacingMsg = errMsg.includes('MISSING_MCQ_RULE')
+      ? errMsg.replace('MISSING_MCQ_RULE: ', '')
+      : errMsg.includes('503') || errMsg.includes('high demand')
       ? 'The AI evaluation service is temporarily experiencing high demand. No credits were deducted. Please try submitting again in a moment.'
       : 'Evaluation encountered an issue. No credits or free evaluations were deducted. Please retry.';
 

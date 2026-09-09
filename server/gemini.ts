@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult, QuestionEvaluation } from '../src/types/index.js';
 import { db } from './db.js';
 import { executeModelWithFallback } from './models/modelRegistry.js';
+import { getActiveMcqScoringRule, getCanonicalPaperName } from './mcqRules.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -267,6 +268,7 @@ export interface EvaluateAnswerSheetParams {
   subjectKey: string;
   subjectName: string;
   attempt?: string;
+  syllabusVersion?: string;
   checkingMode: CheckingMode;
   fileBase64: string;
   mimeType: string;
@@ -281,14 +283,45 @@ export interface EvaluateAnswerSheetParams {
 export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): Promise<EvaluationResult> {
   const ai = getGemini();
 
-  const isMcqOnly = params.subjectKey.includes('quantitative_aptitude') || params.subjectKey.includes('business_economics');
+  // Canonicalize subject name using full official ICAI title
+  const canonicalSubjectName = getCanonicalPaperName(params.level, params.subjectName, params.subjectKey);
 
-  const mcqInstruction = `CRITICAL MANDATORY ICAI RULE FOR ALL PAPERS & LEVELS (FOUNDATION, INTERMEDIATE, FINAL):
-For all multiple choice questions (MCQs), there is STRICTLY ZERO NEGATIVE MARKING:
-- Correct MCQ = Full assigned marks (e.g. +1 or +2)
-- Wrong / Incorrect MCQ = STRICTLY 0 marks (NEVER deduct any fractional marks like -0.25, -0.5, or -1/4)
-- Unattempted MCQ = STRICTLY 0 marks
-Zero negative marking applies universally without exception. Never award negative marks under any circumstances.`;
+  // Identify CA Level, exact Paper/Subject, Attempt/Exam, and Syllabus Version
+  // Fetch the matching active MCQ scoring rule from database
+  const mcqRule = getActiveMcqScoringRule({
+    level: params.level,
+    subjectName: params.subjectName,
+    subjectKey: params.subjectKey,
+    attempt: params.attempt,
+    syllabusVersion: params.syllabusVersion,
+  });
+
+  // If no matching active rule exists, DO NOT silently assume a negative-marking value.
+  // Halt/flag the MCQ scoring configuration as missing.
+  if (!mcqRule) {
+    throw new Error(
+      `MISSING_MCQ_RULE: No active MCQ scoring configuration rule found for CA ${params.level} - ${canonicalSubjectName}. Evaluation halted for scoring accuracy and audit compliance. Please configure this paper in Admin AI Evaluation Settings.`
+    );
+  }
+
+  const isMcqOnly =
+    params.level === 'FOUNDATION' &&
+    (canonicalSubjectName === 'Quantitative Aptitude' || canonicalSubjectName === 'Business Economics');
+
+  const penaltyMarks = Math.abs(mcqRule.wrong_penalty);
+
+  // Construct paper-specific MCQ directive for the evaluator model
+  const mcqInstruction = mcqRule.wrong_penalty < 0
+    ? `CRITICAL MANDATORY ICAI MCQ SCORING DIRECTIVE FOR CA ${mcqRule.course_level} - ${canonicalSubjectName}:
+- Correct MCQ = Full assigned marks (e.g. +1.0)
+- Wrong / Incorrect MCQ = -${penaltyMarks} marks (STRICTLY deduct ${penaltyMarks} mark for each incorrect selection)
+- Unattempted / Blank MCQ = STRICTLY 0 marks (NEVER deduct negative marks for unattempted or blank questions)
+Negative marking (-${penaltyMarks}) applies strictly to incorrect multiple choice questions in this specific paper.`
+    : `CRITICAL MANDATORY ICAI MCQ SCORING DIRECTIVE FOR CA ${mcqRule.course_level} - ${canonicalSubjectName}:
+- Correct MCQ = Full assigned marks
+- Wrong / Incorrect MCQ = STRICTLY 0 marks (Strictly zero negative marking - NEVER deduct marks for incorrect answers)
+- Unattempted / Blank MCQ = STRICTLY 0 marks (NEVER deduct marks for unattempted questions)
+Zero negative marking applies for this paper.`;
 
   const checkingStrictness = params.checkingMode === 'strict'
     ? 'Strict ICAI Head Examiner Standard: Rigorous examination. Require correct statutory section numbers, accounting standard steps, and complete working notes before awarding full marks.'
@@ -389,7 +422,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 `;
 
   const modelOutput = await executeModelWithFallback({
-    systemPrompt: 'You are an expert Senior CA Examination Evaluator. You evaluate CA student answer sheets with rigorous ICAI step-marking standards, zero negative marking for all MCQs, and return your response in strictly valid JSON format conforming to the requested schema.',
+    systemPrompt: `You are an expert Senior CA Examination Evaluator. You evaluate CA student answer sheets with rigorous ICAI step-marking standards and official paper-specific MCQ scoring rules (${mcqRule.wrong_penalty < 0 ? `-${penaltyMarks} penalty for incorrect MCQs in ${canonicalSubjectName}` : 'zero negative marking for incorrect MCQs'}), and return your response in strictly valid JSON format conforming to the requested schema.`,
     userPrompt: `${evaluationPrompt}\n\n${schemaFormatInstructions}`,
     pdfBase64: params.fileBase64,
     mimeType: params.mimeType === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
@@ -429,7 +462,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     }
   }
 
-  // Verify and enforce mathematical sum consistency & STRICT ZERO NEGATIVE MARKING
+  // Verify and enforce mathematical sum consistency & paper-specific MCQ scoring rules
   const questions: QuestionEvaluation[] = Array.isArray(parsed.questions) ? parsed.questions : [];
   let calculatedTotal = 0;
 
@@ -437,28 +470,59 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     const maxMarks = Math.max(0, Number(q.maximumMarks) || 0);
     let awarded = Number(q.marksAwarded) || 0;
 
-    // Strict Universal Zero Negative Marking across ALL levels & papers
     const isMcqQuestion =
       isMcqOnly ||
-      (q.questionNumber && q.questionNumber.toLowerCase().includes('mcq')) ||
-      (q.subQuestion && q.subQuestion.toLowerCase().includes('mcq')) ||
-      (q.technicalEvaluation && q.technicalEvaluation.toLowerCase().includes('mcq')) ||
-      (q.detailedFeedback && q.detailedFeedback.toLowerCase().includes('multiple choice'));
+      Boolean(q.questionNumber && q.questionNumber.toLowerCase().includes('mcq')) ||
+      Boolean(q.subQuestion && q.subQuestion.toLowerCase().includes('mcq')) ||
+      Boolean(q.technicalEvaluation && q.technicalEvaluation.toLowerCase().includes('mcq')) ||
+      Boolean(q.detailedFeedback && q.detailedFeedback.toLowerCase().includes('multiple choice')) ||
+      Boolean(q.detailedFeedback && q.detailedFeedback.toLowerCase().includes('mcq'));
 
     if (isMcqQuestion) {
-      if ((q.status as string) === 'incorrect' || (q.status as string) === 'unattempted' || q.status === 'not_attempted' || awarded < 0) {
+      const qStatus = String(q.status || '').toLowerCase().trim();
+      const isUnattempted = qStatus === 'unattempted' || qStatus === 'not_attempted' || qStatus === 'blank';
+      const isIncorrect = qStatus === 'incorrect' || qStatus === 'wrong';
+      const isCorrect = qStatus === 'correct';
+
+      if (isUnattempted) {
+        // Unattempted questions ALWAYS receive 0. NEVER apply negative marking to unattempted questions!
         awarded = 0;
+      } else if (isIncorrect) {
+        // Apply configured negative penalty ONLY to incorrect MCQs
+        awarded = mcqRule.wrong_penalty;
+      } else if (isCorrect) {
+        // Correct answers receive full assigned marks
+        awarded = maxMarks > 0 ? maxMarks : 1;
+      } else {
+        // Ambiguous status: if negative awarded, check if rule allows it
+        if (awarded < 0) {
+          awarded = mcqRule.wrong_penalty;
+        } else if (awarded === 0 && mcqRule.wrong_penalty < 0 && !isUnattempted) {
+          awarded = mcqRule.wrong_penalty;
+        }
       }
+
+      if (awarded < 0) {
+        // Negative marking applied to incorrect MCQ
+        q.marksAwarded = awarded;
+        q.marksLost = maxMarks - awarded; // e.g. 1 - (-0.25) = 1.25 marks lost
+      } else {
+        awarded = Math.max(0, Math.min(awarded, maxMarks));
+        q.marksAwarded = Math.round(awarded * 4) / 4; // support 0.25 granularity
+        q.marksLost = Math.max(0, maxMarks - q.marksAwarded);
+      }
+    } else {
+      // Non-MCQ / Subjective questions: NEVER introduce negative marking
+      awarded = Math.max(0, Math.min(awarded, maxMarks));
+      q.marksAwarded = Math.round(awarded * 2) / 2; // round to nearest 0.5
+      q.marksLost = Math.round(Math.max(0, maxMarks - q.marksAwarded) * 2) / 2;
     }
 
-    // Absolute non-negative clamp for all questions - marks can NEVER be below 0
-    awarded = Math.max(0, Math.min(awarded, maxMarks));
-
-    q.marksAwarded = Math.round(awarded * 2) / 2; // round to nearest 0.5
-    q.marksLost = Math.round(Math.max(0, maxMarks - q.marksAwarded) * 2) / 2;
     calculatedTotal += q.marksAwarded;
   }
 
+  // ICAI overall paper total cannot be negative
+  calculatedTotal = Math.max(0, Math.round(calculatedTotal * 4) / 4);
   const maxTotal = Number(parsed.maximumMarks) || 100;
   calculatedTotal = Math.min(calculatedTotal, maxTotal);
   const percentage = Math.round((calculatedTotal / maxTotal) * 1000) / 10;
@@ -504,6 +568,15 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     ],
     questions,
     isMcqPaper: isMcqOnly,
+    mcqScoringRuleApplied: {
+      ruleId: mcqRule.id,
+      level: mcqRule.course_level,
+      paper: mcqRule.paper_name,
+      attempt: mcqRule.attempt,
+      syllabusVersion: mcqRule.syllabus_version,
+      wrongPenalty: mcqRule.wrong_penalty,
+      description: mcqRule.description || `Rule ${mcqRule.id}`,
+    },
     modelUsed: modelOutput.modelUsed,
     modelDisplayName: modelOutput.modelDisplayName,
     modelProvider: modelOutput.provider,

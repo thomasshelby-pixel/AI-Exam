@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
+import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 
 const router = Router();
 
@@ -2550,6 +2551,218 @@ router.get('/models/telemetry', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get model telemetry error:', error);
     return res.status(500).json({ error: 'Failed to load model telemetry' });
+  }
+});
+
+// ==========================================
+// Configurable Paper-Specific MCQ Scoring Rules
+// ==========================================
+router.get('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
+  try {
+    const rules = getAllMcqRules();
+    return res.json({ success: true, rules });
+  } catch (error: unknown) {
+    console.error('Get MCQ scoring rules error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve MCQ scoring rules' });
+  }
+});
+
+router.post('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      courseLevel,
+      paperNumber,
+      paperName,
+      attempt,
+      syllabusVersion,
+      wrongPenalty,
+      correctScoreRule,
+      unattemptedScoreRule,
+      isActive,
+      description,
+    } = req.body;
+
+    if (!courseLevel || !paperName) {
+      return res.status(400).json({ error: 'Course Level and Paper/Subject Name are required.' });
+    }
+
+    const normLevel = String(courseLevel).toUpperCase().trim();
+    if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(normLevel)) {
+      return res.status(400).json({ error: 'Course Level must be FOUNDATION, INTERMEDIATE, or FINAL.' });
+    }
+
+    const canonicalName = normLevel === 'FOUNDATION'
+      ? getCanonicalPaperName(normLevel, paperName)
+      : String(paperName).trim();
+
+    const penaltyNum = typeof wrongPenalty === 'number' ? wrongPenalty : parseFloat(wrongPenalty) || 0;
+
+    // Safety constraint: -0.25 negative marking permitted ONLY when BOTH conditions are true:
+    // Level = FOUNDATION AND Paper is Quantitative Aptitude or Business Economics
+    if (penaltyNum < 0) {
+      const isAllowed = normLevel === 'FOUNDATION' && (canonicalName === 'Quantitative Aptitude' || canonicalName === 'Business Economics');
+      if (!isAllowed) {
+        return res.status(400).json({
+          error: 'Negative marking (-0.25) under ICAI rules is permitted ONLY for CA Foundation Quantitative Aptitude and Business Economics. All other papers and levels must be 0.',
+        });
+      }
+    }
+
+    const ruleId = `mcq_rule_${crypto.randomBytes(8).toString('hex')}`;
+    const activeInt = isActive === false || isActive === 0 ? 0 : 1;
+
+    db.prepare(`
+      INSERT INTO mcq_scoring_rules (
+        id, course_level, paper_number, paper_name, attempt, syllabus_version,
+        wrong_penalty, correct_score_rule, unattempted_score_rule, is_active, description,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(
+      ruleId,
+      normLevel,
+      paperNumber || 'ALL',
+      canonicalName,
+      attempt || 'ALL',
+      syllabusVersion || 'ALL',
+      penaltyNum,
+      correctScoreRule || 'FULL_MARKS',
+      unattemptedScoreRule || 'ZERO',
+      activeInt,
+      description || `MCQ Rule for CA ${normLevel} ${canonicalName}`
+    );
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      'CREATE_MCQ_SCORING_RULE',
+      'mcq_scoring_rules',
+      `Created MCQ scoring rule for ${normLevel} - ${canonicalName} (Wrong: ${penaltyNum})`
+    );
+
+    return res.status(201).json({ success: true, message: 'MCQ scoring rule created successfully', ruleId });
+  } catch (error: unknown) {
+    console.error('Create MCQ scoring rule error:', error);
+    return res.status(500).json({ error: 'Failed to create MCQ scoring rule' });
+  }
+});
+
+router.put('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM mcq_scoring_rules WHERE id = ?').get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'MCQ scoring rule not found' });
+    }
+
+    const {
+      courseLevel,
+      paperNumber,
+      paperName,
+      attempt,
+      syllabusVersion,
+      wrongPenalty,
+      correctScoreRule,
+      unattemptedScoreRule,
+      isActive,
+      description,
+    } = req.body;
+
+    const normLevel = courseLevel ? String(courseLevel).toUpperCase().trim() : existing.course_level;
+    const effectivePaperName = paperName
+      ? (normLevel === 'FOUNDATION' ? getCanonicalPaperName(normLevel, paperName) : String(paperName).trim())
+      : existing.paper_name;
+
+    const penaltyNum = wrongPenalty !== undefined
+      ? (typeof wrongPenalty === 'number' ? wrongPenalty : parseFloat(wrongPenalty) || 0)
+      : existing.wrong_penalty;
+
+    // Safety constraint check
+    if (penaltyNum < 0) {
+      const isAllowed = normLevel === 'FOUNDATION' && (effectivePaperName === 'Quantitative Aptitude' || effectivePaperName === 'Business Economics');
+      if (!isAllowed) {
+        return res.status(400).json({
+          error: 'Negative marking (-0.25) under ICAI rules is permitted ONLY for CA Foundation Quantitative Aptitude and Business Economics. All other papers and levels must be 0.',
+        });
+      }
+    }
+
+    const activeInt = isActive !== undefined ? (isActive ? 1 : 0) : existing.is_active;
+
+    db.prepare(`
+      UPDATE mcq_scoring_rules
+      SET course_level = ?,
+          paper_number = ?,
+          paper_name = ?,
+          attempt = ?,
+          syllabus_version = ?,
+          wrong_penalty = ?,
+          correct_score_rule = ?,
+          unattempted_score_rule = ?,
+          is_active = ?,
+          description = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      normLevel,
+      paperNumber !== undefined ? paperNumber : existing.paper_number,
+      effectivePaperName,
+      attempt !== undefined ? attempt : existing.attempt,
+      syllabusVersion !== undefined ? syllabusVersion : existing.syllabus_version,
+      penaltyNum,
+      correctScoreRule || existing.correct_score_rule,
+      unattemptedScoreRule || existing.unattempted_score_rule,
+      activeInt,
+      description !== undefined ? description : existing.description,
+      id
+    );
+
+    return res.json({ success: true, message: 'MCQ scoring rule updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update MCQ scoring rule error:', error);
+    return res.status(500).json({ error: 'Failed to update MCQ scoring rule' });
+  }
+});
+
+router.delete('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM mcq_scoring_rules WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'MCQ scoring rule not found' });
+    }
+
+    db.prepare('DELETE FROM mcq_scoring_rules WHERE id = ?').run(id);
+
+    return res.json({ success: true, message: 'MCQ scoring rule deleted successfully' });
+  } catch (error: unknown) {
+    console.error('Delete MCQ scoring rule error:', error);
+    return res.status(500).json({ error: 'Failed to delete MCQ scoring rule' });
+  }
+});
+
+router.post('/mcq-scoring-rules/reset-defaults', (req: AuthRequest, res: Response) => {
+  try {
+    resetDefaultMcqRules();
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      'RESET_MCQ_SCORING_RULES',
+      'mcq_scoring_rules',
+      'Reset all MCQ scoring rules to official ICAI default configuration'
+    );
+
+    const rules = getAllMcqRules();
+    return res.json({ success: true, message: 'MCQ scoring rules reset to official ICAI default configuration', rules });
+  } catch (error: unknown) {
+    console.error('Reset MCQ scoring rules error:', error);
+    return res.status(500).json({ error: 'Failed to reset MCQ scoring rules' });
   }
 });
 

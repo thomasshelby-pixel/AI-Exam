@@ -166,6 +166,31 @@ export interface EvaluationResult {
   latencyMs?: number;
   fallbackOccurred?: boolean;
   fallbackReason?: string;
+  mcqScoringRuleApplied?: {
+    ruleId: string;
+    level: string;
+    paper: string;
+    attempt: string;
+    syllabusVersion: string;
+    wrongPenalty: number;
+    description?: string;
+  };
+}
+
+export interface McqScoringRule {
+  id: string;
+  courseLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
+  paperNumber: string;
+  paperName: string;
+  attempt: string;
+  syllabusVersion: string;
+  wrongPenalty: number;
+  correctScoreRule: string;
+  unattemptedScoreRule: string;
+  isActive: boolean;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ExamAttempt {
