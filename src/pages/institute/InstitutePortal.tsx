@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
 import {
   Building2,
   LayoutDashboard,
@@ -21,12 +22,16 @@ import {
   AlertCircle,
   CheckCircle2,
   Trash2,
+  UserMinus,
   Lock,
   ChevronRight,
   Clock,
   ExternalLink,
   Edit3,
   LogOut,
+  BookOpen,
+  Upload,
+  Download,
 } from 'lucide-react';
 
 export const InstitutePortal: React.FC = () => {
@@ -62,7 +67,9 @@ export const InstitutePortal: React.FC = () => {
   // Students
   const [studentsList, setStudentsList] = useState<any[]>([]);
   const [studentSearch, setStudentSearch] = useState<string>('');
+  const [batchFilter, setBatchFilter] = useState<string>('');
   const [selectedStudentDetail, setSelectedStudentDetail] = useState<any>(null);
+  const [detailBatchId, setDetailBatchId] = useState<string>('');
   const [showAddStudentModal, setShowAddStudentModal] = useState<boolean>(false);
   const [newStudentForm, setNewStudentForm] = useState({
     fullName: '',
@@ -97,6 +104,27 @@ export const InstitutePortal: React.FC = () => {
     deadline: '',
     batchId: '',
   });
+
+  // Materials Management (Institute-specific question papers & suggested answers)
+  const [materialsList, setMaterialsList] = useState<any[]>([]);
+  const [showUploadMaterialModal, setShowUploadMaterialModal] = useState<boolean>(false);
+  const [materialForm, setMaterialForm] = useState({
+    title: '',
+    level: 'INTERMEDIATE',
+    subjectKey: 'inter_advanced_accounting',
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    materialType: 'TEST_SERIES',
+    questionPaperText: '',
+    suggestedAnswersText: '',
+    markingSchemeText: '',
+  });
+
+  // Bulk Student Import
+  const [showBulkImportModal, setShowBulkImportModal] = useState<boolean>(false);
+  const [bulkCsvText, setBulkCsvText] = useState<string>('');
+  const [bulkBatchId, setBulkBatchId] = useState<string>('');
+  const [isBulkImporting, setIsBulkImporting] = useState<boolean>(false);
 
   // Evaluations, Results, Analytics
   const [evaluationsList, setEvaluationsList] = useState<any[]>([]);
@@ -138,8 +166,13 @@ export const InstitutePortal: React.FC = () => {
           if (subId) {
             const detailRes = await apiRequest<any>(`/api/institute/students/${subId}`);
             setSelectedStudentDetail(detailRes);
+            setDetailBatchId(detailRes?.membership?.batch_id || '');
           } else {
-            const res = await apiRequest<{ students: any[] }>(`/api/institute/students?search=${encodeURIComponent(studentSearch)}`);
+            let url = `/api/institute/students?search=${encodeURIComponent(studentSearch)}`;
+            if (batchFilter) {
+              url += `&batchId=${encodeURIComponent(batchFilter)}`;
+            }
+            const res = await apiRequest<{ students: any[] }>(url);
             setStudentsList(res.students || []);
           }
           const batchRes = await apiRequest<{ batches: any[] }>('/api/institute/batches');
@@ -163,6 +196,11 @@ export const InstitutePortal: React.FC = () => {
           setTestsList(res.tests || []);
           const bRes = await apiRequest<{ batches: any[] }>('/api/institute/batches');
           setBatchesList(bRes.batches || []);
+          break;
+        }
+        case 'materials': {
+          const res = await apiRequest<{ materials: any[] }>('/api/institute/materials');
+          setMaterialsList(res.materials || []);
           break;
         }
         case 'evaluations': {
@@ -278,6 +316,161 @@ export const InstitutePortal: React.FC = () => {
     }
   };
 
+  // Assign or Update Student Batch
+  const handleAssignStudentBatch = async (studentId: string, batchId: string | null) => {
+    try {
+      await apiRequest(`/api/institute/students/${studentId}/batch`, {
+        method: 'PUT',
+        body: JSON.stringify({ batchId: batchId || null }),
+      });
+      setSuccessMsg(batchId ? 'Student batch updated successfully.' : 'Student removed from batch.');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update student batch');
+    }
+  };
+
+  // Remove Student from Institute
+  const handleRemoveStudentFromInstitute = async (studentId: string, studentName?: string) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to remove ${studentName || 'this student'} from your institute?\n\n` +
+      `Note: The student account and all their evaluation history will NOT be deleted. Only their enrollment with your institute will be severed.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await apiRequest(`/api/institute/students/${studentId}`, {
+        method: 'DELETE',
+      });
+      setSuccessMsg('Student successfully removed from institute.');
+      if (subId) {
+        navigate('/institute/students');
+      } else {
+        loadSectionData();
+      }
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to remove student');
+    }
+  };
+
+  // Delete Batch
+  const handleDeleteBatch = async (batchId: string, batchName?: string) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete batch "${batchName || 'this batch'}"?\n\n` +
+      `Students assigned to this batch will remain enrolled in your institute but their batch will become unassigned.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await apiRequest(`/api/institute/batches/${batchId}`, {
+        method: 'DELETE',
+      });
+      setSuccessMsg('Batch deleted successfully.');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to delete batch');
+    }
+  };
+
+  // Bulk Student Import
+  const handleBulkImportStudents = async () => {
+    if (!bulkCsvText.trim()) {
+      setErrorMsg('Please provide student CSV records.');
+      return;
+    }
+
+    const lines = bulkCsvText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const students: any[] = [];
+
+    for (const line of lines) {
+      if (line.toLowerCase().startsWith('name') || line.toLowerCase().startsWith('full name') || line.toLowerCase().startsWith('email')) {
+        continue;
+      }
+      const cols = line.split(',').map((c) => c.trim().replace(/^["']|["']$/g, ''));
+      if (cols.length >= 2 && cols[1].includes('@')) {
+        students.push({
+          fullName: cols[0],
+          email: cols[1],
+          phone: cols[2] || '',
+          icaiRegistrationNumber: cols[3] || '',
+          caLevel: cols[4] || 'INTERMEDIATE',
+          batchId: bulkBatchId || undefined,
+        });
+      }
+    }
+
+    if (students.length === 0) {
+      setErrorMsg('No valid student entries found. Expected format: Full Name, Email, Phone, ICAI Reg, Level');
+      return;
+    }
+
+    setIsBulkImporting(true);
+    setErrorMsg('');
+    try {
+      const res = await apiRequest<{ success: boolean; enrolledCount: number; pendingCount: number; message: string }>(
+        '/api/institute/students/bulk',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            batchId: bulkBatchId || null,
+            students,
+          }),
+        }
+      );
+      setShowBulkImportModal(false);
+      setBulkCsvText('');
+      setBulkBatchId('');
+      setSuccessMsg(res.message || `Successfully processed ${res.enrolledCount} enrolled students.`);
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to import students');
+    } finally {
+      setIsBulkImporting(false);
+    }
+  };
+
+  // Upload Material
+  const handleUploadMaterial = async () => {
+    if (!materialForm.title || !materialForm.questionPaperText || !materialForm.suggestedAnswersText) {
+      setErrorMsg('Please enter Material Title, Question Paper text, and Suggested Answers text.');
+      return;
+    }
+    try {
+      await apiRequest('/api/institute/materials', {
+        method: 'POST',
+        body: JSON.stringify(materialForm),
+      });
+      setShowUploadMaterialModal(false);
+      setMaterialForm({
+        title: '',
+        level: 'INTERMEDIATE',
+        subjectKey: 'inter_advanced_accounting',
+        subjectName: 'Advanced Accounting',
+        paper: 'Paper 1',
+        materialType: 'TEST_SERIES',
+        questionPaperText: '',
+        suggestedAnswersText: '',
+        markingSchemeText: '',
+      });
+      setSuccessMsg('Institute study material uploaded successfully.');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to upload material');
+    }
+  };
+
+  // Delete Material
+  const handleDeleteMaterial = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this study material?')) return;
+    try {
+      await apiRequest(`/api/institute/materials/${id}`, { method: 'DELETE' });
+      setSuccessMsg('Study material deleted successfully.');
+      loadSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to delete material');
+    }
+  };
+
   // Create Scheduled Test
   const handleCreateTest = async () => {
     if (!newTestForm.title || !newTestForm.deadline) {
@@ -371,6 +564,7 @@ export const InstitutePortal: React.FC = () => {
     { id: 'batches', label: 'Batches', icon: Layers },
     { id: 'assignments', label: 'Assignments', icon: FileText },
     { id: 'tests', label: 'Tests / Mock Tests', icon: Clock },
+    { id: 'materials', label: 'Study Materials', icon: BookOpen },
     { id: 'evaluations', label: 'Evaluations', icon: FileCheck2 },
     { id: 'results', label: 'Results & Rankings', icon: Award },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -656,7 +850,7 @@ export const InstitutePortal: React.FC = () => {
               {activeSection === 'students' && !subId && (
                 <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
                   <div className="flex flex-col sm:flex-row gap-3 items-center justify-between mb-5">
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                       <div className="relative w-full sm:w-64">
                         <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                         <input
@@ -668,14 +862,46 @@ export const InstitutePortal: React.FC = () => {
                           className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none"
                         />
                       </div>
+                      <select
+                        value={batchFilter}
+                        onChange={(e) => {
+                          setBatchFilter(e.target.value);
+                          // will reload on next render or via loadSectionData
+                        }}
+                        className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none text-slate-700"
+                      >
+                        <option value="">All Batches</option>
+                        {batchesList.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} ({b.course_level})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={loadSectionData}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1"
+                        title="Apply filter"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Filter</span>
+                      </button>
                     </div>
-                    <button
-                      onClick={() => setShowAddStudentModal(true)}
-                      className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Enroll Student
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowBulkImportModal(true)}
+                        className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-slate-500" />
+                        Bulk Import CSV
+                      </button>
+                      <button
+                        onClick={() => setShowAddStudentModal(true)}
+                        className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Enroll Student
+                      </button>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -692,35 +918,58 @@ export const InstitutePortal: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {studentsList.map((st) => (
-                          <tr key={st.id} className="hover:bg-slate-50/80">
-                            <td className="py-2.5 px-3">
-                              <p className="font-bold text-slate-900">{st.full_name}</p>
-                              <p className="text-[11px] text-slate-400">{st.email}</p>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono">{st.icai_registration_number || 'N/A'}</td>
-                            <td className="py-2.5 px-3">{st.batch_name || 'Unassigned'}</td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                st.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'
-                              }`}>
-                                {st.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono font-bold">{st.evaluations_count || 0}</td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-indigo-600">
-                              {st.average_percentage !== null ? `${Math.round(st.average_percentage)}%` : '—'}
-                            </td>
-                            <td className="py-2.5 px-3 text-right">
-                              <button
-                                onClick={() => navigate(`/institute/students/${st.id}`)}
-                                className="px-2 py-1 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                              >
-                                View Performance
-                              </button>
+                        {studentsList.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-8 text-center text-slate-400 italic">
+                              No enrolled students match your search criteria.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          studentsList.map((st) => (
+                            <tr key={st.id} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3">
+                                <p className="font-bold text-slate-900">{st.full_name}</p>
+                                <p className="text-[11px] text-slate-400">{st.email}</p>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono">{st.icai_registration_number || 'N/A'}</td>
+                              <td className="py-2.5 px-3">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium ${
+                                  st.batch_name ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-400 italic'
+                                }`}>
+                                  {st.batch_name || 'Unassigned'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  st.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {st.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold">{st.evaluations_count || 0}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-indigo-600">
+                                {st.average_percentage !== null ? `${Math.round(st.average_percentage)}%` : '—'}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => navigate(`/institute/students/${st.id}`)}
+                                    className="px-2 py-1 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                                  >
+                                    View Performance
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemoveStudentFromInstitute(st.id, st.full_name)}
+                                    className="p-1 rounded text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200"
+                                    title="Remove from Institute"
+                                  >
+                                    <UserMinus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -740,37 +989,105 @@ export const InstitutePortal: React.FC = () => {
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                    <div className="flex items-start justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                       <div>
-                        <h3 className="text-base font-bold text-slate-900">{selectedStudentDetail.student?.full_name}</h3>
-                        <p className="text-xs text-slate-500">{selectedStudentDetail.student?.email} • {selectedStudentDetail.student?.phone || 'No phone'}</p>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-bold text-slate-900">{selectedStudentDetail.student?.full_name}</h3>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {selectedStudentDetail.membership?.status || 'ACTIVE'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">{selectedStudentDetail.student?.email} • {selectedStudentDetail.student?.phone || 'No phone recorded'}</p>
                         <p className="text-xs text-slate-600 mt-2 font-mono">
-                          ICAI Reg: {selectedStudentDetail.student?.icai_registration_number || 'N/A'} • Level: {selectedStudentDetail.student?.ca_level}
+                          ICAI Reg: {selectedStudentDetail.student?.icai_registration_number || 'N/A'} • CA Level: {selectedStudentDetail.student?.ca_level || 'N/A'}
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Enrolled on: {new Date(selectedStudentDetail.membership?.joined_at || selectedStudentDetail.student?.created_at).toLocaleDateString()}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <span className="px-2 py-1 rounded text-xs font-bold bg-indigo-50 text-indigo-700">
+                      <div className="text-right flex flex-col items-end gap-2">
+                        <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
                           Batch: {selectedStudentDetail.membership?.batch_name || 'Unassigned'}
                         </span>
                       </div>
+                    </div>
+
+                    {/* Batch Management & Assignment */}
+                    <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/70 p-3.5 rounded-xl border">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-indigo-600" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">Batch Assignment</p>
+                          <p className="text-[11px] text-slate-500">Assign this student to a cohort or change their batch</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={detailBatchId}
+                          onChange={(e) => setDetailBatchId(e.target.value)}
+                          className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none"
+                        >
+                          <option value="">-- No Batch (Unassigned) --</option>
+                          {batchesList.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name} ({b.course_level})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => handleAssignStudentBatch(selectedStudentDetail.student.id, detailBatchId)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold"
+                        >
+                          Save Batch
+                        </button>
+                        {selectedStudentDetail.membership?.batch_id && (
+                          <button
+                            onClick={() => handleAssignStudentBatch(selectedStudentDetail.student.id, null)}
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                          >
+                            Unassign
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Institute Removal Action */}
+                    <div className="mt-4 p-3.5 rounded-xl border border-rose-100 bg-rose-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div>
+                        <p className="font-bold text-rose-900">Institute Enrollment Access</p>
+                        <p className="text-[11px] text-rose-700/80">
+                          Removing will end this student's affiliation and access to your tests. Their user account and past evaluation records will NOT be deleted.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveStudentFromInstitute(selectedStudentDetail.student.id, selectedStudentDetail.student.full_name)}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0"
+                      >
+                        <UserMinus className="w-3.5 h-3.5" />
+                        Remove from Institute
+                      </button>
                     </div>
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
                     <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4">Evaluation History</h4>
                     <div className="space-y-3">
-                      {selectedStudentDetail.evaluations?.map((ev: any) => (
-                        <div key={ev.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
-                          <div>
-                            <p className="font-bold text-slate-800">{ev.subject_name}</p>
-                            <p className="text-[10px] text-slate-400">{new Date(ev.created_at).toLocaleDateString()}</p>
+                      {(!selectedStudentDetail.evaluations || selectedStudentDetail.evaluations.length === 0) ? (
+                        <p className="text-xs text-slate-400 italic py-3">No evaluations submitted yet by this student.</p>
+                      ) : (
+                        selectedStudentDetail.evaluations.map((ev: any) => (
+                          <div key={ev.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
+                            <div>
+                              <p className="font-bold text-slate-800">{ev.subject_name}</p>
+                              <p className="text-[10px] text-slate-400">{new Date(ev.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-mono font-bold text-indigo-600">{ev.total_marks}/{ev.maximum_marks} ({ev.percentage}%)</span>
+                              <p className="text-[10px] text-slate-500">Grade: {ev.grade || 'Pass'}</p>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="font-mono font-bold text-indigo-600">{ev.total_marks}/{ev.maximum_marks} ({ev.percentage}%)</span>
-                            <p className="text-[10px] text-slate-500">Grade: {ev.grade || 'Pass'}</p>
-                          </div>
-                        </div>
-                      ))}
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
@@ -794,21 +1111,50 @@ export const InstitutePortal: React.FC = () => {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {batchesList.map((b) => (
-                      <div key={b.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 shadow-xs">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-bold text-xs text-slate-900">{b.name}</h4>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700">
-                            {b.course_level}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mb-3">{b.description || 'Target: ' + b.target_attempt}</p>
-                        <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-200">
-                          <span className="font-mono text-slate-600 font-bold">{b.student_count || 0} Students</span>
-                          <span className="text-[10px] text-slate-400">Target: {b.target_attempt}</span>
-                        </div>
+                    {batchesList.length === 0 ? (
+                      <div className="col-span-full py-8 text-center text-slate-400 italic">
+                        No batches created yet. Click "Create New Batch" to get started.
                       </div>
-                    ))}
+                    ) : (
+                      batchesList.map((b) => (
+                        <div key={b.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 shadow-xs flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="font-bold text-xs text-slate-900">{b.name}</h4>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700">
+                                {b.course_level}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mb-3">{b.description || 'Target Attempt: ' + b.target_attempt}</p>
+                          </div>
+                          
+                          <div className="pt-3 border-t border-slate-200 space-y-2.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-mono text-slate-700 font-bold">{b.student_count || 0} Students</span>
+                              <span className="text-[10px] text-slate-500">Target: {b.target_attempt || 'May 2026'}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-1 gap-2">
+                              <button
+                                onClick={() => {
+                                  setBatchFilter(b.id);
+                                  navigate('/institute/students');
+                                }}
+                                className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 text-indigo-700 rounded text-[11px] font-semibold flex-1 text-center"
+                              >
+                                View Students
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBatch(b.id, b.name)}
+                                className="p-1 text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded"
+                                title="Delete Batch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               )}
@@ -880,6 +1226,74 @@ export const InstitutePortal: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* 6b. MATERIALS (Institute-Specific Ground Truth Materials) */}
+              {activeSection === 'materials' && (
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-indigo-600" />
+                        Institute Test Series & Answer Ground Truth Materials
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Upload your academy's question papers, suggested answers, and marking rubrics for proprietary step-evaluation
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowUploadMaterialModal(true)}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Upload Material
+                    </button>
+                  </div>
+
+                  {materialsList.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs">
+                      <BookOpen className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                      <p className="font-semibold text-slate-600">No institute materials uploaded yet</p>
+                      <p className="text-[11px] mt-1">Add your test papers and suggested solutions to grade student submissions against them.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {materialsList.map((mat) => (
+                        <div key={mat.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700">
+                                  {mat.level}
+                                </span>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700">
+                                  {mat.material_type}
+                                </span>
+                              </div>
+                              <h4 className="font-bold text-slate-900 text-sm mt-1.5">{mat.title}</h4>
+                              <p className="text-xs text-slate-500">{mat.subject_name} • {mat.paper || 'Paper 1'}</p>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteMaterial(mat.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
+                              title="Delete Material"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-[11px] text-slate-500 pt-2 border-t border-slate-200/60">
+                            <span>QP Length: <strong className="text-slate-700">{mat.qp_len || 0} chars</strong></span>
+                            <span>Model Answer: <strong className="text-slate-700">{mat.sa_len || 0} chars</strong></span>
+                            <span className="ml-auto text-[10px] text-slate-400">
+                              {new Date(mat.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -994,39 +1408,16 @@ export const InstitutePortal: React.FC = () => {
 
               {/* 10. SUBSCRIPTION */}
               {activeSection === 'subscription' && subscriptionData && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl">
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Institutional Plan & Student Quota</h3>
-                  <p className="text-xs text-slate-500 mb-4">License details managed by Super Admin</p>
-
-                  <div className="space-y-3 text-xs border-t border-slate-100 pt-3">
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Plan Type</span>
-                      <span className="font-mono font-bold text-indigo-700">{subscriptionData.plan}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Account Status</span>
-                      <span className="font-mono font-bold text-emerald-600">{subscriptionData.status}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Enrolled Students</span>
-                      <span className="font-mono font-bold text-slate-800">{subscriptionData.activeStudents}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Maximum Student Seat Quota</span>
-                      <span className="font-mono font-bold text-slate-800">{subscriptionData.maxStudents}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Remaining Seats</span>
-                      <span className="font-mono font-bold text-indigo-600">{subscriptionData.remainingSeats}</span>
-                    </div>
-                    <div className="flex justify-between py-1.5 border-b border-slate-50">
-                      <span className="text-slate-500">Expiration</span>
-                      <span className="font-mono font-bold text-slate-700">
-                        {subscriptionData.expiresAt ? new Date(subscriptionData.expiresAt).toLocaleDateString() : 'Active Partner License'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                <InstituteSubscriptionManager
+                  data={subscriptionData}
+                  onRefresh={async () => {
+                    await loadSectionData();
+                  }}
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                />
               )}
 
               {/* 11. NOTIFICATIONS */}
@@ -1324,15 +1715,198 @@ export const InstitutePortal: React.FC = () => {
               <div className="flex gap-2 justify-end pt-2">
                 <button
                   onClick={() => setShowCreateTestModal(false)}
-                  className="px-3 py-1.5 rounded border border-slate-200 text-slate-600 font-semibold"
+                  className="px-3 py-1.5 rounded border border-slate-200 text-slate-600 font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCreateTest}
-                  className="px-3 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
+                  className="px-3 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700 cursor-pointer"
                 >
                   Schedule Test
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Material Modal */}
+      {showUploadMaterialModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 shadow-xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-sm font-bold text-slate-900 mb-1">Upload Institute Test Material</h3>
+            <p className="text-xs text-slate-500 mb-4">Add question paper and suggested answers for automated AI grading</p>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Course Level</label>
+                  <select
+                    value={materialForm.level}
+                    onChange={(e) => setMaterialForm({ ...materialForm, level: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                  >
+                    <option value="FOUNDATION">Foundation</option>
+                    <option value="INTERMEDIATE">Intermediate</option>
+                    <option value="FINAL">Final</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Material Type</label>
+                  <select
+                    value={materialForm.materialType}
+                    onChange={(e) => setMaterialForm({ ...materialForm, materialType: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                  >
+                    <option value="TEST_SERIES">Test Series</option>
+                    <option value="MOCK_EXAM">Mock Exam Paper</option>
+                    <option value="CHAPTER_TEST">Chapter Test</option>
+                    <option value="REVISION_NOTES">Revision Notes</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Material Title</label>
+                <input
+                  type="text"
+                  placeholder="e.g. ICAI Advanced Accounting Test Series - Paper 1"
+                  value={materialForm.title}
+                  onChange={(e) => setMaterialForm({ ...materialForm, title: e.target.value })}
+                  className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Subject</label>
+                  <select
+                    value={materialForm.subjectKey}
+                    onChange={(e) => {
+                      const opt = e.target.selectedOptions[0]?.text;
+                      setMaterialForm({ ...materialForm, subjectKey: e.target.value, subjectName: opt || e.target.value });
+                    }}
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                  >
+                    <option value="inter_advanced_accounting">Advanced Accounting</option>
+                    <option value="inter_law">Corporate and Other Laws</option>
+                    <option value="inter_taxation">Taxation</option>
+                    <option value="inter_costing">Cost & Management Accounting</option>
+                    <option value="inter_audit">Auditing & Ethics</option>
+                    <option value="inter_fmsm">FM & SM</option>
+                    <option value="final_fr">Financial Reporting (Final)</option>
+                    <option value="final_afm">Advanced Financial Management (Final)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Paper Label</label>
+                  <input
+                    type="text"
+                    value={materialForm.paper}
+                    onChange={(e) => setMaterialForm({ ...materialForm, paper: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Question Paper Text</label>
+                <textarea
+                  rows={4}
+                  placeholder="Paste question paper text with problem statements..."
+                  value={materialForm.questionPaperText}
+                  onChange={(e) => setMaterialForm({ ...materialForm, questionPaperText: e.target.value })}
+                  className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50 font-mono text-[11px]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Suggested Answers & Working Notes</label>
+                <textarea
+                  rows={4}
+                  placeholder="Paste suggested answers, journal entries, working notes..."
+                  value={materialForm.suggestedAnswersText}
+                  onChange={(e) => setMaterialForm({ ...materialForm, suggestedAnswersText: e.target.value })}
+                  className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50 font-mono text-[11px]"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowUploadMaterialModal(false)}
+                  className="px-3 py-1.5 rounded border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUploadMaterial}
+                  className="px-4 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700 cursor-pointer"
+                >
+                  Upload Material
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Import Students Modal */}
+      {showBulkImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 shadow-xl text-slate-800">
+            <h3 className="text-sm font-bold text-slate-900 mb-1">Bulk Import Students (CSV)</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Enroll multiple students in one operation. Existing accounts will be linked immediately; new emails will receive pending invitations.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Assign to Batch (Optional)</label>
+                <select
+                  value={bulkBatchId}
+                  onChange={(e) => setBulkBatchId(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
+                >
+                  <option value="">-- No specific batch --</option>
+                  {batchesList.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.course_level})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Student Data (CSV Format: Full Name, Email, Phone, ICAI Reg, Level)
+                </label>
+                <textarea
+                  rows={6}
+                  placeholder={`Rohan Sharma, rohan@example.com, 9876543210, WRO0123456, INTERMEDIATE\nPriya Mehta, priya@example.com, 9876543211, CRO0987654, FINAL`}
+                  value={bulkCsvText}
+                  onChange={(e) => setBulkCsvText(e.target.value)}
+                  className="w-full px-3 py-2 rounded border border-slate-200 bg-slate-50 font-mono text-[11px] leading-relaxed"
+                />
+              </div>
+
+              <div className="p-2.5 rounded bg-indigo-50/60 border border-indigo-100 text-[11px] text-indigo-900">
+                Each enrolled student receives 100% sponsored, unlimited evaluations under your institute's active subscription.
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowBulkImportModal(false)}
+                  className="px-3 py-1.5 rounded border border-slate-200 text-slate-600 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleBulkImportStudents}
+                  disabled={isBulkImporting}
+                  className="px-4 py-1.5 rounded bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60 cursor-pointer"
+                >
+                  {isBulkImporting ? 'Importing Students...' : 'Import Students'}
                 </button>
               </div>
             </div>

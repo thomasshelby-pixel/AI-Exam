@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult, QuestionEvaluation } from '../src/types/index.js';
 import { db } from './db.js';
+import { executeModelWithFallback } from './models/modelRegistry.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -24,7 +25,7 @@ export function getAISettings() {
     const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
     return {
       primaryModel: map.EVAL_MODEL_PROVIDER || 'gemini-3.8-flash',
-      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-2.5-flash',
+      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-3.6-flash',
       maxRetries: parseInt(map.EVAL_MAX_RETRIES || '3', 10),
       timeoutSeconds: parseInt(map.EVAL_TIMEOUT_SECONDS || '90', 10),
       confidenceThreshold: parseFloat(map.EVAL_CONFIDENCE_THRESHOLD || '75'),
@@ -36,7 +37,7 @@ export function getAISettings() {
   } catch {
     return {
       primaryModel: 'gemini-3.8-flash',
-      fallbackModel: 'gemini-2.5-flash',
+      fallbackModel: 'gemini-3.6-flash',
       maxRetries: 3,
       timeoutSeconds: 90,
       confidenceThreshold: 75,
@@ -50,7 +51,7 @@ export function getAISettings() {
 
 /**
  * Robust Gemini generation with dynamic database-configured primary model,
- * automatic fallback model (e.g. gemini-2.5-flash) on transient errors (503 / 429),
+ * automatic fallback model (e.g. gemini-3.6-flash) on transient errors (503 / 429),
  * and exponential backoff with random jitter.
  */
 export async function generateContentWithResilience(
@@ -67,7 +68,7 @@ export async function generateContentWithResilience(
 ) {
   const settings = getAISettings();
   const primaryModel = options?.primaryModel || settings.primaryModel || 'gemini-3.8-flash';
-  const fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-2.5-flash';
+  const fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-3.6-flash';
   const maxRetries = options?.maxRetriesPerModel ?? settings.maxRetries ?? 3;
 
   // Build unique sequence of candidate models
@@ -281,17 +282,13 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
   const ai = getGemini();
 
   const isMcqOnly = params.subjectKey.includes('quantitative_aptitude') || params.subjectKey.includes('business_economics');
-  const isInterOrFinal = params.level === 'INTERMEDIATE' || params.level === 'FINAL';
 
-  const mcqInstruction = isInterOrFinal
-    ? `CRITICAL ICAI RULE FOR CA ${params.level}:
-For CA Intermediate and Final MCQs, there is STRICTLY NO NEGATIVE MARKING.
-- Correct MCQ = Assigned Marks (usually 1 or 2 marks)
-- Wrong MCQ = 0 marks (NEVER deduct marks for incorrect MCQs)
-- Unattempted MCQ = 0 marks
-DO NOT penalize wrong MCQs under any circumstances for Intermediate or Final papers.`
-    : `ICAI FOUNDATION MCQ RULE:
-For Foundation Objective papers: Correct = +1 mark, Incorrect = -0.25 marks, Unattempted = 0 marks.`;
+  const mcqInstruction = `CRITICAL MANDATORY ICAI RULE FOR ALL PAPERS & LEVELS (FOUNDATION, INTERMEDIATE, FINAL):
+For all multiple choice questions (MCQs), there is STRICTLY ZERO NEGATIVE MARKING:
+- Correct MCQ = Full assigned marks (e.g. +1 or +2)
+- Wrong / Incorrect MCQ = STRICTLY 0 marks (NEVER deduct any fractional marks like -0.25, -0.5, or -1/4)
+- Unattempted MCQ = STRICTLY 0 marks
+Zero negative marking applies universally without exception. Never award negative marks under any circumstances.`;
 
   const checkingStrictness = params.checkingMode === 'strict'
     ? 'Strict ICAI Head Examiner Standard: Rigorous examination. Require correct statutory section numbers, accounting standard steps, and complete working notes before awarding full marks.'
@@ -343,160 +340,96 @@ EVALUATION MANDATES:
 Return a detailed JSON response strictly adhering to the schema.
 `;
 
-  const response = await generateContentWithResilience(ai, {
-    contents: [
-      {
-        inlineData: {
-          mimeType: params.mimeType === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
-          data: params.fileBase64,
-        },
-      },
-      { text: evaluationPrompt },
-    ],
-    config: {
-      temperature: 0.15,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          overallSummary: {
-            type: Type.STRING,
-            description: 'Comprehensive executive summary of the student performance, examiner remarks, and pass likelihood.',
-          },
-          totalMarks: {
-            type: Type.NUMBER,
-            description: 'Total marks awarded across all attempted questions. Must equal sum of question marks.',
-          },
-          maximumMarks: {
-            type: Type.NUMBER,
-            description: 'Maximum marks available for the paper (usually 100).',
-          },
-          confidenceScore: {
-            type: Type.NUMBER,
-            description: 'Internal evaluation confidence percentage (70 to 100).',
-          },
-          grade: {
-            type: Type.STRING,
-            description: 'Performance grade: Distinction (>=70), Exemption (>=60), Pass (>=40), Fail (<40).',
-          },
-          strengths: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Key conceptual, technical, or presentation strengths demonstrated.',
-          },
-          weaknesses: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Key areas where marks were lost (e.g. missing working notes, wrong sections, calculation slip).',
-          },
-          topicPerformance: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                topic: { type: Type.STRING },
-                marksObtained: { type: Type.NUMBER },
-                maximumMarks: { type: Type.NUMBER },
-                percentage: { type: Type.NUMBER },
-                status: { type: Type.STRING, enum: ['STRONG', 'AVERAGE', 'WEAK'] },
-              },
-              required: ['topic', 'marksObtained', 'maximumMarks', 'status'],
-            },
-          },
-          presentationAnalysis: {
-            type: Type.OBJECT,
-            properties: {
-              score: { type: Type.NUMBER },
-              feedback: { type: Type.STRING },
-              workingNotesQuality: { type: Type.STRING },
-              handwritingLegibility: { type: Type.STRING },
-            },
-            required: ['score', 'feedback', 'workingNotesQuality', 'handwritingLegibility'],
-          },
-          accuracyAnalysis: {
-            type: Type.OBJECT,
-            properties: {
-              calculationAccuracy: { type: Type.STRING },
-              provisionsAccuracy: { type: Type.STRING },
-              methodologyCorrectness: { type: Type.STRING },
-            },
-            required: ['calculationAccuracy', 'provisionsAccuracy', 'methodologyCorrectness'],
-          },
-          recommendations: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: 'Actionable recommendations for improving marks in future ICAI exams.',
-          },
-          questions: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                questionNumber: { type: Type.STRING },
-                subQuestion: { type: Type.STRING },
-                maximumMarks: { type: Type.NUMBER },
-                marksAwarded: { type: Type.NUMBER },
-                marksLost: { type: Type.NUMBER },
-                status: {
-                  type: Type.STRING,
-                  enum: ['correct', 'partially_correct', 'incorrect', 'not_attempted', 'unclear'],
-                },
-                reasonForDeduction: { type: Type.STRING },
-                detailedFeedback: { type: Type.STRING },
-                technicalEvaluation: { type: Type.STRING },
-                validAlternativeRecognition: { type: Type.STRING },
-                consequentialErrorDetected: { type: Type.BOOLEAN },
-                stepMarkingBreakdown: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      step: { type: Type.STRING },
-                      marksAwarded: { type: Type.NUMBER },
-                      maximumMarks: { type: Type.NUMBER },
-                      remarks: { type: Type.STRING },
-                    },
-                    required: ['step', 'marksAwarded', 'maximumMarks', 'remarks'],
-                  },
-                },
-                applicableProvisions: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                },
-                accountingStandardNotes: { type: Type.STRING },
-              },
-              required: [
-                'questionNumber',
-                'maximumMarks',
-                'marksAwarded',
-                'marksLost',
-                'status',
-                'reasonForDeduction',
-                'detailedFeedback',
-              ],
-            },
-          },
-        },
-        required: [
-          'overallSummary',
-          'totalMarks',
-          'maximumMarks',
-          'confidenceScore',
-          'grade',
-          'strengths',
-          'weaknesses',
-          'presentationAnalysis',
-          'accuracyAnalysis',
-          'recommendations',
-          'questions',
-        ],
-      },
+  const schemaFormatInstructions = `
+CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structure:
+{
+  "overallSummary": "Comprehensive executive summary of student performance, examiner remarks, and pass likelihood.",
+  "totalMarks": 0,
+  "maximumMarks": 100,
+  "confidenceScore": 92,
+  "grade": "Pass",
+  "strengths": ["string"],
+  "weaknesses": ["string"],
+  "topicPerformance": [
+    { "topic": "string", "marksObtained": 0, "maximumMarks": 0, "percentage": 0, "status": "STRONG" }
+  ],
+  "presentationAnalysis": {
+    "score": 8,
+    "feedback": "string",
+    "workingNotesQuality": "string",
+    "handwritingLegibility": "string"
+  },
+  "accuracyAnalysis": {
+    "calculationAccuracy": "string",
+    "provisionsAccuracy": "string",
+    "methodologyCorrectness": "string"
+  },
+  "recommendations": ["string"],
+  "questions": [
+    {
+      "questionNumber": "Q1(a)",
+      "subQuestion": "Part A",
+      "maximumMarks": 5,
+      "marksAwarded": 4,
+      "marksLost": 1,
+      "status": "correct",
+      "reasonForDeduction": "string",
+      "detailedFeedback": "string",
+      "technicalEvaluation": "string",
+      "validAlternativeRecognition": "string",
+      "consequentialErrorDetected": false,
+      "stepMarkingBreakdown": [
+        { "step": "Step 1", "marksAwarded": 2, "maximumMarks": 2, "remarks": "Correct calculation" }
+      ],
+      "applicableProvisions": ["Section 44AB"],
+      "accountingStandardNotes": "AS 2 / Ind AS 2"
+    }
+  ]
+}
+`;
+
+  const modelOutput = await executeModelWithFallback({
+    systemPrompt: 'You are an expert Senior CA Examination Evaluator. You evaluate CA student answer sheets with rigorous ICAI step-marking standards, zero negative marking for all MCQs, and return your response in strictly valid JSON format conforming to the requested schema.',
+    userPrompt: `${evaluationPrompt}\n\n${schemaFormatInstructions}`,
+    pdfBase64: params.fileBase64,
+    mimeType: params.mimeType === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
+    context: {
+      level: params.level,
+      subjectKey: params.subjectKey,
+      subjectName: params.subjectName,
+      checkingMode: params.checkingMode,
+      hasCalculationHeavyContent:
+        params.subjectKey.includes('tax') ||
+        params.subjectKey.includes('costing') ||
+        params.subjectKey.includes('accounting') ||
+        params.subjectKey.includes('financial') ||
+        params.subjectKey.includes('quantitative'),
+      isAmbiguousOrComplex: params.level === 'FINAL' || params.checkingMode === 'strict',
     },
   });
 
-  const parsed = JSON.parse(response.text || '{}');
+  let parsed: any = {};
+  try {
+    let clean = modelOutput.rawText.trim();
+    if (clean.startsWith('```json')) {
+      clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (clean.startsWith('```')) {
+      clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+    parsed = JSON.parse(clean);
+  } catch {
+    const firstBrace = modelOutput.rawText.indexOf('{');
+    const lastBrace = modelOutput.rawText.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      try {
+        parsed = JSON.parse(modelOutput.rawText.slice(firstBrace, lastBrace + 1));
+      } catch {
+        parsed = {};
+      }
+    }
+  }
 
-  // Verify and enforce mathematical sum consistency
+  // Verify and enforce mathematical sum consistency & STRICT ZERO NEGATIVE MARKING
   const questions: QuestionEvaluation[] = Array.isArray(parsed.questions) ? parsed.questions : [];
   let calculatedTotal = 0;
 
@@ -504,16 +437,22 @@ Return a detailed JSON response strictly adhering to the schema.
     const maxMarks = Math.max(0, Number(q.maximumMarks) || 0);
     let awarded = Number(q.marksAwarded) || 0;
 
-    // Intermediate & Final MCQ negative marking guard
-    if (isInterOrFinal && (q.questionNumber.toLowerCase().includes('mcq') || q.subQuestion?.toLowerCase().includes('mcq'))) {
-      awarded = Math.max(0, awarded); // Absolutely zero negative marks for Inter/Final MCQs
+    // Strict Universal Zero Negative Marking across ALL levels & papers
+    const isMcqQuestion =
+      isMcqOnly ||
+      (q.questionNumber && q.questionNumber.toLowerCase().includes('mcq')) ||
+      (q.subQuestion && q.subQuestion.toLowerCase().includes('mcq')) ||
+      (q.technicalEvaluation && q.technicalEvaluation.toLowerCase().includes('mcq')) ||
+      (q.detailedFeedback && q.detailedFeedback.toLowerCase().includes('multiple choice'));
+
+    if (isMcqQuestion) {
+      if ((q.status as string) === 'incorrect' || (q.status as string) === 'unattempted' || q.status === 'not_attempted' || awarded < 0) {
+        awarded = 0;
+      }
     }
 
-    // Clamp marks
-    awarded = Math.min(awarded, maxMarks);
-    if (!isMcqOnly && awarded < 0) {
-      awarded = 0;
-    }
+    // Absolute non-negative clamp for all questions - marks can NEVER be below 0
+    awarded = Math.max(0, Math.min(awarded, maxMarks));
 
     q.marksAwarded = Math.round(awarded * 2) / 2; // round to nearest 0.5
     q.marksLost = Math.round(Math.max(0, maxMarks - q.marksAwarded) * 2) / 2;
@@ -565,7 +504,21 @@ Return a detailed JSON response strictly adhering to the schema.
     ],
     questions,
     isMcqPaper: isMcqOnly,
-    modelUsed: (response as any).modelUsed || 'gemini-3.8-flash',
+    modelUsed: modelOutput.modelUsed,
+    modelDisplayName: modelOutput.modelDisplayName,
+    modelProvider: modelOutput.provider,
+    thinkingLevel: modelOutput.thinkingLevel,
+    routingReason: modelOutput.routingReason,
+    originalModel: modelOutput.originalModel,
+    fallbackModel: modelOutput.fallbackModel,
+    retryCount: modelOutput.retryCount,
+    evaluationEngineVersion: '3.8.0-ca',
+    promptTokens: modelOutput.promptTokens,
+    completionTokens: modelOutput.completionTokens,
+    totalTokens: modelOutput.totalTokens,
+    latencyMs: modelOutput.latencyMs,
+    fallbackOccurred: modelOutput.fallbackOccurred,
+    fallbackReason: modelOutput.fallbackReason,
   };
 
   return evaluationResult;

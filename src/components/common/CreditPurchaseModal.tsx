@@ -246,6 +246,10 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
             <span className="text-xs font-bold text-slate-800">Total Amount</span>
             <span className="text-lg font-mono font-bold text-slate-900">₹{priceInINR}</span>
           </div>
+          <div className="pt-1 text-[11px] text-blue-700 bg-blue-50/70 -mx-3.5 -mb-3.5 p-2 rounded-b-lg border-t border-blue-100 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span>Valid for <strong>exactly 3 months</strong> from purchase date. Consumed via First-Expiring, First-Out (FEFO).</span>
+          </div>
         </div>
 
         {/* Security badges */}

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
+import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
 
 const router = Router();
 
@@ -97,13 +98,43 @@ router.get('/users', (req: AuthRequest, res: Response) => {
 router.put('/users/:id/status', (req: AuthRequest, res: Response) => {
   try {
     const userId = req.params.id;
-    const { status } = req.body;
+    const { status, reason, internalNote } = req.body;
 
     if (!['ACTIVE', 'SUSPENDED', 'BLOCKED'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
     db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId);
+
+    if (status === 'SUSPENDED') {
+      // Invalidate all active sessions immediately server-side
+      db.prepare("UPDATE user_sessions SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'ACTIVE'").run(userId);
+
+      const suspensionId = `susp_${crypto.randomBytes(8).toString('hex')}`;
+      const suspReason = reason?.trim() || 'Account suspended by administrator for policy violation.';
+      const suspNote = internalNote?.trim() || '';
+
+      db.prepare(`
+        INSERT INTO account_suspensions (id, user_id, reason, internal_note, suspended_by, status)
+        VALUES (?, ?, ?, ?, ?, 'SUSPENDED')
+      `).run(suspensionId, userId, suspReason, suspNote, req.user!.id);
+
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Account Suspended', ?, 'WARNING')
+      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId, `Your account has been suspended: ${suspReason}. You may submit a formal appeal.`);
+    } else if (status === 'ACTIVE') {
+      db.prepare(`
+        UPDATE account_suspensions
+        SET status = 'REINSTATED', updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND status = 'SUSPENDED'
+      `).run(userId);
+
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Account Reinstated', 'Your account has been reinstated to active status by the administrator.', 'SYSTEM')
+      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+    }
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -112,13 +143,118 @@ router.put('/users/:id/status', (req: AuthRequest, res: Response) => {
       `log_${crypto.randomBytes(8).toString('hex')}`,
       req.user!.id,
       userId,
-      `Changed status to ${status}`
+      `Changed status to ${status}. Reason: ${reason || 'N/A'}`
     );
 
     return res.json({ success: true, message: `User status set to ${status}` });
   } catch (error: unknown) {
     console.error('Update user status error:', error);
     return res.status(500).json({ error: 'Failed to update user status' });
+  }
+});
+
+// Revocation Requests Listing (Admin Portal)
+router.get('/revocation-requests', (req: AuthRequest, res: Response) => {
+  try {
+    const { status } = req.query;
+    let query = `
+      SELECT r.*,
+             u.email as user_email, u.full_name as user_name, u.role as user_role, u.status as user_status,
+             s.reason as suspension_reason, s.internal_note as suspension_note, s.created_at as suspended_at,
+             reviewer.full_name as reviewer_name
+      FROM revocation_requests r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN account_suspensions s ON s.id = r.suspension_id
+      LEFT JOIN users reviewer ON reviewer.id = r.reviewed_by
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (status) {
+      query += ' AND r.status = ?';
+      params.push(status);
+    }
+
+    query += ' ORDER BY r.created_at DESC';
+
+    const requests = db.prepare(query).all(...params);
+    return res.json({ requests });
+  } catch (error: unknown) {
+    console.error('Get revocation requests error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve revocation requests' });
+  }
+});
+
+// Revocation Request Review (Approve or Reject)
+router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response) => {
+  try {
+    const requestId = req.params.id;
+    const { decision, adminReply } = req.body;
+
+    if (!decision || !['APPROVED', 'REJECTED'].includes(decision)) {
+      return res.status(400).json({ error: 'Decision must be either APPROVED or REJECTED' });
+    }
+
+    const request = db.prepare('SELECT * FROM revocation_requests WHERE id = ?').get(requestId) as any;
+    if (!request) {
+      return res.status(404).json({ error: 'Revocation request not found' });
+    }
+
+    const reply = adminReply?.trim() || (decision === 'APPROVED' ? 'Your appeal has been reviewed and accepted. Account access is reinstated.' : 'Your appeal has been reviewed and denied.');
+
+    // Update request
+    db.prepare(`
+      UPDATE revocation_requests
+      SET status = ?,
+          admin_reply = ?,
+          reviewed_by = ?,
+          reviewed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(decision, reply, req.user!.id, requestId);
+
+    if (decision === 'APPROVED') {
+      // Reinstate user
+      db.prepare("UPDATE users SET status = 'ACTIVE' WHERE id = ?").run(request.user_id);
+
+      // Mark suspension as reinstated
+      if (request.suspension_id) {
+        db.prepare("UPDATE account_suspensions SET status = 'REINSTATED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(request.suspension_id);
+      } else {
+        db.prepare("UPDATE account_suspensions SET status = 'REINSTATED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'SUSPENDED'").run(request.user_id);
+      }
+
+      // Notify user
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Account Appeal Approved', ?, 'SYSTEM')
+      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, request.user_id, `Your suspension appeal was approved. Message: ${reply}`);
+    } else {
+      // Notify user of rejection
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Account Appeal Rejected', ?, 'WARNING')
+      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, request.user_id, `Your suspension appeal was reviewed and rejected. Reason: ${reply}`);
+    }
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'REVOCATION_REVIEW', 'USER', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      request.user_id,
+      `Reviewed revocation request ${requestId}: Decision ${decision}. Reply: ${reply}`
+    );
+
+    return res.json({
+      success: true,
+      message: `Revocation appeal has been ${decision.toLowerCase()}.`,
+      decision,
+    });
+  } catch (error: unknown) {
+    console.error('Review revocation request error:', error);
+    return res.status(500).json({ error: 'Failed to process revocation review' });
   }
 });
 
@@ -141,8 +277,18 @@ router.post('/students/:id/adjust-credits', (req: AuthRequest, res: Response) =>
       return res.status(404).json({ error: 'Student profile not found' });
     }
 
-    const newBalance = Math.max(0, profile.purchased_credits + delta);
-    db.prepare('UPDATE student_profiles SET purchased_credits = ? WHERE user_id = ?').run(newBalance, studentId);
+    let newBalance = 0;
+    if (delta > 0) {
+      const lotRes = recordCreditPurchase({
+        userId: studentId,
+        creditsPurchased: delta,
+        purchaseDate: new Date(),
+      });
+      newBalance = lotRes.totalValidCredits;
+    } else {
+      newBalance = Math.max(0, getValidStudentCreditBalance(studentId) + delta);
+      db.prepare('UPDATE student_profiles SET purchased_credits = ? WHERE user_id = ?').run(newBalance, studentId);
+    }
 
     // Ledger record
     db.prepare(`
@@ -773,6 +919,276 @@ router.get('/students', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Admin Action: Suspend User Account
+router.put('/users/:id/suspend', (req: AuthRequest, res: Response) => {
+  try {
+    const { reason, internalNote } = req.body;
+    const targetUserId = req.params.id;
+
+    if (!reason) {
+      return res.status(400).json({ error: 'Reason for suspension is required.' });
+    }
+
+    const targetUser = db.prepare('SELECT id, email, role, status FROM users WHERE id = ?').get(targetUserId) as {
+      id: string;
+      email: string;
+      role: string;
+      status: string;
+    } | undefined;
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (targetUser.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Super Admin accounts cannot be suspended.' });
+    }
+
+    const suspensionId = `susp_${crypto.randomBytes(8).toString('hex')}`;
+
+    // Invalidate all active sessions immediately server-side
+    db.prepare("UPDATE user_sessions SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'ACTIVE'").run(targetUserId);
+
+    // Mark user as SUSPENDED
+    db.prepare("UPDATE users SET status = 'SUSPENDED' WHERE id = ?").run(targetUserId);
+
+    // Record suspension details
+    db.prepare(`
+      INSERT INTO account_suspensions (id, user_id, reason, internal_note, suspended_by, status)
+      VALUES (?, ?, ?, ?, ?, 'SUSPENDED')
+    `).run(suspensionId, targetUserId, reason.trim(), internalNote?.trim() || null, req.user!.id);
+
+    // Notification to user
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, 'Account Suspended', ?, 'ALERT')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      targetUserId,
+      `Your account has been suspended by the administrator. Reason: ${reason}`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'USER_SUSPENDED', 'USER', ?, ?)
+    `).run(`log_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, targetUserId, `Suspended user ${targetUser.email}. Reason: ${reason}`);
+
+    return res.json({ success: true, message: `User account suspended successfully: ${targetUser.email}` });
+  } catch (error: unknown) {
+    console.error('Suspend user error:', error);
+    return res.status(500).json({ error: 'Failed to suspend user' });
+  }
+});
+
+// Admin Action: Reactivate User Account
+router.put('/users/:id/reactivate', (req: AuthRequest, res: Response) => {
+  try {
+    const targetUserId = req.params.id;
+
+    const targetUser = db.prepare('SELECT id, email, role, status FROM users WHERE id = ?').get(targetUserId) as {
+      id: string;
+      email: string;
+      role: string;
+      status: string;
+    } | undefined;
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Set user to ACTIVE
+    db.prepare("UPDATE users SET status = 'ACTIVE' WHERE id = ?").run(targetUserId);
+
+    // Mark open suspensions as RESOLVED
+    db.prepare("UPDATE account_suspensions SET status = 'RESOLVED' WHERE user_id = ? AND status = 'SUSPENDED'").run(targetUserId);
+
+    // Notification to user
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, 'Account Reactivated', 'Your account has been reactivated. You have full portal access.', 'SYSTEM')
+    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, targetUserId);
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'USER_REACTIVATED', 'USER', ?, ?)
+    `).run(`log_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, targetUserId, `Reactivated account for ${targetUser.email}`);
+
+    return res.json({ success: true, message: `Account reactivated successfully for ${targetUser.email}` });
+  } catch (error: unknown) {
+    console.error('Reactivate user error:', error);
+    return res.status(500).json({ error: 'Failed to reactivate user' });
+  }
+});
+
+// Admin Action: List All Revocation Requests
+router.get('/revocation-requests', (_req: AuthRequest, res: Response) => {
+  try {
+    const requests = db.prepare(`
+      SELECT r.*, u.email as user_email, u.full_name as user_name, u.role as user_role, u.status as user_status,
+             s.reason as suspension_reason, s.created_at as suspended_at
+      FROM revocation_requests r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN account_suspensions s ON s.id = r.suspension_id
+      ORDER BY r.created_at DESC
+    `).all();
+
+    return res.json({ requests });
+  } catch (error: unknown) {
+    console.error('Get revocation requests error:', error);
+    return res.status(500).json({ error: 'Failed to load revocation requests' });
+  }
+});
+
+// Admin Action: Review Revocation Request (Approve or Reject)
+router.put('/revocation-requests/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { action, adminReply } = req.body;
+    const requestId = req.params.id;
+
+    if (action !== 'APPROVE' && action !== 'REJECT') {
+      return res.status(400).json({ error: 'Action must be either APPROVE or REJECT' });
+    }
+
+    const request = db.prepare('SELECT * FROM revocation_requests WHERE id = ?').get(requestId) as {
+      id: string;
+      user_id: string;
+      status: string;
+    } | undefined;
+
+    if (!request) {
+      return res.status(404).json({ error: 'Revocation request not found' });
+    }
+
+    const newStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+
+    db.prepare(`
+      UPDATE revocation_requests
+      SET status = ?, admin_reply = ?, admin_id = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newStatus, adminReply?.trim() || null, req.user!.id, requestId);
+
+    if (action === 'APPROVE') {
+      // Re-enable user account to ACTIVE
+      db.prepare("UPDATE users SET status = 'ACTIVE' WHERE id = ?").run(request.user_id);
+      db.prepare("UPDATE account_suspensions SET status = 'RESOLVED' WHERE user_id = ? AND status = 'SUSPENDED'").run(request.user_id);
+
+      // Notification
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Revocation Appeal Approved', ?, 'SYSTEM')
+      `).run(
+        `notif_${crypto.randomBytes(8).toString('hex')}`,
+        request.user_id,
+        `Your account revocation request has been approved by the administrator. Reason: ${adminReply || 'Account access restored.'}`
+      );
+    } else {
+      // Rejection Notification
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Revocation Appeal Declined', ?, 'ALERT')
+      `).run(
+        `notif_${crypto.randomBytes(8).toString('hex')}`,
+        request.user_id,
+        `Your account revocation request has been declined. Remarks: ${adminReply || 'Policy guidelines violated.'}`
+      );
+    }
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'REVOCATION_DECISION', 'USER', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      request.user_id,
+      `Admin ${action}D revocation appeal ${requestId}. Reply: ${adminReply || 'None'}`
+    );
+
+    return res.json({ success: true, message: `Revocation request has been ${action.toLowerCase()}d.` });
+  } catch (error: unknown) {
+    console.error('Review revocation request error:', error);
+    return res.status(500).json({ error: 'Failed to process revocation request' });
+  }
+});
+
+// Admin Action: Manage 6 Database-Driven Pricing Plans
+router.get('/pricing-plans', (_req: AuthRequest, res: Response) => {
+  try {
+    const rawPlans = db.prepare('SELECT * FROM pricing_plans ORDER BY sort_order ASC').all() as any[];
+    const plans = rawPlans.map((p) => {
+      let benefits: string[] = [];
+      try {
+        benefits = JSON.parse(p.benefits_json);
+      } catch {
+        benefits = [p.benefits_json];
+      }
+      return {
+        ...p,
+        benefits,
+      };
+    });
+    return res.json({ plans });
+  } catch (error: unknown) {
+    console.error('Get admin pricing plans error:', error);
+    return res.status(500).json({ error: 'Failed to load pricing plans' });
+  }
+});
+
+router.put('/pricing-plans/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const { name, billing_period, price_inr, original_price_inr, evaluation_allowance, student_capacity, unlimited_badge, badge, benefits, is_active } = req.body;
+    const planId = req.params.id;
+
+    const existing = db.prepare('SELECT id FROM pricing_plans WHERE id = ?').get(planId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Pricing plan not found' });
+    }
+
+    const benefitsJson = Array.isArray(benefits) ? JSON.stringify(benefits) : JSON.stringify([benefits]);
+
+    db.prepare(`
+      UPDATE pricing_plans SET
+        name = COALESCE(?, name),
+        billing_period = COALESCE(?, billing_period),
+        price_inr = COALESCE(?, price_inr),
+        original_price_inr = ?,
+        evaluation_allowance = COALESCE(?, evaluation_allowance),
+        student_capacity = COALESCE(?, student_capacity),
+        unlimited_badge = COALESCE(?, unlimited_badge),
+        badge = ?,
+        benefits_json = COALESCE(?, benefits_json),
+        is_active = COALESCE(?, is_active),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name || null,
+      billing_period || null,
+      price_inr !== undefined ? price_inr : null,
+      original_price_inr !== undefined ? original_price_inr : null,
+      evaluation_allowance !== undefined ? evaluation_allowance : null,
+      student_capacity !== undefined ? student_capacity : null,
+      unlimited_badge !== undefined ? unlimited_badge : null,
+      badge !== undefined ? badge : null,
+      benefits ? benefitsJson : null,
+      is_active !== undefined ? is_active : null,
+      planId
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'UPDATE_PRICING_PLAN', 'SYSTEM', ?, ?)
+    `).run(`log_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, planId, `Updated pricing plan ${planId}`);
+
+    return res.json({ success: true, message: 'Pricing plan updated successfully' });
+  } catch (error: unknown) {
+    console.error('Update pricing plan error:', error);
+    return res.status(500).json({ error: 'Failed to update pricing plan' });
+  }
+});
+
 // 10. Courses & Syllabus
 router.get('/courses', (req: AuthRequest, res: Response) => {
   try {
@@ -1320,15 +1736,17 @@ router.get('/ai-settings', (req: AuthRequest, res: Response) => {
     return res.json({
       settings: {
         primaryModel: map.EVAL_MODEL_PROVIDER || 'gemini-3.8-flash',
-        fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-2.5-flash',
+        fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-3.6-flash',
         maxRetries: Number(map.EVAL_MAX_RETRIES) || 3,
         strictnessMode: map.EVAL_STRICTNESS_MODE || 'BALANCED',
         confidenceThreshold: Number(map.CONFIDENCE_THRESHOLD) || 85,
         geminiConfigured: !!process.env.GEMINI_API_KEY,
         availableModels: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Recommended - Fastest & ICAI Step-marking Optimized)' },
-          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Ultra-stable High Throughput Fallback)' },
-          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Deep Complex Reasoning & Advanced Cases)' },
+          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Primary CA Evaluation)' },
+          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Secondary Complex & Legal Reasoning)' },
+          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Fast Review & MCQ Evaluator)' },
+          { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Primary Fallback Model)' },
+          { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash (Secondary Fallback Model)' },
         ],
       },
     });
@@ -1486,44 +1904,373 @@ router.delete('/institute-plans/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 24. Referral Campaigns & Redemptions (/admin/referrals)
-router.get('/referrals', (req: AuthRequest, res: Response) => {
+// 24. Promo Code Management & Redemptions (/admin/promo-codes and /admin/referrals)
+router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => {
   try {
-    const campaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all();
+    const rawCampaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all() as any[];
+    const campaigns = rawCampaigns.map(c => {
+      const redemptionsCount = (db.prepare('SELECT COUNT(*) as cnt FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)').get(c.code) as any)?.cnt || 0;
+      const maxRedemptions = c.max_redemptions ?? 20;
+      const remainingSlots = Math.max(0, maxRedemptions - redemptionsCount);
+      
+      let computedStatus = c.status || (c.is_active ? 'ACTIVE' : 'DISABLED');
+      if (computedStatus === 'ACTIVE' && remainingSlots === 0) {
+        computedStatus = 'EXHAUSTED';
+      }
+
+      return {
+        ...c,
+        code: c.code,
+        campaignName: c.campaign_name,
+        description: c.description || c.campaign_name,
+        status: computedStatus,
+        isActive: Boolean(c.is_active),
+        maxRedemptions,
+        successfulRedemptions: redemptionsCount,
+        used_redemptions: redemptionsCount,
+        remainingSlots,
+        remainingRedemptions: remainingSlots,
+        maxEvaluations: c.max_evaluations || 15,
+        benefitDurationDays: c.benefit_duration_days || 30,
+        validity_days: c.benefit_duration_days || 30,
+        discount_type: c.benefit_type || '1_MONTH_FREE_ACCESS',
+        startDate: c.start_date || null,
+        endDate: c.end_date || null,
+        userType: c.user_type || 'ALL',
+        termsNotes: c.terms_notes || '',
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+      };
+    });
+
     const redemptions = db.prepare(`
-      SELECT r.*, u.full_name as user_name
+      SELECT r.*, u.full_name as user_name, u.email as user_email
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       ORDER BY r.redeemed_at DESC
     `).all();
 
-    return res.json({ campaigns, redemptions });
+    return res.json({ success: true, campaigns, redemptions });
   } catch (error: unknown) {
-    console.error('Get referrals error:', error);
-    return res.status(500).json({ error: 'Failed to load referral data' });
+    console.error('Get promo codes error:', error);
+    return res.status(500).json({ error: 'Failed to load promo code data' });
   }
 });
 
-router.put('/referrals/campaigns/:code', (req: AuthRequest, res: Response) => {
+// Create new promo code
+router.post('/promo-codes', (req: AuthRequest, res: Response) => {
   try {
-    const { maxRedemptions, isActive, benefitDurationDays } = req.body;
+    const adminId = req.user!.id;
+    const {
+      code,
+      campaignName,
+      description,
+      status = 'ACTIVE',
+      maxRedemptions = 20,
+      maxEvaluations = 15,
+      benefitDurationDays = 30,
+      startDate,
+      endDate,
+      userType = 'ALL',
+      termsNotes,
+    } = req.body;
+
+    if (!code || typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'Promo code string is required.' });
+    }
+
+    const cleanCode = code.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{2,30}$/.test(cleanCode)) {
+      return res.status(400).json({
+        error: 'Promo code must be 2-30 characters containing only uppercase letters, numbers, hyphens, and underscores.',
+      });
+    }
+
+    // Check uniqueness
+    const existing = db.prepare('SELECT code FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(cleanCode);
+    if (existing) {
+      return res.status(400).json({ error: `Promo code "${cleanCode}" already exists.` });
+    }
+
+    const cleanName = (campaignName || description || `${cleanCode} Promo Offer`).trim();
+    const cleanDesc = (description || campaignName || `${cleanCode} Promotional Offer`).trim();
+    const numMaxRedemptions = Math.max(1, parseInt(maxRedemptions, 10) || 20);
+    const numMaxEvaluations = Math.max(1, parseInt(maxEvaluations, 10) || 15);
+    const numDurationDays = Math.max(1, parseInt(benefitDurationDays, 10) || 30);
+    const isActive = status === 'ACTIVE' ? 1 : 0;
+
     db.prepare(`
-      UPDATE referral_campaigns
-      SET max_redemptions = COALESCE(?, max_redemptions),
-          is_active = COALESCE(?, is_active),
-          benefit_duration_days = COALESCE(?, benefit_duration_days)
-      WHERE code = ?
+      INSERT INTO referral_campaigns (
+        code, campaign_name, description, benefit_type, benefit_duration_days,
+        max_redemptions, max_evaluations, is_active, status, start_date, end_date,
+        user_type, terms_notes, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, '1_MONTH_FREE_ACCESS', ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
     `).run(
-      maxRedemptions !== undefined ? Number(maxRedemptions) : null,
-      isActive !== undefined ? (isActive ? 1 : 0) : null,
-      benefitDurationDays !== undefined ? Number(benefitDurationDays) : null,
-      req.params.code.toUpperCase()
+      cleanCode,
+      cleanName,
+      cleanDesc,
+      numDurationDays,
+      numMaxRedemptions,
+      numMaxEvaluations,
+      isActive,
+      status,
+      startDate ? new Date(startDate).toISOString() : null,
+      endDate ? new Date(endDate).toISOString() : null,
+      userType || 'ALL',
+      termsNotes?.trim() || null
     );
 
-    return res.json({ success: true, message: 'Referral campaign updated successfully' });
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'CREATE_PROMO_CODE', 'PROMO_CODE', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      cleanCode,
+      JSON.stringify({
+        code: cleanCode,
+        campaignName: cleanName,
+        maxRedemptions: numMaxRedemptions,
+        maxEvaluations: numMaxEvaluations,
+        benefitDurationDays: numDurationDays,
+        status,
+        userType,
+      })
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: `Promo code ${cleanCode} created successfully.`,
+      code: cleanCode,
+    });
   } catch (error: unknown) {
-    console.error('Update campaign error:', error);
-    return res.status(500).json({ error: 'Failed to update campaign' });
+    console.error('Create promo code error:', error);
+    return res.status(500).json({ error: 'Failed to create promo code' });
+  }
+});
+
+// Update promo code parameters
+router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const campaignCode = req.params.code.toUpperCase();
+    const {
+      campaignName,
+      description,
+      maxRedemptions,
+      maxEvaluations,
+      benefitDurationDays,
+      status,
+      isActive,
+      startDate,
+      endDate,
+      userType,
+      termsNotes,
+    } = req.body;
+
+    const currentCampaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (!currentCampaign) {
+      return res.status(404).json({ error: 'Promo code not found' });
+    }
+
+    const newStatus = status !== undefined ? status : (isActive !== undefined ? (isActive ? 'ACTIVE' : 'DISABLED') : currentCampaign.status);
+    const newIsActive = newStatus === 'ACTIVE' ? 1 : 0;
+
+    db.prepare(`
+      UPDATE referral_campaigns
+      SET campaign_name = COALESCE(?, campaign_name),
+          description = COALESCE(?, description),
+          max_redemptions = COALESCE(?, max_redemptions),
+          max_evaluations = COALESCE(?, max_evaluations),
+          benefit_duration_days = COALESCE(?, benefit_duration_days),
+          status = COALESCE(?, status),
+          is_active = ?,
+          start_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE start_date END,
+          end_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE end_date END,
+          user_type = COALESCE(?, user_type),
+          terms_notes = COALESCE(?, terms_notes),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE UPPER(code) = UPPER(?)
+    `).run(
+      campaignName?.trim() || null,
+      description?.trim() || null,
+      maxRedemptions !== undefined ? Math.max(1, parseInt(maxRedemptions, 10)) : null,
+      maxEvaluations !== undefined ? Math.max(1, parseInt(maxEvaluations, 10)) : null,
+      benefitDurationDays !== undefined ? Math.max(1, parseInt(benefitDurationDays, 10)) : null,
+      newStatus,
+      newIsActive,
+      startDate, startDate, startDate ? new Date(startDate).toISOString() : null,
+      endDate, endDate, endDate ? new Date(endDate).toISOString() : null,
+      userType || null,
+      termsNotes !== undefined ? termsNotes?.trim() : null,
+      campaignCode
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'UPDATE_PROMO_CODE', 'PROMO_CODE', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      campaignCode,
+      JSON.stringify({
+        previous: {
+          max_redemptions: currentCampaign.max_redemptions,
+          max_evaluations: currentCampaign.max_evaluations,
+          benefit_duration_days: currentCampaign.benefit_duration_days,
+          status: currentCampaign.status,
+          is_active: currentCampaign.is_active,
+        },
+        updated: { maxRedemptions, maxEvaluations, benefitDurationDays, status: newStatus },
+      })
+    );
+
+    return res.json({ success: true, message: `Promo code ${campaignCode} updated successfully.` });
+  } catch (error: unknown) {
+    console.error('Update promo code error:', error);
+    return res.status(500).json({ error: 'Failed to update promo code' });
+  }
+});
+
+// Quick toggle status: ACTIVE / DISABLED / ARCHIVED
+router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const campaignCode = req.params.code.toUpperCase();
+    const { status } = req.body;
+
+    if (!['ACTIVE', 'DISABLED', 'ARCHIVED'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be ACTIVE, DISABLED, or ARCHIVED.' });
+    }
+
+    const currentCampaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (!currentCampaign) {
+      return res.status(404).json({ error: 'Promo code not found' });
+    }
+
+    const isActive = status === 'ACTIVE' ? 1 : 0;
+    db.prepare(`
+      UPDATE referral_campaigns
+      SET status = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE UPPER(code) = UPPER(?)
+    `).run(status, isActive, campaignCode);
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'TOGGLE_PROMO_CODE_STATUS', 'PROMO_CODE', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      campaignCode,
+      JSON.stringify({ previousStatus: currentCampaign.status, newStatus: status })
+    );
+
+    return res.json({ success: true, message: `Promo code ${campaignCode} status set to ${status}.` });
+  } catch (error: unknown) {
+    console.error('Toggle promo code status error:', error);
+    return res.status(500).json({ error: 'Failed to toggle promo code status' });
+  }
+});
+
+// Delete or Archive promo code
+router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const campaignCode = req.params.code.toUpperCase();
+
+    const currentCampaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (!currentCampaign) {
+      return res.status(404).json({ error: 'Promo code not found' });
+    }
+
+    // Check if any redemptions exist
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as total FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)
+    `).get(campaignCode) as { total: number };
+
+    if (countRow.total > 0) {
+      // Historical redemptions exist! Preserve records and archive rather than destructive delete
+      db.prepare(`
+        UPDATE referral_campaigns
+        SET status = 'ARCHIVED', is_active = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE UPPER(code) = UPPER(?)
+      `).run(campaignCode);
+
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'ARCHIVE_PROMO_CODE', 'PROMO_CODE', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        adminId,
+        campaignCode,
+        JSON.stringify({
+          reason: 'Archived because historical redemptions exist',
+          redemptionsCount: countRow.total,
+        })
+      );
+
+      return res.json({
+        success: true,
+        archived: true,
+        message: `Promo code "${campaignCode}" has ${countRow.total} student redemption record(s). It has been safely archived and disabled to preserve historical audit records.`,
+      });
+    }
+
+    // No redemptions exist: safe destructive delete
+    db.prepare('DELETE FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').run(campaignCode);
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'DELETE_PROMO_CODE', 'PROMO_CODE', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      campaignCode,
+      JSON.stringify({ message: 'Promo code deleted with 0 redemptions' })
+    );
+
+    return res.json({
+      success: true,
+      deleted: true,
+      message: `Promo code "${campaignCode}" has been deleted.`,
+    });
+  } catch (error: unknown) {
+    console.error('Delete promo code error:', error);
+    return res.status(500).json({ error: 'Failed to delete promo code' });
+  }
+});
+
+// View redemptions for a specific promo code
+router.get('/promo-codes/:code/redemptions', (req: AuthRequest, res: Response) => {
+  try {
+    const campaignCode = req.params.code.toUpperCase();
+    const redemptions = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE UPPER(r.referral_code) = UPPER(?)
+      ORDER BY r.redeemed_at DESC
+    `).all(campaignCode);
+
+    const campaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode);
+
+    return res.json({
+      success: true,
+      code: campaignCode,
+      campaign,
+      totalRedemptions: redemptions.length,
+      redemptions,
+    });
+  } catch (error: unknown) {
+    console.error('Get promo redemptions error:', error);
+    return res.status(500).json({ error: 'Failed to load promo code redemptions' });
   }
 });
 
@@ -1633,6 +2380,177 @@ router.get('/support', (req: AuthRequest, res: Response, next) => {
 router.put('/support/:id', (req: AuthRequest, res: Response, next) => {
   req.url = `/support-tickets/${req.params.id}`;
   (router as any).handle(req, res, next);
+});
+
+// ==========================================
+// 19. PLUGGABLE AI MODEL ARCHITECTURE & CONTROLS
+// ==========================================
+router.get('/models', (req: AuthRequest, res: Response) => {
+  try {
+    const models = db.prepare(`
+      SELECT * FROM model_configs ORDER BY is_primary DESC, fallback_order ASC, display_name ASC
+    `).all() as any[];
+
+    // Provider environment availability check
+    const geminiKey = process.env.GEMINI_API_KEY || '';
+    const openaiKey = process.env.OPENAI_API_KEY || '';
+    const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
+
+    const providerStatus = {
+      gemini: {
+        configured: Boolean(geminiKey && geminiKey.length > 5),
+        keyMasked: geminiKey ? `${geminiKey.slice(0, 4)}...${geminiKey.slice(-4)}` : 'Not Configured',
+      },
+      openai: {
+        configured: Boolean(openaiKey && openaiKey.length > 5),
+        keyMasked: openaiKey ? `${openaiKey.slice(0, 4)}...${openaiKey.slice(-4)}` : 'Not Configured',
+      },
+      anthropic: {
+        configured: Boolean(anthropicKey && anthropicKey.length > 5),
+        keyMasked: anthropicKey ? `${anthropicKey.slice(0, 4)}...${anthropicKey.slice(-4)}` : 'Not Configured',
+      },
+    };
+
+    return res.json({
+      models,
+      providerStatus,
+    });
+  } catch (error: unknown) {
+    console.error('Get models error:', error);
+    return res.status(500).json({ error: 'Failed to load model configurations' });
+  }
+});
+
+router.put('/models/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const modelId = req.params.id;
+    const { is_primary, fallback_order, is_enabled, role, thinking_level, temperature, top_p, max_tokens, custom_endpoint } = req.body;
+
+    const existing = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'Model configuration not found' });
+    }
+
+    if (is_primary === 1 || is_primary === true) {
+      // Clear other primaries
+      db.prepare('UPDATE model_configs SET is_primary = 0').run();
+      db.prepare('UPDATE model_configs SET is_primary = 1, is_enabled = 1 WHERE id = ?').run(modelId);
+      // Sync with pricing_settings EVAL_MODEL_PROVIDER
+      db.prepare(`
+        INSERT INTO pricing_settings (key, value, updated_at)
+        VALUES ('EVAL_MODEL_PROVIDER', ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(modelId);
+    }
+
+    if (role !== undefined) {
+      db.prepare('UPDATE model_configs SET role = ? WHERE id = ?').run(String(role), modelId);
+    }
+
+    if (thinking_level !== undefined) {
+      db.prepare('UPDATE model_configs SET thinking_level = ? WHERE id = ?').run(String(thinking_level), modelId);
+    }
+
+    if (fallback_order !== undefined) {
+      db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(Number(fallback_order), modelId);
+    }
+
+    if (is_enabled !== undefined && !is_primary) {
+      db.prepare('UPDATE model_configs SET is_enabled = ? WHERE id = ?').run(is_enabled ? 1 : 0, modelId);
+    }
+
+    if (temperature !== undefined) {
+      db.prepare('UPDATE model_configs SET temperature = ? WHERE id = ?').run(Number(temperature), modelId);
+    }
+
+    if (top_p !== undefined) {
+      db.prepare('UPDATE model_configs SET top_p = ? WHERE id = ?').run(Number(top_p), modelId);
+    }
+
+    if (max_tokens !== undefined) {
+      db.prepare('UPDATE model_configs SET max_tokens = ? WHERE id = ?').run(Number(max_tokens), modelId);
+    }
+
+    if (custom_endpoint !== undefined) {
+      db.prepare('UPDATE model_configs SET custom_endpoint = ? WHERE id = ?').run(custom_endpoint || null, modelId);
+    }
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'UPDATE_MODEL_CONFIG', 'AI_MODEL', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      modelId,
+      `Updated model configuration for ${modelId} (Primary: ${Boolean(is_primary)})`
+    );
+
+    const updated = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId);
+    return res.json({ success: true, model: updated });
+  } catch (error: unknown) {
+    console.error('Update model error:', error);
+    return res.status(500).json({ error: 'Failed to update model configuration' });
+  }
+});
+
+router.post('/models/test-connection', async (req: AuthRequest, res: Response) => {
+  try {
+    const { modelId } = req.body;
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' });
+    }
+
+    const { testModelConnection } = await import('../models/modelRegistry.js');
+    const result = await testModelConnection(modelId);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Test model connection error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Connection test failed',
+    });
+  }
+});
+
+router.get('/models/telemetry', (req: AuthRequest, res: Response) => {
+  try {
+    // Aggregated stats from evaluations
+    const providerStats = db.prepare(`
+      SELECT
+        COALESCE(model_provider, 'gemini') as provider,
+        COALESCE(model_used, 'gemini-3.8-flash') as model,
+        COUNT(*) as total_evaluations,
+        SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as successful_evaluations,
+        SUM(CASE WHEN fallback_occurred = 1 THEN 1 ELSE 0 END) as fallback_count,
+        ROUND(AVG(CASE WHEN latency_ms > 0 THEN latency_ms ELSE NULL END), 0) as avg_latency_ms,
+        SUM(COALESCE(prompt_tokens, 0)) as total_prompt_tokens,
+        SUM(COALESCE(completion_tokens, 0)) as total_completion_tokens,
+        SUM(COALESCE(total_tokens, 0)) as total_tokens
+      FROM evaluations
+      WHERE status IN ('COMPLETED', 'FAILED')
+      GROUP BY model_provider, model_used
+      ORDER BY total_evaluations DESC
+    `).all();
+
+    const overallStats = db.prepare(`
+      SELECT
+        COUNT(*) as total_evaluations,
+        SUM(CASE WHEN fallback_occurred = 1 THEN 1 ELSE 0 END) as total_fallbacks,
+        ROUND(AVG(CASE WHEN latency_ms > 0 THEN latency_ms ELSE NULL END), 0) as global_avg_latency_ms,
+        SUM(COALESCE(total_tokens, 0)) as total_tokens_used
+      FROM evaluations
+      WHERE status = 'COMPLETED'
+    `).get();
+
+    return res.json({
+      overallStats,
+      providerStats,
+    });
+  } catch (error: unknown) {
+    console.error('Get model telemetry error:', error);
+    return res.status(500).json({ error: 'Failed to load model telemetry' });
+  }
 });
 
 export default router;

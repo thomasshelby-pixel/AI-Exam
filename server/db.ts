@@ -334,6 +334,86 @@ export function initDatabase() {
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS account_suspensions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      internal_note TEXT,
+      suspended_by TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SUSPENDED',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS revocation_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      suspension_id TEXT,
+      appeal_reason TEXT NOT NULL,
+      explanation TEXT NOT NULL,
+      supporting_info TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      admin_reply TEXT,
+      admin_id TEXT,
+      reviewed_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      device_name TEXT,
+      ip_address TEXT,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
+
+    CREATE TABLE IF NOT EXISTS pricing_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      billing_period TEXT NOT NULL,
+      price_inr INTEGER NOT NULL,
+      original_price_inr INTEGER,
+      evaluation_allowance INTEGER NOT NULL,
+      student_capacity INTEGER NOT NULL DEFAULT 1,
+      unlimited_badge INTEGER NOT NULL DEFAULT 0,
+      badge TEXT,
+      benefits_json TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS student_credit_purchases (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      order_id TEXT,
+      payment_id TEXT,
+      credits_purchased INTEGER NOT NULL,
+      credits_remaining INTEGER NOT NULL,
+      valid_from TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      purchase_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credit_purchases_user_status_expiry
+    ON student_credit_purchases (user_id, status, expires_at);
   `);
 
   runMigrations();
@@ -385,11 +465,58 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'checked_copy_status', "TEXT DEFAULT 'PENDING'");
   addColumnIfNotExists('evaluations', 'original_page_count', 'INTEGER');
   addColumnIfNotExists('evaluations', 'checked_copy_page_count', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'model_provider', "TEXT DEFAULT 'gemini'");
+  addColumnIfNotExists('evaluations', 'prompt_tokens', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'completion_tokens', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'total_tokens', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'latency_ms', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'fallback_occurred', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'fallback_reason', 'TEXT');
+  addColumnIfNotExists('evaluations', 'model_display_name', 'TEXT');
+  addColumnIfNotExists('evaluations', 'thinking_level', 'TEXT');
+  addColumnIfNotExists('evaluations', 'routing_reason', 'TEXT');
+  addColumnIfNotExists('evaluations', 'evaluation_engine_version', "TEXT DEFAULT '3.8.0-ca'");
+  addColumnIfNotExists('evaluations', 'prompt_version', "TEXT DEFAULT 'v2026.1'");
+  addColumnIfNotExists('evaluations', 'reference_material_ids', 'TEXT');
+  addColumnIfNotExists('evaluations', 'model_answer_version', 'TEXT');
+  addColumnIfNotExists('evaluations', 'marking_scheme_version', 'TEXT');
+  addColumnIfNotExists('evaluations', 'retry_count', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'original_model', 'TEXT');
+  addColumnIfNotExists('evaluations', 'fallback_model', 'TEXT');
+  addColumnIfNotExists('evaluations', 'audit_metadata_json', 'TEXT');
+
+  // Ensure model_configs table exists for Super Admin dynamic AI model controls
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS model_configs (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Primary',
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      fallback_order INTEGER NOT NULL DEFAULT 1,
+      thinking_level TEXT NOT NULL DEFAULT 'HIGH',
+      temperature REAL NOT NULL DEFAULT 0.2,
+      top_p REAL NOT NULL DEFAULT 0.95,
+      max_tokens INTEGER NOT NULL DEFAULT 8192,
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'AVAILABLE',
+      last_latency_ms INTEGER DEFAULT 0,
+      last_tested_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  addColumnIfNotExists('model_configs', 'role', "TEXT NOT NULL DEFAULT 'Primary'");
+  addColumnIfNotExists('model_configs', 'thinking_level', "TEXT NOT NULL DEFAULT 'HIGH'");
 
   // Ensure institute_memberships supports email-based invitation and pending state
   addColumnIfNotExists('institute_memberships', 'invited_email', 'TEXT');
   addColumnIfNotExists('institute_memberships', 'student_name', 'TEXT');
   addColumnIfNotExists('institute_memberships', 'notes', 'TEXT');
+
+  // Ensure batches table supports target_attempt, capacity, and status
+  addColumnIfNotExists('batches', 'target_attempt', "TEXT DEFAULT 'May 2026'");
+  addColumnIfNotExists('batches', 'capacity', 'INTEGER DEFAULT 100');
+  addColumnIfNotExists('batches', 'status', "TEXT DEFAULT 'ACTIVE'");
 
   // Ensure institute_materials table exists
   db.exec(`
@@ -445,6 +572,81 @@ function runMigrations() {
   addColumnIfNotExists('support_tickets', 'resolution_note', 'TEXT');
   addColumnIfNotExists('support_tickets', 'resolved_at', 'TEXT');
 
+  // Pricing Plans Category & Capacity Columns
+  addColumnIfNotExists('pricing_plans', 'category', "TEXT NOT NULL DEFAULT 'INSTITUTE'");
+  addColumnIfNotExists('pricing_plans', 'min_students', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('pricing_plans', 'max_students', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('pricing_plans', 'tier_code', 'TEXT');
+  addColumnIfNotExists('pricing_plans', 'is_custom', 'INTEGER DEFAULT 0');
+
+  // Institute Subscriptions & Real Ledger
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS institute_subscriptions (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      plan_id TEXT NOT NULL,
+      billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
+      price_inr INTEGER NOT NULL,
+      student_capacity INTEGER NOT NULL,
+      evaluation_allowance INTEGER NOT NULL,
+      evaluations_used INTEGER NOT NULL DEFAULT 0,
+      evaluations_remaining INTEGER NOT NULL,
+      payment_order_ref TEXT,
+      payment_id TEXT,
+      start_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expiry_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS institute_usage_ledger (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      evaluation_id TEXT,
+      units_deducted INTEGER NOT NULL DEFAULT 1,
+      balance_before INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      action_type TEXT NOT NULL,
+      idempotency_key TEXT UNIQUE,
+      notes TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Institute Materials Enhancements
+  addColumnIfNotExists('institute_materials', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  addColumnIfNotExists('institute_materials', 'parsing_status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  addColumnIfNotExists('institute_materials', 'model_answer_text', 'TEXT');
+  addColumnIfNotExists('institute_materials', 'model_answer_pdf_base64', 'TEXT');
+  addColumnIfNotExists('institute_materials', 'amendments_text', 'TEXT');
+  addColumnIfNotExists('institute_materials', 'amendments_pdf_base64', 'TEXT');
+
+  // Institute Memberships Enhancements
+  addColumnIfNotExists('institute_memberships', 'sponsored_access', 'INTEGER NOT NULL DEFAULT 1');
+  addColumnIfNotExists('institute_memberships', 'removed_at', 'TEXT');
+
+  // Student Subscription Validity (Preserved during suspension/revocation)
+  addColumnIfNotExists('student_profiles', 'subscription_start_date', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'subscription_expiry_date', 'TEXT');
+
+  // Suspension & Revocation Audit Enhancement
+  addColumnIfNotExists('account_suspensions', 'previous_status', "TEXT DEFAULT 'ACTIVE'");
+  addColumnIfNotExists('account_suspensions', 'suspended_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('account_suspensions', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+
+  addColumnIfNotExists('revocation_requests', 'student_name', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'student_email', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'suspension_reason', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'attachments_json', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'admin_decision', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'admin_response', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'reviewed_by', 'TEXT');
+  addColumnIfNotExists('revocation_requests', 'submitted_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+
   // Strict Material Ownership Rule:
   // Identify legacy automatically seeded/demo materials and deactivate them
   // (Mark as UNVERIFIED, admin_approved = 0, remove from ACTIVE evaluation pool)
@@ -459,6 +661,86 @@ function runMigrations() {
   } catch (err) {
     console.warn('Material cleanup warning:', err);
   }
+
+  // Safe Historical Credit Migration & Expiry Calculation
+  try {
+    const unrecordedOrders = db.prepare(`
+      SELECT o.id, o.student_id, o.quantity, o.created_at, t.razorpay_payment_id
+      FROM payment_orders o
+      LEFT JOIN payment_transactions t ON t.order_id = o.id
+      LEFT JOIN student_credit_purchases p ON p.order_id = o.id
+      WHERE o.status = 'SUCCESS' AND p.id IS NULL
+    `).all() as Array<{
+      id: string;
+      student_id: string;
+      quantity: number;
+      created_at: string;
+      razorpay_payment_id: string | null;
+    }>;
+
+    for (const ord of unrecordedOrders) {
+      const pDate = new Date(ord.created_at || new Date().toISOString());
+      const expDate = new Date(pDate.getTime());
+      const targetM = (expDate.getMonth() + 3) % 12;
+      expDate.setMonth(expDate.getMonth() + 3);
+      if (expDate.getMonth() !== targetM) expDate.setDate(0);
+      const isExpired = expDate.getTime() <= Date.now();
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `crd_${Math.random().toString(36).substring(2, 10)}`,
+        ord.student_id,
+        ord.id,
+        ord.razorpay_payment_id || null,
+        ord.quantity,
+        isExpired ? 0 : ord.quantity,
+        pDate.toISOString(),
+        expDate.toISOString(),
+        pDate.toISOString(),
+        isExpired ? 'EXPIRED' : 'ACTIVE',
+        pDate.toISOString()
+      );
+    }
+  } catch (err) {
+    console.warn('Historical credit migration warning:', err);
+  }
+
+  // Student Profiles enhancements (City, preferred subjects, avatar URL)
+  addColumnIfNotExists('student_profiles', 'city', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'preferred_subjects', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'avatar_url', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'updated_at', 'TEXT');
+
+  // Referral campaigns & redemptions tracking enhancements
+  addColumnIfNotExists('referral_campaigns', 'max_evaluations', 'INTEGER NOT NULL DEFAULT 15');
+  addColumnIfNotExists('referral_campaigns', 'description', 'TEXT');
+  addColumnIfNotExists('referral_campaigns', 'status', "TEXT NOT NULL DEFAULT 'ACTIVE'");
+  addColumnIfNotExists('referral_campaigns', 'start_date', 'TEXT');
+  addColumnIfNotExists('referral_campaigns', 'end_date', 'TEXT');
+  addColumnIfNotExists('referral_campaigns', 'user_type', "TEXT NOT NULL DEFAULT 'ALL'");
+  addColumnIfNotExists('referral_campaigns', 'terms_notes', 'TEXT');
+  addColumnIfNotExists('referral_campaigns', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+
+  addColumnIfNotExists('referral_redemptions', 'max_evaluations', 'INTEGER NOT NULL DEFAULT 15');
+  addColumnIfNotExists('referral_redemptions', 'evaluations_used', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('referral_redemptions', 'evaluations_remaining', 'INTEGER NOT NULL DEFAULT 15');
+  addColumnIfNotExists('referral_redemptions', 'audit_note', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+
+  // Unique constraint to prevent duplicate redemptions per user per code
+  try {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_redemptions_code_user 
+      ON referral_redemptions(referral_code, user_id);
+    `);
+  } catch (err) {
+    console.warn('Index creation warning:', err);
+  }
 }
 
 function seedInitialData() {
@@ -469,6 +751,7 @@ function seedInitialData() {
 
   const admins = [
     { id: 'usr_super_admin_001', email: 'admin@caexamchecker.ai', name: 'Super Administrator', role: 'SUPER_ADMIN', hash: superAdminHash },
+    { id: 'usr_super_admin_002', email: 'superadmin@ca-exam-checker.com', name: 'Super Administrator', role: 'SUPER_ADMIN', hash: superAdminHash },
     { id: 'usr_admin_support_002', email: 'caexamchecker.support@gmail.com', name: 'CA Exam Checker Support Admin', role: 'ADMIN', hash: supportAdminHash },
   ];
 
@@ -485,7 +768,14 @@ function seedInitialData() {
         VALUES (?, ?, 'INITIALIZE_SYSTEM', 'USER', ?, ?)
       `).run(`log_init_${adm.id}`, adm.id, adm.id, `Created ${adm.role} account`);
     } else if (adm.role === 'SUPER_ADMIN') {
-      // Keep super admin password hash synchronized with server ADMIN_PASSWORD
+      const curr = db.prepare('SELECT status FROM users WHERE email = ?').get(adm.email) as { status: string } | undefined;
+      if (curr && curr.status !== 'ACTIVE') {
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, 'SUPER_ADMIN_RECOVERY', 'USER', ?, 'Restored primary Super Admin from suspended state to ACTIVE')
+        `).run(`log_rec_${Date.now()}`, adm.id, adm.id);
+      }
+      // Keep super admin password hash synchronized with server ADMIN_PASSWORD & enforce ACTIVE status
       db.prepare(`
         UPDATE users SET password_hash = ?, status = 'ACTIVE' WHERE email = ?
       `).run(adm.hash, adm.email);
@@ -525,10 +815,10 @@ function seedInitialData() {
     { key: 'EVAL_CONFIDENCE_THRESHOLD', value: '75', description: 'Minimum confidence percentage threshold for evaluation audit' },
     { key: 'EVAL_STEP_MARKING_ENABLED', value: 'true', description: 'Enforce question-wise step marking breakdown' },
     { key: 'EVAL_CONSEQUENTIAL_ERROR_ENABLED', value: 'true', description: 'Award subsequent step marks if earlier step has calculation slip' },
-    { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'NONE_FOR_INTER_FINAL', description: 'Zero negative marking for CA Intermediate and Final MCQs' },
+    { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'ZERO_FOR_ALL', description: 'Zero negative marking for all CA MCQs (Foundation, Intermediate, Final)' },
     { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
     { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
-    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-2.5-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
+    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-3.6-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
     { key: 'EVAL_MAX_RETRIES', value: '3', description: 'Maximum retry attempts with exponential backoff for transient Gemini API errors' },
     { key: 'EVAL_TIMEOUT_SECONDS', value: '90', description: 'Maximum request timeout in seconds for AI evaluation call' },
     { key: 'REFERRAL_AI30_MAX_USERS', value: '20', description: 'Maximum eligible referred users cap for promo code AI30' },
@@ -548,6 +838,10 @@ function seedInitialData() {
 
   // 5. Seed Configurable Institute Pricing Plans
   seedInstitutePlans();
+  seedPricingPlans();
+
+  // 5b. Seed Multi-Model Provider AI Configurations
+  seedModelConfigs();
 
   // 6. Seed Referral Campaigns (AI30)
   seedReferralCampaigns();
@@ -598,21 +892,25 @@ function seedExamAttempts() {
 }
 
 function seedInstitutePlans() {
-  const plans = [
+  const institutePlans = [
+    // MONTHLY
     {
-      id: 'plan_inst_starter',
-      name: 'Starter Coaching Academy',
-      price_inr: 4999,
+      id: 'institute-starter-monthly',
+      name: 'Starter',
+      price_inr: 3999,
       billing_period: 'MONTHLY',
-      student_quota: 50,
-      evaluation_credits: 150,
+      student_quota: 2000,
+      evaluation_credits: 2500,
       features_json: JSON.stringify([
-        'Up to 50 enrolled CA students',
-        '150 AI Examiner Evaluations per month',
-        'Batch & Section management (up to 3 batches)',
-        'Teacher assignment creation & evaluation sync',
-        'Class-level average score tracking',
-        'Standard Email Support',
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 2,000 students',
+        'AI evaluation allowance: 2,500 evaluations/month',
+        'Student management & Batch management',
+        'Tests & Assignments module',
+        'AI evaluation with Question-wise grading',
+        'Detailed diagnostic reports & Checked-copy PDF',
+        'Basic analytics & Standard email support',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -622,20 +920,22 @@ function seedInstitutePlans() {
       sort_order: 1,
     },
     {
-      id: 'plan_inst_pro',
-      name: 'Pro CA Institute Tier',
-      price_inr: 12999,
+      id: 'institute-growth-monthly',
+      name: 'Growth',
+      price_inr: 7999,
       billing_period: 'MONTHLY',
-      student_quota: 200,
-      evaluation_credits: 600,
+      student_quota: 5000,
+      evaluation_credits: 6000,
       features_json: JSON.stringify([
-        'Up to 200 enrolled CA students',
-        '600 AI Examiner Evaluations per month',
-        'Unlimited Batches (Foundation, Inter, Final)',
-        'Full Mock Test Series & Timed Exam simulator',
-        'Topic-wise weak area diagnostics & rank lists',
-        'Custom teacher answer keys & marking notes',
-        'Priority Phone & WhatsApp Support',
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 6,000 evaluations/month',
+        'Includes everything in Starter plus:',
+        'Advanced analytics & Batch performance analytics',
+        'Advanced tests & Full 3-Hour Mock tests',
+        'Faculty and admin tools with role permissions',
+        'Priority support (WhatsApp & Email)',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -645,31 +945,203 @@ function seedInstitutePlans() {
       sort_order: 2,
     },
     {
-      id: 'plan_inst_enterprise',
-      name: 'Enterprise Multi-Branch Network',
+      id: 'institute-professional-monthly',
+      name: 'Professional',
+      price_inr: 14999,
+      billing_period: 'MONTHLY',
+      student_quota: 10000,
+      evaluation_credits: 12000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 10,000 students',
+        'AI evaluation allowance: 12,000 evaluations/month',
+        'Large student management & Advanced batch management',
+        'Advanced comparative analytics & Faculty tools',
+        'Tests, Assignments, and Mock tests',
+        'Detailed reports & Authentic evaluated copies',
+        'Priority support with fast response SLA',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'PRIORITY',
+      is_active: 1,
+      sort_order: 3,
+    },
+    {
+      id: 'institute-enterprise-monthly',
+      name: 'Enterprise',
       price_inr: 29999,
       billing_period: 'MONTHLY',
-      student_quota: 1000,
-      evaluation_credits: 3000,
+      student_quota: 25000,
+      evaluation_credits: 27500,
       features_json: JSON.stringify([
-        'Up to 1,000 enrolled CA students across multiple branches',
-        '3,000 AI Examiner Evaluations per month',
-        'Multi-faculty teacher access with role permissions',
-        'Institutional branding on PDF evaluation reports',
-        'Deep batch comparative analytics & AIR predictive index',
-        'Dedicated Technical Account Manager & SLA guarantee',
-        'Custom API integration for existing LMS/ERP',
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 25,000 students',
+        'AI evaluation allowance: 27,500 evaluations/month',
+        'Enterprise analytics & Large-scale batch management',
+        'Advanced institutional reporting & Multi-faculty accounts',
+        'Higher processing capacity & Queue prioritization',
+        'Priority support with Dedicated Account Lead',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
       analytics_enabled: 1,
       support_tier: 'DEDICATED_SLA',
       is_active: 1,
-      sort_order: 3,
+      sort_order: 4,
+    },
+    {
+      id: 'institute-scale-monthly',
+      name: 'Scale',
+      price_inr: 54999,
+      billing_period: 'MONTHLY',
+      student_quota: 50000,
+      evaluation_credits: 55000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 50,000 students',
+        'AI evaluation allowance: 55,000 evaluations/month',
+        'Advanced institutional analytics & Multi-campus reporting',
+        'Large-scale tests & High-concurrency processing',
+        'Advanced batch & faculty management',
+        '24/7 Priority support & Dedicated SLA',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'DEDICATED_SLA',
+      is_active: 1,
+      sort_order: 5,
+    },
+    // ANNUAL PLANS (~17% SAVINGS)
+    {
+      id: 'institute-starter-annual',
+      name: 'Starter',
+      price_inr: 39999,
+      billing_period: 'ANNUAL',
+      student_quota: 2000,
+      evaluation_credits: 30000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 2,000 students',
+        'AI evaluation allowance: 30,000 evaluations/year',
+        'Save ~17% with annual commitment',
+        'Student management & Batch management',
+        'Tests, Assignments, Question-wise step marking',
+        'Detailed diagnostic reports & Checked-copy PDF',
+        'Basic analytics & Standard support',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'STANDARD',
+      is_active: 1,
+      sort_order: 6,
+    },
+    {
+      id: 'institute-growth-annual',
+      name: 'Growth',
+      price_inr: 79999,
+      billing_period: 'ANNUAL',
+      student_quota: 5000,
+      evaluation_credits: 72000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 72,000 evaluations/year',
+        'Save ~17% with annual commitment',
+        'Advanced analytics & Batch performance benchmarks',
+        'Advanced tests, Full Mock tests & Faculty tools',
+        'Priority support (WhatsApp & Email)',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'PRIORITY',
+      is_active: 1,
+      sort_order: 7,
+    },
+    {
+      id: 'institute-professional-annual',
+      name: 'Professional',
+      price_inr: 149999,
+      billing_period: 'ANNUAL',
+      student_quota: 10000,
+      evaluation_credits: 144000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 10,000 students',
+        'AI evaluation allowance: 144,000 evaluations/year',
+        'Save ~17% with annual commitment',
+        'Large student management & Advanced batch management',
+        'Advanced analytics, Faculty tools & Mock tests',
+        'Priority support with expedited resolution SLA',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'PRIORITY',
+      is_active: 1,
+      sort_order: 8,
+    },
+    {
+      id: 'institute-enterprise-annual',
+      name: 'Enterprise',
+      price_inr: 299999,
+      billing_period: 'ANNUAL',
+      student_quota: 25000,
+      evaluation_credits: 330000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 25,000 students',
+        'AI evaluation allowance: 330,000 evaluations/year',
+        'Save ~17% with annual commitment',
+        'Enterprise analytics & Large-scale batch management',
+        'Advanced institutional reporting & Multi-faculty accounts',
+        'Higher processing capacity & Dedicated Account Lead',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'DEDICATED_SLA',
+      is_active: 1,
+      sort_order: 9,
+    },
+    {
+      id: 'institute-scale-annual',
+      name: 'Scale',
+      price_inr: 549999,
+      billing_period: 'ANNUAL',
+      student_quota: 50000,
+      evaluation_credits: 660000,
+      features_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 50,000 students',
+        'AI evaluation allowance: 660,000 evaluations/year',
+        'Save ~17% with annual commitment',
+        'Advanced analytics & Multi-campus institutional reporting',
+        'Large-scale tests & High-volume processing',
+        'Faculty/admin management & 24/7 Dedicated SLA',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'DEDICATED_SLA',
+      is_active: 1,
+      sort_order: 10,
     },
   ];
 
-  for (const p of plans) {
+  for (const p of institutePlans) {
     const existing = db.prepare('SELECT id FROM institute_plans WHERE id = ?').get(p.id);
     if (!existing) {
       db.prepare(`
@@ -683,6 +1155,743 @@ function seedInstitutePlans() {
         p.features_json, p.assignments_enabled, p.tests_enabled, p.analytics_enabled,
         p.support_tier, p.is_active, p.sort_order
       );
+    } else {
+      db.prepare(`
+        UPDATE institute_plans SET
+          name = ?, price_inr = ?, billing_period = ?, student_quota = ?, evaluation_credits = ?,
+          features_json = ?, support_tier = ?, is_active = 1, sort_order = ?
+        WHERE id = ?
+      `).run(p.name, p.price_inr, p.billing_period, p.student_quota, p.evaluation_credits, p.features_json, p.support_tier, p.sort_order, p.id);
+    }
+  }
+}
+
+export function seedPricingPlans() {
+  const plans = [
+    // === 1. INSTITUTE MONTHLY PLANS ===
+    {
+      id: 'institute-starter-monthly',
+      name: 'Starter',
+      category: 'INSTITUTE',
+      billing_period: 'MONTHLY',
+      price_inr: 3999,
+      original_price_inr: 4999,
+      evaluation_allowance: 2500,
+      student_capacity: 2000,
+      unlimited_badge: 0,
+      badge: null,
+      min_students: 1,
+      max_students: 2000,
+      tier_code: 'STARTER',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 2,000 students',
+        'AI evaluation allowance: 2,500 evaluations/month',
+        'Student management & Batch management',
+        'Tests & Assignments module',
+        'AI evaluation with Question-wise grading',
+        'Detailed diagnostic reports & Checked-copy PDF',
+        'Basic analytics & Standard email support',
+      ]),
+      is_active: 1,
+      sort_order: 1,
+    },
+    {
+      id: 'institute-growth-monthly',
+      name: 'Growth',
+      category: 'INSTITUTE',
+      billing_period: 'MONTHLY',
+      price_inr: 7999,
+      original_price_inr: 9999,
+      evaluation_allowance: 6000,
+      student_capacity: 5000,
+      unlimited_badge: 0,
+      badge: 'MOST POPULAR',
+      min_students: 2001,
+      max_students: 5000,
+      tier_code: 'GROWTH',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 6,000 evaluations/month',
+        'Includes everything in Starter plus:',
+        'Advanced analytics & Batch performance analytics',
+        'Advanced tests & Full 3-Hour Mock tests',
+        'Faculty and admin tools with role permissions',
+        'Priority support (WhatsApp & Email)',
+      ]),
+      is_active: 1,
+      sort_order: 2,
+    },
+    {
+      id: 'institute-professional-monthly',
+      name: 'Professional',
+      category: 'INSTITUTE',
+      billing_period: 'MONTHLY',
+      price_inr: 14999,
+      original_price_inr: 18999,
+      evaluation_allowance: 12000,
+      student_capacity: 10000,
+      unlimited_badge: 0,
+      badge: null,
+      min_students: 5001,
+      max_students: 10000,
+      tier_code: 'PROFESSIONAL',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 10,000 students',
+        'AI evaluation allowance: 12,000 evaluations/month',
+        'Large student management & Advanced batch management',
+        'Advanced comparative analytics & Faculty tools',
+        'Tests, Assignments, and Mock tests',
+        'Detailed reports & Authentic evaluated copies',
+        'Priority support with fast response SLA',
+      ]),
+      is_active: 1,
+      sort_order: 3,
+    },
+    {
+      id: 'institute-enterprise-monthly',
+      name: 'Enterprise',
+      category: 'INSTITUTE',
+      billing_period: 'MONTHLY',
+      price_inr: 29999,
+      original_price_inr: 37999,
+      evaluation_allowance: 27500,
+      student_capacity: 25000,
+      unlimited_badge: 0,
+      badge: null,
+      min_students: 10001,
+      max_students: 25000,
+      tier_code: 'ENTERPRISE',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 25,000 students',
+        'AI evaluation allowance: 27,500 evaluations/month',
+        'Enterprise analytics & Large-scale batch management',
+        'Advanced institutional reporting & Multi-faculty accounts',
+        'Higher processing capacity & Queue prioritization',
+        'Priority support with Dedicated Account Lead',
+      ]),
+      is_active: 1,
+      sort_order: 4,
+    },
+    {
+      id: 'institute-scale-monthly',
+      name: 'Scale',
+      category: 'INSTITUTE',
+      billing_period: 'MONTHLY',
+      price_inr: 54999,
+      original_price_inr: 69999,
+      evaluation_allowance: 55000,
+      student_capacity: 50000,
+      unlimited_badge: 0,
+      badge: null,
+      min_students: 25001,
+      max_students: 50000,
+      tier_code: 'SCALE',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 50,000 students',
+        'AI evaluation allowance: 55,000 evaluations/month',
+        'Advanced institutional analytics & Multi-campus reporting',
+        'Large-scale tests & High-concurrency processing',
+        'Advanced batch & faculty management',
+        '24/7 Priority support & Dedicated SLA',
+      ]),
+      is_active: 1,
+      sort_order: 5,
+    },
+
+    // === 2. INSTITUTE ANNUAL PLANS (SAVE ~17%) ===
+    {
+      id: 'institute-starter-annual',
+      name: 'Starter',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 39999,
+      original_price_inr: 47988,
+      evaluation_allowance: 30000,
+      student_capacity: 2000,
+      unlimited_badge: 0,
+      badge: 'Save 17%',
+      min_students: 1,
+      max_students: 2000,
+      tier_code: 'STARTER',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 2,000 students',
+        'AI evaluation allowance: 30,000 evaluations/year',
+        'Save ~17% compared to monthly billing',
+        'Student management & Batch management',
+        'Tests, Assignments & AI evaluation',
+        'Detailed diagnostic reports & Checked-copy PDF',
+        'Basic analytics & Standard support',
+      ]),
+      is_active: 1,
+      sort_order: 6,
+    },
+    {
+      id: 'institute-growth-annual',
+      name: 'Growth',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 79999,
+      original_price_inr: 95988,
+      evaluation_allowance: 72000,
+      student_capacity: 5000,
+      unlimited_badge: 0,
+      badge: 'MOST POPULAR (Save 17%)',
+      min_students: 2001,
+      max_students: 5000,
+      tier_code: 'GROWTH',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 72,000 evaluations/year',
+        'Save ~17% compared to monthly billing',
+        'Advanced analytics & Batch performance analytics',
+        'Advanced tests & Mock tests',
+        'Faculty and admin tools with role permissions',
+        'Priority support (WhatsApp & Email)',
+      ]),
+      is_active: 1,
+      sort_order: 7,
+    },
+    {
+      id: 'institute-professional-annual',
+      name: 'Professional',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 149999,
+      original_price_inr: 179988,
+      evaluation_allowance: 144000,
+      student_capacity: 10000,
+      unlimited_badge: 0,
+      badge: 'Save 17%',
+      min_students: 5001,
+      max_students: 10000,
+      tier_code: 'PROFESSIONAL',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 10,000 students',
+        'AI evaluation allowance: 144,000 evaluations/year',
+        'Save ~17% compared to monthly billing',
+        'Large student management & Advanced batch management',
+        'Advanced comparative analytics & Faculty tools',
+        'Tests, Assignments, and Mock tests',
+        'Priority support with fast response SLA',
+      ]),
+      is_active: 1,
+      sort_order: 8,
+    },
+    {
+      id: 'institute-enterprise-annual',
+      name: 'Enterprise',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 299999,
+      original_price_inr: 359988,
+      evaluation_allowance: 330000,
+      student_capacity: 25000,
+      unlimited_badge: 0,
+      badge: 'Save 17%',
+      min_students: 10001,
+      max_students: 25000,
+      tier_code: 'ENTERPRISE',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 25,000 students',
+        'AI evaluation allowance: 330,000 evaluations/year',
+        'Save ~17% compared to monthly billing',
+        'Enterprise analytics & Large-scale batch management',
+        'Advanced institutional reporting & Multi-faculty accounts',
+        'Priority support with Dedicated Account Lead',
+      ]),
+      is_active: 1,
+      sort_order: 9,
+    },
+    {
+      id: 'institute-scale-annual',
+      name: 'Scale',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 549999,
+      original_price_inr: 659988,
+      evaluation_allowance: 660000,
+      student_capacity: 50000,
+      unlimited_badge: 0,
+      badge: 'Save 17%',
+      min_students: 25001,
+      max_students: 50000,
+      tier_code: 'SCALE',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        'Foundation, Intermediate, Final (All levels included)',
+        'All Subjects included',
+        'Student capacity: Up to 50,000 students',
+        'AI evaluation allowance: 660,000 evaluations/year',
+        'Save ~17% compared to monthly billing',
+        'Advanced analytics & Multi-campus institutional reporting',
+        'Large-scale tests & High-volume processing capacity',
+        'Faculty/admin management & 24/7 Dedicated SLA',
+      ]),
+      is_active: 1,
+      sort_order: 10,
+    },
+
+    // === 3. 50,000+ MEGA ENTERPRISE TIERS (ANNUAL ONLY) ===
+    {
+      id: 'institute-mega-50k-75k',
+      name: 'Mega Enterprise (50k–75k Students)',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 749999,
+      original_price_inr: 899999,
+      evaluation_allowance: 85000,
+      student_capacity: 75000,
+      unlimited_badge: 0,
+      badge: 'Annual-Only Mega Tier',
+      min_students: 50001,
+      max_students: 75000,
+      tier_code: 'MEGA_75K',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '50,001 to 75,000 enrolled students',
+        '85,000 evaluations/year pool',
+        'Foundation, Intermediate, Final — All Subjects',
+        'Dedicated cloud computing cluster',
+        'Full institutional API & ERP integration',
+        'Multi-center and pan-India branch isolation',
+        'Custom institutional report templates',
+        '24/7 Dedicated Technical Account Manager',
+      ]),
+      is_active: 1,
+      sort_order: 11,
+    },
+    {
+      id: 'institute-mega-75k-100k',
+      name: 'Mega Enterprise (75k–100k Students)',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 999999,
+      original_price_inr: 1199999,
+      evaluation_allowance: 115000,
+      student_capacity: 100000,
+      unlimited_badge: 0,
+      badge: 'Annual-Only Mega Tier',
+      min_students: 75001,
+      max_students: 100000,
+      tier_code: 'MEGA_100K',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '75,001 to 100,000 enrolled students',
+        '115,000 evaluations/year pool',
+        'Foundation, Intermediate, Final — All Subjects',
+        'Custom fine-tuned evaluation rubric support',
+        'Unlimited faculty/evaluator sub-accounts',
+        'SSO (Single Sign-On) integration',
+        'Institutional AIR prediction index',
+        '24/7 Priority SLA response guarantee',
+      ]),
+      is_active: 1,
+      sort_order: 12,
+    },
+    {
+      id: 'institute-mega-100k-150k',
+      name: 'Mega Enterprise (100k–150k Students)',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 1499999,
+      original_price_inr: 1799999,
+      evaluation_allowance: 175000,
+      student_capacity: 150000,
+      unlimited_badge: 0,
+      badge: 'Annual-Only Mega Tier',
+      min_students: 100001,
+      max_students: 150000,
+      tier_code: 'MEGA_150K',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '100,001 to 150,000 enrolled students',
+        '175,000 evaluations/year pool',
+        'Foundation, Intermediate, Final — All Subjects',
+        'Private institutional evaluation models',
+        'Comprehensive multi-tier audit trail',
+        'Automated batch progression workflows',
+        'Executive dashboard for Board & Directors',
+        'Enterprise SLA with 99.9% uptime commitment',
+      ]),
+      is_active: 1,
+      sort_order: 13,
+    },
+    {
+      id: 'institute-mega-150k-250k',
+      name: 'Mega Enterprise (150k–250k Students)',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 2499999,
+      original_price_inr: 2999999,
+      evaluation_allowance: 300000,
+      student_capacity: 250000,
+      unlimited_badge: 0,
+      badge: 'Annual-Only Mega Tier',
+      min_students: 150001,
+      max_students: 250000,
+      tier_code: 'MEGA_250K',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '150,001 to 250,000 enrolled students',
+        '300,000 evaluations/year pool',
+        'Foundation, Intermediate, Final — All Subjects',
+        'Enterprise-scale distributed evaluation cluster',
+        'Custom question bank & test authoring suite',
+        'Dedicated senior engineering & pedagogical team',
+        'Annual contract with custom payment schedules',
+      ]),
+      is_active: 1,
+      sort_order: 14,
+    },
+    {
+      id: 'institute-mega-custom',
+      name: 'Custom Enterprise (250,000+ Students)',
+      category: 'INSTITUTE',
+      billing_period: 'ANNUAL',
+      price_inr: 0,
+      original_price_inr: 0,
+      evaluation_allowance: 9999999,
+      student_capacity: 500000,
+      unlimited_badge: 1,
+      badge: 'Custom Architecture',
+      min_students: 250001,
+      max_students: 1000000,
+      tier_code: 'CUSTOM_ENTERPRISE',
+      is_custom: 1,
+      benefits_json: JSON.stringify([
+        '250,000+ Students scale',
+        'Tailored annual evaluation capacity',
+        'Foundation, Intermediate, Final — All Subjects',
+        'On-premises / Private cloud deployment option',
+        'Custom bespoke AI models and grading criteria',
+        'Full custom contract & tailored commercial terms',
+        'Direct hotline to Engineering Leadership',
+      ]),
+      is_active: 1,
+      sort_order: 15,
+    },
+
+    // === 4. STUDENT / CANDIDATE INDIVIDUAL TIERS ===
+    {
+      id: 'student-free-tier',
+      name: 'Free Starter Trial',
+      category: 'STUDENT',
+      billing_period: 'MONTHLY',
+      price_inr: 0,
+      original_price_inr: 20,
+      evaluation_allowance: 2,
+      student_capacity: 1,
+      unlimited_badge: 0,
+      badge: 'Free with Signup',
+      min_students: 1,
+      max_students: 1,
+      tier_code: 'STUDENT_FREE',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '2 Free Full ICAI-standard answer sheet evaluations',
+        'Step-by-step marking with question-by-question examiner remarks',
+        'Working note validation & statutory section accuracy check',
+        'Authentic evaluated copy PDF download',
+        'Valid for Foundation, Inter & Final',
+      ]),
+      is_active: 1,
+      sort_order: 16,
+    },
+    {
+      id: 'student-pay-per-paper',
+      name: 'Pay-Per-Paper (1 Evaluation)',
+      category: 'STUDENT',
+      billing_period: 'MONTHLY',
+      price_inr: 10,
+      original_price_inr: 25,
+      evaluation_allowance: 1,
+      student_capacity: 1,
+      unlimited_badge: 0,
+      badge: '₹10 / Paper',
+      min_students: 1,
+      max_students: 1,
+      tier_code: 'STUDENT_1',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '1 Full ICAI-standard answer sheet evaluation credit',
+        'Deep step-by-step marking & working notes check',
+        'Question-by-question examiner remarks & marks breakdown',
+        'Official ICAI guideline answer matching & section validation',
+        'Authentic evaluated checked copy PDF generation',
+        'Credits valid for 3 months from purchase',
+      ]),
+      is_active: 1,
+      sort_order: 17,
+    },
+    {
+      id: 'student-5-pack',
+      name: '5 Evaluation Credits Pack',
+      category: 'STUDENT',
+      billing_period: 'MONTHLY',
+      price_inr: 50,
+      original_price_inr: 100,
+      evaluation_allowance: 5,
+      student_capacity: 1,
+      unlimited_badge: 0,
+      badge: 'Basic Pack',
+      min_students: 1,
+      max_students: 1,
+      tier_code: 'STUDENT_5',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '5 Full ICAI-standard answer sheet evaluations',
+        'Deep step-by-step marking & working notes check',
+        'Question-by-question examiner remarks & marks breakdown',
+        'Authentic evaluated checked copy PDF generation',
+        'Credits valid for 3 months from purchase',
+      ]),
+      is_active: 1,
+      sort_order: 18,
+    },
+    {
+      id: 'student-10-pack',
+      name: '10 Evaluation Credits Pack',
+      category: 'STUDENT',
+      billing_period: 'MONTHLY',
+      price_inr: 100,
+      original_price_inr: 200,
+      evaluation_allowance: 10,
+      student_capacity: 1,
+      unlimited_badge: 0,
+      badge: 'Most Popular',
+      min_students: 1,
+      max_students: 1,
+      tier_code: 'STUDENT_10',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '10 Full ICAI-standard answer sheet evaluations',
+        'Deep step-by-step marking & working notes check',
+        'Question-by-question examiner remarks & marks breakdown',
+        'Authentic evaluated checked copy PDF generation',
+        'Performance diagnostic & passing probability index',
+        'Credits valid for 3 months from purchase',
+      ]),
+      is_active: 1,
+      sort_order: 19,
+    },
+    {
+      id: 'student-20-pack',
+      name: '20 Evaluation Credits Pack',
+      category: 'STUDENT',
+      billing_period: 'MONTHLY',
+      price_inr: 200,
+      original_price_inr: 400,
+      evaluation_allowance: 20,
+      student_capacity: 1,
+      unlimited_badge: 0,
+      badge: 'Best Value',
+      min_students: 1,
+      max_students: 1,
+      tier_code: 'STUDENT_20',
+      is_custom: 0,
+      benefits_json: JSON.stringify([
+        '20 Full ICAI-standard answer sheet evaluations',
+        'Deep step-by-step marking & working notes check',
+        'Question-by-question examiner remarks & marks breakdown',
+        'Authentic evaluated checked copy PDF generation',
+        'Performance diagnostic & passing probability index',
+        'Priority evaluation queue',
+        'Credits valid for 3 months from purchase',
+      ]),
+      is_active: 1,
+      sort_order: 20,
+    },
+  ];
+
+  // Clean up any legacy erroneous plans like "Single Subject Pro" or "Both Groups Pro"
+  try {
+    db.prepare(`
+      DELETE FROM pricing_plans 
+      WHERE id IN ('single-subject-pro-monthly', 'both-groups-pro-monthly', 'all-levels-ultimate-monthly',
+                   'single-subject-pro-annual', 'both-groups-pro-annual', 'all-levels-ultimate-annual',
+                   'plan_inst_starter', 'plan_inst_growth', 'plan_inst_enterprise')
+    `).run();
+    db.prepare(`
+      DELETE FROM institute_plans 
+      WHERE id IN ('single-subject-pro-monthly', 'both-groups-pro-monthly', 'all-levels-ultimate-monthly',
+                   'single-subject-pro-annual', 'both-groups-pro-annual', 'all-levels-ultimate-annual',
+                   'plan_inst_starter', 'plan_inst_growth', 'plan_inst_enterprise')
+    `).run();
+  } catch (err) {
+    console.warn('Legacy plan cleanup warning:', err);
+  }
+
+  for (const p of plans) {
+    const existing = db.prepare('SELECT id FROM pricing_plans WHERE id = ?').get(p.id);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO pricing_plans (
+          id, name, category, billing_period, price_inr, original_price_inr, evaluation_allowance,
+          student_capacity, unlimited_badge, badge, min_students, max_students, tier_code, is_custom,
+          benefits_json, is_active, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        p.id, p.name, p.category, p.billing_period, p.price_inr, p.original_price_inr, p.evaluation_allowance,
+        p.student_capacity, p.unlimited_badge, p.badge, p.min_students, p.max_students, p.tier_code, p.is_custom,
+        p.benefits_json, p.is_active, p.sort_order
+      );
+    } else {
+      db.prepare(`
+        UPDATE pricing_plans SET
+          name = ?, category = ?, billing_period = ?, price_inr = ?, original_price_inr = ?,
+          evaluation_allowance = ?, student_capacity = ?, unlimited_badge = ?,
+          badge = ?, min_students = ?, max_students = ?, tier_code = ?, is_custom = ?,
+          benefits_json = ?, is_active = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        p.name, p.category, p.billing_period, p.price_inr, p.original_price_inr, p.evaluation_allowance,
+        p.student_capacity, p.unlimited_badge, p.badge, p.min_students, p.max_students, p.tier_code, p.is_custom,
+        p.benefits_json, p.is_active, p.sort_order, p.id
+      );
+    }
+  }
+}
+
+function seedModelConfigs() {
+  // 1. Purge all invalid, non-approved, or legacy models
+  db.prepare(`
+    DELETE FROM model_configs
+    WHERE id NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash')
+  `).run();
+
+  // 2. Synchronize active pricing_settings so old models are never chosen
+  db.prepare(`
+    UPDATE pricing_settings
+    SET value = 'gemini-3.8-flash'
+    WHERE key = 'EVAL_MODEL_PROVIDER' AND (value IN ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-3.8-pro') OR value NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'))
+  `).run();
+
+  db.prepare(`
+    UPDATE pricing_settings
+    SET value = 'gemini-3.6-flash'
+    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value IN ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-3.8-pro') OR value NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'))
+  `).run();
+
+  db.prepare(`
+    UPDATE pricing_settings
+    SET value = 'ZERO_FOR_ALL'
+    WHERE key = 'EVAL_MCQ_NEGATIVE_MARKING'
+  `).run();
+
+  // Ensure is_primary is only on gemini-3.8-flash unless admin explicitly switched to another approved model
+  const currentPrimary = db.prepare("SELECT id FROM model_configs WHERE is_primary = 1").all() as any[];
+  if (currentPrimary.length !== 1 || !['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(currentPrimary[0]?.id)) {
+    db.prepare("UPDATE model_configs SET is_primary = CASE WHEN id = 'gemini-3.8-flash' THEN 1 ELSE 0 END").run();
+  }
+
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
+  const defaultStatus = geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED';
+
+  // 3. Approved Gemini Models with Deterministic Priorities (1 to 5)
+  const models = [
+    {
+      id: 'gemini-3.8-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.8 Flash',
+      role: 'Primary',
+      is_primary: 1,
+      fallback_order: 1,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+    },
+    {
+      id: 'gemini-3.1-pro-preview',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.1 Pro (Preview)',
+      role: 'Deep Reasoning',
+      is_primary: 0,
+      fallback_order: 2,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+    },
+    {
+      id: 'gemini-3.7-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.7 Flash',
+      role: 'Fast Multimodal',
+      is_primary: 0,
+      fallback_order: 3,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+    },
+    {
+      id: 'gemini-3.6-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.6 Flash',
+      role: 'Fallback #1',
+      is_primary: 0,
+      fallback_order: 4,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+    },
+    {
+      id: 'gemini-3.5-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.5 Flash',
+      role: 'Fallback #2',
+      is_primary: 0,
+      fallback_order: 5,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+    },
+  ];
+
+  for (const m of models) {
+    const existing = db.prepare('SELECT id FROM model_configs WHERE id = ?').get(m.id);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO model_configs (id, provider, display_name, role, is_primary, fallback_order, thinking_level, temperature, top_p, max_tokens, is_enabled, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      `).run(m.id, m.provider, m.display_name, m.role, m.is_primary, m.fallback_order, m.thinking_level, m.temperature, m.top_p, m.max_tokens, defaultStatus);
+    } else {
+      db.prepare(`
+        UPDATE model_configs SET
+          provider = ?, display_name = ?, role = ?, fallback_order = ?, thinking_level = ?, max_tokens = ?,
+          status = CASE WHEN status = 'RETIRED' THEN ? ELSE status END
+        WHERE id = ?
+      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, defaultStatus, m.id);
     }
   }
 }
@@ -691,8 +1900,23 @@ function seedReferralCampaigns() {
   const existing = db.prepare('SELECT code FROM referral_campaigns WHERE code = ?').get('AI30');
   if (!existing) {
     db.prepare(`
-      INSERT INTO referral_campaigns (code, campaign_name, benefit_type, benefit_duration_days, max_redemptions, is_active)
-      VALUES ('AI30', 'AI30 Special Promo - 1 Month Free Access', '1_MONTH_FREE_ACCESS', 30, 20, 1)
+      INSERT INTO referral_campaigns (
+        code, campaign_name, description, benefit_type, benefit_duration_days, 
+        max_redemptions, max_evaluations, is_active, status, user_type, terms_notes
+      ) VALUES (
+        'AI30', 'AI30 Special Promo - 1 Month Free Access', 
+        'Special promotional launch offer with 15 free evaluations for 30 days.', 
+        '1_MONTH_FREE_ACCESS', 30, 20, 15, 1, 'ACTIVE', 'ALL',
+        'Valid for the first 20 eligible student registrations.'
+      )
+    `).run();
+  } else {
+    // Ensure baseline fields are set properly while preserving custom configurations
+    db.prepare(`
+      UPDATE referral_campaigns
+      SET status = COALESCE(NULLIF(status, ''), 'ACTIVE'),
+          description = COALESCE(NULLIF(description, ''), 'Special promotional launch offer with 15 free evaluations for 30 days.')
+      WHERE code = 'AI30'
     `).run();
   }
 }

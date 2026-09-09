@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { MaterialManagement } from '../../components/admin/MaterialManagement.js';
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
+import { ModelManagement } from '../../components/admin/ModelManagement.js';
+import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
 import {
   LayoutDashboard,
   Users,
@@ -22,6 +24,7 @@ import {
   Bell,
   Headphones,
   Gift,
+  Sparkles,
   Settings,
   ScrollText,
   Search,
@@ -38,6 +41,9 @@ import {
   UserX,
   UserCheck,
   LogOut,
+  Brain,
+  ShieldAlert,
+  AlertOctagon,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -120,6 +126,25 @@ export const AdminPortal: React.FC = () => {
   const [settingsData, setSettingsData] = useState<any>(null);
   const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
 
+  // Suspension Modal State
+  const [suspendModal, setSuspendModal] = useState<{ user: any; reason: string; internalNote: string } | null>(null);
+
+  // Revocation Requests State
+  const [revocationRequests, setRevocationRequests] = useState<any[]>([]);
+  const [revocationStatusFilter, setRevocationStatusFilter] = useState<string>('ALL');
+  const [revocationReviewModal, setRevocationReviewModal] = useState<{ request: any; decision: 'APPROVED' | 'REJECTED'; reply: string } | null>(null);
+
+  // Referral Campaigns & AI30 State
+  const [referralCampaigns, setReferralCampaigns] = useState<any[]>([]);
+  const [referralRedemptions, setReferralRedemptions] = useState<any[]>([]);
+  const [editingCampaign, setEditingCampaign] = useState<{
+    code: string;
+    campaign_name: string;
+    max_redemptions: number;
+    max_evaluations: number;
+    is_active: number;
+  } | null>(null);
+
   // Load section data based on active section
   const loadActiveSectionData = async () => {
     try {
@@ -128,7 +153,9 @@ export const AdminPortal: React.FC = () => {
 
       switch (activeSection) {
         case 'materials':
-        case 'rules': {
+        case 'rules':
+        case 'promo-codes':
+        case 'referrals': {
           // Handled self-contained within dedicated components
           break;
         }
@@ -234,6 +261,12 @@ export const AdminPortal: React.FC = () => {
           setAuditLogsList(res.logs || []);
           break;
         }
+        case 'revocation-requests': {
+          const query = revocationStatusFilter === 'ALL' ? '' : `?status=${revocationStatusFilter}`;
+          const res = await apiRequest<{ requests: any[] }>(`/api/admin/revocation-requests${query}`);
+          setRevocationRequests(res.requests || []);
+          break;
+        }
         default:
           break;
       }
@@ -249,20 +282,73 @@ export const AdminPortal: React.FC = () => {
     if (isAuthenticated && (user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN')) {
       loadActiveSectionData();
     }
-  }, [activeSection, isAuthenticated, user]);
+  }, [activeSection, revocationStatusFilter, isAuthenticated, user]);
 
   // Handle User Status toggle
-  const handleToggleUserStatus = async (userId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-    try {
-      await apiRequest(`/api/admin/users/${userId}/status`, {
-        method: 'PUT',
-        body: JSON.stringify({ status: newStatus }),
+  const handleToggleUserStatus = async (targetUser: any) => {
+    if (targetUser.status === 'ACTIVE') {
+      // Open modal to enter explicit suspension reason
+      setSuspendModal({
+        user: targetUser,
+        reason: 'Violation of academic integrity and examination terms of use.',
+        internalNote: '',
       });
-      setSuccessMsg(`User status updated to ${newStatus}`);
+      return;
+    }
+
+    // Direct reactivation
+    try {
+      await apiRequest(`/api/admin/users/${targetUser.id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'ACTIVE' }),
+      });
+      setSuccessMsg(`User ${targetUser.full_name} has been reinstated to ACTIVE status.`);
       loadActiveSectionData();
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to update user status');
+    }
+  };
+
+  // Confirm Suspension with mandatory reason
+  const handleConfirmSuspension = async () => {
+    if (!suspendModal) return;
+    if (!suspendModal.reason.trim()) {
+      setErrorMsg('Please specify a valid reason for suspension.');
+      return;
+    }
+    try {
+      await apiRequest(`/api/admin/users/${suspendModal.user.id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status: 'SUSPENDED',
+          reason: suspendModal.reason.trim(),
+          internalNote: suspendModal.internalNote.trim(),
+        }),
+      });
+      setSuccessMsg(`User ${suspendModal.user.full_name} has been suspended.`);
+      setSuspendModal(null);
+      loadActiveSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to suspend user');
+    }
+  };
+
+  // Handle Revocation Review (Approve or Reject)
+  const handleReviewRevocation = async () => {
+    if (!revocationReviewModal) return;
+    try {
+      await apiRequest(`/api/admin/revocation-requests/${revocationReviewModal.request.id}/review`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision: revocationReviewModal.decision,
+          adminReply: revocationReviewModal.reply.trim(),
+        }),
+      });
+      setSuccessMsg(`Appeal has been ${revocationReviewModal.decision.toLowerCase()} successfully.`);
+      setRevocationReviewModal(null);
+      loadActiveSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to process appeal review');
     }
   };
 
@@ -314,6 +400,26 @@ export const AdminPortal: React.FC = () => {
       loadActiveSectionData();
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to revoke access');
+    }
+  };
+
+  // Handle Update Referral Campaign (e.g. AI30)
+  const handleUpdateCampaign = async () => {
+    if (!editingCampaign) return;
+    try {
+      await apiRequest(`/api/admin/referrals/campaigns/${editingCampaign.code}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          max_redemptions: Number(editingCampaign.max_redemptions),
+          max_evaluations: Number(editingCampaign.max_evaluations),
+          is_active: Number(editingCampaign.is_active),
+        }),
+      });
+      setSuccessMsg(`Campaign ${editingCampaign.code} updated successfully.`);
+      setEditingCampaign(null);
+      loadActiveSectionData();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update campaign');
     }
   };
 
@@ -446,6 +552,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
+    { id: 'ai-models', label: 'AI Models & Fallbacks', icon: Brain },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'students', label: 'Students', icon: GraduationCap },
     { id: 'institutes', label: 'Institutes', icon: Building2 },
@@ -462,6 +569,8 @@ export const AdminPortal: React.FC = () => {
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'support', label: 'Support', icon: Headphones },
     { id: 'free-access', label: 'Permanent Free', icon: Gift },
+    { id: 'promo-codes', label: 'Promo Codes', icon: Sparkles },
+    { id: 'revocation-requests', label: 'Revocation Requests', icon: ShieldAlert },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'audit-logs', label: 'Audit Logs', icon: ScrollText },
   ];
@@ -483,7 +592,9 @@ export const AdminPortal: React.FC = () => {
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeSection === item.id;
+            const isActive =
+              activeSection === item.id ||
+              (item.id === 'promo-codes' && activeSection === 'referrals');
             return (
               <button
                 key={item.id}
@@ -608,6 +719,16 @@ export const AdminPortal: React.FC = () => {
               {/* EVALUATION CONTROLS & RULES */}
               {activeSection === 'rules' && (
                 <EvaluationControls
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                />
+              )}
+
+              {/* MULTI-MODEL AI ARCHITECTURE & CONTROLS */}
+              {activeSection === 'ai-models' && (
+                <ModelManagement
                   onNotify={(msg, type) => {
                     if (type === 'success') setSuccessMsg(msg);
                     else setErrorMsg(msg);
@@ -773,14 +894,14 @@ export const AdminPortal: React.FC = () => {
                             <td className="py-2.5 px-3 text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
                             <td className="py-2.5 px-3 text-right">
                               <button
-                                onClick={() => handleToggleUserStatus(u.id, u.status)}
-                                className={`px-2 py-1 rounded text-[10px] font-bold transition ${
+                                onClick={() => handleToggleUserStatus(u)}
+                                className={`px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer ${
                                   u.status === 'ACTIVE'
                                     ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
                                     : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                                 }`}
                               >
-                                {u.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                                {u.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
                               </button>
                             </td>
                           </tr>
@@ -1506,6 +1627,11 @@ export const AdminPortal: React.FC = () => {
                 </div>
               )}
 
+              {/* 17B. PROMO CODES & REFERRAL CAMPAIGNS */}
+              {(activeSection === 'promo-codes' || activeSection === 'referrals') && (
+                <AdminPromoCodesSection />
+              )}
+
               {/* 18. SETTINGS */}
               {activeSection === 'settings' && settingsData && (
                 <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl space-y-4">
@@ -1582,6 +1708,147 @@ export const AdminPortal: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* 20. REVOCATION REQUESTS */}
+              {activeSection === 'revocation-requests' && (
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-rose-600" />
+                        Account Suspension Revocation Appeals
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Review formal student and institute appeals, examine reasons, and render binding reinstatement verdicts
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map((filter) => (
+                        <button
+                          key={filter}
+                          onClick={() => setRevocationStatusFilter(filter)}
+                          className={`px-3 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                            revocationStatusFilter === filter
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {filter}
+                        </button>
+                      ))}
+                      <button
+                        onClick={loadActiveSectionData}
+                        className="p-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                        title="Refresh list"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {revocationRequests.length === 0 ? (
+                    <div className="text-center py-12 text-slate-400 text-xs">
+                      <ShieldCheck className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                      <p className="font-semibold text-slate-600">No revocation requests found</p>
+                      <p className="text-[11px] mt-1">There are no appeals matching the current filter.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                            <th className="py-2.5 px-3 font-bold">User</th>
+                            <th className="py-2.5 px-3 font-bold">Suspension Reason</th>
+                            <th className="py-2.5 px-3 font-bold">Appeal Statement</th>
+                            <th className="py-2.5 px-3 font-bold">Status</th>
+                            <th className="py-2.5 px-3 font-bold">Submitted</th>
+                            <th className="py-2.5 px-3 font-bold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {revocationRequests.map((req) => (
+                            <tr key={req.id} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3">
+                                <p className="font-bold text-slate-900">{req.user_name}</p>
+                                <p className="text-[11px] text-slate-400">{req.user_email}</p>
+                                <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-600">
+                                  {req.user_role}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 max-w-xs">
+                                <p className="text-rose-900 font-medium line-clamp-2">
+                                  {req.suspension_reason || 'Administrative suspension'}
+                                </p>
+                                {req.suspended_at && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    {new Date(req.suspended_at).toLocaleDateString()}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 max-w-sm">
+                                <p className="font-bold text-slate-800">{req.appeal_reason}</p>
+                                <p className="text-slate-600 text-[11px] line-clamp-2 mt-0.5">{req.explanation}</p>
+                                {req.supporting_info && (
+                                  <p className="text-slate-400 text-[10px] mt-0.5">Info: {req.supporting_info}</p>
+                                )}
+                                {req.admin_reply && (
+                                  <div className="mt-1 p-1.5 rounded bg-slate-100 border border-slate-200 text-[11px]">
+                                    <span className="font-bold text-slate-700">Reply: </span>
+                                    <span className="text-slate-600">{req.admin_reply}</span>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  req.status === 'APPROVED'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : req.status === 'REJECTED'
+                                    ? 'bg-rose-50 text-rose-700'
+                                    : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                  {req.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-400">
+                                {new Date(req.created_at).toLocaleDateString()}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                {req.status === 'PENDING' ? (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => setRevocationReviewModal({
+                                        request: req,
+                                        decision: 'APPROVED',
+                                        reply: 'Your appeal has been accepted. Account access has been fully restored.',
+                                      })}
+                                      className="px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition cursor-pointer"
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      onClick={() => setRevocationReviewModal({
+                                        request: req,
+                                        decision: 'REJECTED',
+                                        reply: 'Your appeal has been denied due to non-compliance with examination integrity policies.',
+                                      })}
+                                      className="px-2 py-1 rounded text-[10px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400 italic">Resolved</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -1748,6 +2015,129 @@ export const AdminPortal: React.FC = () => {
                   className="px-3 py-1.5 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700"
                 >
                   Send Reply
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Suspend User Modal */}
+      {suspendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-xl max-w-md w-full p-5 shadow-xl text-slate-800">
+            <div className="flex items-center gap-2.5 mb-3 text-rose-600">
+              <AlertOctagon className="w-5 h-5" />
+              <h3 className="text-sm font-bold text-slate-900">Suspend User Account</h3>
+            </div>
+            <p className="text-xs text-slate-600 mb-4">
+              Suspending <strong className="text-slate-900">{suspendModal.user.full_name}</strong> ({suspendModal.user.email}). The user will immediately be blocked from evaluations and will see this exact suspension reason.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Public Suspension Reason <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Reason displayed directly to the student upon login/access attempt..."
+                  value={suspendModal.reason}
+                  onChange={(e) => setSuspendModal({ ...suspendModal, reason: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Internal Administrative Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Confidential remarks for admin audit logs..."
+                  value={suspendModal.internalNote}
+                  onChange={(e) => setSuspendModal({ ...suspendModal, internalNote: e.target.value })}
+                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-slate-400"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setSuspendModal(null)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmSuspension}
+                  className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer"
+                >
+                  Confirm Suspension
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revocation Review Modal */}
+      {revocationReviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 shadow-xl text-slate-800">
+            <h3 className="text-sm font-bold text-slate-900 mb-1">
+              Review Revocation Appeal: {revocationReviewModal.decision === 'APPROVED' ? 'Approve Reinstatement' : 'Reject Appeal'}
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Candidate: <strong className="text-slate-800">{revocationReviewModal.request.user_name}</strong> ({revocationReviewModal.request.user_email})
+            </p>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-1.5 mb-3">
+              <div>
+                <span className="font-bold text-slate-700">Appeal Basis: </span>
+                <span className="text-slate-900">{revocationReviewModal.request.appeal_reason}</span>
+              </div>
+              <div>
+                <span className="font-bold text-slate-700">Explanation: </span>
+                <span className="text-slate-800">{revocationReviewModal.request.explanation}</span>
+              </div>
+              {revocationReviewModal.request.supporting_info && (
+                <div>
+                  <span className="font-bold text-slate-700">Supporting Info: </span>
+                  <span className="text-slate-800">{revocationReviewModal.request.supporting_info}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Administrator Response / Note to User
+                </label>
+                <textarea
+                  rows={3}
+                  value={revocationReviewModal.reply}
+                  onChange={(e) => setRevocationReviewModal({ ...revocationReviewModal, reply: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setRevocationReviewModal(null)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReviewRevocation}
+                  className={`px-4 py-1.5 rounded-lg text-white font-bold cursor-pointer ${
+                    revocationReviewModal.decision === 'APPROVED'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  Confirm {revocationReviewModal.decision}
                 </button>
               </div>
             </div>

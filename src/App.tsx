@@ -18,9 +18,11 @@ import { HowItWorksPage } from './pages/public/HowItWorksPage.js';
 import { LegalPage } from './pages/public/LegalPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
+import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
 import { UploadEvaluation } from './pages/student/UploadEvaluation.js';
 import { MyEvaluations } from './pages/student/MyEvaluations.js';
+import { StudentProfilePage } from './pages/student/StudentProfilePage.js';
 import { EvaluationReportView } from './pages/student/EvaluationReportView.js';
 import { InstitutePortal } from './pages/institute/InstitutePortal.js';
 import { AdminPortal } from './pages/admin/AdminPortal.js';
@@ -229,6 +231,9 @@ const PublicAndStudentLayout: React.FC<{
       case 'student-evaluations':
         navigate('/student/evaluations');
         break;
+      case 'student-profile':
+        navigate('/student/profile');
+        break;
       case 'institute-dashboard':
         navigate('/institute/dashboard');
         break;
@@ -343,6 +348,8 @@ const AppRoutes: React.FC = () => {
         {/* ============================================================ */}
         {/* INSTITUTE PORTAL ROUTES — Dedicated Full Screen Backoffice */}
         {/* ============================================================ */}
+        <Route path="/institute/login" element={<InstituteAuthPage initialMode="login" />} />
+        <Route path="/institute/register" element={<InstituteAuthPage initialMode="register" />} />
         <Route path="/institute" element={<Navigate to="/institute/dashboard" replace />} />
         <Route path="/institute/*" element={<InstitutePortal />} />
 
@@ -434,6 +441,7 @@ const AppRoutes: React.FC = () => {
                   onNavigateEvaluations={() => navigate('/student/evaluations')}
                   onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                  onNavigateProfile={() => navigate('/student/profile')}
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
@@ -464,6 +472,20 @@ const AppRoutes: React.FC = () => {
                 <MyEvaluations
                   onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                   onNavigateUpload={() => navigate('/student/upload')}
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/profile"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudentProfilePage
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
+                  onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>

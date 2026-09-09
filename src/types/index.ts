@@ -147,6 +147,20 @@ export interface EvaluationResult {
   questions: QuestionEvaluation[];
   isMcqPaper?: boolean;
   modelUsed?: string;
+  modelDisplayName?: string;
+  modelProvider?: string;
+  thinkingLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
+  routingReason?: string;
+  originalModel?: string;
+  fallbackModel?: string;
+  retryCount?: number;
+  evaluationEngineVersion?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  latencyMs?: number;
+  fallbackOccurred?: boolean;
+  fallbackReason?: string;
 }
 
 export interface ExamAttempt {

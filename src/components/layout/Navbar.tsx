@@ -155,6 +155,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     >
                       My Reports
                     </button>
+                    <button
+                      id="nav-student-profile"
+                      onClick={() => onNavigate('student-profile')}
+                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                        currentView === 'student-profile'
+                          ? 'text-blue-700 bg-blue-50 font-bold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      }`}
+                    >
+                      Profile & Settings
+                    </button>
                   </>
                 )}
 
@@ -370,6 +381,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     className="text-left py-2 text-sm text-slate-700 font-medium"
                   >
                     My Past Reports
+                  </button>
+                  <button
+                    onClick={() => {
+                      onNavigate('student-profile');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 text-sm text-slate-700 font-medium"
+                  >
+                    Profile & Settings
                   </button>
                 </>
               )}

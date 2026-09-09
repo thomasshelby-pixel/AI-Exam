@@ -61,9 +61,8 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ onNavigateRegist
           <span>ICAI Zero Negative Marking Compliance Guarantee</span>
         </h3>
         <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-          In generic online grading tools, candidates frequently see negative marks deducted for wrong answers on CA Intermediate or CA Final papers.
-          At CA Exam Checker AI, our evaluation prompt and logic strictly enforce ICAI&apos;s statutory exam policy:
-          <strong> Zero negative marking on CA Intermediate and CA Final 30-mark case scenarios</strong>. Only CA Foundation Papers 3 and 4 have 0.25 negative marking applied.
+          In generic online grading tools, candidates frequently see negative marks deducted for wrong answers.
+          At CA Exam Checker AI, our evaluation engine strictly enforces <strong>zero negative marking for all multiple choice questions (MCQs)</strong> across CA Foundation, CA Intermediate, and CA Final exams. Incorrect or unattempted MCQs are awarded 0 marks, and marks are never deducted.
         </p>
       </div>
 

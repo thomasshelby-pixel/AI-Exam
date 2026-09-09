@@ -3,20 +3,20 @@ import { ShieldCheck, Scale, FileText, AlertCircle } from 'lucide-react';
 
 export const LegalPage: React.FC = () => {
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-slate-100 space-y-12">
+    <div id="legal-page-container" className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-slate-100 space-y-12">
       {/* Title */}
-      <div className="space-y-3">
-        <h1 className="text-3xl font-extrabold text-white">Terms, Policies & Legal Compliance</h1>
+      <div className="space-y-3 text-[#00adff]">
+        <h1 id="legal-page-heading" className="text-3xl font-extrabold text-[#ff0000]">Terms, Policies & Legal Compliance</h1>
         <p className="text-xs text-slate-400">Last updated: May 2026</p>
       </div>
 
       {/* ICAI Disclaimer */}
-      <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2 text-xs">
-        <h3 className="font-bold text-amber-300 flex items-center gap-2">
+      <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2 text-xs text-[#0086ff]">
+        <h3 className="font-bold text-[#ffc900] flex items-center gap-2">
           <Scale className="w-4 h-4" />
           ICAI Official Disclaimer & Non-Affiliation Notice
         </h3>
-        <p className="text-slate-300 leading-relaxed">
+        <p className="text-[#007aff] leading-relaxed">
           &ldquo;Chartered Accountant&rdquo;, &ldquo;CA&rdquo;, and &ldquo;ICAI&rdquo; are registered trademarks of The Institute of Chartered Accountants of India (ICAI).
           CA Exam Checker AI is an independent academic software technology built for educational preparation and self-assessment purposes only.
           This platform is not affiliated with, endorsed by, or operated under the authority of the Institute of Chartered Accountants of India.
@@ -26,8 +26,8 @@ export const LegalPage: React.FC = () => {
 
       {/* Terms of Service */}
       <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
-        <h2 className="text-lg font-bold text-white">1. Terms of Service</h2>
-        <p>
+        <h2 className="text-lg font-bold text-[#ff0000]">1. Terms of Service</h2>
+        <p className="text-[#006fff]">
           By creating an account or accessing CA Exam Checker AI, you agree to abide by these terms. Our service evaluates candidate answer sheets
           against publicly accessible suggested answers, statutory standards, and test series rubrics. You agree not to upload harmful, offensive,
           or non-educational materials to the system.
@@ -36,8 +36,8 @@ export const LegalPage: React.FC = () => {
 
       {/* Privacy Policy */}
       <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
-        <h2 className="text-lg font-bold text-white">2. Privacy Policy & Document Protection</h2>
-        <p>
+        <h2 className="text-lg font-bold text-[#fa0505]">2. Privacy Policy & Document Protection</h2>
+        <p className="text-[#0080ff]">
           We treat candidate answer sheets and personal details with strict academic confidentiality. Your uploaded papers are processed securely
           in transient memory for the sole purpose of generating your evaluation report. We do not sell or monetize candidate data.
           Candidate names and ICAI registration numbers are stored exclusively to render your personal scorecards and prevent duplicate free-tier claims.
@@ -46,28 +46,32 @@ export const LegalPage: React.FC = () => {
 
       {/* Refund & Cancellation Policy */}
       <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
-        <h2 className="text-lg font-bold text-white">3. Refund & Cancellation Policy</h2>
-        <p>
-          We are committed to fair and transparent billing for all CA aspirants:
+        <h2 className="text-lg font-bold text-[#ff0000]">3. Refund & Cancellation Policy</h2>
+        <p className="text-[#006fff]">
+          We are committed to fair, transparent billing and academic integrity for all CA aspirants:
         </p>
-        <ul className="list-disc list-inside space-y-2 text-slate-300">
-          <li>
-            <strong>Safeguard Protection:</strong> If an uploaded file fails the document authenticity check (e.g. an admit card or blank image is uploaded),
-            the system rejects the file and <strong>zero evaluation credits are deducted</strong>.
+        <ul className="list-disc list-inside space-y-2.5 text-slate-300">
+          <li className="text-[#0071ff]">
+            <strong>Final and Non-Refundable Purchases:</strong> All evaluation credit purchases are final and non-refundable after successful purchase and credit issuance.
           </li>
-          <li>
-            <strong>Unconsumed Credits:</strong> Candidates may request a refund for unconsumed, purchased credit packages within 7 days of payment
-            by emailing <a href="mailto:caexamchecker.support@gmail.com" className="text-amber-400 underline">caexamchecker.support@gmail.com</a>.
+          <li className="text-[#006bff]">
+            <strong>Credit Validity:</strong> Purchased evaluation credits are valid for 3 months from the date of successful payment/credit issuance. Each purchase is treated as a separate credit lot with its own 3-month validity period. Expired credits cannot be used.
           </li>
-          <li>
-            <strong>Completed Evaluations:</strong> Due to server and AI computation costs, credits utilized for completed evaluations are non-refundable.
+          <li className="text-[#0071ff]">
+            <strong>Safeguard Protection (Invalid Uploads):</strong> If an uploaded file fails the document authenticity check (e.g., an admit card, blank page, or non-exam document is detected), the system rejects the file and <strong>zero evaluation credits are deducted</strong>.
+          </li>
+          <li className="text-[#0072ff]">
+            <strong>Completed Evaluations:</strong> Successfully completed evaluations consume the applicable credit. Due to server infrastructure and high-reasoning AI computation costs, credits utilized for completed evaluations cannot be restored or refunded.
+          </li>
+          <li className="text-[#0075ff]">
+            <strong>Payment Processing Failures & Reconciliation:</strong> For payment-processing failures where money is deducted by the bank or UPI app but the order/credit issuance fails, the transaction is handled strictly according to the payment gateway reconciliation flow and applicable payment network rules. This is handled as automated payment reconciliation, not as a normal user-requested refund option.
           </li>
         </ul>
       </div>
 
       {/* Contact for Grievances */}
       <div className="pt-6 border-t border-slate-800 text-xs text-slate-400 space-y-1">
-        <p>
+        <p className="text-[#ff2c00]">
           Grievance Officer & Legal Helpdesk:{' '}
           <a href="mailto:caexamchecker.support@gmail.com" className="text-amber-400 hover:underline">
             caexamchecker.support@gmail.com

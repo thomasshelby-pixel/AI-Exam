@@ -20,11 +20,11 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
   const [saving, setSaving] = useState<boolean>(false);
   const [settings, setSettings] = useState<Record<string, string>>({
     EVAL_CHECKING_MODE: 'standard',
-    EVAL_MODEL_PROVIDER: 'gemini-2.5-flash',
+    EVAL_MODEL_PROVIDER: 'gemini-3.8-flash',
     EVAL_CONFIDENCE_THRESHOLD: '80',
     EVAL_STEP_MARKING_ENABLED: 'true',
     EVAL_CONSEQUENTIAL_ERROR_ENABLED: 'true',
-    EVAL_MCQ_NEGATIVE_MARKING: 'false',
+    EVAL_MCQ_NEGATIVE_MARKING: 'ZERO_FOR_ALL',
     EVAL_EQUIVALENT_ANSWER_DETECTION: 'true',
     EVAL_MATERIAL_PRIORITY: 'STRICT_ACTIVE',
   });
@@ -167,8 +167,11 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                   onChange={(e) => setSettings({ ...settings, EVAL_MODEL_PROVIDER: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none"
                 >
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Default - High Speed & OCR Precision)</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Complex Legal Reasoning)</option>
+                  <option value="gemini-3.8-flash">Gemini 3.8 Flash (Primary CA Evaluation — Default)</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Secondary Complex & Legal Reasoning)</option>
+                  <option value="gemini-3.7-flash">Gemini 3.7 Flash (Fast Review & MCQ Evaluator)</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (Primary Fallback Model)</option>
+                  <option value="gemini-3.5-flash">Gemini 3.5 Flash (Secondary Fallback Model)</option>
                 </select>
               </div>
 
@@ -249,18 +252,29 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
           {/* Card 4: MCQ Negative Marking Policy */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
             <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
-              <ShieldCheck className="w-4 h-4 text-amber-600" />
-              <span>CA MCQ Negative Marking Guard</span>
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span>Universal Zero MCQ Negative Marking Guard</span>
             </div>
 
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800 space-y-1">
+            <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 text-xs text-emerald-800 space-y-1">
               <div className="font-bold flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>Enforced CA Examination Standard</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Enforced ICAI Standard — Zero Negative Marking</span>
               </div>
               <p className="text-[11px] leading-relaxed">
-                Intermediate and Final 30-mark case scenarios strictly have <strong>zero negative marking</strong> (wrong MCQ = 0 marks, not -0.25). Foundation Paper 3 & 4 maintain standard 0.25 penalty.
+                Universal Rule Enforced across CA Foundation, Intermediate, and Final: <strong>Zero Negative Marking</strong> for all MCQs. Correct = full marks, Wrong/Incorrect = 0 marks (never deduct marks), Unattempted = 0 marks.
               </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">MCQ Scoring Rule</label>
+              <select
+                value={settings.EVAL_MCQ_NEGATIVE_MARKING || 'ZERO_FOR_ALL'}
+                onChange={(e) => setSettings({ ...settings, EVAL_MCQ_NEGATIVE_MARKING: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none"
+              >
+                <option value="ZERO_FOR_ALL">Zero Negative Marking for All MCQs (Foundation, Inter & Final)</option>
+              </select>
             </div>
 
             <div>

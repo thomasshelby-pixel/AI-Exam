@@ -41,7 +41,7 @@ export const ContactPage: React.FC = () => {
         <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
           Support & Guidance
         </span>
-        <h1 className="text-3xl font-extrabold text-white">Academic Helpdesk</h1>
+        <h1 className="text-3xl font-extrabold text-[#FF0000]">Academic Helpdesk</h1>
         <p className="text-xs sm:text-sm text-slate-400">
           Have questions about step marking, institute partnership, or payment confirmation? Reach out directly.
         </p>

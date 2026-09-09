@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { createInstituteSubscriptionOrder, verifyInstituteSubscriptionPayment, isRazorpayConfigured, getRazorpayKeyId } from '../razorpay.js';
 
 const router = Router();
 
@@ -15,13 +16,34 @@ function getAdminInstituteId(req: AuthRequest): string | null {
     if (req.query.instituteId) {
       return String(req.query.instituteId);
     }
-    const instByEmail = db.prepare('SELECT id FROM institutes WHERE email = ?').get(req.user!.email) as { id: string } | undefined;
+    const instByEmail = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user!.email) as { id: string } | undefined;
     if (instByEmail) return instByEmail.id;
     const firstInst = db.prepare('SELECT id FROM institutes ORDER BY created_at ASC LIMIT 1').get() as { id: string } | undefined;
     return firstInst ? firstInst.id : null;
   }
-  const inst = db.prepare('SELECT id FROM institutes WHERE email = ?').get(req.user!.email) as { id: string } | undefined;
+  const inst = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user!.email) as { id: string } | undefined;
   return inst ? inst.id : null;
+}
+
+// Helper to log institute-related administrative audit events
+function logInstituteAudit(userId: string, action: string, entityType: string, entityId: string, details: any, ipAddress?: string) {
+  try {
+    const id = `audit_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      id,
+      userId,
+      action,
+      entityType,
+      entityId,
+      typeof details === 'string' ? details : JSON.stringify(details),
+      ipAddress || null
+    );
+  } catch (err) {
+    console.warn('logInstituteAudit error:', err);
+  }
 }
 
 // 1. Institute Dashboard
@@ -114,32 +136,37 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const { search, batchId, status } = req.query;
 
     let query = `
-      SELECT COALESCE(u.id, m.id) as id,
+      SELECT COALESCE(u.id, m.student_id, m.id) as id,
+             m.id as membership_id,
              u.id as user_id,
              COALESCE(u.full_name, m.student_name, 'Invited Student') as full_name,
              COALESCE(u.email, m.invited_email) as email,
              u.phone,
              p.icai_registration_number,
              p.ca_level,
-             m.status as membership_status,
+             m.status as status,
              m.joined_at,
              m.invited_email,
              b.name as batch_name,
              b.id as batch_id,
              COUNT(e.id) as evaluations_count,
-             AVG(e.percentage) as average_score
+             AVG(e.percentage) as average_percentage
       FROM institute_memberships m
       LEFT JOIN users u ON u.id = m.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN batches b ON b.id = m.batch_id
-      LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
+      LEFT JOIN evaluations e ON (e.student_id = u.id OR e.student_id = m.student_id) AND e.institute_id = ? AND e.status = 'COMPLETED'
       WHERE m.institute_id = ?
     `;
-    const params: any[] = [instituteId];
+    const params: any[] = [instituteId, instituteId];
 
     if (batchId) {
-      query += ' AND m.batch_id = ?';
-      params.push(batchId);
+      if (batchId === 'unassigned') {
+        query += ' AND m.batch_id IS NULL';
+      } else {
+        query += ' AND m.batch_id = ?';
+        params.push(batchId);
+      }
     }
     if (status) {
       query += ' AND m.status = ?';
@@ -150,7 +177,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    query += ' GROUP BY COALESCE(u.id, m.id) ORDER BY m.joined_at DESC';
+    query += ' GROUP BY m.id ORDER BY m.joined_at DESC';
 
     const students = db.prepare(query).all(...params);
     return res.json({ students });
@@ -166,76 +193,125 @@ router.post('/students', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
-    const { email, batchId, studentName, notes } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Student email is required.' });
+    const { email, batchId, studentName, notes, phone, icaiRegistrationNumber, caLevel } = req.body;
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid student email is required.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Check institute capacity
-    const countRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
-    const inst = db.prepare('SELECT max_students FROM institutes WHERE id = ?').get(instituteId) as { max_students: number };
-    if (countRow.count >= inst.max_students) {
-      return res.status(403).json({ error: `Institute student limit (${inst.max_students}) reached. Contact super admin to upgrade capacity.` });
+    // Verify batchId if provided belongs to this institute
+    if (batchId) {
+      const validBatch = db.prepare('SELECT id FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId);
+      if (!validBatch) {
+        return res.status(400).json({ error: 'Invalid batch selected for this institute.' });
+      }
     }
 
-    const user = db.prepare('SELECT id, full_name, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+    // Check institute capacity
+    const countRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
+    const inst = db.prepare('SELECT name, max_students FROM institutes WHERE id = ?').get(instituteId) as { name: string; max_students: number };
+    const maxCapacity = inst?.max_students || 50;
+    if (countRow.count >= maxCapacity) {
+      return res.status(403).json({ error: `Institute student limit (${maxCapacity}) reached. Please upgrade your capacity.` });
+    }
+
+    // Check if student user exists in users table
+    const existingUser = db.prepare('SELECT id, full_name, email, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
       id: string;
       full_name: string;
+      email: string;
       role: string;
     } | undefined;
 
-    if (user) {
-      if (user.role !== 'STUDENT') {
-        return res.status(400).json({ error: 'Specified account is not a student.' });
+    if (existingUser) {
+      if (existingUser.role !== 'STUDENT') {
+        return res.status(400).json({ error: `The account with email ${normalizedEmail} is registered as ${existingUser.role}. Only student accounts can be enrolled.` });
       }
 
-      // Existing user -> activate membership immediately
-      const existingMembership = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, user.id) as { id: string } | undefined;
-      
+      // Check existing membership in THIS institute
+      const existingMembership = db.prepare('SELECT id, status, batch_id FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, existingUser.id) as { id: string; status: string; batch_id: string } | undefined;
+
       if (existingMembership) {
-        db.prepare("UPDATE institute_memberships SET batch_id = ?, status = 'ACTIVE' WHERE id = ?").run(batchId || null, existingMembership.id);
-      } else {
-        const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-        db.prepare(`
-          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes)
-          VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
-        `).run(membershipId, instituteId, user.id, batchId || null, normalizedEmail, user.full_name, notes || null);
+        if (existingMembership.status === 'ACTIVE') {
+          // If already active, update batch if requested or inform admin
+          if (batchId && batchId !== existingMembership.batch_id) {
+            db.prepare('UPDATE institute_memberships SET batch_id = ?, notes = COALESCE(?, notes) WHERE id = ?').run(batchId, notes || null, existingMembership.id);
+            logInstituteAudit(req.user!.id, 'ASSIGN_BATCH', 'MEMBERSHIP', existingMembership.id, { batchId, studentEmail: normalizedEmail });
+            return res.json({ success: true, message: `Student ${existingUser.full_name} is already enrolled in ${inst.name}. Batch updated.` });
+          }
+          return res.status(400).json({ error: `Student ${existingUser.full_name} (${normalizedEmail}) is already actively enrolled in this institute.` });
+        } else {
+          // Reactivate inactive membership
+          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = ?, notes = COALESCE(?, notes), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .run(batchId || null, notes || null, existingMembership.id);
+          
+          logInstituteAudit(req.user!.id, 'REACTIVATE_STUDENT_ENROLLMENT', 'MEMBERSHIP', existingMembership.id, { instituteId, studentId: existingUser.id });
+          return res.json({ success: true, message: `Student ${existingUser.full_name} re-enrolled successfully with active sponsorship.` });
+        }
       }
 
-      // Link in student profile
+      // Create new active membership (multi-institute supported: no check blocking enrollment if student belongs to another institute!)
+      const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
-        UPDATE student_profiles SET institute_id = ?, batch_id = ? WHERE user_id = ?
-      `).run(instituteId, batchId || null, user.id);
+        INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
+        VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(membershipId, instituteId, existingUser.id, batchId || null, normalizedEmail, existingUser.full_name, notes || null);
 
-      // Notify student
+      // Optionally update student profile registration info if provided and empty
+      if (icaiRegistrationNumber || caLevel) {
+        db.prepare(`
+          UPDATE student_profiles
+          SET icai_registration_number = COALESCE(icai_registration_number, ?),
+              ca_level = COALESCE(ca_level, ?)
+          WHERE user_id = ?
+        `).run(icaiRegistrationNumber || null, caLevel || null, existingUser.id);
+      }
+
+      // Send in-app notification to student
       const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
-        INSERT INTO notifications (id, user_id, title, message, type)
-        VALUES (?, ?, 'Institute Membership Activated', 'You have been enrolled under your coaching institute. Your evaluations are now sponsored.', 'INSTITUTE')
-      `).run(notifId, user.id);
+        INSERT INTO notifications (id, user_id, title, message, type, created_at)
+        VALUES (?, ?, 'Institute Membership Activated', ?, 'INSTITUTE', CURRENT_TIMESTAMP)
+      `).run(notifId, existingUser.id, `You have been enrolled in ${inst.name}. Your evaluations and test series are now sponsored.`);
 
-      return res.status(201).json({ success: true, message: `Student ${user.full_name} enrolled successfully with full institute sponsorship.` });
+      logInstituteAudit(req.user!.id, 'ENROLL_STUDENT', 'MEMBERSHIP', membershipId, {
+        instituteId,
+        studentId: existingUser.id,
+        email: normalizedEmail,
+        batchId: batchId || null,
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: `Student ${existingUser.full_name} enrolled successfully with full institute sponsorship in ${inst.name}.`,
+      });
     } else {
-      // User has not registered yet -> record pending enrollment by email (Rule 42-44)
-      const existingInvite = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string } | undefined;
+      // User has not registered yet -> create pending invitation record
+      const existingInvite = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string; status: string } | undefined;
 
+      let membershipId = existingInvite?.id;
       if (existingInvite) {
         db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
           .run(batchId || null, studentName || null, notes || null, existingInvite.id);
       } else {
-        const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+        membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
         db.prepare(`
-          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes)
-          VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, ?)
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
+          VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)
         `).run(membershipId, instituteId, batchId || null, normalizedEmail, studentName || 'Invited Student', notes || null);
       }
+
+      logInstituteAudit(req.user!.id, 'INVITE_STUDENT', 'MEMBERSHIP', membershipId || 'invite', {
+        instituteId,
+        email: normalizedEmail,
+        batchId: batchId || null,
+      });
 
       return res.status(201).json({
         success: true,
         pending: true,
-        message: `Student invitation recorded for ${normalizedEmail}. When the student registers or logs in, their account will be automatically enrolled with institute sponsorship.`,
+        message: `Student invitation recorded for ${normalizedEmail}. When this student signs up with this email, their account will automatically be linked to ${inst.name} and the selected batch.`,
       });
     }
   } catch (error: unknown) {
@@ -244,47 +320,273 @@ router.post('/students', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 4. Remove Student from Institute (Sponsorship stops, historical evaluations preserved!)
+// 3b. Bulk Enroll Students (from CSV / batch import)
+router.post('/students/bulk', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const { students, batchId } = req.body;
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ error: 'A list of students is required.' });
+    }
+
+    const results = {
+      enrolled: 0,
+      invited: 0,
+      skipped: 0,
+      errors: [] as string[],
+    };
+
+    const institute = db.prepare('SELECT name, max_students FROM institutes WHERE id = ?').get(instituteId) as { name: string; max_students: number } | undefined;
+    const currentCount = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
+    const maxCapacity = institute?.max_students || 50;
+
+    for (const item of students) {
+      const email = typeof item === 'string' ? item.trim() : item?.email?.trim();
+      const name = typeof item === 'object' ? item.fullName || item.name : '';
+      const targetBatchId = (typeof item === 'object' && item.batchId) ? item.batchId : batchId;
+
+      if (!email || !email.includes('@')) {
+        results.skipped++;
+        continue;
+      }
+
+      const normalizedEmail = email.toLowerCase();
+
+      if (currentCount.count + results.enrolled >= maxCapacity) {
+        results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
+        results.skipped++;
+        continue;
+      }
+
+      const user = db.prepare('SELECT id, full_name, email, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; full_name: string; email: string; role: string } | undefined;
+
+      if (user && user.role === 'STUDENT') {
+        const existingMem = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, user.id) as { id: string; status: string } | undefined;
+
+        if (existingMem) {
+          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id) WHERE id = ?").run(targetBatchId || null, existingMem.id);
+        } else {
+          const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+          db.prepare(`
+            INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+            VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, CURRENT_TIMESTAMP)
+          `).run(memId, instituteId, user.id, targetBatchId || null, normalizedEmail, user.full_name);
+        }
+        results.enrolled++;
+      } else {
+        const existingInvite = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string } | undefined;
+
+        if (existingInvite) {
+          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?").run(targetBatchId || null, existingInvite.id);
+        } else {
+          const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+          db.prepare(`
+            INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+            VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, CURRENT_TIMESTAMP)
+          `).run(memId, instituteId, targetBatchId || null, normalizedEmail, name || 'Invited Student');
+        }
+        results.invited++;
+      }
+    }
+
+    logInstituteAudit(req.user!.id, 'BULK_ENROLL_STUDENTS', 'MEMBERSHIP', instituteId, {
+      enrolled: results.enrolled,
+      invited: results.invited,
+      skipped: results.skipped,
+    });
+
+    return res.json({
+      success: true,
+      message: `Bulk processing complete: ${results.enrolled} active enrolled, ${results.invited} pending invitations recorded.`,
+      ...results,
+    });
+  } catch (error: unknown) {
+    console.error('Bulk enroll students error:', error);
+    return res.status(500).json({ error: 'Failed to process bulk student enrollment.' });
+  }
+});
+
+// 4. Student Details View (/institute/students/:id)
+router.get('/students/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const studentIdOrMembershipId = req.params.id;
+
+    // Look up membership
+    const membership = db.prepare(`
+      SELECT m.*,
+             b.name as batch_name,
+             b.course_level as batch_level,
+             b.target_attempt as batch_target_attempt,
+             u.full_name as user_full_name,
+             u.email as user_email,
+             u.phone as user_phone,
+             p.icai_registration_number,
+             p.ca_level
+      FROM institute_memberships m
+      LEFT JOIN users u ON u.id = m.student_id
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.institute_id = ? AND (m.student_id = ? OR m.id = ?)
+    `).get(instituteId, studentIdOrMembershipId, studentIdOrMembershipId) as any;
+
+    if (!membership) {
+      return res.status(404).json({ error: 'Student enrollment record not found in this institute.' });
+    }
+
+    // Fetch evaluations completed under this institute
+    const evaluations = membership.student_id ? db.prepare(`
+      SELECT e.id, e.subject_name, e.paper, e.total_marks, e.maximum_marks, e.percentage, e.grade, e.status, e.created_at
+      FROM evaluations e
+      WHERE e.institute_id = ? AND e.student_id = ?
+      ORDER BY e.created_at DESC
+    `).all(instituteId, membership.student_id) : [];
+
+    // Fetch available batches in this institute for easy assignment
+    const availableBatches = db.prepare(`
+      SELECT id, name, course_level, target_attempt
+      FROM batches
+      WHERE institute_id = ?
+      ORDER BY name ASC
+    `).all(instituteId);
+
+    return res.json({
+      student: {
+        id: membership.student_id || membership.id,
+        fullName: membership.user_full_name || membership.student_name || 'Invited Student',
+        email: membership.user_email || membership.invited_email,
+        phone: membership.user_phone,
+        icaiRegistrationNumber: membership.icai_registration_number,
+        caLevel: membership.ca_level,
+      },
+      membership: {
+        id: membership.id,
+        status: membership.status,
+        batchId: membership.batch_id,
+        batchName: membership.batch_name || 'Unassigned',
+        joinedAt: membership.joined_at,
+        notes: membership.notes,
+      },
+      evaluations,
+      availableBatches,
+    });
+  } catch (error: unknown) {
+    console.error('Get student details error:', error);
+    return res.status(500).json({ error: 'Failed to load student details' });
+  }
+});
+
+// 4b. Assign or Change Student Batch
+router.put('/students/:id/batch', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const studentIdOrMembershipId = req.params.id;
+    const { batchId } = req.body;
+
+    const membership = db.prepare(`
+      SELECT id, student_id, batch_id FROM institute_memberships
+      WHERE institute_id = ? AND (student_id = ? OR id = ?)
+    `).get(instituteId, studentIdOrMembershipId, studentIdOrMembershipId) as { id: string; student_id: string; batch_id: string } | undefined;
+
+    if (!membership) {
+      return res.status(404).json({ error: 'Student enrollment record not found in this institute.' });
+    }
+
+    if (batchId) {
+      const batch = db.prepare('SELECT id, name FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId) as { id: string; name: string } | undefined;
+      if (!batch) {
+        return res.status(400).json({ error: 'Invalid batch for this institute.' });
+      }
+    }
+
+    db.prepare('UPDATE institute_memberships SET batch_id = ? WHERE id = ?').run(batchId || null, membership.id);
+
+    logInstituteAudit(req.user!.id, 'CHANGE_STUDENT_BATCH', 'MEMBERSHIP', membership.id, {
+      instituteId,
+      oldBatchId: membership.batch_id,
+      newBatchId: batchId || null,
+    });
+
+    return res.json({ success: true, message: 'Student batch assignment updated successfully.' });
+  } catch (error: unknown) {
+    console.error('Update student batch error:', error);
+    return res.status(500).json({ error: 'Failed to update student batch' });
+  }
+});
+
+// 4c. Remove Student from Institute (Sponsorship stops, historical evaluations and user accounts preserved!)
 router.delete('/students/:id', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
-    const studentId = req.params.id;
+    const studentIdOrMembershipId = req.params.id;
 
-    // Set membership status to INACTIVE rather than deleting evaluations
+    // Verify membership belongs to this institute
+    const membership = db.prepare(`
+      SELECT id, student_id, invited_email, student_name FROM institute_memberships
+      WHERE institute_id = ? AND (student_id = ? OR id = ?)
+    `).get(instituteId, studentIdOrMembershipId, studentIdOrMembershipId) as {
+      id: string;
+      student_id: string;
+      invited_email: string;
+      student_name: string;
+    } | undefined;
+
+    if (!membership) {
+      return res.status(404).json({ error: 'Student membership not found in this institute.' });
+    }
+
+    // Set membership status to INACTIVE and clear batch assignment
     db.prepare(`
-      UPDATE institute_memberships SET status = 'INACTIVE' WHERE institute_id = ? AND student_id = ?
-    `).run(instituteId, studentId);
+      UPDATE institute_memberships
+      SET status = 'INACTIVE', batch_id = NULL
+      WHERE id = ?
+    `).run(membership.id);
 
-    // Clear institute reference from profile so student falls back to normal system
-    db.prepare(`
-      UPDATE student_profiles SET institute_id = NULL, batch_id = NULL WHERE user_id = ? AND institute_id = ?
-    `).run(studentId, instituteId);
+    // If student user exists, notify them
+    if (membership.student_id) {
+      const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(instituteId) as { name: string } | undefined;
+      const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type, created_at)
+        VALUES (?, ?, 'Institute Sponsorship Update', ?, 'INSTITUTE', CURRENT_TIMESTAMP)
+      `).run(notifId, membership.student_id, `Your enrollment under ${inst?.name || 'your coaching institute'} has ended. Your personal account and historical reports remain intact.`);
+    }
 
-    // Notify student
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Institute Sponsorship Update', 'Your institute sponsorship has ended. You are now using your standard individual student account.', 'INSTITUTE')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, studentId);
+    logInstituteAudit(req.user!.id, 'REMOVE_STUDENT_FROM_INSTITUTE', 'MEMBERSHIP', membership.id, {
+      instituteId,
+      studentId: membership.student_id,
+      email: membership.invited_email,
+    });
 
-    return res.json({ success: true, message: 'Student removed from institute. Historical evaluations remain safely intact.' });
+    return res.json({
+      success: true,
+      message: 'Student removed from institute. Historical evaluations, reports, and student user account remain safely preserved.',
+    });
   } catch (error: unknown) {
     console.error('Remove student error:', error);
-    return res.status(500).json({ error: 'Failed to remove student' });
+    return res.status(500).json({ error: 'Failed to remove student from institute' });
   }
 });
 
-// 5. Batch Management
+// 5. Batch Management: List Batches
 router.get('/batches', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
     const batches = db.prepare(`
-      SELECT b.*, COUNT(m.id) as student_count
+      SELECT b.*,
+             COUNT(CASE WHEN m.status = 'ACTIVE' THEN 1 ELSE NULL END) as student_count
       FROM batches b
-      LEFT JOIN institute_memberships m ON m.batch_id = b.id AND m.status = 'ACTIVE'
+      LEFT JOIN institute_memberships m ON m.batch_id = b.id AND m.institute_id = b.institute_id
       WHERE b.institute_id = ?
       GROUP BY b.id
       ORDER BY b.created_at DESC
@@ -297,26 +599,326 @@ router.get('/batches', (req: AuthRequest, res: Response) => {
   }
 });
 
+// 5b. Create Batch
 router.post('/batches', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
-    const { name, courseLevel, description } = req.body;
+    const { name, courseLevel, targetAttempt, description, capacity } = req.body;
     if (!name || !courseLevel) {
       return res.status(400).json({ error: 'Batch name and course level are required.' });
     }
 
     const batchId = `batch_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
-      INSERT INTO batches (id, institute_id, name, course_level, description)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(batchId, instituteId, name.trim(), courseLevel, description?.trim() || null);
+      INSERT INTO batches (id, institute_id, name, course_level, target_attempt, description, capacity, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', CURRENT_TIMESTAMP)
+    `).run(
+      batchId,
+      instituteId,
+      name.trim(),
+      courseLevel,
+      targetAttempt?.trim() || 'May 2026',
+      description?.trim() || null,
+      capacity ? Number(capacity) : 100
+    );
+
+    logInstituteAudit(req.user!.id, 'CREATE_BATCH', 'BATCH', batchId, {
+      name,
+      courseLevel,
+      targetAttempt,
+    });
 
     return res.status(201).json({ success: true, batchId, message: 'Batch created successfully.' });
   } catch (error: unknown) {
     console.error('Create batch error:', error);
     return res.status(500).json({ error: 'Failed to create batch' });
+  }
+});
+
+// 5c. Batch Details View (/institute/batches/:id)
+router.get('/batches/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const batchId = req.params.id;
+
+    const batch = db.prepare(`
+      SELECT b.*,
+             COUNT(CASE WHEN m.status = 'ACTIVE' THEN 1 ELSE NULL END) as student_count
+      FROM batches b
+      LEFT JOIN institute_memberships m ON m.batch_id = b.id AND m.institute_id = b.institute_id
+      WHERE b.id = ? AND b.institute_id = ?
+      GROUP BY b.id
+    `).get(batchId, instituteId) as any;
+
+    if (!batch) {
+      return res.status(404).json({ error: 'Batch not found in this institute.' });
+    }
+
+    // List of students currently in this batch
+    const students = db.prepare(`
+      SELECT COALESCE(u.id, m.student_id, m.id) as id,
+             m.id as membership_id,
+             u.id as user_id,
+             COALESCE(u.full_name, m.student_name, 'Invited Student') as full_name,
+             COALESCE(u.email, m.invited_email) as email,
+             u.phone,
+             p.icai_registration_number,
+             p.ca_level,
+             m.status as status,
+             m.joined_at,
+             COUNT(e.id) as evaluations_count,
+             AVG(e.percentage) as average_percentage
+      FROM institute_memberships m
+      LEFT JOIN users u ON u.id = m.student_id
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN evaluations e ON (e.student_id = u.id OR e.student_id = m.student_id) AND e.institute_id = ? AND e.status = 'COMPLETED'
+      WHERE m.institute_id = ? AND m.batch_id = ?
+      GROUP BY m.id
+      ORDER BY m.joined_at DESC
+    `).all(instituteId, instituteId, batchId);
+
+    // List of enrolled active students in this institute who are NOT in this batch
+    const availableStudents = db.prepare(`
+      SELECT COALESCE(u.id, m.student_id, m.id) as id,
+             m.id as membership_id,
+             COALESCE(u.full_name, m.student_name, 'Invited Student') as full_name,
+             COALESCE(u.email, m.invited_email) as email,
+             p.icai_registration_number,
+             m.batch_id,
+             b.name as current_batch_name
+      FROM institute_memberships m
+      LEFT JOIN users u ON u.id = m.student_id
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.institute_id = ? AND m.status = 'ACTIVE' AND (m.batch_id IS NULL OR m.batch_id != ?)
+      ORDER BY full_name ASC
+    `).all(instituteId, batchId);
+
+    // Other batches in this institute (for move student)
+    const otherBatches = db.prepare(`
+      SELECT id, name, course_level, target_attempt
+      FROM batches
+      WHERE institute_id = ? AND id != ?
+      ORDER BY name ASC
+    `).all(instituteId, batchId);
+
+    return res.json({
+      batch,
+      students,
+      availableStudents,
+      otherBatches,
+    });
+  } catch (error: unknown) {
+    console.error('Get batch details error:', error);
+    return res.status(500).json({ error: 'Failed to load batch details' });
+  }
+});
+
+// 5d. Add Students to Batch (bulk or single)
+router.post('/batches/:id/students', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const batchId = req.params.id;
+    const batch = db.prepare('SELECT id, name FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId) as { id: string; name: string } | undefined;
+    if (!batch) return res.status(404).json({ error: 'Batch not found in this institute.' });
+
+    const { studentIds, studentId } = req.body;
+    const idsToAdd: string[] = studentIds && Array.isArray(studentIds) ? studentIds : (studentId ? [studentId] : []);
+
+    if (idsToAdd.length === 0) {
+      return res.status(400).json({ error: 'At least one student must be selected.' });
+    }
+
+    let assignedCount = 0;
+    for (const sid of idsToAdd) {
+      const resUpdate = db.prepare(`
+        UPDATE institute_memberships
+        SET batch_id = ?
+        WHERE institute_id = ? AND (student_id = ? OR id = ?)
+      `).run(batchId, instituteId, sid, sid);
+
+      if (resUpdate.changes > 0) assignedCount++;
+    }
+
+    logInstituteAudit(req.user!.id, 'ASSIGN_STUDENTS_TO_BATCH', 'BATCH', batchId, {
+      batchName: batch.name,
+      assignedCount,
+      studentIds: idsToAdd,
+    });
+
+    return res.json({
+      success: true,
+      message: `Successfully assigned ${assignedCount} student(s) to ${batch.name}.`,
+    });
+  } catch (error: unknown) {
+    console.error('Add students to batch error:', error);
+    return res.status(500).json({ error: 'Failed to assign students to batch' });
+  }
+});
+
+// 5e. Remove Student from Batch (Student remains active in institute, batch set to NULL)
+router.delete('/batches/:id/students/:studentId', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const { id: batchId, studentId } = req.params;
+
+    const resUpdate = db.prepare(`
+      UPDATE institute_memberships
+      SET batch_id = NULL
+      WHERE institute_id = ? AND batch_id = ? AND (student_id = ? OR id = ?)
+    `).run(instituteId, batchId, studentId, studentId);
+
+    if (resUpdate.changes === 0) {
+      return res.status(404).json({ error: 'Student not found in this batch.' });
+    }
+
+    logInstituteAudit(req.user!.id, 'REMOVE_STUDENT_FROM_BATCH', 'BATCH', batchId, {
+      studentId,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Student removed from batch. The student remains enrolled in the institute.',
+    });
+  } catch (error: unknown) {
+    console.error('Remove student from batch error:', error);
+    return res.status(500).json({ error: 'Failed to remove student from batch' });
+  }
+});
+
+// 5f. Move Student Between Batches
+router.post('/batches/:id/move-student', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const { id: sourceBatchId } = req.params;
+    const { studentId, targetBatchId } = req.body;
+
+    if (!studentId) {
+      return res.status(400).json({ error: 'Student ID is required.' });
+    }
+
+    // Verify target batch if provided
+    let targetBatchName = 'Unassigned';
+    if (targetBatchId) {
+      const targetBatch = db.prepare('SELECT id, name FROM batches WHERE id = ? AND institute_id = ?').get(targetBatchId, instituteId) as { id: string; name: string } | undefined;
+      if (!targetBatch) {
+        return res.status(400).json({ error: 'Target batch not found in this institute.' });
+      }
+      targetBatchName = targetBatch.name;
+    }
+
+    const resUpdate = db.prepare(`
+      UPDATE institute_memberships
+      SET batch_id = ?
+      WHERE institute_id = ? AND (student_id = ? OR id = ?)
+    `).run(targetBatchId || null, instituteId, studentId, studentId);
+
+    if (resUpdate.changes === 0) {
+      return res.status(404).json({ error: 'Student not found in this institute.' });
+    }
+
+    logInstituteAudit(req.user!.id, 'MOVE_STUDENT_BATCH', 'BATCH', targetBatchId || 'unassigned', {
+      sourceBatchId,
+      targetBatchId,
+      studentId,
+    });
+
+    return res.json({
+      success: true,
+      message: `Student successfully moved to ${targetBatchName}. Historical evaluations remain intact.`,
+    });
+  } catch (error: unknown) {
+    console.error('Move student batch error:', error);
+    return res.status(500).json({ error: 'Failed to move student to new batch' });
+  }
+});
+
+// 5g. Update Batch Metadata
+router.put('/batches/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const batchId = req.params.id;
+    const { name, courseLevel, targetAttempt, description, capacity, status } = req.body;
+
+    const existing = db.prepare('SELECT id FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId);
+    if (!existing) return res.status(404).json({ error: 'Batch not found.' });
+
+    db.prepare(`
+      UPDATE batches
+      SET name = COALESCE(?, name),
+          course_level = COALESCE(?, course_level),
+          target_attempt = COALESCE(?, target_attempt),
+          description = COALESCE(?, description),
+          capacity = COALESCE(?, capacity),
+          status = COALESCE(?, status)
+      WHERE id = ? AND institute_id = ?
+    `).run(
+      name?.trim() || null,
+      courseLevel || null,
+      targetAttempt?.trim() || null,
+      description !== undefined ? description?.trim() : null,
+      capacity ? Number(capacity) : null,
+      status || null,
+      batchId,
+      instituteId
+    );
+
+    logInstituteAudit(req.user!.id, 'UPDATE_BATCH', 'BATCH', batchId, {
+      name,
+      courseLevel,
+      targetAttempt,
+    });
+
+    return res.json({ success: true, message: 'Batch updated successfully.' });
+  } catch (error: unknown) {
+    console.error('Update batch error:', error);
+    return res.status(500).json({ error: 'Failed to update batch' });
+  }
+});
+
+// 5h. Delete Batch (Safety: Unassigns students first, never deletes students or evaluations)
+router.delete('/batches/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const batchId = req.params.id;
+    const batch = db.prepare('SELECT id, name FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId) as { id: string; name: string } | undefined;
+    if (!batch) return res.status(404).json({ error: 'Batch not found.' });
+
+    // Safely unassign all students from this batch in this institute
+    db.prepare(`
+      UPDATE institute_memberships
+      SET batch_id = NULL
+      WHERE institute_id = ? AND batch_id = ?
+    `).run(instituteId, batchId);
+
+    // Delete the batch
+    db.prepare('DELETE FROM batches WHERE id = ? AND institute_id = ?').run(batchId, instituteId);
+
+    logInstituteAudit(req.user!.id, 'DELETE_BATCH', 'BATCH', batchId, {
+      deletedBatchName: batch.name,
+    });
+
+    return res.json({
+      success: true,
+      message: `Batch "${batch.name}" deleted. Any enrolled students have been moved to unassigned status.`,
+    });
+  } catch (error: unknown) {
+    console.error('Delete batch error:', error);
+    return res.status(500).json({ error: 'Failed to delete batch' });
   }
 });
 
@@ -683,19 +1285,88 @@ router.get('/subscription', (req: AuthRequest, res: Response) => {
     const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
     const activeMembers = (db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as any).count;
 
+    // Fetch dynamic tiers from DB
+    const plansRaw = db.prepare('SELECT * FROM institute_plans WHERE is_active = 1 ORDER BY sort_order ASC').all() as any[];
+    const availablePlans = plansRaw.map((p) => ({
+      ...p,
+      features: JSON.parse(p.features_json || '[]'),
+    }));
+
     return res.json({
-      plan: inst.subscription_plan || 'INSTITUTIONAL_PARTNER',
+      instituteId,
+      instituteName: inst.name,
+      plan: inst.subscription_plan || 'plan_inst_starter',
       status: inst.status,
-      maxStudents: inst.max_students || 500,
+      maxStudents: inst.max_students || 50,
       activeStudents: activeMembers,
-      remainingSeats: Math.max(0, (inst.max_students || 500) - activeMembers),
+      remainingSeats: Math.max(0, (inst.max_students || 50) - activeMembers),
       expiresAt: inst.subscription_expires_at,
       contactPerson: inst.contact_person,
       email: inst.email,
+      phone: inst.phone,
+      razorpayKeyId: getRazorpayKeyId(),
+      isRazorpayConfigured: isRazorpayConfigured(),
+      availablePlans,
     });
   } catch (error: unknown) {
     console.error('Get subscription error:', error);
     return res.status(500).json({ error: 'Failed to load subscription details' });
+  }
+});
+
+// Create Razorpay Order for Institute Subscription
+router.post('/subscription/create-order', async (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const { planId, billingPeriod } = req.body;
+    if (!planId) {
+      return res.status(400).json({ error: 'Plan ID is required' });
+    }
+
+    const order = await createInstituteSubscriptionOrder({
+      instituteId,
+      planId,
+      billingPeriod: billingPeriod === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY',
+    });
+
+    return res.status(201).json(order);
+  } catch (error: any) {
+    console.error('Create institute subscription order error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to create subscription order' });
+  }
+});
+
+// Verify Razorpay Payment for Institute Subscription
+router.post('/subscription/verify-payment', async (req: AuthRequest, res: Response) => {
+  try {
+    const instituteId = getAdminInstituteId(req);
+    if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId } = req.body;
+    if (!razorpay_order_id || !razorpay_payment_id || !planId) {
+      return res.status(400).json({ error: 'Missing payment verification credentials' });
+    }
+
+    const result = verifyInstituteSubscriptionPayment({
+      instituteId,
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature || '',
+      planId,
+    });
+
+    return res.json({
+      success: true,
+      message: `Institute subscription activated successfully on ${result.plan}!`,
+      plan: result.plan,
+      maxStudents: result.maxStudents,
+      expiresAt: result.expiresAt,
+    });
+  } catch (error: any) {
+    console.error('Verify institute payment error:', error);
+    return res.status(400).json({ error: error?.message || 'Payment verification failed' });
   }
 });
 

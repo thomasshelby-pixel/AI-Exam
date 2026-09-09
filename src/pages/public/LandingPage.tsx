@@ -117,7 +117,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
             <h3 className="text-base font-bold text-slate-900">Zero MCQ Negative Marking Rule</h3>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              Strict compliance with CA examination guidelines: CA Intermediate and CA Final 30-mark case scenarios feature strictly zero negative marking, while Foundation follows the 0.25 rule.
+              Universal compliance with CA examination guidelines: All MCQs across CA Foundation, Intermediate, and Final feature strictly zero negative marking.
             </p>
           </div>
         </div>
@@ -138,7 +138,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <p className="text-xs text-slate-600">
                 Accounting, Business Laws, Quantitative Aptitude (Maths, Stats, LR), Business Economics.
               </p>
-              <div className="pt-1 text-[11px] text-slate-500">Includes 0.25 negative marking on Paper 3 & 4.</div>
+              <div className="pt-1 text-[11px] text-emerald-700 font-semibold">Universal zero negative marking enforced.</div>
             </div>
 
             <div className="p-5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">

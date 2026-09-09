@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { initDatabase } from './server/db.js';
 import authRoutes from './server/routes/authRoutes.js';
@@ -9,9 +8,7 @@ import instituteRoutes from './server/routes/instituteRoutes.js';
 import adminRoutes from './server/routes/adminRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
 import publicRoutes from './server/routes/publicRoutes.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import pricingRoutes from './server/routes/pricingRoutes.js';
 
 async function startServer() {
   // Initialize Database schemas, indices, and baseline ICAI materials
@@ -50,6 +47,7 @@ async function startServer() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/payments', paymentRoutes);
   app.use('/api/public', publicRoutes);
+  app.use('/api/pricing', pricingRoutes);
 
   // Vite middleware in development vs static file serving in production
   if (process.env.NODE_ENV !== 'production') {

@@ -2,14 +2,32 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, UserRole } from '../types/index.js';
 import { apiRequest } from '../api/client.js';
 
+export interface SuspendedAccountInfo {
+  reason: string;
+  suspendedAt: string;
+  userId: string;
+  revocationToken: string;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: Record<string, unknown> | null;
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  suspendedAccount: SuspendedAccountInfo | null;
+  clearSuspension: () => void;
   login: (email: string, password: string) => Promise<User>;
-  demoLogin: (role?: string) => Promise<User>;
+  instituteLogin: (email: string, password: string) => Promise<User>;
+  instituteRegister: (data: {
+    instituteName: string;
+    contactPerson: string;
+    email: string;
+    password: string;
+    phone: string;
+    address?: string;
+    website?: string;
+  }) => Promise<{ user: User; institute: any }>;
   register: (data: {
     email: string;
     password: string;
@@ -17,7 +35,9 @@ interface AuthContextType {
     phone?: string;
     icaiRegistrationNumber: string;
     caLevel: string;
+    referralCode?: string;
   }) => Promise<User>;
+  submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -28,7 +48,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('ca_exam_checker_token'));
+  const [suspendedAccount, setSuspendedAccount] = useState<SuspendedAccountInfo | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const clearSuspension = () => setSuspendedAccount(null);
+
+  const handleSuspension = (payload: any): boolean => {
+    const susp =
+      payload?.suspension ||
+      payload?.data?.suspension ||
+      (payload?.status === 'SUSPENDED' && payload) ||
+      (payload?.accountStatus === 'SUSPENDED' && payload);
+
+    if (susp && (susp.reason || susp.revocationToken || susp.suspendedAt)) {
+      setSuspendedAccount({
+        reason: susp.reason || 'Account access suspended by the administrator.',
+        suspendedAt: susp.suspendedAt || new Date().toISOString(),
+        userId: susp.userId || '',
+        revocationToken: susp.revocationToken || '',
+      });
+      return true;
+    }
+    return false;
+  };
 
   const refreshUser = useCallback(async () => {
     try {
@@ -45,7 +87,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await apiRequest<{
         user: User | null;
         profile: Record<string, unknown> | null;
+        isSuspended?: boolean;
+        suspension?: SuspendedAccountInfo;
       }>('/api/auth/me');
+
+      if (response && (response.isSuspended || response.user?.status === 'SUSPENDED') && response.suspension) {
+        setSuspendedAccount(response.suspension);
+        setUser(null);
+        setProfile(null);
+        return;
+      }
 
       if (response && response.user) {
         setUser(response.user);
@@ -61,11 +112,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(null);
         setToken(null);
       }
-    } catch {
-      localStorage.removeItem('ca_exam_checker_token');
-      setUser(null);
-      setProfile(null);
-      setToken(null);
+    } catch (err: any) {
+      if (handleSuspension(err) || handleSuspension(err?.data)) {
+        setUser(null);
+        setProfile(null);
+      } else {
+        localStorage.removeItem('ca_exam_checker_token');
+        setUser(null);
+        setProfile(null);
+        setToken(null);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -76,34 +132,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshUser]);
 
   const login = async (email: string, password: string): Promise<User> => {
-    const res = await apiRequest<{ token: string; user: User }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
+    try {
+      const res = await apiRequest<{ token: string; user: User }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
 
-    localStorage.setItem('ca_exam_checker_token', res.token);
-    setToken(res.token);
-    setUser(res.user);
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+      setUser(res.user);
+      setSuspendedAccount(null);
 
-    // Refresh profile in background without blocking immediate navigation
-    refreshUser().catch(() => {});
-
-    return res.user;
+      refreshUser().catch(() => {});
+      return res.user;
+    } catch (err: any) {
+      handleSuspension(err) || handleSuspension(err?.data);
+      throw err;
+    }
   };
 
-  const demoLogin = async (role: string = 'STUDENT'): Promise<User> => {
-    const res = await apiRequest<{ token: string; user: User }>('/api/auth/demo-login', {
+  const instituteLogin = async (email: string, password: string): Promise<User> => {
+    try {
+      const res = await apiRequest<{ token: string; user: User }>('/api/auth/institute/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+      setUser(res.user);
+      setSuspendedAccount(null);
+
+      refreshUser().catch(() => {});
+      return res.user;
+    } catch (err: any) {
+      handleSuspension(err) || handleSuspension(err?.data);
+      throw err;
+    }
+  };
+
+  const instituteRegister = async (data: {
+    instituteName: string;
+    contactPerson: string;
+    email: string;
+    password: string;
+    phone: string;
+    address?: string;
+    website?: string;
+  }): Promise<{ user: User; institute: any }> => {
+    const res = await apiRequest<{ token: string; user: User; institute: any }>('/api/auth/institute/register', {
       method: 'POST',
-      body: JSON.stringify({ role }),
+      body: JSON.stringify(data),
     });
 
     localStorage.setItem('ca_exam_checker_token', res.token);
     setToken(res.token);
     setUser(res.user);
+    setSuspendedAccount(null);
 
     refreshUser().catch(() => {});
-
-    return res.user;
+    return { user: res.user, institute: res.institute };
   };
 
   const register = async (data: {
@@ -113,6 +201,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone?: string;
     icaiRegistrationNumber: string;
     caLevel: string;
+    referralCode?: string;
   }): Promise<User> => {
     const res = await apiRequest<{ token: string; user: User }>('/api/auth/register', {
       method: 'POST',
@@ -122,11 +211,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('ca_exam_checker_token', res.token);
     setToken(res.token);
     setUser(res.user);
+    setSuspendedAccount(null);
 
-    // Refresh profile in background without blocking immediate navigation
     refreshUser().catch(() => {});
-
     return res.user;
+  };
+
+  const submitRevocationRequest = async (
+    appealReason: string,
+    explanation: string,
+    supportingInfo?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const authHeader = suspendedAccount?.revocationToken
+      ? { Authorization: `Bearer ${suspendedAccount.revocationToken}` }
+      : {};
+
+    const res = await apiRequest<{ success: boolean; message: string }>('/api/auth/revocation-request', {
+      method: 'POST',
+      headers: authHeader,
+      body: JSON.stringify({ appealReason, explanation, supportingInfo }),
+    });
+
+    return res;
   };
 
   const logout = async (): Promise<void> => {
@@ -137,6 +243,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(null);
       setUser(null);
       setProfile(null);
+      setSuspendedAccount(null);
     }
   };
 
@@ -150,8 +257,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated,
         isLoading,
+        suspendedAccount,
+        clearSuspension,
         login,
+        instituteLogin,
+        instituteRegister,
         register,
+        submitRevocationRequest,
         logout,
         refreshUser,
       }}

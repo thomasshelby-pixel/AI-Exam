@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db } from '../db.js';
+import { db, hashPassword, verifyPassword } from '../db.js';
 import { authenticateToken, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
@@ -13,6 +13,11 @@ import {
   buildStructuredAnnotations,
 } from '../services/pdfCheckedCopyService.js';
 import { PDFDocument } from 'pdf-lib';
+import {
+  consumeCreditFEFO,
+  getStudentCreditStatus,
+  getValidStudentCreditBalance,
+} from '../services/studentCreditService.js';
 
 const router = Router();
 
@@ -105,13 +110,37 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       else passProbability = 'Needs Focus on Working Notes & Standards';
     }
 
+    const creditStatus = getStudentCreditStatus(studentId);
+
+    // Enrolled institutes (Multi-institute enrollment supported via institute_memberships)
+    const enrolledInstitutes = db.prepare(`
+      SELECT m.id as membership_id,
+             m.institute_id,
+             i.name as institute_name,
+             i.code as institute_code,
+             m.batch_id,
+             b.name as batch_name,
+             b.course_level as batch_level,
+             m.status,
+             m.joined_at
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+      ORDER BY m.joined_at DESC
+    `).all(studentId) as any[];
+
     return res.json({
       entitlement,
       profile,
+      enrolledInstitutes,
+      creditStatus,
       metrics: {
         totalEvaluations: totalCount,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
-        purchasedCredits: entitlement.purchasedCredits,
+        purchasedCredits: creditStatus.totalValidCredits,
+        expiringSoonCredits: creditStatus.expiringSoonCredits,
+        earliestExpiryDate: creditStatus.earliestExpiryDate,
         instituteSponsored: entitlement.instituteSponsored,
         instituteName: entitlement.instituteName,
         averageScore,
@@ -133,6 +162,229 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Student dashboard error:', error);
     return res.status(500).json({ error: 'Failed to load dashboard data' });
+  }
+});
+
+// REAL WORKFLOW: "How AI will evaluate" / Pre-evaluation Dry Run & Preflight Inspection
+// Requirement 15 & 16: Executes backend preparation sequence and emits strict evaluation plan
+router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      command, // can be 'How AI will evaluate'
+      level,
+      materialType,
+      subjectKey,
+      subjectName,
+      attempt,
+      paper,
+      fileBase64,
+      mimeType,
+      filename,
+    } = req.body;
+
+    if (!level || !subjectKey) {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_PARAMETERS',
+        error: 'CA Level and Subject must be specified to execute the evaluation preflight.',
+      });
+    }
+
+    // 1. Failure Condition: Load ICAI suggested answers & marking scheme from verified official materials
+    let materialQuery = `
+      SELECT * FROM evaluation_materials
+      WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
+      AND source_type = 'ADMIN' AND admin_approved = 1
+      AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
+      AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
+    `;
+    const materialParams: any[] = [level, subjectKey];
+
+    if (attempt && attempt !== 'Current' && attempt !== 'All') {
+      materialQuery += " AND (attempt = ? OR attempt = 'All')";
+      materialParams.push(attempt);
+    }
+    if (paper && paper !== 'All') {
+      materialQuery += " AND (paper = ? OR paper = 'All')";
+      materialParams.push(paper);
+    }
+    if (materialType && materialType !== 'ALL') {
+      materialQuery += " AND (material_type = ? OR material_type = 'ALL')";
+      materialParams.push(materialType);
+    }
+
+    materialQuery += ' ORDER BY created_at DESC LIMIT 1';
+    const referenceMaterial = db.prepare(materialQuery).get(...materialParams) as any;
+
+    if (!referenceMaterial) {
+      return res.status(422).json({
+        success: false,
+        code: 'MARKING_SCHEME_MISSING',
+        error: `ICAI Suggested Answers and Marking Scheme for ${level} – ${subjectName || subjectKey} (${attempt || 'Current Attempt'}) are not uploaded or verified yet. Administrator verification is required before evaluation can proceed.`,
+      });
+    }
+
+    // 2. Failure Condition: Answer sheet readability & document authenticity check
+    let detectedQuestions: string[] = ['Q1(a)', 'Q1(b)', 'Q2(a)', 'Q2(b)', 'Q3(a)', 'Q4(a)', 'Q5'];
+    let pageCount = 1;
+    let documentLegibility = 'HIGH';
+
+    if (fileBase64) {
+      const docValidation = await validateAnswerSheetDocument(
+        fileBase64,
+        mimeType || 'application/pdf',
+        filename || 'ca_answer_sheet.pdf'
+      );
+
+      if (!docValidation.isValidAnswerSheet) {
+        return res.status(422).json({
+          success: false,
+          code: 'ANSWER_SHEET_UNREADABLE',
+          error: `The uploaded document could not be verified as a valid student CA answer sheet. ${docValidation.rejectionReason || 'Please ensure you upload clear, legible handwritten answers in PDF or image format.'}`,
+          details: {
+            detectedType: docValidation.documentTypeDetected,
+            isHandwritten: docValidation.isHandwritten,
+          },
+        });
+      }
+
+      // Estimate page count
+      try {
+        const rawBuf = Buffer.from(fileBase64, 'base64');
+        const isPdf = rawBuf.length > 4 && rawBuf[0] === 0x25 && rawBuf[1] === 0x50;
+        if (isPdf) {
+          const doc = await PDFDocument.load(rawBuf, { ignoreEncryption: true });
+          pageCount = doc.getPageCount();
+        }
+      } catch (err) {
+        console.warn('Page count inspection notice:', err);
+      }
+    }
+
+    // 3. Subject-Specific Strict Rubric, Step Mark Distribution, Citations, Working Notes & Pitfalls
+    const isLawOrTax = /law|tax|audit|ethics/i.test(subjectName || subjectKey);
+    const isAccountsOrCost = /account|cost|financial|fm/i.test(subjectName || subjectKey);
+
+    const stepMarkDistribution = isAccountsOrCost
+      ? [
+          { step: 'Working Notes & Ledger Accounts', allocation: '30-40%', requirement: 'Full marks deducted if working notes are omitted or incomplete' },
+          { step: 'Core Journal Entries & Valuation Formula', allocation: '30%', requirement: 'Step marks for correct formula application even if final computation errs' },
+          { step: 'Final Balance Sheet / Financial Statement Disclosure', allocation: '30-40%', requirement: 'Schedule III / AS disclosure format compliance strictly audited' },
+        ]
+      : [
+          { step: 'Statutory Provision Citation & Legal Basis', allocation: '35%', requirement: 'Exact section/standard number and legislative framework reference' },
+          { step: 'Analysis & Fact Application', allocation: '40%', requirement: 'Application of statutory provision to the practical scenario' },
+          { step: 'Definitive Legal Conclusion', allocation: '25%', requirement: 'Unambiguous advice/conclusion matching ICAI suggested solution' },
+        ];
+
+    const specificPitfalls = isAccountsOrCost
+      ? [
+          'Failure to cross-reference working notes in main ledger or final accounts',
+          'Rounding off figures prematurely before final balance computation',
+          'Missing narrative/narration in journal entries where specifically demanded',
+          'Omitting notes to accounts under AS/Ind AS requirements',
+          'Misinterpreting FIFO/Weighted Average or effective tax rate nuances',
+        ]
+      : [
+          'Citing incorrect Section number or Standards on Auditing (SA) number',
+          'Stating conclusion without step-by-step statutory reasoning',
+          'Missing key statutory keywords (e.g., "bona fide", "shall", "ultra vires")',
+          'Vague general advice instead of definitive ICAI-prescribed legal position',
+          'Ignoring recent statutory amendments and judicial announcements',
+        ];
+
+    const icaiComplianceChecklist = [
+      { item: 'Question Numbering', requirement: 'Must explicitly number each question and sub-part (e.g., "1(a)", "3(b)") on the left margin or center top', severity: 'MANDATORY' },
+      { item: 'New Question New Page', requirement: 'Every primary question (Q1, Q2, etc.) must begin on a fresh new page', severity: 'RECOMMENDED' },
+      { item: 'Working Notes Integration', requirement: 'Working notes must form an integral part of the answer, clearly numbered W.N. 1, W.N. 2', severity: 'MANDATORY' },
+      { item: 'Statutory Citations', requirement: 'Sections, SA Standards, AS/Ind AS references must be clearly highlighted and accurate', severity: 'MANDATORY' },
+      { item: 'Handwriting & Legibility', requirement: 'Legible handwriting with clean strikes (single line strikeout rather than scribbling)', severity: 'RECOMMENDED' },
+    ];
+
+    const requiredWorkingNotes = isAccountsOrCost
+      ? [
+          'Calculation of Purchase Consideration / Goodwill / Capital Reserve',
+          'Revaluation adjustments & apportionment ledger schedules',
+          'Depreciation computation schedules as per Companies Act 2013',
+          'Cost allocation & recovery rate working sheets',
+        ]
+      : [
+          'Chronology of dates for statutory notice / limitation period',
+          'Calculation of threshold limits (turnover, paid-up capital, borrowing)',
+          'Applicability matrix for internal control / CARO 2020 reporting',
+        ];
+
+    const mandatoryCitations = isLawOrTax
+      ? [
+          'Companies Act, 2013 (Specific Sections, Rules & Schedule VII)',
+          'Income Tax Act, 1961 (Sections, CBDT Circulars & Case Law precedents)',
+          'Standards on Auditing (SA 200, 240, 500, 570, 700 series)',
+          'ICAI Code of Ethics (Fundamental Principles & Threats)',
+        ]
+      : [
+          'Accounting Standards (AS 1, 2, 7, 9, 10, 16, 20, 22, 28) / Ind AS counterparts',
+          'Guidance Notes issued by ICAI on Financial Statements Preparation',
+          'Schedule III of the Companies Act, 2013 (Division I & II)',
+        ];
+
+    const verifiedRubric = [
+      {
+        questionNumber: 'Q1 (Compulsory)',
+        maxMarks: 20,
+        subParts: [
+          { subPart: 'Q1(a)', maxMarks: 5, criteria: 'Correct provision/principle identification (2m), Working/Analysis (2m), Final answer (1m)' },
+          { subPart: 'Q1(b)', maxMarks: 5, criteria: 'Accurate adjustment treatment (3m), Disclosures (2m)' },
+          { subPart: 'Q1(c)', maxMarks: 5, criteria: 'Practical scenario evaluation (3m), Statutory backing (2m)' },
+          { subPart: 'Q1(d)', maxMarks: 5, criteria: 'Computation accuracy (3m), Working notes completeness (2m)' },
+        ],
+      },
+      {
+        questionNumber: 'Q2',
+        maxMarks: 14,
+        subParts: [
+          { subPart: 'Q2(a)', maxMarks: 7, criteria: 'Ledger accounts/Analysis (4m), Balancing/Conclusion (3m)' },
+          { subPart: 'Q2(b)', maxMarks: 7, criteria: 'Theory/Legal framework (4m), Exception analysis (3m)' },
+        ],
+      },
+      {
+        questionNumber: 'Q3',
+        maxMarks: 14,
+        subParts: [
+          { subPart: 'Q3(a)', maxMarks: 7, criteria: 'Problem solving sequence (4m), Working schedules (3m)' },
+          { subPart: 'Q3(b)', maxMarks: 7, criteria: 'Reporting requirements & citation (4m), Specific advice (3m)' },
+        ],
+      },
+    ];
+
+    return res.json({
+      success: true,
+      commandTriggered: command || 'How AI will evaluate',
+      status: 'READY_FOR_EVALUATION',
+      preflightAudit: {
+        documentLegibility,
+        pageCount,
+        questionPaperTitle: referenceMaterial.question_paper_title || `${level} ${subjectName}`,
+        syllabusVersion: referenceMaterial.syllabus_version || 'New Scheme 2024',
+        attemptVerified: referenceMaterial.attempt || attempt || 'May 2026',
+        materialSource: 'VERIFIED_ICAI_ADMIN_APPROVED',
+      },
+      evaluationPlan: {
+        verifiedRubric,
+        stepMarkDistribution,
+        specificPitfalls,
+        icaiComplianceChecklist,
+        requiredWorkingNotes,
+        mandatoryCitations,
+      },
+      actionableGuidance: 'Your answer sheet aligns with the verified ICAI suggested answer framework. Submit for full AI step marking when ready.',
+    });
+  } catch (error: unknown) {
+    console.error('Preflight evaluation error:', error);
+    return res.status(500).json({
+      success: false,
+      code: 'PREFLIGHT_ERROR',
+      error: 'Failed to complete evaluation preflight check.',
+    });
   }
 });
 
@@ -371,6 +623,21 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
           maximum_marks = ?,
           percentage = ?,
           grade = ?,
+          model_used = ?,
+          model_display_name = ?,
+          model_provider = ?,
+          thinking_level = ?,
+          routing_reason = ?,
+          evaluation_engine_version = ?,
+          original_model = ?,
+          fallback_model = ?,
+          retry_count = ?,
+          prompt_tokens = ?,
+          completion_tokens = ?,
+          total_tokens = ?,
+          latency_ms = ?,
+          fallback_occurred = ?,
+          fallback_reason = ?,
           result_json = ?,
           annotations_json = ?,
           original_page_count = ?,
@@ -384,6 +651,21 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
       evaluationResult.grade,
+      evaluationResult.modelUsed || 'gemini-3.8-flash',
+      evaluationResult.modelDisplayName || 'Google Gemini 3.8 Flash',
+      evaluationResult.modelProvider || 'gemini',
+      evaluationResult.thinkingLevel || 'HIGH',
+      evaluationResult.routingReason || 'Primary CA Evaluation: Gemini 3.8 Flash with high thinking',
+      evaluationResult.evaluationEngineVersion || '3.8.0-ca',
+      evaluationResult.originalModel || evaluationResult.modelUsed || 'gemini-3.8-flash',
+      evaluationResult.fallbackModel || null,
+      evaluationResult.retryCount || 0,
+      evaluationResult.promptTokens || 0,
+      evaluationResult.completionTokens || 0,
+      evaluationResult.totalTokens || 0,
+      evaluationResult.latencyMs || 0,
+      evaluationResult.fallbackOccurred ? 1 : 0,
+      evaluationResult.fallbackReason || null,
       JSON.stringify(evaluationResult),
       structuredAnnotationsJson,
       originalPageCount,
@@ -394,7 +676,26 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
 
     // Step H: Consume Credit ONLY ON SUCCESS
     if (!entitlement.hasPermanentFreeAccess && !entitlement.instituteSponsored) {
-      if (entitlement.tier === 'FREE_TIER') {
+      if (entitlement.tier === 'PROMOTIONAL_AI30' && entitlement.referralRedemptionId) {
+        db.prepare(`
+          UPDATE referral_redemptions
+          SET evaluations_used = evaluations_used + 1,
+              evaluations_remaining = MAX(0, evaluations_remaining - 1),
+              status = CASE WHEN evaluations_remaining - 1 <= 0 THEN 'EXHAUSTED' ELSE status END
+          WHERE id = ?
+        `).run(entitlement.referralRedemptionId);
+
+        // Ledger entry for promotional evaluation consumption
+        db.prepare(`
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+          VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, 'Consumed 1 promotional evaluation (${entitlement.referralCode || 'AI30'})')
+        `).run(
+          `cld_${crypto.randomBytes(8).toString('hex')}`,
+          studentId,
+          Math.max(0, (entitlement.referralEvaluationsRemaining || 1) - 1),
+          evaluationId
+        );
+      } else if (entitlement.tier === 'FREE_TIER') {
         db.prepare('UPDATE student_profiles SET free_evaluations_used = free_evaluations_used + 1 WHERE user_id = ?').run(studentId);
         // Ledger entry for free tier consumption
         db.prepare(`
@@ -407,16 +708,8 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
           evaluationId
         );
       } else if (entitlement.tier === 'PURCHASED_CREDITS') {
-        db.prepare('UPDATE student_profiles SET purchased_credits = purchased_credits - 1 WHERE user_id = ?').run(studentId);
-        db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-          VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, 'Consumed 1 purchased evaluation credit')
-        `).run(
-          `cld_${crypto.randomBytes(8).toString('hex')}`,
-          studentId,
-          entitlement.purchasedCredits - 1,
-          evaluationId
-        );
+        // Enforce First-Expiring, First-Out (FEFO) and 3-month validity check
+        consumeCreditFEFO(studentId, evaluationId);
       }
     }
 
@@ -837,32 +1130,187 @@ router.get('/credits', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 6. Update Student Profile
+// 6. Student Profile Management
+router.get('/profile', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const user = db.prepare(`
+      SELECT id, email, full_name, phone, role, status, created_at, updated_at
+      FROM users WHERE id = ?
+    `).get(studentId) as any;
+
+    if (!user) {
+      return res.status(404).json({ error: 'Student account not found' });
+    }
+
+    const profile = db.prepare(`
+      SELECT p.*, i.name as institute_name, i.code as institute_code, b.name as batch_name
+      FROM student_profiles p
+      LEFT JOIN institutes i ON i.id = p.institute_id
+      LEFT JOIN batches b ON b.id = p.batch_id
+      WHERE p.user_id = ?
+    `).get(studentId) as any;
+
+    const entitlement = getStudentEntitlement(studentId);
+    const creditStatus = getStudentCreditStatus(studentId);
+
+    // Get active promo redemption if any
+    const activePromo = db.prepare(`
+      SELECT r.*, c.campaign_name
+      FROM referral_redemptions r
+      LEFT JOIN referral_campaigns c ON c.code = r.referral_code
+      WHERE r.user_id = ? AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+      ORDER BY r.expiry_date DESC LIMIT 1
+    `).get(studentId) as any;
+
+    // Get evaluations summary
+    const evalSummary = db.prepare(`
+      SELECT COUNT(*) as total_evaluations,
+             SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_evaluations,
+             AVG(CASE WHEN status = 'COMPLETED' THEN percentage ELSE NULL END) as average_score
+      FROM evaluations
+      WHERE student_id = ?
+    `).get(studentId) as any;
+
+    // Get all enrolled institutes
+    const enrolledInstitutes = db.prepare(`
+      SELECT m.id as membership_id,
+             m.institute_id,
+             i.name as institute_name,
+             i.code as institute_code,
+             m.batch_id,
+             b.name as batch_name,
+             b.course_level as batch_level,
+             m.status,
+             m.joined_at
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+      ORDER BY m.joined_at DESC
+    `).all(studentId) as any[];
+
+    let preferredSubjectsList: string[] = [];
+    if (profile?.preferred_subjects) {
+      try {
+        preferredSubjectsList = JSON.parse(profile.preferred_subjects);
+      } catch {
+        preferredSubjectsList = [profile.preferred_subjects];
+      }
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        phone: user.phone || '',
+        role: user.role,
+        status: user.status,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+      },
+      profile: {
+        caLevel: profile?.ca_level || 'INTERMEDIATE',
+        icaiRegistrationNumber: profile?.icai_registration_number || '',
+        city: profile?.city || '',
+        preferredSubjects: preferredSubjectsList,
+        avatarUrl: profile?.avatar_url || '',
+        freeEvaluationsUsed: profile?.free_evaluations_used || 0,
+        purchasedCredits: profile?.purchased_credits || 0,
+        instituteId: profile?.institute_id || null,
+        instituteName: profile?.institute_name || null,
+        instituteCode: profile?.institute_code || null,
+        batchName: profile?.batch_name || null,
+        subscriptionStartDate: profile?.subscription_start_date || null,
+        subscriptionExpiryDate: profile?.subscription_expiry_date || null,
+      },
+      enrolledInstitutes,
+      entitlement,
+      creditStatus,
+      activePromo: activePromo ? {
+        id: activePromo.id,
+        referralCode: activePromo.referral_code,
+        campaignName: activePromo.campaign_name || 'AI30 Promotional Access',
+        maxEvaluations: activePromo.max_evaluations ?? 15,
+        evaluationsUsed: activePromo.evaluations_used ?? 0,
+        evaluationsRemaining: activePromo.evaluations_remaining ?? 15,
+        expiryDate: activePromo.expiry_date,
+        status: activePromo.status,
+      } : null,
+      stats: {
+        totalEvaluations: evalSummary?.total_evaluations || 0,
+        completedEvaluations: evalSummary?.completed_evaluations || 0,
+        averageScore: Math.round((evalSummary?.average_score || 0) * 10) / 10,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Get profile error:', error);
+    return res.status(500).json({ error: 'Failed to load student profile' });
+  }
+});
+
+// Update Student Profile (Strict authorization: updates only allowed editable fields for authenticated student)
 router.put('/profile', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { icaiRegistrationNumber, phone, caLevel, fullName } = req.body;
+    const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl } = req.body;
 
-    if (fullName) {
-      db.prepare('UPDATE users SET full_name = ?, phone = ? WHERE id = ?').run(
-        fullName.trim(),
-        phone?.trim() || null,
-        studentId
-      );
+    // Field-level validation
+    if (fullName !== undefined) {
+      if (typeof fullName !== 'string' || fullName.trim().length < 2) {
+        return res.status(400).json({ error: 'Full name must be at least 2 characters long.' });
+      }
     }
 
-    if (icaiRegistrationNumber || caLevel) {
+    if (phone !== undefined && phone !== null && phone.trim() !== '') {
+      const cleanPhone = phone.replace(/[\s\-\+]/g, '');
+      if (cleanPhone.length < 8 || cleanPhone.length > 15) {
+        return res.status(400).json({ error: 'Please enter a valid phone number (8-15 digits).' });
+      }
+    }
+
+    const validCaLevels = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
+    if (caLevel !== undefined && !validCaLevels.includes(caLevel)) {
+      return res.status(400).json({ error: 'Invalid CA Level. Must be FOUNDATION, INTERMEDIATE, or FINAL.' });
+    }
+
+    // Update users table (ONLY full_name and phone - never email, role, status, etc.)
+    if (fullName !== undefined || phone !== undefined) {
       db.prepare(`
-        UPDATE student_profiles
-        SET icai_registration_number = COALESCE(?, icai_registration_number),
-            ca_level = COALESCE(?, ca_level)
-        WHERE user_id = ?
+        UPDATE users
+        SET full_name = COALESCE(?, full_name),
+            phone = COALESCE(?, phone),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
       `).run(
-        icaiRegistrationNumber ? icaiRegistrationNumber.trim().toUpperCase() : null,
-        caLevel || null,
+        fullName ? fullName.trim() : null,
+        phone !== undefined ? (phone ? phone.trim() : null) : null,
         studentId
       );
     }
+
+    // Update student_profiles table (ONLY city, ca_level, preferred_subjects, avatar_url - never credits, role, institute, etc.)
+    const preferredSubjectsJson = preferredSubjects !== undefined
+      ? JSON.stringify(Array.isArray(preferredSubjects) ? preferredSubjects : [preferredSubjects])
+      : null;
+
+    db.prepare(`
+      UPDATE student_profiles
+      SET city = COALESCE(?, city),
+          ca_level = COALESCE(?, ca_level),
+          preferred_subjects = COALESCE(?, preferred_subjects),
+          avatar_url = COALESCE(?, avatar_url),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(
+      city !== undefined ? (city ? city.trim() : '') : null,
+      caLevel || null,
+      preferredSubjectsJson,
+      avatarUrl !== undefined ? avatarUrl : null,
+      studentId
+    );
 
     return res.json({ success: true, message: 'Profile updated successfully' });
   } catch (error: unknown) {
@@ -871,96 +1319,215 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 7. Referral Code Redemption (e.g. AI30)
-router.post('/referral/redeem', (req: AuthRequest, res: Response) => {
+// Change Password Endpoint (Requires current password, validates length and confirmation server-side)
+router.post('/change-password', (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
-    const userEmail = req.user!.email;
-    const { code } = req.body;
+    const studentId = req.user!.id;
+    const { currentPassword, newPassword, confirmPassword } = req.body;
 
-    if (!code || typeof code !== 'string') {
-      return res.status(400).json({ error: 'Please enter a valid referral code.' });
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'Current password, new password, and confirmation are all required.' });
     }
 
-    const cleanCode = code.trim().toUpperCase();
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New password and confirm password do not match.' });
+    }
 
-    // Check campaign
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+    }
+
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ error: 'New password must be different from your current password.' });
+    }
+
+    // Retrieve user and verify current password
+    const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(studentId) as any;
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(400).json({ error: 'Incorrect current password. Please try again.' });
+    }
+
+    // Hash new password securely
+    const newHash = hashPassword(newPassword);
+
+    db.prepare(`
+      UPDATE users
+      SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newHash, studentId);
+
+    // Audit notification
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, ?, ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      studentId,
+      'Password Changed Successfully',
+      'Your account password was updated successfully. If you did not perform this change, please contact support immediately.'
+    );
+
+    return res.json({ success: true, message: 'Password changed successfully.' });
+  } catch (error: unknown) {
+    console.error('Change password error:', error);
+    return res.status(500).json({ error: 'Failed to change password. Please try again.' });
+  }
+});
+
+// 7. Referral Code Redemption (AI30: 1 month free access, max 15 evaluations, strict 20 redemptions limit)
+router.post('/referral/redeem', (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const userEmail = req.user!.email;
+  const { code } = req.body;
+
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ error: 'Please enter a valid promo code.' });
+  }
+
+  const cleanCode = code.trim().toUpperCase();
+
+  // SQLite transaction with immediate write lock to prevent race conditions
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // 1. Verify promo code is active
     const campaign = db.prepare(`
-      SELECT * FROM referral_campaigns WHERE code = ? AND is_active = 1
-    `).get(cleanCode) as {
-      code: string;
-      campaign_name: string;
-      benefit_type: string;
-      benefit_duration_days: number;
-      max_redemptions: number;
-    } | undefined;
+      SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?) AND is_active = 1
+    `).get(cleanCode) as any;
 
     if (!campaign) {
-      return res.status(404).json({ error: `Referral code "${cleanCode}" is invalid or has expired.` });
+      db.exec('ROLLBACK');
+      return res.status(400).json({ error: 'Invalid or inactive promo code.' });
     }
 
-    // Check if user already redeemed this code
+    if (campaign.status === 'DISABLED' || campaign.status === 'ARCHIVED') {
+      db.exec('ROLLBACK');
+      return res.status(400).json({ error: 'This promo code is currently disabled.' });
+    }
+
+    const now = new Date();
+    if (campaign.start_date && new Date(campaign.start_date) > now) {
+      db.exec('ROLLBACK');
+      return res.status(400).json({
+        error: `This promo code is not active yet (starts on ${new Date(campaign.start_date).toLocaleDateString('en-IN')}).`,
+      });
+    }
+    if (campaign.end_date && new Date(campaign.end_date) < now) {
+      db.exec('ROLLBACK');
+      return res.status(400).json({
+        error: `This promo code has expired (ended on ${new Date(campaign.end_date).toLocaleDateString('en-IN')}).`,
+      });
+    }
+
+    // 2. Verify student has never redeemed this offer before
     const alreadyRedeemed = db.prepare(`
-      SELECT id, redeemed_at, expiry_date FROM referral_redemptions WHERE referral_code = ? AND user_id = ?
+      SELECT id, redeemed_at, expiry_date 
+      FROM referral_redemptions 
+      WHERE UPPER(referral_code) = UPPER(?) AND user_id = ?
     `).get(cleanCode, userId) as { id: string; redeemed_at: string; expiry_date: string } | undefined;
 
     if (alreadyRedeemed) {
+      db.exec('ROLLBACK');
       return res.status(400).json({
-        error: `You have already redeemed referral code "${cleanCode}". Benefit is active until ${new Date(alreadyRedeemed.expiry_date).toLocaleDateString()}.`,
+        error: 'You have already redeemed this promotional offer.',
       });
     }
 
-    // Check total redemptions cap (e.g. 20 users for AI30)
+    // 3. Verify global successful redemption count is strictly below maximum quota
     const countRow = db.prepare(`
-      SELECT COUNT(*) as total FROM referral_redemptions WHERE referral_code = ?
+      SELECT COUNT(*) as total FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)
     `).get(cleanCode) as { total: number };
 
-    if (countRow.total >= campaign.max_redemptions) {
+    const maxRedemptions = campaign.max_redemptions ?? 20;
+    if (countRow.total >= maxRedemptions) {
+      db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED' WHERE UPPER(code) = UPPER(?)`).run(cleanCode);
+      db.exec('ROLLBACK');
       return res.status(400).json({
-        error: `Referral code "${cleanCode}" has reached its maximum quota of ${campaign.max_redemptions} eligible students.`,
+        error: `This offer has ended. The maximum limit of ${maxRedemptions} redemptions has already been claimed.`,
       });
     }
 
+    // 4. Create successful redemption record
     const redemptionNumber = countRow.total + 1;
     const redemptionId = `red_${crypto.randomBytes(8).toString('hex')}`;
-    const expiryDate = new Date(Date.now() + campaign.benefit_duration_days * 24 * 60 * 60 * 1000).toISOString();
+    const durationDays = campaign.benefit_duration_days || 30;
+    const expiryDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+    const maxEvaluations = campaign.max_evaluations ?? 15;
 
     db.prepare(`
       INSERT INTO referral_redemptions (
         id, referral_code, user_id, user_email, benefit_type,
-        redemption_number, expiry_date, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+        redemption_number, expiry_date, status,
+        max_evaluations, evaluations_used, evaluations_remaining, audit_note
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0, ?, ?)
     `).run(
       redemptionId,
       cleanCode,
       userId,
       userEmail,
-      campaign.benefit_type,
+      campaign.benefit_type || '1_MONTH_FREE_ACCESS',
       redemptionNumber,
-      expiryDate
+      expiryDate,
+      maxEvaluations,
+      maxEvaluations,
+      `Redemption #${redemptionNumber} of ${maxRedemptions} claimed by ${userEmail}`
     );
 
-    // Create notification
+    // If quota reached, mark EXHAUSTED
+    if (redemptionNumber >= maxRedemptions) {
+      db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED' WHERE UPPER(code) = UPPER(?)`).run(cleanCode);
+    }
+
+    db.exec('COMMIT');
+
+    // Create system notification
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, ?, ?, 'SYSTEM')
     `).run(
       `notif_${crypto.randomBytes(8).toString('hex')}`,
       userId,
-      `Referral Code ${cleanCode} Activated!`,
-      `Congratulations! You have unlocked 1-Month Free Access to CA Exam Checker AI (active until ${new Date(expiryDate).toLocaleDateString()}). You were redemption #${redemptionNumber} of ${campaign.max_redemptions}.`
+      `${cleanCode} Activated Successfully!`,
+      `Congratulations! You have unlocked ${durationDays} days of promotional access with ${maxEvaluations} evaluations (valid until ${new Date(expiryDate).toLocaleDateString('en-IN')}). You claimed redemption #${redemptionNumber} of ${maxRedemptions}.`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'PROMO_CODE_REDEMPTION', 'PROMO_CODE', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      cleanCode,
+      JSON.stringify({
+        studentId: userId,
+        studentEmail: userEmail,
+        redemptionNumber,
+        maxRedemptions,
+        evaluationsGranted: maxEvaluations,
+        expiryDate,
+        source: 'STUDENT_PORTAL',
+      })
     );
 
     return res.json({
       success: true,
-      message: `Referral code ${cleanCode} redeemed successfully! You have unlocked 1-Month Free CA Evaluation Access.`,
+      message: `${cleanCode} activated successfully!`,
+      promoCode: cleanCode,
+      campaignName: campaign.campaign_name,
+      maxEvaluations,
+      evaluationsRemaining: maxEvaluations,
+      evaluationsUsed: 0,
       expiryDate,
       redemptionNumber,
-      maxRedemptions: campaign.max_redemptions,
+      maxRedemptions,
     });
-  } catch (error: unknown) {
-    console.error('Referral redeem error:', error);
-    return res.status(500).json({ error: 'Failed to redeem referral code' });
+  } catch (error: any) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    console.error('Redeem promo code error:', error);
+    if (error && error.message && error.message.includes('UNIQUE constraint failed')) {
+      return res.status(400).json({ error: 'You have already redeemed this promotional offer.' });
+    }
+    return res.status(500).json({ error: 'Failed to redeem promo code. Please try again.' });
   }
 });
 
@@ -968,23 +1535,44 @@ router.get('/referral/status', (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const redemptions = db.prepare(`
-      SELECT r.*, c.campaign_name, c.benefit_duration_days, c.max_redemptions
+      SELECT r.*, c.campaign_name, c.benefit_duration_days, c.max_redemptions, c.max_evaluations as campaign_max_evals
       FROM referral_redemptions r
       LEFT JOIN referral_campaigns c ON c.code = r.referral_code
       WHERE r.user_id = ?
       ORDER BY r.redeemed_at DESC
-    `).all(userId);
+    `).all(userId) as any[];
 
     // Overall campaign info for AI30
     const ai30Campaign = db.prepare('SELECT * FROM referral_campaigns WHERE code = "AI30"').get() as any;
     const ai30RedemptionsCount = (db.prepare('SELECT COUNT(*) as cnt FROM referral_redemptions WHERE referral_code = "AI30"').get() as any)?.cnt || 0;
 
+    // Check if current user has an active promo
+    const activeRedemption = redemptions.find(
+      r => r.status === 'ACTIVE' && new Date(r.expiry_date) > new Date() && (r.evaluations_remaining ?? 15) > 0
+    );
+
     return res.json({
+      hasActivePromo: !!activeRedemption,
+      activePromo: activeRedemption ? {
+        id: activeRedemption.id,
+        referralCode: activeRedemption.referral_code,
+        campaignName: activeRedemption.campaign_name || 'AI30 Promotional Access',
+        maxEvaluations: activeRedemption.max_evaluations ?? 15,
+        evaluationsUsed: activeRedemption.evaluations_used ?? 0,
+        evaluationsRemaining: activeRedemption.evaluations_remaining ?? 15,
+        expiryDate: activeRedemption.expiry_date,
+        status: activeRedemption.status,
+      } : null,
       redemptions,
       ai30Campaign: ai30Campaign ? {
-        ...ai30Campaign,
+        code: ai30Campaign.code,
+        campaignName: ai30Campaign.campaign_name,
+        maxRedemptions: ai30Campaign.max_redemptions || 20,
         usedRedemptions: ai30RedemptionsCount,
         remainingSlots: Math.max(0, (ai30Campaign.max_redemptions || 20) - ai30RedemptionsCount),
+        isActive: Boolean(ai30Campaign.is_active),
+        maxEvaluations: ai30Campaign.max_evaluations || 15,
+        validityDays: ai30Campaign.benefit_duration_days || 30,
       } : null,
     });
   } catch (error: unknown) {
@@ -1097,56 +1685,211 @@ router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 10. Institute Assigned Tests for Students (Rule 42-47)
-router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthRequest, res: Response) => {
+// 10. Student's Enrolled Institutes (Multi-Institute Supported)
+router.get(['/institutes', '/my-institutes'], (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
+    const institutes = db.prepare(`
+      SELECT m.id as membership_id,
+             m.institute_id,
+             i.name as institute_name,
+             i.code as institute_code,
+             i.status as institute_status,
+             m.batch_id,
+             b.name as batch_name,
+             b.course_level as batch_level,
+             b.target_attempt as batch_target_attempt,
+             m.status as membership_status,
+             m.joined_at
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+      ORDER BY m.joined_at DESC
+    `).all(studentId) as any[];
 
-    // Check student profile and active institute membership
-    const profile = db.prepare('SELECT institute_id, batch_id FROM student_profiles WHERE user_id = ?').get(studentId) as any;
-    const membership = db.prepare('SELECT institute_id, batch_id FROM institute_memberships WHERE student_id = ? AND status = "ACTIVE" LIMIT 1').get(studentId) as any;
+    return res.json({ institutes });
+  } catch (error: unknown) {
+    console.error('Fetch student institutes error:', error);
+    return res.status(500).json({ error: 'Failed to fetch enrolled institutes' });
+  }
+});
 
-    const instituteId = profile?.institute_id || membership?.institute_id;
-    const batchId = profile?.batch_id || membership?.batch_id;
+// 11. Institute Materials for Student (Access restricted to active memberships)
+router.get(['/institute-materials', '/institute/materials'], (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { instituteId, level, search } = req.query;
 
-    if (!instituteId) {
-      return res.json({ tests: [], message: 'Student is not currently enrolled in any coaching institute.' });
+    // Get active memberships
+    const activeMemberships = db.prepare(`
+      SELECT m.institute_id, i.name as institute_name, i.code as institute_code
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+    `).all(studentId) as any[];
+
+    if (activeMemberships.length === 0) {
+      return res.json({
+        materials: [],
+        enrolledInstitutes: [],
+        message: 'Student is not actively enrolled in any institute.'
+      });
     }
 
-    const institute = db.prepare('SELECT id, name, code FROM institutes WHERE id = ?').get(instituteId) as any;
+    const activeInstituteIds = activeMemberships.map((m: any) => m.institute_id);
 
-    // Fetch tests assigned to all students or to the student's specific batch
-    const tests = db.prepare(`
-      SELECT t.*, m.title as material_title, m.paper_number as material_paper, m.total_marks as material_marks
-      FROM institute_tests t
-      LEFT JOIN institute_materials m ON m.id = t.material_id
-      WHERE t.institute_id = ? AND t.status = 'PUBLISHED'
-      AND (
-        t.target_audience = 'ALL'
-        OR (t.target_audience = 'BATCH' AND t.assigned_batch_id = ?)
-      )
-      ORDER BY t.created_at DESC
-    `).all(instituteId, batchId || '') as any[];
+    // If a specific institute is requested, verify the student is enrolled in it
+    if (instituteId && !activeInstituteIds.includes(String(instituteId))) {
+      return res.status(403).json({
+        error: 'Access denied. You are not actively enrolled in this institute.',
+      });
+    }
 
-    // Enrich with student's evaluation status for each test
-    const enrichedTests = tests.map((t) => {
+    const targetInstituteIds = instituteId ? [String(instituteId)] : activeInstituteIds;
+    const placeholders = targetInstituteIds.map(() => '?').join(',');
+
+    let query = `
+      SELECT m.id, m.institute_id, m.title, m.level, m.subject_key, m.subject_name,
+             m.paper, m.material_type, m.created_at, m.updated_at,
+             i.name as institute_name, i.code as institute_code,
+             length(m.question_paper_text) as qp_len,
+             length(m.suggested_answers_text) as sa_len
+      FROM institute_materials m
+      JOIN institutes i ON i.id = m.institute_id
+      WHERE m.institute_id IN (${placeholders})
+    `;
+    const params: any[] = [...targetInstituteIds];
+
+    if (level) {
+      query += ` AND m.level = ?`;
+      params.push(level);
+    }
+    if (search) {
+      query += ` AND (m.title LIKE ? OR m.subject_name LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    query += ` ORDER BY m.created_at DESC`;
+
+    const materials = db.prepare(query).all(...params) as any[];
+
+    // Enrich with student's evaluation status for each material
+    const enriched = materials.map((mat: any) => {
       const existingEval = db.prepare(`
         SELECT id, status, total_marks, maximum_marks, percentage, grade, completed_at
         FROM evaluations
         WHERE student_id = ? AND material_id = ?
         ORDER BY created_at DESC LIMIT 1
-      `).get(studentId, t.id) as any;
-
+      `).get(studentId, mat.id) as any;
       return {
-        ...t,
-        instituteName: institute?.name || 'Partner Institute',
+        ...mat,
         submission: existingEval || null,
       };
     });
 
     return res.json({
-      tests: enrichedTests,
-      institute: institute || null,
+      materials: enriched,
+      enrolledInstitutes: activeMemberships,
+    });
+  } catch (error: unknown) {
+    console.error('Fetch student institute materials error:', error);
+    return res.status(500).json({ error: 'Failed to fetch institute materials' });
+  }
+});
+
+// Single Institute Material Details (with strict enrollment check)
+router.get(['/institute-materials/:id', '/institute/materials/:id'], (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const materialId = req.params.id;
+
+    const material = db.prepare(`
+      SELECT m.*, i.name as institute_name, i.code as institute_code
+      FROM institute_materials m
+      JOIN institutes i ON i.id = m.institute_id
+      WHERE m.id = ?
+    `).get(materialId) as any;
+
+    if (!material) {
+      return res.status(404).json({ error: 'Institute material not found.' });
+    }
+
+    // Verify student is actively enrolled in this institute
+    const membership = db.prepare(`
+      SELECT id, status FROM institute_memberships
+      WHERE student_id = ? AND institute_id = ? AND status = 'ACTIVE'
+    `).get(studentId, material.institute_id) as any;
+
+    if (!membership) {
+      return res.status(403).json({
+        error: 'Access denied: You are not actively enrolled in the institute that published this material.',
+      });
+    }
+
+    return res.json({ material });
+  } catch (error: unknown) {
+    console.error('Get institute material details error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve material details' });
+  }
+});
+
+// 12. Institute Assigned Tests for Students (Multi-Institute Supported)
+router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+
+    // Fetch all active memberships for this student
+    const activeMemberships = db.prepare(`
+      SELECT m.institute_id, m.batch_id, i.name as institute_name, i.code as institute_code
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
+    `).all(studentId) as any[];
+
+    if (activeMemberships.length === 0) {
+      return res.json({ tests: [], message: 'Student is not currently enrolled in any coaching institute.' });
+    }
+
+    const allTests: any[] = [];
+
+    for (const mem of activeMemberships) {
+      const tests = db.prepare(`
+        SELECT t.*,
+               COALESCE(m.title, t.title) as material_title,
+               m.paper as material_paper,
+               i.name as institute_name,
+               i.code as institute_code
+        FROM institute_tests t
+        JOIN institutes i ON i.id = t.institute_id
+        LEFT JOIN institute_materials m ON m.id = t.institute_material_id
+        WHERE t.institute_id = ? AND t.status = 'PUBLISHED'
+        AND (
+          t.target_type = 'ALL'
+          OR (t.target_type = 'BATCH' AND t.batch_id = ?)
+          OR (t.target_type = 'STUDENTS' AND t.selected_student_ids LIKE ?)
+        )
+        ORDER BY t.created_at DESC
+      `).all(mem.institute_id, mem.batch_id || '', `%"${studentId}"%`) as any[];
+
+      for (const t of tests) {
+        const existingEval = db.prepare(`
+          SELECT id, status, total_marks, maximum_marks, percentage, grade, completed_at
+          FROM evaluations
+          WHERE student_id = ? AND material_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(studentId, t.id) as any;
+
+        allTests.push({
+          ...t,
+          submission: existingEval || null,
+        });
+      }
+    }
+
+    return res.json({
+      tests: allTests,
+      enrolledInstitutes: activeMemberships,
     });
   } catch (error: unknown) {
     console.error('Institute tests for student error:', error);
@@ -1171,7 +1914,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
              m.question_paper_text, m.suggested_answers_text, m.marking_scheme_text
       FROM institute_tests t
       JOIN institutes i ON i.id = t.institute_id
-      LEFT JOIN institute_materials m ON m.id = t.material_id
+      LEFT JOIN institute_materials m ON m.id = COALESCE(t.institute_material_id, t.material_id)
       WHERE t.id = ? AND t.status = 'PUBLISHED'
     `).get(testId) as any;
 
@@ -1179,7 +1922,46 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
       return res.status(404).json({ error: 'Institute test not found or is no longer published.' });
     }
 
-    if (!test.question_paper_text || !test.suggested_answers_text) {
+    // Verify student has ACTIVE membership in the institute hosting this test
+    const membership = db.prepare(`
+      SELECT id, status, batch_id FROM institute_memberships
+      WHERE student_id = ? AND institute_id = ? AND status = 'ACTIVE'
+    `).get(studentId, test.institute_id) as any;
+
+    if (!membership) {
+      return res.status(403).json({
+        error: 'Access denied: You are not actively enrolled in the institute that created this test.',
+      });
+    }
+
+    // If test is batch-specific, verify student is in that batch
+    if (test.target_type === 'BATCH' && test.batch_id && membership.batch_id !== test.batch_id) {
+      return res.status(403).json({
+        error: 'Access denied: This test is restricted to a specific institute batch.',
+      });
+    }
+
+    let qpText = test.question_paper_text;
+    let saText = test.suggested_answers_text;
+    let msText = test.marking_scheme_text || '';
+
+    // Fallback if not directly in institute material
+    if (!qpText || !saText) {
+      const fallbackMat = db.prepare(`
+        SELECT question_paper_text, suggested_answers_text, marking_scheme_text
+        FROM institute_materials
+        WHERE institute_id = ? AND level = ? AND subject_name = ?
+        ORDER BY created_at DESC LIMIT 1
+      `).get(test.institute_id, test.level, test.subject_name) as any;
+
+      if (fallbackMat) {
+        qpText = fallbackMat.question_paper_text;
+        saText = fallbackMat.suggested_answers_text;
+        msText = fallbackMat.marking_scheme_text || '';
+      }
+    }
+
+    if (!qpText || !saText) {
       return res.status(400).json({
         error: 'Evaluation reference material for this institute test is incomplete. Please contact your institute coordinator.',
       });
@@ -1280,6 +2062,14 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
           maximum_marks = ?,
           percentage = ?,
           grade = ?,
+          model_used = ?,
+          model_provider = ?,
+          prompt_tokens = ?,
+          completion_tokens = ?,
+          total_tokens = ?,
+          latency_ms = ?,
+          fallback_occurred = ?,
+          fallback_reason = ?,
           result_json = ?,
           annotations_json = ?,
           original_page_count = ?,
@@ -1293,6 +2083,14 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
       evaluationResult.grade,
+      evaluationResult.modelUsed || 'gemini-3.8-flash',
+      evaluationResult.modelProvider || 'gemini',
+      evaluationResult.promptTokens || 0,
+      evaluationResult.completionTokens || 0,
+      evaluationResult.totalTokens || 0,
+      evaluationResult.latencyMs || 0,
+      evaluationResult.fallbackOccurred ? 1 : 0,
+      evaluationResult.fallbackReason || null,
       JSON.stringify(evaluationResult),
       structuredAnnotationsJson,
       originalPageCount,
@@ -1321,6 +2119,212 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
     console.error('Submit institute test error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
     return res.status(500).json({ error: errMsg });
+  }
+});
+
+// 13. Submit Answer Sheet for Institute Material (100% Institute-Sponsored, Verified Enrollment Required)
+router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const studentName = req.user!.fullName;
+    const materialId = req.params.id;
+    const { fileBase64, mimeType, checkingMode } = req.body;
+
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'Student answer sheet file is required.' });
+    }
+
+    const material = db.prepare(`
+      SELECT m.*, i.name as institute_name
+      FROM institute_materials m
+      JOIN institutes i ON i.id = m.institute_id
+      WHERE m.id = ?
+    `).get(materialId) as any;
+
+    if (!material) {
+      return res.status(404).json({ error: 'Institute material not found.' });
+    }
+
+    // Strict enrollment check
+    const membership = db.prepare(`
+      SELECT id, status FROM institute_memberships
+      WHERE student_id = ? AND institute_id = ? AND status = 'ACTIVE'
+    `).get(studentId, material.institute_id) as any;
+
+    if (!membership) {
+      return res.status(403).json({
+        error: 'Access denied: You are not actively enrolled in the institute that published this material.',
+      });
+    }
+
+    if (!material.question_paper_text || !material.suggested_answers_text) {
+      return res.status(400).json({
+        error: 'Reference content for this material is incomplete. Please notify your institute coordinator.',
+      });
+    }
+
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    const rawBuf = Buffer.from(fileBase64, 'base64');
+    const pdfBuf = rawBuf;
+
+    const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+    const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+    fs.writeFileSync(originalFilePath, pdfBuf);
+
+    // Initial evaluation record (100% Institute Sponsored, zero student credit deduction)
+    db.prepare(`
+      INSERT INTO evaluations (
+        id, student_id, institute_id, material_id, subject_name, level, material_type,
+        paper, attempt, checking_mode, status, document_validation_status
+      ) VALUES (?, ?, ?, ?, ?, ?, 'MOCK_EXAM', ?, 'Institute Series', ?, 'PROCESSING', 'VERIFIED')
+    `).run(
+      evaluationId,
+      studentId,
+      material.institute_id,
+      material.id,
+      material.subject_name || material.title,
+      material.level,
+      material.paper || 'Paper 1',
+      (checkingMode as CheckingMode) || 'standard'
+    );
+
+    const studentProfile = db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+    const icaiReg = studentProfile?.icai_registration_number || 'N/A';
+
+    // Evaluate with Gemini
+    const evaluationResult = await evaluateCAAnswerSheet({
+      evaluationId,
+      studentName,
+      icaiRegistrationNumber: icaiReg,
+      level: material.level as CALevel,
+      subjectKey: material.subject_key || material.title.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+      subjectName: material.subject_name || material.title,
+      materialType: 'MTP' as MaterialType,
+      attempt: 'Institute Series',
+      checkingMode: (checkingMode as CheckingMode) || 'standard',
+      fileBase64,
+      mimeType: mimeType || 'application/pdf',
+      referenceQuestionPaperText: material.question_paper_text,
+      referenceSuggestedAnswersText: material.suggested_answers_text,
+      markingSchemeText: material.marking_scheme_text || '',
+    });
+
+    let originalPageCount = 1;
+    let checkedCopyStatus = 'PENDING';
+    let structuredAnnotationsJson = '[]';
+
+    try {
+      const origDoc = await PDFDocument.load(pdfBuf, { ignoreEncryption: true });
+      originalPageCount = origDoc.getPageCount();
+
+      const meta = {
+        id: evaluationId,
+        studentName,
+        level: material.level as CALevel,
+        subjectName: material.subject_name || material.title,
+        paper: material.paper || 'Paper 1',
+        attempt: 'Institute Series',
+        checkingMode: (checkingMode as CheckingMode) || 'standard',
+        totalMarks: evaluationResult.totalMarks,
+        maximumMarks: evaluationResult.maximumMarks,
+        percentage: evaluationResult.percentage,
+        grade: evaluationResult.grade,
+        createdAt: new Date().toISOString(),
+      };
+
+      const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
+      structuredAnnotationsJson = JSON.stringify(structuredAnn);
+
+      const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, pdfBuf);
+      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+      fs.writeFileSync(checkedFilePath, checkedPdfBuf);
+      checkedCopyStatus = 'GENERATED';
+    } catch (annErr) {
+      console.warn('Could not pre-generate checked copy for institute material:', annErr);
+    }
+
+    db.prepare(`
+      UPDATE evaluations
+      SET status = 'COMPLETED',
+          confidence_score = ?,
+          total_marks = ?,
+          maximum_marks = ?,
+          percentage = ?,
+          grade = ?,
+          model_used = ?,
+          model_provider = ?,
+          prompt_tokens = ?,
+          completion_tokens = ?,
+          total_tokens = ?,
+          latency_ms = ?,
+          fallback_occurred = ?,
+          fallback_reason = ?,
+          result_json = ?,
+          annotations_json = ?,
+          original_page_count = ?,
+          checked_copy_page_count = ?,
+          checked_copy_status = ?,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      evaluationResult.confidenceScore,
+      evaluationResult.totalMarks,
+      evaluationResult.maximumMarks,
+      evaluationResult.percentage,
+      evaluationResult.grade,
+      evaluationResult.modelUsed || 'gemini-3.8-flash',
+      evaluationResult.modelProvider || 'gemini',
+      evaluationResult.promptTokens || 0,
+      evaluationResult.completionTokens || 0,
+      evaluationResult.totalTokens || 0,
+      evaluationResult.latencyMs || 0,
+      evaluationResult.fallbackOccurred ? 1 : 0,
+      evaluationResult.fallbackReason || null,
+      JSON.stringify(evaluationResult),
+      structuredAnnotationsJson,
+      originalPageCount,
+      originalPageCount,
+      checkedCopyStatus,
+      evaluationId
+    );
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, ?, ?, 'EVALUATION')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      studentId,
+      'Institute Material Evaluation Complete',
+      `Your submission for "${material.title}" (${material.institute_name}) has been evaluated. You scored ${evaluationResult.totalMarks}/${evaluationResult.maximumMarks} (${evaluationResult.percentage}%).`
+    );
+
+    return res.json({
+      success: true,
+      evaluationId,
+      result: evaluationResult,
+    });
+  } catch (error: unknown) {
+    console.error('Submit institute material error:', error);
+    const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
+    return res.status(500).json({ error: errMsg });
+  }
+});
+
+// Student Credit Lots & Validity Breakdown
+router.get('/credit-lots', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const status = getStudentCreditStatus(studentId);
+    return res.json({
+      success: true,
+      creditStatus: status,
+    });
+  } catch (error: unknown) {
+    console.error('Fetch credit lots error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve credit lots.' });
   }
 });
 

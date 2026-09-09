@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
+import { recordCreditPurchase } from './services/studentCreditService.js';
 
 function getCleanEnv(name: string): string {
   const val = process.env[name] || '';
@@ -184,15 +185,21 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
   // 5. Update order status
   db.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').run('SUCCESS', order.id);
 
-  // 6. Update student profile purchased credits
-  const profile = db.prepare('SELECT purchased_credits FROM student_profiles WHERE user_id = ?').get(studentId) as {
-    purchased_credits: number;
-  } | undefined;
+  // 6. Record credit purchase with exact 3-month validity lot
+  const lotResult = recordCreditPurchase({
+    userId: studentId,
+    creditsPurchased: order.quantity,
+    orderId: order.id,
+    paymentId: razorpayPaymentId,
+    purchaseDate: new Date(),
+  });
 
-  const previousBalance = profile ? profile.purchased_credits : 0;
-  const newBalance = previousBalance + order.quantity;
-
-  db.prepare('UPDATE student_profiles SET purchased_credits = ? WHERE user_id = ?').run(newBalance, studentId);
+  const newBalance = lotResult.totalValidCredits;
+  const expiryFormatted = new Date(lotResult.expiresAt).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 
   // 7. Credit ledger entry
   const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
@@ -206,7 +213,7 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
     newBalance,
     order.id,
     razorpayPaymentId,
-    `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId})`
+    `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId}). Valid for 3 months until ${expiryFormatted}.`
   );
 
   // 8. In-app notification
@@ -218,7 +225,7 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
     notifId,
     studentId,
     'Payment Successful - Credits Added',
-    `Your payment of ₹${order.amount_paise / 100} was successful. ${order.quantity} evaluation credits have been added to your account.`
+    `Your payment of ₹${order.amount_paise / 100} was successful. ${order.quantity} evaluation credits have been added to your account (valid for 3 months until ${expiryFormatted}).`
   );
 
   // 9. Audit log
@@ -273,4 +280,157 @@ export function processRazorpayWebhook(rawBody: string, signature: string): { re
   }
 
   return { received: true };
+}
+
+export interface CreateInstituteOrderParams {
+  instituteId: string;
+  planId: string;
+  billingPeriod?: 'MONTHLY' | 'ANNUAL';
+}
+
+export interface InstituteOrderResult {
+  orderId: string;
+  razorpayOrderId: string;
+  amountPaise: number;
+  currency: string;
+  keyId: string;
+  planId: string;
+  planName: string;
+}
+
+export async function createInstituteSubscriptionOrder(params: CreateInstituteOrderParams): Promise<InstituteOrderResult> {
+  const { instituteId, planId, billingPeriod = 'MONTHLY' } = params;
+
+  // 1. Fetch plan from DB
+  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ?').get(planId) as any;
+  if (!plan) {
+    throw new Error(`Invalid plan ID: ${planId}`);
+  }
+
+  // 2. Fetch institute
+  const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+  if (!inst) {
+    throw new Error(`Institute not found: ${instituteId}`);
+  }
+
+  const multiplier = billingPeriod === 'ANNUAL' ? 10 : 1; // 2 months free on annual
+  const amountPaise = plan.price_inr * multiplier * 100;
+  const internalOrderId = `ord_inst_${crypto.randomBytes(8).toString('hex')}`;
+
+  let razorpayOrderId = '';
+  const keyId = getCleanEnv('RAZORPAY_KEY_ID');
+  const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
+
+  if (isRazorpayConfigured()) {
+    const credentials = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const response = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: amountPaise,
+        currency: 'INR',
+        receipt: internalOrderId,
+        notes: {
+          instituteId,
+          planId,
+          billingPeriod,
+          instituteName: inst.name,
+          purpose: `Institute Subscription: ${plan.name}`,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Razorpay Order creation failed: ${errText.slice(0, 150)}`);
+    }
+
+    const data = (await response.json()) as { id: string };
+    razorpayOrderId = data.id;
+  } else {
+    razorpayOrderId = `order_${crypto.randomBytes(10).toString('hex')}`;
+  }
+
+  // Persist order in payment_orders
+  db.prepare(`
+    INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status)
+    VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING')
+  `).run(internalOrderId, `inst_${instituteId}`, razorpayOrderId, plan.evaluation_credits || 500, amountPaise);
+
+  return {
+    orderId: internalOrderId,
+    razorpayOrderId,
+    amountPaise,
+    currency: 'INR',
+    keyId,
+    planId: plan.id,
+    planName: plan.name,
+  };
+}
+
+export interface VerifyInstitutePaymentParams {
+  instituteId: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+  planId: string;
+}
+
+export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymentParams) {
+  const { instituteId, razorpayOrderId, razorpayPaymentId, razorpaySignature, planId } = params;
+
+  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ?').get(planId) as any;
+  if (!plan) throw new Error('Selected plan not found');
+
+  const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+  if (!inst) throw new Error('Institute not found');
+
+  const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
+  if (isRazorpayConfigured()) {
+    const generatedSignature = crypto
+      .createHmac('sha256', keySecret)
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest('hex');
+
+    if (generatedSignature !== razorpaySignature) {
+      throw new Error('Payment signature verification failed. Untrusted payment.');
+    }
+  }
+
+  // Calculate expiration date: +30 days
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Update institute in DB
+  db.prepare(`
+    UPDATE institutes SET
+      status = 'ACTIVE',
+      subscription_plan = ?,
+      max_students = ?,
+      subscription_expires_at = ?
+    WHERE id = ?
+  `).run(plan.id, plan.student_quota, expiresAt, instituteId);
+
+  // Update payment_order
+  db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE razorpay_order_id = ?").run(razorpayOrderId);
+
+  // Audit log
+  db.prepare(`
+    INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+    VALUES (?, ?, 'INSTITUTE_SUBSCRIPTION_ACTIVE', 'INSTITUTE', ?, ?)
+  `).run(
+    `log_${crypto.randomBytes(8).toString('hex')}`,
+    inst.admin_user_id || instituteId,
+    instituteId,
+    `Subscribed to ${plan.name} (Quota: ${plan.student_quota} students). Payment ID: ${razorpayPaymentId}`
+  );
+
+  return {
+    success: true,
+    plan: plan.name,
+    maxStudents: plan.student_quota,
+    expiresAt,
+  };
 }
