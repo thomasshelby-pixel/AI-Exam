@@ -380,7 +380,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               </span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Verified against ICAI guideline answers. Zero negative marking applied for Inter/Final MCQs.
+              Verified against ICAI guideline answers and official paper-specific MCQ scoring rules.
             </p>
           </div>
 

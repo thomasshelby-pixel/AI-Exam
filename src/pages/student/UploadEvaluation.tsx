@@ -397,7 +397,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               { key: 'READING_SOLUTIONS', label: '3. Reading Handwritten Solutions & OCR Extraction' },
               { key: 'IDENTIFYING_QUESTIONS', label: '4. Indexing Questions, Sub-questions & Ledger Workings' },
               { key: 'EVALUATING_STEPS', label: '5. ICAI Step Marking, AS/Ind AS & Legal Provisions Check' },
-              { key: 'CALCULATING_MARKS', label: '6. Sum Verification (Strictly No Negative Marking on Inter/Final MCQs)' },
+              { key: 'CALCULATING_MARKS', label: '6. Mathematical Sum Verification & Paper-Specific MCQ Scoring' },
               { key: 'FINALIZING_REPORT', label: '7. Generating Detailed Examiner Feedback & Strengths Report' },
             ].map((st) => {
               const stepsList: EvaluationStep[] = [
@@ -767,7 +767,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             <ul className="space-y-1.5 list-disc list-inside text-slate-500 text-[11px]">
               <li>Step-by-step marking awarded for correct intermediate calculations.</li>
               <li>
-                <strong className="text-slate-800 font-bold">Zero Negative Marking</strong> for Intermediate & Final MCQs.
+                <strong className="text-slate-800 font-bold">Paper-Specific MCQ Rules:</strong> 0 negative marking for Inter/Final; -0.25 on Foundation QA &amp; Eco.
               </li>
               <li>Working Notes evaluated alongside Main Financial Statements.</li>
               <li>Alternative correct methods and interpretations accepted.</li>

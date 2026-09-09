@@ -54,15 +54,15 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ onNavigateRegist
         ))}
       </div>
 
-      {/* ICAI Zero Negative Marking Rule Callout */}
+      {/* ICAI Paper-Specific MCQ Scoring Policy */}
       <div className="p-6 rounded-xl bg-blue-50 border border-blue-200 space-y-2.5 shadow-sm">
         <h3 className="text-sm font-bold text-blue-900 flex items-center gap-2">
           <Scale className="w-4 h-4 text-blue-600" />
-          <span>ICAI Zero Negative Marking Compliance Guarantee</span>
+          <span>Official ICAI Paper-Specific MCQ Scoring Compliance</span>
         </h3>
         <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-          In generic online grading tools, candidates frequently see negative marks deducted for wrong answers.
-          At CA Exam Checker AI, our evaluation engine strictly enforces <strong>zero negative marking for all multiple choice questions (MCQs)</strong> across CA Foundation, CA Intermediate, and CA Final exams. Incorrect or unattempted MCQs are awarded 0 marks, and marks are never deducted.
+          At CA Exam Checker AI, our evaluation engine enforces exact paper-specific scoring rules per official ICAI regulations:
+          <strong> Zero negative marking</strong> is strictly guaranteed across all CA Intermediate and CA Final 30% MCQs, as well as CA Foundation Accounting and Business Laws. For CA Foundation <strong>Quantitative Aptitude</strong> and <strong>Business Economics</strong>, incorrect answers receive the official <strong>-0.25 mark penalty</strong>. Unattempted questions always receive 0 marks without penalty.
         </p>
       </div>
 

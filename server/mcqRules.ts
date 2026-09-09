@@ -165,10 +165,10 @@ export function getActiveMcqScoringRule(params: {
   const syllabus = (params.syllabusVersion || 'ALL').trim();
 
   // 1. Fetch active rules for this course level
-  const rules = db.prepare(`
+  const rules = (db.prepare(`
     SELECT * FROM mcq_scoring_rules
     WHERE is_active = 1 AND course_level = ?
-  `).all(normLevel) as DbMcqScoringRule[];
+  `).all(normLevel) as unknown) as DbMcqScoringRule[];
 
   if (!rules || rules.length === 0) {
     return null;
@@ -244,7 +244,7 @@ export function getActiveMcqScoringRule(params: {
  * Retrieves all configured MCQ scoring rules from the database.
  */
 export function getAllMcqRules(): DbMcqScoringRule[] {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT * FROM mcq_scoring_rules
     ORDER BY 
       CASE course_level 
@@ -255,14 +255,15 @@ export function getAllMcqRules(): DbMcqScoringRule[] {
       END ASC,
       paper_number ASC,
       paper_name ASC
-  `).all() as DbMcqScoringRule[];
+  `).all() as unknown) as DbMcqScoringRule[];
 }
 
 /**
  * Resets the MCQ scoring rules to the official ICAI default configuration.
  */
 export function resetDefaultMcqRules(): void {
-  db.transaction(() => {
+  db.exec('BEGIN TRANSACTION');
+  try {
     db.prepare('DELETE FROM mcq_scoring_rules').run();
     const insertStmt = db.prepare(`
       INSERT INTO mcq_scoring_rules (
@@ -287,5 +288,9 @@ export function resetDefaultMcqRules(): void {
         rule.description
       );
     }
-  })();
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }

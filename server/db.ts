@@ -2257,7 +2257,7 @@ function seedSampleInstitute() {
         id, name, code, logo_url, email, phone, address, website,
         contact_person, status, subscription_plan, subscription_expires_at, max_students
       ) VALUES (
-        ?, 'Apex CA Academy', 'APEX-CA-2026', '', 'director@apexca.edu', '+919811223344',
+        ?, 'Apex CA Academy', 'APEX-CA-2026', '', 'institute@apexca.edu', '+919811223344',
         'Connaught Place, New Delhi', 'https://apexca.edu', 'CA Rajesh Khurana, FCA',
         'ACTIVE', 'INSTITUTIONAL_PRO', '2027-12-31T23:59:59.000Z', 500
       )

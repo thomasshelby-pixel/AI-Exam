@@ -489,15 +489,23 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         awarded = 0;
       } else if (isIncorrect) {
         // Apply configured negative penalty ONLY to incorrect MCQs
-        awarded = mcqRule.wrong_penalty;
+        // Strict safety check:
+        // -0.25 can only be applied if params.level === 'FOUNDATION' AND (canonicalSubjectName === 'Quantitative Aptitude' || canonicalSubjectName === 'Business Economics')
+        const isEligibleForPenalty =
+          params.level === 'FOUNDATION' &&
+          (canonicalSubjectName === 'Quantitative Aptitude' || canonicalSubjectName === 'Business Economics');
+        awarded = isEligibleForPenalty && mcqRule.wrong_penalty < 0 ? mcqRule.wrong_penalty : 0;
       } else if (isCorrect) {
         // Correct answers receive full assigned marks
         awarded = maxMarks > 0 ? maxMarks : 1;
       } else {
         // Ambiguous status: if negative awarded, check if rule allows it
+        const isEligibleForPenalty =
+          params.level === 'FOUNDATION' &&
+          (canonicalSubjectName === 'Quantitative Aptitude' || canonicalSubjectName === 'Business Economics');
         if (awarded < 0) {
-          awarded = mcqRule.wrong_penalty;
-        } else if (awarded === 0 && mcqRule.wrong_penalty < 0 && !isUnattempted) {
+          awarded = isEligibleForPenalty && mcqRule.wrong_penalty < 0 ? mcqRule.wrong_penalty : 0;
+        } else if (awarded === 0 && mcqRule.wrong_penalty < 0 && !isUnattempted && isEligibleForPenalty) {
           awarded = mcqRule.wrong_penalty;
         }
       }

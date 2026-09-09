@@ -55,7 +55,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               </li>
               <li>
                 <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 transition">
-                  Zero MCQ Negative Marking
+                  ICAI MCQ Scoring Rules
                 </button>
               </li>
               <li>

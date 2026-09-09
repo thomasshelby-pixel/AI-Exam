@@ -1736,8 +1736,8 @@ router.get('/referral/status', (req: AuthRequest, res: Response) => {
     `).all(userId) as any[];
 
     // Overall campaign info for AI30
-    const ai30Campaign = db.prepare('SELECT * FROM referral_campaigns WHERE code = "AI30"').get() as any;
-    const ai30RedemptionsCount = (db.prepare('SELECT COUNT(*) as cnt FROM referral_redemptions WHERE referral_code = "AI30"').get() as any)?.cnt || 0;
+    const ai30Campaign = db.prepare("SELECT * FROM referral_campaigns WHERE code = 'AI30'").get() as any;
+    const ai30RedemptionsCount = (db.prepare("SELECT COUNT(*) as cnt FROM referral_redemptions WHERE referral_code = 'AI30'").get() as any)?.cnt || 0;
 
     // Check if current user has an active promo
     const activeRedemption = redemptions.find(
@@ -1960,7 +1960,7 @@ router.post('/join-institute', (req: AuthRequest, res: Response) => {
     }
 
     const trimmedCode = instituteCode.trim().toUpperCase();
-    const institute = db.prepare('SELECT * FROM institutes WHERE UPPER(code) = ? AND status = "ACTIVE"').get(trimmedCode) as any;
+    const institute = db.prepare("SELECT * FROM institutes WHERE UPPER(code) = ? AND status = 'ACTIVE'").get(trimmedCode) as any;
     if (!institute) {
       return res.status(404).json({ error: 'No active coaching institute found with this code. Please verify the code with your institute administration.' });
     }
@@ -1972,7 +1972,7 @@ router.post('/join-institute', (req: AuthRequest, res: Response) => {
         return res.status(400).json({ error: `You are already actively enrolled in ${institute.name}.` });
       } else {
         // Reactivate membership
-        db.prepare('UPDATE institute_memberships SET status = "ACTIVE", joined_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?').run(existing.id);
+        db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', joined_at = CURRENT_TIMESTAMP, removed_at = NULL WHERE id = ?").run(existing.id);
         return res.json({
           success: true,
           message: `Successfully reactivated your enrollment with ${institute.name}.`,

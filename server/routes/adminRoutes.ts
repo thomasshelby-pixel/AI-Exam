@@ -2560,7 +2560,20 @@ router.get('/models/telemetry', (req: AuthRequest, res: Response) => {
 router.get('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
   try {
     const rules = getAllMcqRules();
-    return res.json({ success: true, rules });
+    const mapped = rules.map((r) => ({
+      ...r,
+      courseLevel: r.course_level,
+      paperNumber: r.paper_number,
+      paperName: r.paper_name,
+      syllabusVersion: r.syllabus_version,
+      wrongPenalty: r.wrong_penalty,
+      correctScoreRule: r.correct_score_rule,
+      unattemptedScoreRule: r.unattempted_score_rule,
+      isActive: Boolean(r.is_active),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+    return res.json({ success: true, rules: mapped });
   } catch (error: unknown) {
     console.error('Get MCQ scoring rules error:', error);
     return res.status(500).json({ error: 'Failed to retrieve MCQ scoring rules' });
@@ -2571,33 +2584,50 @@ router.post('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
   try {
     const {
       courseLevel,
+      course_level,
       paperNumber,
+      paper_number,
       paperName,
+      paper_name,
       attempt,
       syllabusVersion,
+      syllabus_version,
       wrongPenalty,
+      wrong_penalty,
       correctScoreRule,
+      correct_score_rule,
       unattemptedScoreRule,
+      unattempted_score_rule,
       isActive,
+      is_active,
       description,
     } = req.body;
 
-    if (!courseLevel || !paperName) {
+    const rawLevel = courseLevel || course_level;
+    const rawPaperName = paperName || paper_name;
+    const rawPaperNumber = paperNumber || paper_number;
+    const rawSyllabus = syllabusVersion || syllabus_version;
+    const rawCorrect = correctScoreRule || correct_score_rule;
+    const rawUnattempted = unattemptedScoreRule || unattempted_score_rule;
+    const rawActive = isActive !== undefined ? isActive : is_active;
+    const rawPenalty = wrongPenalty !== undefined ? wrongPenalty : wrong_penalty;
+
+    if (!rawLevel || !rawPaperName) {
       return res.status(400).json({ error: 'Course Level and Paper/Subject Name are required.' });
     }
 
-    const normLevel = String(courseLevel).toUpperCase().trim();
+    const normLevel = String(rawLevel).toUpperCase().trim();
     if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(normLevel)) {
       return res.status(400).json({ error: 'Course Level must be FOUNDATION, INTERMEDIATE, or FINAL.' });
     }
 
     const canonicalName = normLevel === 'FOUNDATION'
-      ? getCanonicalPaperName(normLevel, paperName)
-      : String(paperName).trim();
+      ? getCanonicalPaperName(normLevel, rawPaperName)
+      : String(rawPaperName).trim();
 
-    const penaltyNum = typeof wrongPenalty === 'number' ? wrongPenalty : parseFloat(wrongPenalty) || 0;
+    const penaltyNum = typeof rawPenalty === 'number' ? rawPenalty : parseFloat(rawPenalty) || 0;
 
-    // Safety constraint: -0.25 negative marking permitted ONLY when BOTH conditions are true:
+    // Strict safety constraint: -0.25 negative marking permitted ONLY when BOTH conditions are true:
     // Level = FOUNDATION AND Paper is Quantitative Aptitude or Business Economics
     if (penaltyNum < 0) {
       const isAllowed = normLevel === 'FOUNDATION' && (canonicalName === 'Quantitative Aptitude' || canonicalName === 'Business Economics');
@@ -2609,7 +2639,7 @@ router.post('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
     }
 
     const ruleId = `mcq_rule_${crypto.randomBytes(8).toString('hex')}`;
-    const activeInt = isActive === false || isActive === 0 ? 0 : 1;
+    const activeInt = rawActive === false || rawActive === 0 ? 0 : 1;
 
     db.prepare(`
       INSERT INTO mcq_scoring_rules (
@@ -2620,13 +2650,13 @@ router.post('/mcq-scoring-rules', (req: AuthRequest, res: Response) => {
     `).run(
       ruleId,
       normLevel,
-      paperNumber || 'ALL',
+      rawPaperNumber || 'ALL',
       canonicalName,
       attempt || 'ALL',
-      syllabusVersion || 'ALL',
+      rawSyllabus || 'ALL',
       penaltyNum,
-      correctScoreRule || 'FULL_MARKS',
-      unattemptedScoreRule || 'ZERO',
+      rawCorrect || 'FULL_MARKS',
+      rawUnattempted || 'ZERO',
       activeInt,
       description || `MCQ Rule for CA ${normLevel} ${canonicalName}`
     );
@@ -2659,27 +2689,44 @@ router.put('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
 
     const {
       courseLevel,
+      course_level,
       paperNumber,
+      paper_number,
       paperName,
+      paper_name,
       attempt,
       syllabusVersion,
+      syllabus_version,
       wrongPenalty,
+      wrong_penalty,
       correctScoreRule,
+      correct_score_rule,
       unattemptedScoreRule,
+      unattempted_score_rule,
       isActive,
+      is_active,
       description,
     } = req.body;
 
-    const normLevel = courseLevel ? String(courseLevel).toUpperCase().trim() : existing.course_level;
-    const effectivePaperName = paperName
-      ? (normLevel === 'FOUNDATION' ? getCanonicalPaperName(normLevel, paperName) : String(paperName).trim())
+    const rawLevel = courseLevel || course_level;
+    const rawPaperName = paperName || paper_name;
+    const rawPaperNumber = paperNumber || paper_number;
+    const rawSyllabus = syllabusVersion || syllabus_version;
+    const rawCorrect = correctScoreRule || correct_score_rule;
+    const rawUnattempted = unattemptedScoreRule || unattempted_score_rule;
+    const rawActive = isActive !== undefined ? isActive : is_active;
+    const rawPenalty = wrongPenalty !== undefined ? wrongPenalty : wrong_penalty;
+
+    const normLevel = rawLevel ? String(rawLevel).toUpperCase().trim() : existing.course_level;
+    const effectivePaperName = rawPaperName
+      ? (normLevel === 'FOUNDATION' ? getCanonicalPaperName(normLevel, rawPaperName) : String(rawPaperName).trim())
       : existing.paper_name;
 
-    const penaltyNum = wrongPenalty !== undefined
-      ? (typeof wrongPenalty === 'number' ? wrongPenalty : parseFloat(wrongPenalty) || 0)
+    const penaltyNum = rawPenalty !== undefined
+      ? (typeof rawPenalty === 'number' ? rawPenalty : parseFloat(rawPenalty) || 0)
       : existing.wrong_penalty;
 
-    // Safety constraint check
+    // Strict safety constraint check
     if (penaltyNum < 0) {
       const isAllowed = normLevel === 'FOUNDATION' && (effectivePaperName === 'Quantitative Aptitude' || effectivePaperName === 'Business Economics');
       if (!isAllowed) {
@@ -2689,7 +2736,7 @@ router.put('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
       }
     }
 
-    const activeInt = isActive !== undefined ? (isActive ? 1 : 0) : existing.is_active;
+    const activeInt = rawActive !== undefined ? (rawActive ? 1 : 0) : existing.is_active;
 
     db.prepare(`
       UPDATE mcq_scoring_rules
@@ -2707,13 +2754,13 @@ router.put('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
       WHERE id = ?
     `).run(
       normLevel,
-      paperNumber !== undefined ? paperNumber : existing.paper_number,
+      rawPaperNumber !== undefined ? rawPaperNumber : existing.paper_number,
       effectivePaperName,
       attempt !== undefined ? attempt : existing.attempt,
-      syllabusVersion !== undefined ? syllabusVersion : existing.syllabus_version,
+      rawSyllabus !== undefined ? rawSyllabus : existing.syllabus_version,
       penaltyNum,
-      correctScoreRule || existing.correct_score_rule,
-      unattemptedScoreRule || existing.unattempted_score_rule,
+      rawCorrect || existing.correct_score_rule,
+      rawUnattempted || existing.unattempted_score_rule,
       activeInt,
       description !== undefined ? description : existing.description,
       id

@@ -50,7 +50,7 @@ export const CA_CURRICULUM: Record<CALevel, {
         mode: 'mcq',
         maximumMarks: 100,
         isMcqOnly: true,
-        mcqNegativeMarking: false, // ZERO negative marking for all MCQs
+        mcqNegativeMarking: true, // -0.25 negative marking for incorrect MCQs under ICAI rules
         keyProvisions: ['Ratio and Proportion', 'Time Value of Money', 'Permutations & Combinations', 'Probability', 'Theoretical Distributions', 'Correlation and Regression'],
       },
       {
@@ -60,7 +60,7 @@ export const CA_CURRICULUM: Record<CALevel, {
         mode: 'mcq',
         maximumMarks: 100,
         isMcqOnly: true,
-        mcqNegativeMarking: false, // ZERO negative marking for all MCQs
+        mcqNegativeMarking: true, // -0.25 negative marking for incorrect MCQs under ICAI rules
         keyProvisions: ['Demand and Supply Analysis', 'Theory of Consumer Behavior', 'Theory of Production and Cost', 'Price Determination', 'National Income', 'Public Finance', 'Money Market', 'International Trade'],
       },
     ],
