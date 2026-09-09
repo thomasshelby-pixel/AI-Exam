@@ -425,7 +425,17 @@ function runMigrations() {
     try {
       const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       if (!cols.some(c => c.name === column)) {
-        db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${colDef}`).run();
+        // SQLite does not allow ALTER TABLE ADD COLUMN with non-constant defaults like CURRENT_TIMESTAMP
+        let cleanDef = colDef;
+        let requiresTimestampUpdate = false;
+        if (/DEFAULT\s+CURRENT_TIMESTAMP/i.test(colDef)) {
+          cleanDef = colDef.replace(/DEFAULT\s+CURRENT_TIMESTAMP/gi, '').trim();
+          requiresTimestampUpdate = true;
+        }
+        db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${cleanDef}`).run();
+        if (requiresTimestampUpdate) {
+          db.prepare(`UPDATE ${table} SET ${column} = CURRENT_TIMESTAMP WHERE ${column} IS NULL`).run();
+        }
       }
     } catch (err) {
       console.warn(`Migration check warning for ${table}.${column}:`, err);
@@ -648,8 +658,8 @@ function runMigrations() {
 
   // Suspension & Revocation Audit Enhancement
   addColumnIfNotExists('account_suspensions', 'previous_status', "TEXT DEFAULT 'ACTIVE'");
-  addColumnIfNotExists('account_suspensions', 'suspended_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  addColumnIfNotExists('account_suspensions', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('account_suspensions', 'suspended_at', 'TEXT');
+  addColumnIfNotExists('account_suspensions', 'updated_at', 'TEXT');
 
   addColumnIfNotExists('revocation_requests', 'student_name', 'TEXT');
   addColumnIfNotExists('revocation_requests', 'student_email', 'TEXT');
@@ -658,7 +668,7 @@ function runMigrations() {
   addColumnIfNotExists('revocation_requests', 'admin_decision', 'TEXT');
   addColumnIfNotExists('revocation_requests', 'admin_response', 'TEXT');
   addColumnIfNotExists('revocation_requests', 'reviewed_by', 'TEXT');
-  addColumnIfNotExists('revocation_requests', 'submitted_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('revocation_requests', 'submitted_at', 'TEXT');
 
   // Strict Material Ownership Rule:
   // Identify legacy automatically seeded/demo materials and deactivate them
@@ -736,14 +746,14 @@ function runMigrations() {
   addColumnIfNotExists('referral_campaigns', 'end_date', 'TEXT');
   addColumnIfNotExists('referral_campaigns', 'user_type', "TEXT NOT NULL DEFAULT 'ALL'");
   addColumnIfNotExists('referral_campaigns', 'terms_notes', 'TEXT');
-  addColumnIfNotExists('referral_campaigns', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('referral_campaigns', 'updated_at', 'TEXT');
 
   addColumnIfNotExists('referral_redemptions', 'max_evaluations', 'INTEGER NOT NULL DEFAULT 15');
   addColumnIfNotExists('referral_redemptions', 'evaluations_used', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('referral_redemptions', 'evaluations_remaining', 'INTEGER NOT NULL DEFAULT 15');
   addColumnIfNotExists('referral_redemptions', 'audit_note', 'TEXT');
-  addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT');
 
   // Unique constraint to prevent duplicate redemptions per user per code
   try {
