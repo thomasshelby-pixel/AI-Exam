@@ -1814,9 +1814,13 @@ router.post('/referral/redeem', (req: AuthRequest, res: Response) => {
       });
     }
 
-    // 3. Verify global successful redemption count is strictly below maximum quota
+    // 3. Verify global successful redemption count is strictly below maximum quota (excluding test accounts)
     const countRow = db.prepare(`
-      SELECT COUNT(*) as total FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)
+      SELECT COUNT(*) as total
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE UPPER(r.referral_code) = UPPER(?)
+        AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
     `).get(cleanCode) as { total: number };
 
     const maxRedemptions = campaign.max_redemptions ?? 20;
@@ -1926,7 +1930,13 @@ router.get('/referral/status', (req: AuthRequest, res: Response) => {
 
     // Overall campaign info for AI30
     const ai30Campaign = db.prepare("SELECT * FROM referral_campaigns WHERE code = 'AI30'").get() as any;
-    const ai30RedemptionsCount = (db.prepare("SELECT COUNT(*) as cnt FROM referral_redemptions WHERE referral_code = 'AI30'").get() as any)?.cnt || 0;
+    const ai30RedemptionsCount = (db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.referral_code = 'AI30'
+        AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+    `).get() as any)?.cnt || 0;
 
     // Check if current user has an active promo
     const activeRedemption = redemptions.find(

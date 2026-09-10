@@ -103,7 +103,11 @@ router.post('/register', (req: Request, res: Response) => {
       }
 
       const countRow = db.prepare(`
-        SELECT COUNT(*) as total FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)
+        SELECT COUNT(*) as total
+        FROM referral_redemptions r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE UPPER(r.referral_code) = UPPER(?)
+          AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
       `).get(rawReferralCode) as { total: number };
 
       const maxRedemptions = promoCampaign.max_redemptions ?? 20;
@@ -129,9 +133,13 @@ router.post('/register', (req: Request, res: Response) => {
 
     try {
       if (promoCampaign) {
-        // Re-check redemption limit inside transaction write lock
+        // Re-check redemption limit inside transaction write lock (excluding TEST accounts)
         const lockedCount = db.prepare(`
-          SELECT COUNT(*) as total FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)
+          SELECT COUNT(*) as total
+          FROM referral_redemptions r
+          LEFT JOIN users u ON u.id = r.user_id
+          WHERE UPPER(r.referral_code) = UPPER(?)
+            AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
         `).get(rawReferralCode) as { total: number };
 
         promoMaxRedemptions = promoCampaign.max_redemptions ?? 20;

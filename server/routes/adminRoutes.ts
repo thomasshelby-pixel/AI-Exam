@@ -5,6 +5,14 @@ import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
+import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
+import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
+import {
+  getTestCleanupPreview,
+  deleteSingleTestRecord,
+  bulkDeleteTestCategory,
+  bulkDeleteAllTestData,
+} from '../services/testDataCleanupService.js';
 
 const router = Router();
 
@@ -815,12 +823,41 @@ router.put('/institutes/:id/status', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Update Institute Account Classification (NORMAL vs TEST)
+router.put('/institutes/:id/classification', (req: AuthRequest, res: Response) => {
+  try {
+    const { classification } = req.body;
+    const result = updateInstituteClassification(req.params.id, classification, req.user!);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Update institute classification error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to update institute classification' });
+  }
+});
+
+// Delete Institute Account (SUPER ADMIN ONLY)
+router.delete('/institutes/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = deleteInstituteAccount(req.params.id, req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete institute error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete institute' });
+  }
+});
+
 // 6. Payments & Transactions
 router.get('/payments', (req: AuthRequest, res: Response) => {
   try {
     const orders = db.prepare(`
-      SELECT o.*, u.full_name as student_name, u.email as student_email,
-             t.razorpay_payment_id, t.created_at as paid_at
+      SELECT o.*, 
+             COALESCE(o.account_classification, 'NORMAL') as account_classification,
+             u.full_name as student_name, u.email as student_email,
+             t.id as transaction_id, t.razorpay_payment_id, t.created_at as paid_at,
+             t.status as transaction_status
       FROM payment_orders o
       JOIN users u ON u.id = o.student_id
       LEFT JOIN payment_transactions t ON t.order_id = o.id
@@ -831,6 +868,96 @@ router.get('/payments', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get payments error:', error);
     return res.status(500).json({ error: 'Failed to load payments' });
+  }
+});
+
+// Delete Test Payment Order
+router.delete('/payments/orders/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = deleteSingleTestRecord('ORDERS', req.params.id, req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete payment order error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete payment order' });
+  }
+});
+
+// Delete Test Payment Transaction
+router.delete('/payments/transactions/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = deleteSingleTestRecord('PAYMENTS', req.params.id, req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete payment transaction error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete payment transaction' });
+  }
+});
+
+// 6B. Test Data Cleanup Endpoints
+router.get('/test-cleanup/preview', (req: AuthRequest, res: Response) => {
+  try {
+    const preview = getTestCleanupPreview();
+    return res.json(preview);
+  } catch (error: any) {
+    console.error('Test cleanup preview error:', error);
+    return res.status(500).json({ error: error.message || 'Failed to generate test cleanup preview' });
+  }
+});
+
+router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => {
+  try {
+    const { category, id } = req.body;
+    if (!category || !id) {
+      return res.status(400).json({ error: 'Category and ID are required' });
+    }
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = deleteSingleTestRecord(category, id, req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete test record error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete test record' });
+  }
+});
+
+router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) => {
+  try {
+    const { category } = req.body;
+    if (!category) {
+      return res.status(400).json({ error: 'Category is required' });
+    }
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = bulkDeleteTestCategory(category, req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete test category error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete test category' });
+  }
+});
+
+router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
+  try {
+    const { confirmation } = req.body;
+    if (confirmation !== 'DELETE ALL TEST DATA') {
+      return res.status(400).json({ error: 'Confirmation mismatch. You must send exact confirmation "DELETE ALL TEST DATA"' });
+    }
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = req.headers['user-agent'] || null;
+
+    const result = bulkDeleteAllTestData(req.user!, ipAddress, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete all test data error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete all test data' });
   }
 });
 
@@ -885,10 +1012,11 @@ router.post('/support/:id/reply', (req: AuthRequest, res: Response) => {
 // 9. Students Management
 router.get('/students', (req: AuthRequest, res: Response) => {
   try {
-    const { search, caLevel } = req.query;
+    const { search, caLevel, classification } = req.query;
     let query = `
-      SELECT u.id, u.email, u.full_name, u.phone, u.status, u.created_at,
+      SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.city,
              i.name as institute_name,
              pfe.is_active as permanent_free_active,
              COUNT(e.id) as evaluations_count,
@@ -910,6 +1038,10 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       query += ' AND p.ca_level = ?';
       params.push(caLevel);
     }
+    if (classification && classification !== 'ALL') {
+      query += ' AND u.account_classification = ?';
+      params.push(classification);
+    }
 
     query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
     const students = db.prepare(query).all(...params);
@@ -917,6 +1049,137 @@ router.get('/students', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get students error:', error);
     return res.status(500).json({ error: 'Failed to retrieve students' });
+  }
+});
+
+// Get detailed student profile for Super Admin inspection
+router.get('/students/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.params.id;
+    const student = db.prepare(`
+      SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at, u.updated_at,
+             p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.city, p.preferred_subjects,
+             i.id as institute_id, i.name as institute_name,
+             b.id as batch_id, b.name as batch_name,
+             pfe.is_active as permanent_free_active,
+             COUNT(DISTINCT e.id) as evaluations_count,
+             AVG(e.percentage) as average_percentage
+      FROM users u
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN institutes i ON i.id = p.institute_id
+      LEFT JOIN batches b ON b.id = p.batch_id
+      LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
+      LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
+      WHERE u.id = ? AND u.role = 'STUDENT'
+      GROUP BY u.id
+    `).get(studentId);
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found.' });
+    }
+
+    // Recent evaluations
+    const recentEvals = db.prepare(`
+      SELECT id, subject_name, level, total_marks, maximum_marks, percentage, status, created_at
+      FROM evaluations
+      WHERE student_id = ?
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).all(studentId);
+
+    // Recent credit ledger
+    const creditLedger = db.prepare(`
+      SELECT id, amount, source, balance_after, note, created_at
+      FROM credit_ledger
+      WHERE student_id = ?
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).all(studentId);
+
+    return res.json({
+      student,
+      recentEvaluations: recentEvals,
+      creditLedger,
+    });
+  } catch (error: unknown) {
+    console.error('Get student details error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve student details' });
+  }
+});
+
+// Super Admin Update Student Account Classification (NORMAL vs TEST)
+router.patch('/students/:id/classification', (req: AuthRequest, res: Response) => {
+  try {
+    const { classification } = req.body;
+    if (!classification || (classification !== 'NORMAL' && classification !== 'TEST')) {
+      return res.status(400).json({ error: "Classification must be 'NORMAL' or 'TEST'." });
+    }
+
+    const result = updateStudentClassification(req.params.id, classification, req.user!);
+    return res.json(result);
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    return res.status(status).json({ error: error.message || 'Failed to update student classification' });
+  }
+});
+
+// Super Admin Permanent Student Account Delete
+router.delete('/students/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.params.id;
+    if (!studentId || typeof studentId !== 'string') {
+      return res.status(400).json({ error: 'Invalid student identifier provided.' });
+    }
+
+    // Explicit check: Only SUPER_ADMIN allowed
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Access denied. Only Super Admin can permanently delete student accounts.' });
+    }
+
+    const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
+    const userAgent = (req.headers['user-agent'] || '') as string;
+
+    const result = deleteStudentAccount(studentId, req.user!, ip, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    console.error('Delete student account error:', error);
+    return res.status(status).json({ error: error.message || 'Failed to delete student account' });
+  }
+});
+
+// Also support router.delete('/users/:id') with role verification
+router.delete('/users/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.params.id;
+    if (!userId || typeof userId !== 'string') {
+      return res.status(400).json({ error: 'Invalid user identifier provided.' });
+    }
+
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Access denied. Only Super Admin can delete user accounts.' });
+    }
+
+    const target = db.prepare('SELECT id, role, email FROM users WHERE id = ?').get(userId) as any;
+    if (!target) {
+      return res.status(404).json({ error: 'User not found or already deleted.' });
+    }
+
+    if (target.role !== 'STUDENT') {
+      return res.status(400).json({
+        error: `Deletion via this endpoint is only permitted for STUDENT accounts. User has role ${target.role}.`,
+      });
+    }
+
+    const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
+    const userAgent = (req.headers['user-agent'] || '') as string;
+
+    const result = deleteStudentAccount(userId, req.user!, ip, userAgent);
+    return res.json(result);
+  } catch (error: any) {
+    const status = error.statusCode || 500;
+    return res.status(status).json({ error: error.message || 'Failed to delete user' });
   }
 });
 
@@ -1910,7 +2173,14 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
   try {
     const rawCampaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all() as any[];
     const campaigns = rawCampaigns.map(c => {
-      const redemptionsCount = (db.prepare('SELECT COUNT(*) as cnt FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)').get(c.code) as any)?.cnt || 0;
+      const redemptionsCount = (db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM referral_redemptions r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE UPPER(r.referral_code) = UPPER(?)
+          AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+      `).get(c.code) as any)?.cnt || 0;
+      const totalRawRedemptions = (db.prepare('SELECT COUNT(*) as cnt FROM referral_redemptions WHERE UPPER(referral_code) = UPPER(?)').get(c.code) as any)?.cnt || 0;
       const maxRedemptions = c.max_redemptions ?? 20;
       const remainingSlots = Math.max(0, maxRedemptions - redemptionsCount);
       
@@ -1929,6 +2199,7 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
         maxRedemptions,
         successfulRedemptions: redemptionsCount,
         used_redemptions: redemptionsCount,
+        totalRawRedemptions,
         remainingSlots,
         remainingRedemptions: remainingSlots,
         maxEvaluations: c.max_evaluations || 15,
@@ -1945,7 +2216,7 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
     });
 
     const redemptions = db.prepare(`
-      SELECT r.*, u.full_name as user_name, u.email as user_email
+      SELECT r.*, u.full_name as user_name, u.email as user_email, u.account_classification
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       ORDER BY r.redeemed_at DESC
@@ -2253,7 +2524,7 @@ router.get('/promo-codes/:code/redemptions', (req: AuthRequest, res: Response) =
   try {
     const campaignCode = req.params.code.toUpperCase();
     const redemptions = db.prepare(`
-      SELECT r.*, u.full_name as user_name, u.email as user_email
+      SELECT r.*, u.full_name as user_name, u.email as user_email, u.account_classification
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       WHERE UPPER(r.referral_code) = UPPER(?)

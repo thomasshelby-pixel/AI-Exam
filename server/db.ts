@@ -48,6 +48,7 @@ export function initDatabase() {
       phone TEXT,
       role TEXT NOT NULL DEFAULT 'STUDENT',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
+      account_classification TEXT NOT NULL DEFAULT 'NORMAL',
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -522,6 +523,42 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'entitlement_source', "TEXT DEFAULT 'PERSONAL_FREE'");
   addColumnIfNotExists('evaluations', 'consumed_from_institute_allocation', 'INTEGER DEFAULT 0');
   addColumnIfNotExists('evaluations', 'consumed_from_personal_credits', 'INTEGER DEFAULT 0');
+
+  // Ensure users and entities support account classification (NORMAL / TEST)
+  addColumnIfNotExists('users', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('institutes', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('payment_orders', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('evaluations', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+
+  // Explicitly tag identified development/testing entities as TEST so they can be cleaned up
+  try {
+    // 1. Tag test institute '123' and its admin user as TEST
+    db.prepare("UPDATE institutes SET account_classification = 'TEST' WHERE id = 'inst_481604a10fa1fcea' OR email = '1234@gmail.com' OR name = '123'").run();
+    db.prepare("UPDATE users SET account_classification = 'TEST' WHERE email = '1234@gmail.com' OR id = 'usr_453601cee00ce2b8'").run();
+
+    // 2. Tag existing development payment orders & transactions as TEST
+    db.prepare(`
+      UPDATE payment_orders 
+      SET account_classification = 'TEST' 
+      WHERE id LIKE 'ord_plan_%' OR id LIKE 'order_17890372%' OR student_id LIKE 'test_%' OR student_id = 'usr_453601cee00ce2b8' OR student_id = 'usr_financial_audit_archive'
+    `).run();
+
+    db.prepare(`
+      UPDATE payment_transactions
+      SET account_classification = 'TEST'
+      WHERE id LIKE 'pay_17890372%' OR student_id LIKE 'test_%' OR student_id = 'usr_financial_audit_archive'
+    `).run();
+
+    // 3. Tag test evaluations as TEST
+    db.prepare(`
+      UPDATE evaluations
+      SET account_classification = 'TEST'
+      WHERE student_id LIKE 'test_%' OR student_id IN (SELECT id FROM users WHERE account_classification = 'TEST')
+    `).run();
+  } catch (migErr) {
+    console.warn('[DB Migration] Error tagging existing test records:', migErr);
+  }
 
   // Ensure institute_memberships columns
   addColumnIfNotExists('institute_memberships', 'removed_at', 'TEXT');

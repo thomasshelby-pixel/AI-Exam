@@ -6,6 +6,7 @@ import { MaterialManagement } from '../../components/admin/MaterialManagement.js
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
+import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -45,6 +46,12 @@ import {
   Brain,
   ShieldAlert,
   AlertOctagon,
+  AlertTriangle,
+  Eye,
+  FlaskConical,
+  Power,
+  Filter,
+  X,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -70,10 +77,28 @@ export const AdminPortal: React.FC = () => {
   const [studentsList, setStudentsList] = useState<any[]>([]);
   const [userSearch, setUserSearch] = useState<string>('');
   const [userRoleFilter, setUserRoleFilter] = useState<string>('ALL');
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [studentLevelFilter, setStudentLevelFilter] = useState<string>('ALL');
+  const [studentClassificationFilter, setStudentClassificationFilter] = useState<string>('ALL');
   const [creditAdjustModal, setCreditAdjustModal] = useState<{ student: any; delta: string; reason: string } | null>(null);
+  const [deleteStudentModal, setDeleteStudentModal] = useState<{ student: any } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState<string>('');
+  const [isDeletingStudent, setIsDeletingStudent] = useState<boolean>(false);
+  const [deleteStudentError, setDeleteStudentError] = useState<string | null>(null);
+  const [viewStudentModal, setViewStudentModal] = useState<{ student: any; details?: any; loading: boolean } | null>(null);
+  const [isUpdatingClassification, setIsUpdatingClassification] = useState<boolean>(false);
 
   // Institutes
   const [institutesList, setInstitutesList] = useState<any[]>([]);
+  const [instituteSearch, setInstituteSearch] = useState<string>('');
+  const [instituteStatusFilter, setInstituteStatusFilter] = useState<string>('ALL');
+  const [instituteClassificationFilter, setInstituteClassificationFilter] = useState<string>('ALL');
+  const [viewInstituteModal, setViewInstituteModal] = useState<{ institute: any } | null>(null);
+  const [deleteInstituteModal, setDeleteInstituteModal] = useState<{ institute: any } | null>(null);
+  const [deleteInstituteConfirmText, setDeleteInstituteConfirmText] = useState<string>('');
+  const [isDeletingInstitute, setIsDeletingInstitute] = useState<boolean>(false);
+  const [deleteInstituteError, setDeleteInstituteError] = useState<string | null>(null);
+  const [isUpdatingInstituteClassification, setIsUpdatingInstituteClassification] = useState<boolean>(false);
 
   // Courses & Subjects
   const [coursesData, setCoursesData] = useState<any>(null);
@@ -136,6 +161,12 @@ export const AdminPortal: React.FC = () => {
 
   // Payments & Subscriptions
   const [paymentsList, setPaymentsList] = useState<any[]>([]);
+  const [paymentSearch, setPaymentSearch] = useState<string>('');
+  const [paymentClassificationFilter, setPaymentClassificationFilter] = useState<string>('ALL');
+  const [deletePaymentModal, setDeletePaymentModal] = useState<{ order: any } | null>(null);
+  const [deletePaymentConfirmText, setDeletePaymentConfirmText] = useState<string>('');
+  const [isDeletingPayment, setIsDeletingPayment] = useState<boolean>(false);
+  const [deletePaymentError, setDeletePaymentError] = useState<string | null>(null);
   const [subscriptionsList, setSubscriptionsList] = useState<any[]>([]);
 
   // Analytics, Notifications, Support, Free-Access, Settings, Audit-Logs
@@ -194,7 +225,11 @@ export const AdminPortal: React.FC = () => {
           break;
         }
         case 'students': {
-          const res = await apiRequest<{ students: any[] }>(`/api/admin/students?search=${encodeURIComponent(userSearch)}`);
+          const queryParams = new URLSearchParams();
+          if (studentSearch.trim()) queryParams.set('search', studentSearch.trim());
+          if (studentLevelFilter !== 'ALL') queryParams.set('caLevel', studentLevelFilter);
+          if (studentClassificationFilter !== 'ALL') queryParams.set('classification', studentClassificationFilter);
+          const res = await apiRequest<{ students: any[] }>(`/api/admin/students?${queryParams.toString()}`);
           setStudentsList(res.students || []);
           break;
         }
@@ -306,7 +341,7 @@ export const AdminPortal: React.FC = () => {
     if (isAuthenticated && (user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN')) {
       loadActiveSectionData();
     }
-  }, [activeSection, revocationStatusFilter, isAuthenticated, user]);
+  }, [activeSection, revocationStatusFilter, studentSearch, studentLevelFilter, studentClassificationFilter, isAuthenticated, user]);
 
   // Handle User Status toggle
   const handleToggleUserStatus = async (targetUser: any) => {
@@ -392,6 +427,182 @@ export const AdminPortal: React.FC = () => {
       loadActiveSectionData();
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Credit adjustment failed');
+    }
+  };
+
+  // Permanently Delete Student Account (Super Admin Only)
+  const handlePermanentlyDeleteStudent = async () => {
+    if (!deleteStudentModal) return;
+    if (deleteConfirmText.trim() !== 'DELETE') {
+      setDeleteStudentError('You must type DELETE exactly to enable and confirm permanent deletion.');
+      return;
+    }
+
+    setIsDeletingStudent(true);
+    setDeleteStudentError(null);
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        `/api/admin/students/${deleteStudentModal.student.id}`,
+        { method: 'DELETE' }
+      );
+
+      setSuccessMsg(res.message || `Student ${deleteStudentModal.student.full_name} (${deleteStudentModal.student.email}) has been permanently deleted.`);
+      setDeleteStudentModal(null);
+      setDeleteConfirmText('');
+      if (viewStudentModal?.student?.id === deleteStudentModal.student.id) {
+        setViewStudentModal(null);
+      }
+      loadActiveSectionData();
+    } catch (err: any) {
+      setDeleteStudentError(err instanceof Error ? err.message : 'Failed to permanently delete student account');
+    } finally {
+      setIsDeletingStudent(false);
+    }
+  };
+
+  // View Student Full Details Modal
+  const handleOpenViewStudent = async (student: any) => {
+    setViewStudentModal({ student, loading: true });
+    try {
+      const res = await apiRequest<{ student: any; recentEvaluations: any[]; creditLedger: any[] }>(
+        `/api/admin/students/${student.id}`
+      );
+      setViewStudentModal({
+        student: res.student || student,
+        details: res,
+        loading: false,
+      });
+    } catch {
+      setViewStudentModal({ student, loading: false });
+    }
+  };
+
+  // Toggle Student Account Classification (NORMAL vs TEST)
+  const handleToggleStudentClassification = async (studentId: string, currentClassification: string) => {
+    const nextClassification = currentClassification === 'TEST' ? 'NORMAL' : 'TEST';
+    setIsUpdatingClassification(true);
+    try {
+      await apiRequest(`/api/admin/students/${studentId}/classification`, {
+        method: 'PATCH',
+        body: JSON.stringify({ classification: nextClassification }),
+      });
+      setSuccessMsg(`Student classification successfully updated to ${nextClassification}.`);
+      if (viewStudentModal && viewStudentModal.student.id === studentId) {
+        setViewStudentModal(prev => prev ? {
+          ...prev,
+          student: { ...prev.student, account_classification: nextClassification },
+        } : null);
+      }
+      loadActiveSectionData();
+    } catch (err: any) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update classification');
+    } finally {
+      setIsUpdatingClassification(false);
+    }
+  };
+
+  // Toggle Institute Status (ACTIVE vs SUSPENDED)
+  const handleToggleInstituteStatus = async (instituteId: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+    try {
+      await apiRequest(`/api/admin/institutes/${instituteId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      setSuccessMsg(`Institute status updated to ${nextStatus}.`);
+      if (viewInstituteModal && viewInstituteModal.institute.id === instituteId) {
+        setViewInstituteModal(prev => prev ? {
+          ...prev,
+          institute: { ...prev.institute, status: nextStatus },
+        } : null);
+      }
+      loadActiveSectionData();
+    } catch (err: any) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update institute status');
+    }
+  };
+
+  // Toggle Institute Classification (NORMAL vs TEST)
+  const handleToggleInstituteClassification = async (instituteId: string, currentClassification: string) => {
+    const nextClassification = currentClassification === 'TEST' ? 'NORMAL' : 'TEST';
+    setIsUpdatingInstituteClassification(true);
+    try {
+      await apiRequest(`/api/admin/institutes/${instituteId}/classification`, {
+        method: 'PUT',
+        body: JSON.stringify({ classification: nextClassification }),
+      });
+      setSuccessMsg(`Institute classification updated to ${nextClassification}.`);
+      if (viewInstituteModal && viewInstituteModal.institute.id === instituteId) {
+        setViewInstituteModal(prev => prev ? {
+          ...prev,
+          institute: { ...prev.institute, account_classification: nextClassification },
+        } : null);
+      }
+      loadActiveSectionData();
+    } catch (err: any) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to update institute classification');
+    } finally {
+      setIsUpdatingInstituteClassification(false);
+    }
+  };
+
+  // Permanently Delete Institute Account (Super Admin Only)
+  const handlePermanentlyDeleteInstitute = async () => {
+    if (!deleteInstituteModal) return;
+    if (deleteInstituteConfirmText.trim() !== 'DELETE') {
+      setDeleteInstituteError('You must type DELETE exactly to enable and confirm permanent deletion.');
+      return;
+    }
+
+    setIsDeletingInstitute(true);
+    setDeleteInstituteError(null);
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        `/api/admin/institutes/${deleteInstituteModal.institute.id}`,
+        { method: 'DELETE' }
+      );
+
+      setSuccessMsg(res.message || `Institute ${deleteInstituteModal.institute.name} has been permanently deleted.`);
+      setDeleteInstituteModal(null);
+      setDeleteInstituteConfirmText('');
+      if (viewInstituteModal?.institute?.id === deleteInstituteModal.institute.id) {
+        setViewInstituteModal(null);
+      }
+      loadActiveSectionData();
+    } catch (err: any) {
+      setDeleteInstituteError(err instanceof Error ? err.message : 'Failed to permanently delete institute');
+    } finally {
+      setIsDeletingInstitute(false);
+    }
+  };
+
+  // Permanently Delete Test Payment Order (Super Admin Only)
+  const handlePermanentlyDeletePayment = async () => {
+    if (!deletePaymentModal) return;
+    if (deletePaymentConfirmText.trim() !== 'DELETE') {
+      setDeletePaymentError('You must type DELETE exactly to confirm permanent deletion.');
+      return;
+    }
+
+    setIsDeletingPayment(true);
+    setDeletePaymentError(null);
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        `/api/admin/payments/orders/${deletePaymentModal.order.id}`,
+        { method: 'DELETE' }
+      );
+
+      setSuccessMsg(res.message || `Test payment order ${deletePaymentModal.order.id} deleted successfully.`);
+      setDeletePaymentModal(null);
+      setDeletePaymentConfirmText('');
+      loadActiveSectionData();
+    } catch (err: any) {
+      setDeletePaymentError(err instanceof Error ? err.message : 'Failed to delete payment order');
+    } finally {
+      setIsDeletingPayment(false);
     }
   };
 
@@ -595,6 +806,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'free-access', label: 'Permanent Free', icon: Gift },
     { id: 'promo-codes', label: 'Promo Codes', icon: Sparkles },
     { id: 'revocation-requests', label: 'Revocation Requests', icon: ShieldAlert },
+    { id: 'data-cleanup', label: 'Test Data Cleanup', icon: Trash2 },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'audit-logs', label: 'Audit Logs', icon: ScrollText },
   ];
@@ -939,12 +1151,53 @@ export const AdminPortal: React.FC = () => {
               {/* 3. STUDENTS */}
               {activeSection === 'students' && (
                 <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                  <div className="flex items-center justify-between mb-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900">Student Profiles & Credit Management</h3>
-                      <p className="text-xs text-slate-500">Super Admin credit overrides and ICAI attempt details</p>
+                      <h3 className="text-sm font-bold text-slate-900">Student Profiles & Account Governance</h3>
+                      <p className="text-xs text-slate-500">Super Admin account oversight, credit adjustments, and permanent deletion controls</p>
                     </div>
-                    <p className="text-xs text-slate-500">{studentsList.length} enrolled students</p>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                        {studentsList.length} {studentsList.length === 1 ? 'student' : 'students'} listed
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Search and Filters */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="sm:col-span-6 relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Search student name, email, or ICAI reg..."
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <select
+                        value={studentLevelFilter}
+                        onChange={(e) => setStudentLevelFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700"
+                      >
+                        <option value="ALL">All Levels</option>
+                        <option value="FOUNDATION">CA Foundation</option>
+                        <option value="INTERMEDIATE">CA Intermediate</option>
+                        <option value="FINAL">CA Final</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <select
+                        value={studentClassificationFilter}
+                        onChange={(e) => setStudentClassificationFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700"
+                      >
+                        <option value="ALL">All Classifications</option>
+                        <option value="NORMAL">Normal Students Only</option>
+                        <option value="TEST">Test Accounts Only</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -952,43 +1205,140 @@ export const AdminPortal: React.FC = () => {
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
                           <th className="py-2.5 px-3 font-bold">Student</th>
-                          <th className="py-2.5 px-3 font-bold">ICAI Registration</th>
+                          <th className="py-2.5 px-3 font-bold">Classification</th>
+                          <th className="py-2.5 px-3 font-bold">Status</th>
+                          <th className="py-2.5 px-3 font-bold">ICAI Reg</th>
                           <th className="py-2.5 px-3 font-bold">Level</th>
                           <th className="py-2.5 px-3 font-bold">Evaluations</th>
-                          <th className="py-2.5 px-3 font-bold">Free Used</th>
                           <th className="py-2.5 px-3 font-bold">Credits</th>
                           <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {studentsList.map((st) => (
-                          <tr key={st.id} className="hover:bg-slate-50/80">
-                            <td className="py-2.5 px-3">
-                              <p className="font-bold text-slate-900">{st.full_name}</p>
-                              <p className="text-[11px] text-slate-400">{st.email}</p>
-                              {st.permanent_free_active && (
-                                <span className="text-[9px] font-bold text-emerald-600">Permanent Free Access</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 font-mono">{st.icai_registration_number || 'N/A'}</td>
-                            <td className="py-2.5 px-3">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">
-                                {st.ca_level || 'INTERMEDIATE'}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono font-bold">{st.evaluations_count || 0}</td>
-                            <td className="py-2.5 px-3 font-mono">{st.free_evaluations_used || 0}/2</td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{st.purchased_credits || 0}</td>
-                            <td className="py-2.5 px-3 text-right">
-                              <button
-                                onClick={() => setCreditAdjustModal({ student: st, delta: '5', reason: 'Admin adjustment' })}
-                                className="px-2 py-1 rounded text-[10px] font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 transition"
-                              >
-                                Adjust Credits
-                              </button>
+                        {studentsList.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="py-8 text-center text-slate-400">
+                              No students found matching current search or filters.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          studentsList.map((st) => (
+                            <tr key={st.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-3 px-3">
+                                <div className="flex items-start gap-2">
+                                  <div>
+                                    <p className="font-bold text-slate-900">{st.full_name}</p>
+                                    <p className="text-[11px] text-slate-400">{st.email}</p>
+                                    {st.permanent_free_active && (
+                                      <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                        <Sparkles className="w-2.5 h-2.5" /> Permanent Free Access
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-3">
+                                {st.account_classification === 'TEST' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                    TEST
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700">
+                                    NORMAL
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3">
+                                {st.status === 'ACTIVE' ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                                    ACTIVE
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700">
+                                    SUSPENDED
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 font-mono text-slate-700">{st.icai_registration_number || '—'}</td>
+                              <td className="py-3 px-3">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">
+                                  {st.ca_level || 'INTERMEDIATE'}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="font-mono font-bold text-slate-900">{st.evaluations_count || 0}</span>
+                                {st.average_percentage !== null && st.average_percentage !== undefined && (
+                                  <span className="text-[10px] text-slate-400 block">
+                                    Avg: {Math.round(st.average_percentage)}%
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 font-mono font-bold text-blue-600">
+                                {st.purchased_credits || 0}
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                  {/* 1. View */}
+                                  <button
+                                    onClick={() => handleOpenViewStudent(st)}
+                                    className="px-2 py-1 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition flex items-center gap-1"
+                                    title="View full student profile and records"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    View
+                                  </button>
+
+                                  {/* 2. Suspend / Reactivate */}
+                                  <button
+                                    onClick={() => handleToggleUserStatus(st)}
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold transition flex items-center gap-1 ${
+                                      st.status === 'ACTIVE'
+                                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                    }`}
+                                    title={st.status === 'ACTIVE' ? 'Temporarily suspend student account' : 'Reactivate suspended student account'}
+                                  >
+                                    {st.status === 'ACTIVE' ? (
+                                      <>
+                                        <UserX className="w-3.5 h-3.5" />
+                                        Suspend
+                                      </>
+                                    ) : (
+                                      <>
+                                        <UserCheck className="w-3.5 h-3.5" />
+                                        Reactivate
+                                      </>
+                                    )}
+                                  </button>
+
+                                  {/* 3. Adjust Credits */}
+                                  <button
+                                    onClick={() => setCreditAdjustModal({ student: st, delta: '5', reason: 'Admin adjustment' })}
+                                    className="px-2 py-1 rounded text-[11px] font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 transition flex items-center gap-1"
+                                    title="Adjust student credit balance"
+                                  >
+                                    <DollarSign className="w-3.5 h-3.5" />
+                                    Credits
+                                  </button>
+
+                                  {/* 4. Delete Student (Super Admin Only) */}
+                                  <button
+                                    onClick={() => {
+                                      setDeleteStudentModal({ student: st });
+                                      setDeleteConfirmText('');
+                                      setDeleteStudentError(null);
+                                    }}
+                                    className="px-2 py-1 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 border border-rose-200 transition flex items-center gap-1"
+                                    title="Permanently delete student account (Irreversible)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                    Delete Student
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -997,47 +1347,203 @@ export const AdminPortal: React.FC = () => {
 
               {/* 4. INSTITUTES */}
               {activeSection === 'institutes' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                  <div className="flex items-center justify-between mb-5">
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">Coaching Institutes & Academies</h3>
-                      <p className="text-xs text-slate-500">Multi-tenant institutional licensing & student capacity</p>
+                      <p className="text-xs text-slate-500">Multi-tenant institutional licensing, classification, and lifecycle controls</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-slate-500">
+                        {institutesList.filter((inst) => {
+                          const matchesSearch =
+                            (inst.name || '').toLowerCase().includes(instituteSearch.toLowerCase()) ||
+                            (inst.code || '').toLowerCase().includes(instituteSearch.toLowerCase()) ||
+                            (inst.email || '').toLowerCase().includes(instituteSearch.toLowerCase());
+                          const matchesStatus =
+                            instituteStatusFilter === 'ALL' || inst.status === instituteStatusFilter;
+                          const matchesClassification =
+                            instituteClassificationFilter === 'ALL' ||
+                            (inst.account_classification || 'NORMAL') === instituteClassificationFilter;
+                          return matchesSearch && matchesStatus && matchesClassification;
+                        }).length} of {institutesList.length} Institutes
+                      </span>
                     </div>
                   </div>
 
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search name, code, email..."
+                          value={instituteSearch}
+                          onChange={(e) => setInstituteSearch(e.target.value)}
+                          className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 w-52 sm:w-64"
+                        />
+                      </div>
+
+                      {/* Status Filter */}
+                      <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                        <Filter className="w-3 h-3 text-slate-400" />
+                        <span className="text-slate-500 text-[11px] font-medium">Status:</span>
+                        <select
+                          value={instituteStatusFilter}
+                          onChange={(e) => setInstituteStatusFilter(e.target.value)}
+                          className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="ALL">All Statuses</option>
+                          <option value="ACTIVE">Active Only</option>
+                          <option value="SUSPENDED">Suspended Only</option>
+                        </select>
+                      </div>
+
+                      {/* Classification Filter */}
+                      <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                        <FlaskConical className="w-3 h-3 text-amber-500" />
+                        <span className="text-slate-500 text-[11px] font-medium">Type:</span>
+                        <select
+                          value={instituteClassificationFilter}
+                          onChange={(e) => setInstituteClassificationFilter(e.target.value)}
+                          className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="ALL">All Types</option>
+                          <option value="NORMAL">Production (Normal)</option>
+                          <option value="TEST">Test (Demo / Staging)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {(instituteSearch || instituteStatusFilter !== 'ALL' || instituteClassificationFilter !== 'ALL') && (
+                      <button
+                        onClick={() => {
+                          setInstituteSearch('');
+                          setInstituteStatusFilter('ALL');
+                          setInstituteClassificationFilter('ALL');
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                      >
+                        Reset Filters
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Institutes Table */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                          <th className="py-2.5 px-3 font-bold">Institute Name</th>
+                          <th className="py-2.5 px-3 font-bold">Institute Name & Classification</th>
                           <th className="py-2.5 px-3 font-bold">Code</th>
                           <th className="py-2.5 px-3 font-bold">Contact Email</th>
                           <th className="py-2.5 px-3 font-bold">Status</th>
                           <th className="py-2.5 px-3 font-bold">Students</th>
                           <th className="py-2.5 px-3 font-bold">Max Quota</th>
                           <th className="py-2.5 px-3 font-bold">Expires</th>
+                          <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {institutesList.map((inst) => (
-                          <tr key={inst.id} className="hover:bg-slate-50/80">
-                            <td className="py-2.5 px-3 font-bold text-slate-900">{inst.name}</td>
-                            <td className="py-2.5 px-3 font-mono">{inst.code}</td>
-                            <td className="py-2.5 px-3 text-slate-500">{inst.email}</td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                inst.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
-                              }`}>
-                                {inst.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{inst.active_count || 0}</td>
-                            <td className="py-2.5 px-3 font-mono">{inst.max_students || 500}</td>
-                            <td className="py-2.5 px-3 text-slate-400">
-                              {inst.subscription_expires_at ? new Date(inst.subscription_expires_at).toLocaleDateString() : 'Lifetime'}
-                            </td>
-                          </tr>
-                        ))}
+                        {institutesList
+                          .filter((inst) => {
+                            const matchesSearch =
+                              (inst.name || '').toLowerCase().includes(instituteSearch.toLowerCase()) ||
+                              (inst.code || '').toLowerCase().includes(instituteSearch.toLowerCase()) ||
+                              (inst.email || '').toLowerCase().includes(instituteSearch.toLowerCase());
+                            const matchesStatus =
+                              instituteStatusFilter === 'ALL' || inst.status === instituteStatusFilter;
+                            const matchesClassification =
+                              instituteClassificationFilter === 'ALL' ||
+                              (inst.account_classification || 'NORMAL') === instituteClassificationFilter;
+                            return matchesSearch && matchesStatus && matchesClassification;
+                          })
+                          .map((inst) => (
+                            <tr key={inst.id} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-900">{inst.name}</span>
+                                  {inst.account_classification === 'TEST' ? (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1">
+                                      <FlaskConical className="w-2.5 h-2.5" />
+                                      TEST
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                      PRODUCTION
+                                    </span>
+                                  )}
+                                </div>
+                                {inst.contact_person && (
+                                  <span className="text-[11px] text-slate-400 block">{inst.contact_person}</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-purple-700">{inst.code}</td>
+                              <td className="py-2.5 px-3 text-slate-500">{inst.email}</td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    inst.status === 'ACTIVE'
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-rose-50 text-rose-700'
+                                  }`}
+                                >
+                                  {inst.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
+                                {inst.active_count || 0}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono">{inst.max_students || 500}</td>
+                              <td className="py-2.5 px-3 text-slate-400">
+                                {inst.subscription_expires_at
+                                  ? new Date(inst.subscription_expires_at).toLocaleDateString()
+                                  : 'Lifetime'}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {/* View Details */}
+                                  <button
+                                    onClick={() => setViewInstituteModal({ institute: inst })}
+                                    className="px-2 py-1 rounded text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition flex items-center gap-1 cursor-pointer"
+                                    title="View institute details"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    View
+                                  </button>
+
+                                  {/* Suspend / Activate Toggle */}
+                                  <button
+                                    onClick={() => handleToggleInstituteStatus(inst.id, inst.status)}
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer ${
+                                      inst.status === 'ACTIVE'
+                                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                    }`}
+                                    title={inst.status === 'ACTIVE' ? 'Suspend Institute' : 'Activate Institute'}
+                                  >
+                                    <Power className="w-3 h-3" />
+                                    {inst.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                                  </button>
+
+                                  {/* Delete Institute (Super Admin Only) */}
+                                  <button
+                                    onClick={() => {
+                                      setDeleteInstituteModal({ institute: inst });
+                                      setDeleteInstituteConfirmText('');
+                                      setDeleteInstituteError(null);
+                                    }}
+                                    className="px-2 py-1 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 border border-rose-200 transition flex items-center gap-1 cursor-pointer"
+                                    title="Permanently delete institute account (Irreversible)"
+                                  >
+                                    <Trash2 className="w-3 h-3 text-rose-600" />
+                                    Delete Institute
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                       </tbody>
                     </table>
                   </div>
@@ -1343,48 +1849,153 @@ export const AdminPortal: React.FC = () => {
 
               {/* 12. PAYMENTS */}
               {activeSection === 'payments' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                  <div className="flex items-center justify-between mb-4">
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-bold text-slate-900">Razorpay Payment Orders & Transactions</h3>
-                      <p className="text-xs text-slate-500">Real transaction records verified cryptographically</p>
+                      <p className="text-xs text-slate-500">Cryptographically verifiable transactions with statutory audit preservation</p>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-slate-500">
+                        {paymentsList.filter((p) => {
+                          const matchesSearch =
+                            (p.razorpay_order_id || p.id || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                            (p.student_name || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                            (p.student_email || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                            (p.razorpay_payment_id || '').toLowerCase().includes(paymentSearch.toLowerCase());
+                          const matchesClassification =
+                            paymentClassificationFilter === 'ALL' ||
+                            (p.account_classification || 'NORMAL') === paymentClassificationFilter;
+                          return matchesSearch && matchesClassification;
+                        }).length} of {paymentsList.length} Orders
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search order ID, student, payment ID..."
+                          value={paymentSearch}
+                          onChange={(e) => setPaymentSearch(e.target.value)}
+                          className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 w-56 sm:w-72"
+                        />
+                      </div>
+
+                      {/* Classification Filter */}
+                      <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                        <FlaskConical className="w-3 h-3 text-amber-500" />
+                        <span className="text-slate-500 text-[11px] font-medium">Type:</span>
+                        <select
+                          value={paymentClassificationFilter}
+                          onChange={(e) => setPaymentClassificationFilter(e.target.value)}
+                          className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                        >
+                          <option value="ALL">All Orders</option>
+                          <option value="NORMAL">Production (Statutory)</option>
+                          <option value="TEST">Test Orders</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {(paymentSearch || paymentClassificationFilter !== 'ALL') && (
+                      <button
+                        onClick={() => {
+                          setPaymentSearch('');
+                          setPaymentClassificationFilter('ALL');
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                      >
+                        Reset Filters
+                      </button>
+                    )}
                   </div>
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                          <th className="py-2.5 px-3 font-bold">Order ID</th>
+                          <th className="py-2.5 px-3 font-bold">Order ID & Type</th>
                           <th className="py-2.5 px-3 font-bold">Student</th>
                           <th className="py-2.5 px-3 font-bold">Credits</th>
                           <th className="py-2.5 px-3 font-bold">Amount (INR)</th>
                           <th className="py-2.5 px-3 font-bold">Status</th>
                           <th className="py-2.5 px-3 font-bold">Razorpay Payment ID</th>
                           <th className="py-2.5 px-3 font-bold">Created At</th>
+                          <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {paymentsList.map((p) => (
-                          <tr key={p.id} className="hover:bg-slate-50/80">
-                            <td className="py-2.5 px-3 font-mono text-slate-700">{p.razorpay_order_id || p.id}</td>
-                            <td className="py-2.5 px-3">
-                              <p className="font-bold text-slate-900">{p.student_name}</p>
-                              <p className="text-[10px] text-slate-400">{p.student_email}</p>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{p.quantity}</td>
-                            <td className="py-2.5 px-3 font-mono font-bold">₹{p.amount_paise / 100}</td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                p.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                              }`}>
-                                {p.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-mono text-slate-500">{p.razorpay_payment_id || '—'}</td>
-                            <td className="py-2.5 px-3 text-slate-400">{new Date(p.created_at).toLocaleDateString()}</td>
-                          </tr>
-                        ))}
+                        {paymentsList
+                          .filter((p) => {
+                            const matchesSearch =
+                              (p.razorpay_order_id || p.id || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                              (p.student_name || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                              (p.student_email || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                              (p.razorpay_payment_id || '').toLowerCase().includes(paymentSearch.toLowerCase());
+                            const matchesClassification =
+                              paymentClassificationFilter === 'ALL' ||
+                              (p.account_classification || 'NORMAL') === paymentClassificationFilter;
+                            return matchesSearch && matchesClassification;
+                          })
+                          .map((p) => (
+                            <tr key={p.id} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3 font-mono text-slate-700">
+                                <div className="flex items-center gap-1.5">
+                                  <span>{p.razorpay_order_id || p.id}</span>
+                                  {p.account_classification === 'TEST' ? (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                      TEST
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600">
+                                      PROD
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <p className="font-bold text-slate-900">{p.student_name}</p>
+                                <p className="text-[10px] text-slate-400">{p.student_email}</p>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{p.quantity}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold">₹{p.amount_paise / 100}</td>
+                              <td className="py-2.5 px-3">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  p.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                  {p.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-slate-500">{p.razorpay_payment_id || '—'}</td>
+                              <td className="py-2.5 px-3 text-slate-400">{new Date(p.created_at).toLocaleDateString()}</td>
+                              <td className="py-2.5 px-3 text-right">
+                                {p.account_classification === 'TEST' ? (
+                                  <button
+                                    onClick={() => {
+                                      setDeletePaymentModal({ order: p });
+                                      setDeletePaymentConfirmText('');
+                                      setDeletePaymentError(null);
+                                    }}
+                                    className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                                    title="Delete test order"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    Delete
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-1" title="Statutory Financial Record protected by law">
+                                    <Lock className="w-2.5 h-2.5" />
+                                    Statutory
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
                       </tbody>
                     </table>
                   </div>
@@ -1875,6 +2486,11 @@ export const AdminPortal: React.FC = () => {
                   )}
                 </div>
               )}
+
+              {/* 21. TEST DATA CLEANUP */}
+              {activeSection === 'data-cleanup' && (
+                <AdminDataCleanupSection onDataChanged={loadActiveSectionData} />
+              )}
             </>
           )}
         </main>
@@ -1920,6 +2536,755 @@ export const AdminPortal: React.FC = () => {
                   Confirm Adjustment
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Student Confirmation Modal (Super Admin Only) */}
+      {deleteStudentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                <AlertOctagon className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-slate-900">Permanently Delete Student Account</h3>
+                  <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200">
+                    SUPER ADMIN ONLY
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This action cannot be undone. Please review the student information before proceeding.
+                </p>
+              </div>
+            </div>
+
+            {/* Target Student Identity Card */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-4 text-xs space-y-2">
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-slate-400 text-[11px] block">Student Name</span>
+                  <span className="font-bold text-slate-900 text-sm">{deleteStudentModal.student.full_name}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 text-[11px] block">Account Classification</span>
+                  {deleteStudentModal.student.account_classification === 'TEST' ? (
+                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      TEST ACCOUNT
+                    </span>
+                  ) : (
+                    <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-700">
+                      NORMAL STUDENT
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60">
+                <div>
+                  <span className="text-slate-400 text-[11px] block">Email</span>
+                  <span className="font-mono text-slate-700">{deleteStudentModal.student.email}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[11px] block">ICAI Registration</span>
+                  <span className="font-mono text-slate-700">{deleteStudentModal.student.icai_registration_number || 'Not Registered'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[11px] block">CA Level</span>
+                  <span className="font-medium text-slate-700">{deleteStudentModal.student.ca_level || 'INTERMEDIATE'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[11px] block">Credits / Evaluations</span>
+                  <span className="font-medium text-slate-700">
+                    {deleteStudentModal.student.purchased_credits || 0} credits • {deleteStudentModal.student.evaluations_count || 0} evals
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Permanent Warning Box */}
+            <div className="p-3.5 rounded-xl bg-rose-50/80 border border-rose-200 mb-4 text-xs text-rose-900 space-y-1.5">
+              <p className="font-bold flex items-center gap-1.5 text-rose-800">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                Permanent Account Deletion Warning:
+              </p>
+              <ul className="list-disc pl-5 space-y-1 text-rose-800/90 text-[11px]">
+                <li>The student will be <strong>immediately logged out</strong> and will no longer be able to log in.</li>
+                <li>All student-owned <strong>evaluations, answer sheets, and credit balances</strong> will be permanently deleted.</li>
+                {deleteStudentModal.student.account_classification === 'TEST' ? (
+                  <li className="text-amber-800 font-semibold">
+                    Test Account Cleanup: Any promo or referral codes redeemed by this test account will be released back to production campaigns.
+                  </li>
+                ) : (
+                  <li>This is a permanent deletion. The student cannot recover their examination evaluations or notes.</li>
+                )}
+                <li className="text-slate-600">
+                  <em>Financial audit record retention: Successful Razorpay transaction records and tax receipts are safely archived in an anonymized audit vault to fulfill statutory accounting obligations.</em>
+                </li>
+              </ul>
+            </div>
+
+            {/* Confirmation Input */}
+            <div className="mb-4 text-xs space-y-2">
+              <label className="block font-bold text-slate-800">
+                To confirm permanent deletion, type <span className="font-mono text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">DELETE</span> in all caps:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => {
+                  setDeleteConfirmText(e.target.value);
+                  setDeleteStudentError(null);
+                }}
+                placeholder="Type DELETE to confirm"
+                className={`w-full px-3 py-2 rounded-lg border text-sm font-mono transition ${
+                  deleteConfirmText === 'DELETE'
+                    ? 'border-emerald-500 bg-emerald-50/40 text-emerald-900 focus:ring-2 focus:ring-emerald-500'
+                    : 'border-slate-300 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-rose-400'
+                }`}
+                autoFocus
+              />
+              {deleteConfirmText === 'DELETE' ? (
+                <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Confirmation verified. The delete button is now enabled.
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-400">
+                  The button below remains disabled until &quot;DELETE&quot; is entered exactly.
+                </p>
+              )}
+            </div>
+
+            {/* Error Message */}
+            {deleteStudentError && (
+              <div className="mb-4 p-3 rounded-lg bg-rose-100 border border-rose-300 text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deleteStudentError}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-2.5 justify-end pt-2 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  setDeleteStudentModal(null);
+                  setDeleteConfirmText('');
+                  setDeleteStudentError(null);
+                }}
+                disabled={isDeletingStudent}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePermanentlyDeleteStudent}
+                disabled={deleteConfirmText !== 'DELETE' || isDeletingStudent}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+              >
+                {isDeletingStudent ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting Student Account...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Permanently Delete Student
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Student Details Modal */}
+      {viewStudentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-base">
+                  {viewStudentModal.student.full_name?.charAt(0) || 'S'}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    {viewStudentModal.student.full_name}
+                    {viewStudentModal.student.status === 'ACTIVE' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                        ACTIVE
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+                        SUSPENDED
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-500">{viewStudentModal.student.email}</p>
+                </div>
+              </div>
+
+              {/* Classification toggle button */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() =>
+                    handleToggleStudentClassification(
+                      viewStudentModal.student.id,
+                      viewStudentModal.student.account_classification || 'NORMAL'
+                    )
+                  }
+                  disabled={isUpdatingClassification}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 ${
+                    viewStudentModal.student.account_classification === 'TEST'
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                  title="Click to toggle between NORMAL and TEST account classification"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isUpdatingClassification ? 'animate-spin' : ''}`} />
+                  Class: {viewStudentModal.student.account_classification === 'TEST' ? 'TEST' : 'NORMAL'}
+                </button>
+              </div>
+            </div>
+
+            {/* Student Information Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">CA Level</span>
+                <span className="text-xs font-bold text-slate-900 mt-0.5 block">
+                  {viewStudentModal.student.ca_level || 'INTERMEDIATE'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">ICAI Reg Number</span>
+                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
+                  {viewStudentModal.student.icai_registration_number || 'N/A'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Purchased Credits</span>
+                <span className="text-xs font-bold font-mono text-blue-600 mt-0.5 block">
+                  {viewStudentModal.student.purchased_credits || 0}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Free Evals Used</span>
+                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
+                  {viewStudentModal.student.free_evaluations_used || 0}/2
+                </span>
+              </div>
+            </div>
+
+            {/* Extra details (Affiliation, Joined, Phone) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-xs">
+              <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                <span className="text-slate-400 text-[10px] block">Institute Affiliation</span>
+                <span className="font-semibold text-slate-800">
+                  {viewStudentModal.details?.student?.institute_name || 'Self-Registered (Direct)'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                <span className="text-slate-400 text-[10px] block">Registered Phone</span>
+                <span className="font-mono text-slate-800">{viewStudentModal.student.phone || 'None'}</span>
+              </div>
+              <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/50">
+                <span className="text-slate-400 text-[10px] block">Joined On</span>
+                <span className="text-slate-800">
+                  {viewStudentModal.student.created_at
+                    ? new Date(viewStudentModal.student.created_at).toLocaleDateString()
+                    : '—'}
+                </span>
+              </div>
+            </div>
+
+            {/* Recent Evaluations */}
+            <div className="mb-5">
+              <h4 className="text-xs font-bold text-slate-800 mb-2">Recent Evaluations</h4>
+              {viewStudentModal.loading ? (
+                <div className="p-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading evaluations...
+                </div>
+              ) : viewStudentModal.details?.recentEvaluations?.length ? (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                        <th className="py-2 px-3">Subject / Paper</th>
+                        <th className="py-2 px-3">Score</th>
+                        <th className="py-2 px-3">Status</th>
+                        <th className="py-2 px-3 text-right">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {viewStudentModal.details.recentEvaluations.map((ev: any) => (
+                        <tr key={ev.id} className="hover:bg-slate-50/60">
+                          <td className="py-2 px-3 font-medium text-slate-800">
+                            {ev.subject_name || ev.paper_title || 'Evaluation'}
+                          </td>
+                          <td className="py-2 px-3 font-mono font-bold">
+                            {ev.total_marks_obtained !== null ? `${ev.total_marks_obtained}/${ev.total_marks_possible || 100}` : '—'}
+                            {ev.percentage !== null && (
+                              <span className="text-[10px] text-slate-400 ml-1 font-normal">
+                                ({Math.round(ev.percentage)}%)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700">
+                              {ev.status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right text-slate-400">
+                            {ev.created_at ? new Date(ev.created_at).toLocaleDateString() : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 text-center text-xs text-slate-400">
+                  No evaluations submitted yet.
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  const st = viewStudentModal.student;
+                  setViewStudentModal(null);
+                  setDeleteStudentModal({ student: st });
+                  setDeleteConfirmText('');
+                  setDeleteStudentError(null);
+                }}
+                className="px-3 py-1.5 rounded-lg text-rose-700 hover:bg-rose-50 border border-rose-200 font-bold transition flex items-center gap-1"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Student
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const st = viewStudentModal.student;
+                    setCreditAdjustModal({ student: st, delta: '5', reason: 'Admin adjustment' });
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-semibold transition flex items-center gap-1"
+                >
+                  <DollarSign className="w-3.5 h-3.5" />
+                  Adjust Credits
+                </button>
+                <button
+                  onClick={() => {
+                    handleToggleUserStatus(viewStudentModal.student);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
+                    viewStudentModal.student.status === 'ACTIVE'
+                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  }`}
+                >
+                  {viewStudentModal.student.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
+                </button>
+                <button
+                  onClick={() => setViewStudentModal(null)}
+                  className="px-4 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Institute Confirmation Modal (Super Admin Only) */}
+      {deleteInstituteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                <AlertOctagon className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-slate-900">Permanently Delete Institute</h3>
+                  <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200">
+                    SUPER ADMIN ONLY
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This action cannot be undone. Please review the institute details before proceeding.
+                </p>
+              </div>
+            </div>
+
+            {/* Institute Details Card */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 text-xs space-y-2">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Institute Name:</span>
+                <span className="font-bold text-slate-900">{deleteInstituteModal.institute.name}</span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Institute Code:</span>
+                <span className="font-mono font-bold text-purple-700">{deleteInstituteModal.institute.code}</span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Contact Email:</span>
+                <span className="font-mono text-slate-700">{deleteInstituteModal.institute.email}</span>
+              </div>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Active Students Quota:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {deleteInstituteModal.institute.active_count || 0} / {deleteInstituteModal.institute.max_students || 500}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Classification:</span>
+                {deleteInstituteModal.institute.account_classification === 'TEST' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1">
+                    <FlaskConical className="w-2.5 h-2.5" />
+                    TEST (Demo / Staging)
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                    PRODUCTION (Normal)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Warning Notices */}
+            <div className="space-y-2 mb-4">
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+                <div className="space-y-1">
+                  <p className="font-bold">Permanent Data Removal Warning:</p>
+                  <p className="text-[11px] leading-relaxed">
+                    All institute-owned batches, test papers, and institute-specific mock evaluations will be permanently purged from the database.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-blue-600" />
+                <div className="space-y-0.5">
+                  <p className="font-bold">Zero-Student Deletion Guarantee:</p>
+                  <p className="text-[11px] leading-relaxed text-blue-700">
+                    Deleting this institute will <strong>NEVER</strong> delete student platform accounts. Affiliated students will automatically convert to independent direct learners and retain their personal history and credits.
+                  </p>
+                </div>
+              </div>
+
+              {deleteInstituteModal.institute.account_classification !== 'TEST' && (
+                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <p className="text-[11px] font-semibold">
+                    CAUTION: This institute is classified as PRODUCTION. Ensure all operational and contractual obligations are concluded.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Confirmation Input Field */}
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                To confirm deletion, please type <span className="font-mono text-rose-600 font-black">DELETE</span> below:
+              </label>
+              <input
+                type="text"
+                value={deleteInstituteConfirmText}
+                onChange={(e) => setDeleteInstituteConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-mono focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 transition"
+              />
+            </div>
+
+            {/* Error Message */}
+            {deleteInstituteError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deleteInstituteError}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-2.5 justify-end pt-2 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  setDeleteInstituteModal(null);
+                  setDeleteInstituteConfirmText('');
+                  setDeleteInstituteError(null);
+                }}
+                disabled={isDeletingInstitute}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePermanentlyDeleteInstitute}
+                disabled={deleteInstituteConfirmText !== 'DELETE' || isDeletingInstitute}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+              >
+                {isDeletingInstitute ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting Institute...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Permanently Delete Institute
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Institute Details Modal */}
+      {viewInstituteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-xl w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-base">
+                  {viewInstituteModal.institute.name?.charAt(0) || 'I'}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    {viewInstituteModal.institute.name}
+                    {viewInstituteModal.institute.status === 'ACTIVE' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                        ACTIVE
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">
+                        SUSPENDED
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs font-mono text-purple-700 font-bold">{viewInstituteModal.institute.code}</p>
+                </div>
+              </div>
+
+              {/* Classification toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() =>
+                    handleToggleInstituteClassification(
+                      viewInstituteModal.institute.id,
+                      viewInstituteModal.institute.account_classification || 'NORMAL'
+                    )
+                  }
+                  disabled={isUpdatingInstituteClassification}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 cursor-pointer ${
+                    viewInstituteModal.institute.account_classification === 'TEST'
+                      ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                  title="Click to toggle between NORMAL and TEST institute classification"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isUpdatingInstituteClassification ? 'animate-spin' : ''}`} />
+                  Class: {viewInstituteModal.institute.account_classification === 'TEST' ? 'TEST' : 'NORMAL'}
+                </button>
+              </div>
+            </div>
+
+            {/* Institute Information Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 my-4">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Contact Person</span>
+                <span className="text-xs font-bold text-slate-900 mt-0.5 block">
+                  {viewInstituteModal.institute.contact_person || 'Not Specified'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Contact Email</span>
+                <span className="text-xs font-mono text-slate-700 mt-0.5 block truncate">
+                  {viewInstituteModal.institute.email}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Contact Phone</span>
+                <span className="text-xs font-mono text-slate-700 mt-0.5 block">
+                  {viewInstituteModal.institute.phone || '—'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Enrolled Students</span>
+                <span className="text-xs font-bold font-mono text-blue-600 mt-0.5 block">
+                  {viewInstituteModal.institute.active_count || 0}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Max Student Quota</span>
+                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
+                  {viewInstituteModal.institute.max_students || 500}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Subscription Expires</span>
+                <span className="text-xs font-semibold text-slate-800 mt-0.5 block">
+                  {viewInstituteModal.institute.subscription_expires_at
+                    ? new Date(viewInstituteModal.institute.subscription_expires_at).toLocaleDateString()
+                    : 'Lifetime Plan'}
+                </span>
+              </div>
+            </div>
+
+            {viewInstituteModal.institute.address && (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs mb-4">
+                <span className="text-slate-400 text-[11px] block font-medium mb-0.5">Physical Campus / Office Address</span>
+                <p className="text-slate-700">{viewInstituteModal.institute.address}</p>
+              </div>
+            )}
+
+            {/* Footer Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  const inst = viewInstituteModal.institute;
+                  setViewInstituteModal(null);
+                  setDeleteInstituteModal({ institute: inst });
+                  setDeleteInstituteConfirmText('');
+                  setDeleteInstituteError(null);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Institute
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    handleToggleInstituteStatus(viewInstituteModal.institute.id, viewInstituteModal.institute.status);
+                    setViewInstituteModal(null);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 cursor-pointer ${
+                    viewInstituteModal.institute.status === 'ACTIVE'
+                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  {viewInstituteModal.institute.status === 'ACTIVE' ? 'Suspend Institute' : 'Activate Institute'}
+                </button>
+                <button
+                  onClick={() => setViewInstituteModal(null)}
+                  className="px-4 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Payment Modal (Test Orders Only) */}
+      {deletePaymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                <AlertOctagon className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-slate-900">Delete Test Payment Order</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Permanent removal of sandbox or test transaction record
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-4 text-xs space-y-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Order ID:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {deletePaymentModal.order.razorpay_order_id || deletePaymentModal.order.id}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Student:</span>
+                <span className="font-semibold text-slate-800">{deletePaymentModal.order.student_name}</span>
+              </div>
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Amount:</span>
+                <span className="font-mono font-bold text-slate-900">₹{deletePaymentModal.order.amount_paise / 100}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Credits:</span>
+                <span className="font-mono font-bold text-blue-600">{deletePaymentModal.order.quantity}</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs mb-4">
+              <p className="text-[11px] leading-relaxed">
+                This test order and its associated test ledger entries will be permanently removed. Only test orders can be deleted; production statutory transactions remain locked.
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                To confirm deletion, type <span className="font-mono text-rose-600 font-black">DELETE</span>:
+              </label>
+              <input
+                type="text"
+                value={deletePaymentConfirmText}
+                onChange={(e) => setDeletePaymentConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-mono focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 transition"
+              />
+            </div>
+
+            {deletePaymentError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deletePaymentError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2.5 justify-end pt-2 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  setDeletePaymentModal(null);
+                  setDeletePaymentConfirmText('');
+                  setDeletePaymentError(null);
+                }}
+                disabled={isDeletingPayment}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePermanentlyDeletePayment}
+                disabled={deletePaymentConfirmText !== 'DELETE' || isDeletingPayment}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+              >
+                {isDeletingPayment ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting Order...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Order
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

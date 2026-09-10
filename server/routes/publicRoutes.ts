@@ -174,7 +174,11 @@ router.post('/referral/validate', (req: Request, res: Response) => {
     }
 
     const countRow = db.prepare(`
-      SELECT COUNT(*) as total FROM referral_redemptions WHERE referral_code = ?
+      SELECT COUNT(*) as total
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE UPPER(r.referral_code) = UPPER(?)
+        AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
     `).get(cleanCode) as { total: number };
 
     const remainingSlots = Math.max(0, campaign.max_redemptions - countRow.total);
