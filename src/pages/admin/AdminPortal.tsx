@@ -6,6 +6,7 @@ import { MaterialManagement } from '../../components/admin/MaterialManagement.js
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
+import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
   Users,
@@ -95,6 +96,29 @@ export const AdminPortal: React.FC = () => {
     suggestedAnswersText: '',
     markingSchemeText: '',
   });
+
+  const [paperModalAttempts, setPaperModalAttempts] = useState<ExamAttempt[]>(() =>
+    getAttemptsForLevel(newPaperForm.level)
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchExamAttempts(newPaperForm.level).then((attempts) => {
+      if (isMounted && attempts.length > 0) {
+        setPaperModalAttempts(attempts);
+        if (!attempts.some((a) => a.attemptLabel === newPaperForm.attempt)) {
+          const defaultMay26 = attempts.find((a) => a.attemptLabel === 'May 2026');
+          setNewPaperForm((prev) => ({
+            ...prev,
+            attempt: defaultMay26 ? defaultMay26.attemptLabel : attempts[0].attemptLabel,
+          }));
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [newPaperForm.level]);
 
   // Evaluations
   const [evaluationsList, setEvaluationsList] = useState<any[]>([]);
@@ -1924,12 +1948,17 @@ export const AdminPortal: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Attempt</label>
-                  <input
-                    type="text"
+                  <select
                     value={newPaperForm.attempt}
                     onChange={(e) => setNewPaperForm({ ...newPaperForm, attempt: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
-                  />
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800"
+                  >
+                    {paperModalAttempts.map((att) => (
+                      <option key={att.id} value={att.attemptLabel}>
+                        {att.attemptLabel}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

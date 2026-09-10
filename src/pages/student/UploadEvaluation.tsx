@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { CA_SUBJECTS, CASubject } from '../../data/caCurriculum.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../types/index.js';
+import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt } from '../../lib/attempts.js';
 import {
   UploadCloud,
   FileText,
@@ -69,6 +70,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [attempt, setAttempt] = useState<string>('May 2026');
+  const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
+    getAttemptsForLevel(navState.level || 'INTERMEDIATE')
+  );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
 
   // File upload states
@@ -126,6 +130,23 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     };
     fetchEnrollments();
   }, []);
+
+  // Sync available exam attempts dynamically when CA level changes
+  useEffect(() => {
+    let isMounted = true;
+    fetchExamAttempts(level).then((attempts) => {
+      if (isMounted && attempts.length > 0) {
+        setAvailableAttempts(attempts);
+        if (!attempts.some((a) => a.attemptLabel === attempt)) {
+          const defaultMay26 = attempts.find((a) => a.attemptLabel === 'May 2026');
+          setAttempt(defaultMay26 ? defaultMay26.attemptLabel : attempts[0].attemptLabel);
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [level]);
 
   // Fetch materials for selected institute
   useEffect(() => {
@@ -688,11 +709,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
                       className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
                     >
-                      <option value="MTP">ICAI MTP Series</option>
-                      <option value="RTP">ICAI RTP Series</option>
-                      <option value="PAST_EXAM">Past Exam Paper</option>
-                      <option value="MODEL">Model Test Paper</option>
-                      <option value="CUSTOM">Test Series Answer</option>
+                      <option value="MTP">MTP (Mock Test Paper)</option>
+                      <option value="PYQ">PYQ (Past Year Question Paper)</option>
+                      <option value="MODEL_TEST_PAPER">Model Test Paper</option>
                     </select>
                   </div>
 
@@ -703,9 +722,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       onChange={(e) => setAttempt(e.target.value)}
                       className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
                     >
-                      <option value="May 2026">May 2026</option>
-                      <option value="Nov 2026">Nov 2026</option>
-                      <option value="Jan 2027">Jan 2027</option>
+                      {availableAttempts.map((att) => (
+                        <option key={att.id} value={att.attemptLabel}>
+                          {att.attemptLabel}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>

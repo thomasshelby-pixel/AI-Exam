@@ -217,6 +217,10 @@ export const MATERIAL_TYPE_CONFIG: Record<MaterialType, {
   label: string;
   description: string;
 }> = {
+  MODEL_TEST_PAPER: {
+    label: 'Model Test Paper',
+    description: 'Comprehensive full-syllabus question paper with official suggested solutions and step marking.',
+  },
   MODEL: {
     label: 'Model Test Paper',
     description: 'Comprehensive full-syllabus question paper with official suggested solutions and step marking.',

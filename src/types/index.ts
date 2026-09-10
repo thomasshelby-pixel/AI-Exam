@@ -4,7 +4,7 @@ export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'BLOCKED' | 'REMOVED';
 
 export type CALevel = 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
 
-export type MaterialType = 'MODEL' | 'MTP' | 'RTP' | 'PYQ';
+export type MaterialType = 'MODEL' | 'MTP' | 'RTP' | 'PYQ' | 'MODEL_TEST_PAPER';
 
 export type ModelGroup = 'GROUP_1' | 'GROUP_2' | 'OTHER';
 
@@ -123,8 +123,12 @@ export interface EvaluationResult {
   grade: string;
   confidenceScore: number;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
+  materialSource?: 'GLOBAL' | 'INSTITUTE';
   instituteId?: string;
   instituteName?: string;
+  sponsoringInstituteId?: string;
+  sponsoringInstituteName?: string;
+  entitlementSource?: string;
   batchId?: string;
   batchName?: string;
   overallSummary: string;

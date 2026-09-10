@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiRequest } from '../../api/client';
 import { EvaluationMaterial, CALevel, MaterialType } from '../../types';
+import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts';
 import {
   FileText,
   Plus,
@@ -53,7 +54,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   // Form State
   const initialFormState = {
     level: 'INTERMEDIATE' as CALevel,
-    materialType: 'SUGGESTED_ANSWERS' as MaterialType,
+    materialType: 'MTP' as MaterialType,
     modelGroup: 'GROUP_1',
     subjectKey: 'inter_advanced_accounting',
     subjectName: 'Advanced Accounting',
@@ -73,6 +74,29 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   };
 
   const [formData, setFormData] = useState(initialFormState);
+  const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
+    getAttemptsForLevel(initialFormState.level)
+  );
+
+  // Sync available exam attempts dynamically when CA level changes in form
+  useEffect(() => {
+    let isMounted = true;
+    fetchExamAttempts(formData.level).then((attempts) => {
+      if (isMounted && attempts.length > 0) {
+        setAvailableAttempts(attempts);
+        if (!attempts.some((a) => a.attemptLabel === formData.attempt)) {
+          const defaultMay26 = attempts.find((a) => a.attemptLabel === 'May 2026');
+          setFormData((prev) => ({
+            ...prev,
+            attempt: defaultMay26 ? defaultMay26.attemptLabel : attempts[0].attemptLabel,
+          }));
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [formData.level]);
 
   // Handle PDF / Text File Upload and AI Extraction
   const handleFileUpload = async (
@@ -212,7 +236,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       const m = res.material;
       setFormData({
         level: m.level || 'INTERMEDIATE',
-        materialType: m.material_type || 'SUGGESTED_ANSWERS',
+        materialType: (m.material_type || 'MTP') as MaterialType,
         modelGroup: m.model_group || 'GROUP_1',
         subjectKey: m.subject_key || 'inter_advanced_accounting',
         subjectName: m.subject_name || 'Advanced Accounting',
@@ -407,13 +431,9 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
               className="px-2.5 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-700 focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Material Types</option>
-              <option value="QUESTION_PAPER">Question Paper</option>
-              <option value="SUGGESTED_ANSWERS">Suggested Answers</option>
-              <option value="MARKING_SCHEME">Marking Scheme</option>
-              <option value="REFERENCE_GUIDANCE">Reference Guidance</option>
-              <option value="AMENDMENTS_PROVISIONS">Amendments / Provisions</option>
               <option value="MTP">MTP</option>
-              <option value="RTP">RTP</option>
+              <option value="PYQ">PYQ</option>
+              <option value="MODEL_TEST_PAPER">Model Test Paper</option>
             </select>
 
             {/* Status Filter */}
@@ -738,13 +758,9 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     onChange={(e) => setFormData({ ...formData, materialType: e.target.value as MaterialType })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none"
                   >
-                    <option value="QUESTION_PAPER">Question Paper</option>
-                    <option value="SUGGESTED_ANSWERS">Suggested Answers</option>
-                    <option value="MARKING_SCHEME">Marking Scheme</option>
-                    <option value="REFERENCE_GUIDANCE">Reference Guidance</option>
-                    <option value="AMENDMENTS_PROVISIONS">Amendments / Provisions</option>
                     <option value="MTP">MTP (Mock Test Paper)</option>
-                    <option value="RTP">RTP (Revision Test Paper)</option>
+                    <option value="PYQ">PYQ (Past Year Question Paper)</option>
+                    <option value="MODEL_TEST_PAPER">Model Test Paper</option>
                   </select>
                 </div>
 
@@ -789,13 +805,17 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Exam Attempt</label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.attempt}
                     onChange={(e) => setFormData({ ...formData, attempt: e.target.value })}
-                    placeholder="e.g. May 2026 / Nov 2025"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none"
-                  />
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none text-slate-800"
+                  >
+                    {availableAttempts.map((att) => (
+                      <option key={att.id} value={att.attemptLabel}>
+                        {att.attemptLabel}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>

@@ -302,10 +302,19 @@ export function checkPermanentFreeAccess(email: string): boolean {
 export interface StudentEntitlement {
   canEvaluate: boolean;
   tier: 'PERMANENT_FREE' | 'INSTITUTE_SPONSORED' | 'PROMOTIONAL_AI30' | 'FREE_TIER' | 'PURCHASED_CREDITS' | 'EXHAUSTED';
+  evaluationsRemaining?: number;
+  instituteEvaluationsRemaining?: number;
   freeEvaluationsRemaining: number;
   purchasedCredits: number;
   instituteSponsored: boolean;
   instituteName?: string;
+  sponsoringInstituteId?: string;
+  activeInstitutes?: Array<{
+    institute_id: string;
+    institute_name: string;
+    batch_id?: string;
+    batch_name?: string;
+  }>;
   hasPermanentFreeAccess: boolean;
   referralCode?: string;
   referralExpiry?: string;
@@ -334,74 +343,151 @@ export function getStudentEntitlement(
     };
   }
 
-  // If user explicitly requests INSTITUTE evaluation
-  if (evaluationSource === 'INSTITUTE') {
-    let instQuery = `
-      SELECT i.name, i.status, i.subscription_expires_at, i.id as institute_id, m.id as membership_id, m.batch_id
-      FROM institutes i
-      JOIN institute_memberships m ON m.institute_id = i.id
-      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
-    `;
-    const instParams: any[] = [userId];
+  // Get user's personal credit status for balance reporting
+  const profile = db.prepare(`
+    SELECT free_evaluations_used, purchased_credits, institute_id FROM student_profiles WHERE user_id = ?
+  `).get(userId) as {
+    free_evaluations_used: number;
+    purchased_credits: number;
+    institute_id?: string;
+  } | undefined;
+
+  const freeUsed = profile ? profile.free_evaluations_used : 0;
+  const purchased = getValidStudentCreditBalance(userId);
+  const freeRemaining = Math.max(0, 2 - freeUsed);
+  const isPermanentFree = checkPermanentFreeAccess(user.email);
+
+  // 1. Query all currently ACTIVE institute enrollments for this student
+  const activeInstitutes = db.prepare(`
+    SELECT m.id as membership_id, m.batch_id, i.id as institute_id, i.name as institute_name,
+           i.status as institute_status, i.subscription_expires_at, b.name as batch_name
+    FROM institute_memberships m
+    JOIN institutes i ON i.id = m.institute_id
+    LEFT JOIN batches b ON b.id = m.batch_id
+    WHERE m.student_id = ?
+      AND m.status = 'ACTIVE'
+      AND (m.removed_at IS NULL OR m.removed_at = '')
+      AND (m.sponsored_access = 1 OR m.sponsored_access IS NULL)
+      AND i.status = 'ACTIVE'
+      AND (i.subscription_expires_at IS NULL OR datetime(i.subscription_expires_at) > datetime('now'))
+    ORDER BY m.joined_at DESC
+  `).all(userId) as Array<{
+    membership_id: string;
+    batch_id?: string;
+    institute_id: string;
+    institute_name: string;
+    institute_status: string;
+    subscription_expires_at?: string;
+    batch_name?: string;
+  }>;
+
+  // 2. CORE BUSINESS RULE:
+  // If student has at least ONE active institute enrollment, that student is sponsored!
+  // Whether PUBLIC or INSTITUTE evaluation, cost is deducted from the active institute,
+  // and personal credits/free quota are completely untouched.
+  if (activeInstitutes.length > 0) {
+    let chosenInstitute: typeof activeInstitutes[0] | undefined;
+
     if (targetInstituteId) {
-      instQuery += ' AND i.id = ?';
-      instParams.push(targetInstituteId);
-    }
-    instQuery += ' LIMIT 1';
-
-    const inst = db.prepare(instQuery).get(...instParams) as {
-      name: string;
-      status: string;
-      subscription_expires_at?: string;
-      institute_id: string;
-      membership_id: string;
-      batch_id?: string;
-    } | undefined;
-
-    if (inst) {
-      const notExpired = !inst.subscription_expires_at || new Date(inst.subscription_expires_at) > new Date();
-      if (notExpired) {
-        return {
-          canEvaluate: true,
-          tier: 'INSTITUTE_SPONSORED',
-          freeEvaluationsRemaining: 9999,
-          purchasedCredits: 9999,
-          instituteSponsored: true,
-          instituteName: inst.name,
-          hasPermanentFreeAccess: false,
-          reason: `Sponsored by ${inst.name}`,
-        };
-      } else {
+      chosenInstitute = activeInstitutes.find((ai) => ai.institute_id === targetInstituteId);
+      if (!chosenInstitute) {
+        if (evaluationSource === 'INSTITUTE') {
+          return {
+            canEvaluate: false,
+            tier: 'EXHAUSTED',
+            freeEvaluationsRemaining: freeRemaining,
+            purchasedCredits: purchased,
+            instituteSponsored: false,
+            hasPermanentFreeAccess: isPermanentFree,
+            reason: 'You do not have an active enrollment in this coaching institute.',
+          };
+        }
         return {
           canEvaluate: false,
           tier: 'EXHAUSTED',
-          freeEvaluationsRemaining: 0,
-          purchasedCredits: 0,
+          freeEvaluationsRemaining: freeRemaining,
+          purchasedCredits: purchased,
           instituteSponsored: false,
-          hasPermanentFreeAccess: false,
-          reason: `Coaching institute subscription for ${inst.name} is currently expired. Please contact institute administration or use Public Evaluation.`,
+          hasPermanentFreeAccess: isPermanentFree,
+          reason: 'Selected coaching institute is not active or enrollment has ended.',
         };
       }
     } else {
+      // Auto-select first active institute
+      chosenInstitute = activeInstitutes[0];
+    }
+
+    // Check institute quota in institute_subscriptions
+    const sub = db.prepare(`
+      SELECT evaluations_remaining, evaluations_used, status, expiry_date
+      FROM institute_subscriptions
+      WHERE institute_id = ? AND status = 'ACTIVE' AND datetime(expiry_date) > datetime('now')
+      ORDER BY datetime(expiry_date) DESC
+      LIMIT 1
+    `).get(chosenInstitute.institute_id) as { evaluations_remaining: number } | undefined;
+
+    if (sub && sub.evaluations_remaining <= 0) {
       return {
         canEvaluate: false,
         tier: 'EXHAUSTED',
-        freeEvaluationsRemaining: 0,
-        purchasedCredits: 0,
-        instituteSponsored: false,
-        hasPermanentFreeAccess: false,
-        reason: 'You do not have an active enrollment in this coaching institute.',
+        freeEvaluationsRemaining: freeRemaining,
+        purchasedCredits: purchased,
+        instituteSponsored: true,
+        instituteName: chosenInstitute.institute_name,
+        sponsoringInstituteId: chosenInstitute.institute_id,
+        activeInstitutes: activeInstitutes.map((ai) => ({
+          institute_id: ai.institute_id,
+          institute_name: ai.institute_name,
+          batch_id: ai.batch_id,
+          batch_name: ai.batch_name,
+        })),
+        hasPermanentFreeAccess: isPermanentFree,
+        reason: `Coaching institute evaluation quota for ${chosenInstitute.institute_name} is exhausted. Please contact institute administration.`,
       };
     }
+
+    const instRemaining = sub ? sub.evaluations_remaining : 9999;
+    return {
+      canEvaluate: true,
+      tier: 'INSTITUTE_SPONSORED',
+      evaluationsRemaining: instRemaining,
+      instituteEvaluationsRemaining: instRemaining,
+      freeEvaluationsRemaining: freeRemaining, // Preserved!
+      purchasedCredits: purchased,             // Preserved!
+      instituteSponsored: true,
+      instituteName: chosenInstitute.institute_name,
+      sponsoringInstituteId: chosenInstitute.institute_id,
+      activeInstitutes: activeInstitutes.map((ai) => ({
+        institute_id: ai.institute_id,
+        institute_name: ai.institute_name,
+        batch_id: ai.batch_id,
+        batch_name: ai.batch_name,
+      })),
+      hasPermanentFreeAccess: isPermanentFree,
+      reason: `Sponsored by ${chosenInstitute.institute_name} (0 Personal Credits Used)`,
+    };
   }
 
-  // Otherwise, evaluationSource is PUBLIC or unspecified.
-  // Evaluate personal student access:
-  const isPermanentFree = checkPermanentFreeAccess(user.email);
+  // 3. If student has NO active institute enrollment:
+  // If user requested INSTITUTE evaluation without active enrollment, reject
+  if (evaluationSource === 'INSTITUTE') {
+    return {
+      canEvaluate: false,
+      tier: 'EXHAUSTED',
+      freeEvaluationsRemaining: freeRemaining,
+      purchasedCredits: purchased,
+      instituteSponsored: false,
+      hasPermanentFreeAccess: isPermanentFree,
+      reason: 'You do not have an active enrollment in any coaching institute.',
+    };
+  }
+
+  // 4. Fallback to normal individual student rules (PUBLIC evaluation)
   if (isPermanentFree) {
     return {
       canEvaluate: true,
       tier: 'PERMANENT_FREE',
+      evaluationsRemaining: 9999,
       freeEvaluationsRemaining: 9999,
       purchasedCredits: 9999,
       instituteSponsored: false,
@@ -410,7 +496,7 @@ export function getStudentEntitlement(
     };
   }
 
-  // Check active promotional referral code redemption (e.g. AI30 1-Month Free Access & 15 evaluations)
+  // Check active promotional referral code redemption (e.g. AI30)
   try {
     const activeReferral = db.prepare(`
       SELECT id, referral_code, expiry_date, benefit_type, max_evaluations, evaluations_used, evaluations_remaining
@@ -430,10 +516,10 @@ export function getStudentEntitlement(
     } | undefined;
 
     if (activeReferral) {
-      const purchased = getValidStudentCreditBalance(userId);
       return {
         canEvaluate: true,
         tier: 'PROMOTIONAL_AI30',
+        evaluationsRemaining: (activeReferral.evaluations_remaining ?? 15) + purchased,
         freeEvaluationsRemaining: activeReferral.evaluations_remaining,
         purchasedCredits: purchased,
         instituteSponsored: false,
@@ -451,59 +537,17 @@ export function getStudentEntitlement(
     console.warn('Referral check warning:', err);
   }
 
-  const profile = db.prepare(`
-    SELECT free_evaluations_used, purchased_credits, institute_id FROM student_profiles WHERE user_id = ?
-  `).get(userId) as {
-    free_evaluations_used: number;
-    purchased_credits: number;
-    institute_id?: string;
-  } | undefined;
-
-  const freeUsed = profile ? profile.free_evaluations_used : 0;
-  const purchased = getValidStudentCreditBalance(userId);
-  const freeRemaining = Math.max(0, 2 - freeUsed);
-
-  // If evaluationSource is not explicitly set to PUBLIC (unspecified fallback), check institute sponsorship
-  if (!evaluationSource) {
-    const inst = db.prepare(`
-      SELECT i.name, i.status, i.subscription_expires_at, i.id as institute_id
-      FROM institutes i
-      JOIN institute_memberships m ON m.institute_id = i.id
-      WHERE m.student_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
-      LIMIT 1
-    `).get(userId) as {
-      name: string;
-      status: string;
-      subscription_expires_at?: string;
-      institute_id: string;
-    } | undefined;
-
-    if (inst) {
-      const notExpired = !inst.subscription_expires_at || new Date(inst.subscription_expires_at) > new Date();
-      if (notExpired) {
-        return {
-          canEvaluate: true,
-          tier: 'INSTITUTE_SPONSORED',
-          freeEvaluationsRemaining: 9999,
-          purchasedCredits: 9999,
-          instituteSponsored: true,
-          instituteName: inst.name,
-          hasPermanentFreeAccess: false,
-          reason: `Sponsored by ${inst.name}`,
-        };
-      }
-    }
-  }
-
   // Normal Student First 2 Answer Sheets Free
   if (freeRemaining > 0) {
     return {
       canEvaluate: true,
       tier: 'FREE_TIER',
+      evaluationsRemaining: freeRemaining + purchased,
       freeEvaluationsRemaining: freeRemaining,
       purchasedCredits: purchased,
       instituteSponsored: false,
       hasPermanentFreeAccess: false,
+      reason: `${freeRemaining} Free Evaluation${freeRemaining > 1 ? 's' : ''} Remaining`,
     };
   }
 
@@ -512,16 +556,19 @@ export function getStudentEntitlement(
     return {
       canEvaluate: true,
       tier: 'PURCHASED_CREDITS',
+      evaluationsRemaining: purchased,
       freeEvaluationsRemaining: 0,
       purchasedCredits: purchased,
       instituteSponsored: false,
       hasPermanentFreeAccess: false,
+      reason: `${purchased} Purchased Credit${purchased > 1 ? 's' : ''} Available`,
     };
   }
 
   return {
     canEvaluate: false,
     tier: 'EXHAUSTED',
+    evaluationsRemaining: 0,
     freeEvaluationsRemaining: 0,
     purchasedCredits: purchased,
     instituteSponsored: false,

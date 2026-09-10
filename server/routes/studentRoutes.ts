@@ -18,6 +18,7 @@ import {
   getStudentCreditStatus,
   getValidStudentCreditBalance,
 } from '../services/studentCreditService.js';
+import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 
 const router = Router();
 
@@ -389,7 +390,7 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
 });
 
 // 2. Upload and Evaluate Answer Sheet
-router.post('/evaluate', async (req: AuthRequest, res: Response) => {
+router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   const studentId = req.user!.id;
   const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
 
@@ -416,11 +417,119 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });
     }
 
-    const isInstituteMode = evaluationSource === 'INSTITUTE' || (!!instituteId && evaluationSource !== 'PUBLIC');
+    // 1. Fetch all active institute enrollments for this student
+    const activeInstitutes = db.prepare(`
+      SELECT m.id as membership_id, m.batch_id, i.id as institute_id, i.name as institute_name,
+             i.status as institute_status, i.subscription_expires_at, b.name as batch_name
+      FROM institute_memberships m
+      JOIN institutes i ON i.id = m.institute_id
+      LEFT JOIN batches b ON b.id = m.batch_id
+      WHERE m.student_id = ?
+        AND m.status = 'ACTIVE'
+        AND (m.removed_at IS NULL OR m.removed_at = '')
+        AND (m.sponsored_access = 1 OR m.sponsored_access IS NULL)
+        AND i.status = 'ACTIVE'
+        AND (i.subscription_expires_at IS NULL OR datetime(i.subscription_expires_at) > datetime('now'))
+      ORDER BY m.joined_at DESC
+    `).all(studentId) as Array<{
+      membership_id: string;
+      batch_id?: string;
+      institute_id: string;
+      institute_name: string;
+      institute_status: string;
+      subscription_expires_at?: string;
+      batch_name?: string;
+    }>;
 
-    let resolvedInstituteId: string | null = null;
-    let resolvedEnrollmentId: string | null = null;
-    let resolvedBatchId: string | null = null;
+    // 2. Determine Evaluation Mode & Material Source
+    const requestedEvalSource = (evaluationSource === 'INSTITUTE') ? 'INSTITUTE' : 'PUBLIC';
+    const isInstituteMode = requestedEvalSource === 'INSTITUTE';
+    const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+
+    let resolvedSponsoringInstituteId: string | null = null;
+    let resolvedSponsoringEnrollmentId: string | null = null;
+    let resolvedSponsoringBatchId: string | null = null;
+    let resolvedInstituteName: string | null = null;
+    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' = 'PERSONAL_FREE';
+    let personalEntitlement: any = null;
+
+    // 3. Determine Payment/Quota Source
+    if (activeInstitutes.length > 0) {
+      // CORE BUSINESS RULE: Student with active institute enrollment is ALWAYS sponsored!
+      const targetInstId = (instituteId || req.body.sponsoringInstituteId || req.body.sponsoring_institute_id);
+      let chosenInst: typeof activeInstitutes[0] | undefined;
+
+      if (targetInstId) {
+        chosenInst = activeInstitutes.find((ai) => ai.institute_id === targetInstId);
+        if (!chosenInst) {
+          // TEST CASE 8: Student attempts to submit Institute A's ID while not actively enrolled in Institute A
+          return res.status(403).json({
+            error: 'Access denied: You do not have an active enrollment in this coaching institute.',
+          });
+        }
+      } else {
+        if (isInstituteMode && activeInstitutes.length > 1) {
+          return res.status(400).json({
+            error: 'Please select a coaching institute for Institute Evaluation.',
+          });
+        }
+        chosenInst = activeInstitutes[0];
+      }
+
+      // Verify institute subscription quota
+      const sub = db.prepare(`
+        SELECT evaluations_remaining, evaluations_used, status, expiry_date
+        FROM institute_subscriptions
+        WHERE institute_id = ? AND status = 'ACTIVE' AND datetime(expiry_date) > datetime('now')
+        ORDER BY datetime(expiry_date) DESC
+        LIMIT 1
+      `).get(chosenInst.institute_id) as { evaluations_remaining: number } | undefined;
+
+      if (sub && sub.evaluations_remaining <= 0) {
+        return res.status(402).json({
+          error: `Coaching institute evaluation quota for ${chosenInst.institute_name} is exhausted. Please contact institute administration.`,
+        });
+      }
+
+      resolvedSponsoringInstituteId = chosenInst.institute_id;
+      resolvedSponsoringEnrollmentId = chosenInst.membership_id;
+      resolvedSponsoringBatchId = chosenInst.batch_id || null;
+      resolvedInstituteName = chosenInst.institute_name;
+      entitlementSource = 'INSTITUTE_ALLOCATION';
+    } else {
+      // Student has NO active institute enrollment
+      if (isInstituteMode) {
+        return res.status(403).json({
+          error: 'Access denied: You do not have an active enrollment in any coaching institute.',
+        });
+      }
+
+      if (instituteId || req.body.sponsoringInstituteId || req.body.sponsoring_institute_id) {
+        return res.status(403).json({
+          error: 'Access denied: You do not have an active enrollment in this coaching institute.',
+        });
+      }
+
+      // Check personal student entitlement
+      personalEntitlement = getStudentEntitlement(studentId, 'PUBLIC');
+      if (!personalEntitlement.canEvaluate) {
+        return res.status(402).json({
+          error: personalEntitlement.reason || 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
+        });
+      }
+
+      if (personalEntitlement.hasPermanentFreeAccess) {
+        entitlementSource = 'PERMANENT_FREE';
+      } else if (personalEntitlement.tier === 'PROMOTIONAL_AI30') {
+        entitlementSource = 'PROMO';
+      } else if (personalEntitlement.tier === 'FREE_TIER') {
+        entitlementSource = 'PERSONAL_FREE';
+      } else if (personalEntitlement.tier === 'PURCHASED_CREDITS') {
+        entitlementSource = 'PERSONAL_PURCHASED_CREDIT';
+      }
+    }
+
+    // 4. Reference Material Validation (Strict separation of sources)
     let referenceMaterial: {
       id: string;
       version: string;
@@ -434,40 +543,8 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       amendments_provisions_text?: string;
     };
 
-    let entitlement: any;
-
-    if (isInstituteMode) {
-      // Step A (Institute): Enforce active membership in target institute
-      if (!instituteId) {
-        return res.status(400).json({ error: 'Please select a coaching institute for Institute Evaluation.' });
-      }
-
-      const membership = db.prepare(`
-        SELECT m.id as membership_id, m.batch_id, m.status, i.id as institute_id, i.name as institute_name, i.status as institute_status, i.subscription_expires_at
-        FROM institute_memberships m
-        JOIN institutes i ON i.id = m.institute_id
-        WHERE m.student_id = ? AND m.institute_id = ? AND m.status = 'ACTIVE' AND i.status = 'ACTIVE'
-      `).get(studentId, instituteId) as any;
-
-      if (!membership) {
-        return res.status(403).json({
-          error: 'Access denied: You do not have an active enrollment in this coaching institute.',
-        });
-      }
-
-      if (membership.subscription_expires_at && new Date(membership.subscription_expires_at) < new Date()) {
-        return res.status(402).json({
-          error: `Coaching institute subscription for ${membership.institute_name} has expired. Please use Public Evaluation or contact your academy coordinator.`,
-        });
-      }
-
-      resolvedInstituteId = membership.institute_id;
-      resolvedEnrollmentId = membership.membership_id;
-      resolvedBatchId = membership.batch_id || null;
-
-      entitlement = getStudentEntitlement(studentId, 'INSTITUTE', instituteId);
-
-      // Step B (Institute): Verify approved institute reference material
+    if (materialSource === 'INSTITUTE') {
+      // Use ONLY private materials belonging to the selected active institute
       let instMat: any = null;
       if (instituteMaterialId) {
         instMat = db.prepare(`
@@ -475,8 +552,8 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
                  '1.0' as version, 'Institute Curriculum' as syllabus_version,
                  question_paper_text, suggested_answers_text, marking_scheme_text
           FROM institute_materials
-          WHERE id = ? AND institute_id = ?
-        `).get(instituteMaterialId, resolvedInstituteId);
+          WHERE id = ? AND institute_id = ? AND status = 'ACTIVE'
+        `).get(instituteMaterialId, resolvedSponsoringInstituteId);
       }
 
       if (!instMat) {
@@ -485,30 +562,23 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
                  '1.0' as version, 'Institute Curriculum' as syllabus_version,
                  question_paper_text, suggested_answers_text, marking_scheme_text
           FROM institute_materials
-          WHERE institute_id = ? AND level = ? AND subject_key = ?
+          WHERE institute_id = ? AND level = ? AND subject_key = ? AND status = 'ACTIVE'
             AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
             AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
           ORDER BY created_at DESC LIMIT 1
-        `).get(resolvedInstituteId, level, subjectKey);
+        `).get(resolvedSponsoringInstituteId, level, subjectKey);
       }
 
       if (!instMat || !instMat.question_paper_text || !instMat.suggested_answers_text) {
         return res.status(400).json({
-          error: `No approved question paper and suggested answers found for ${membership.institute_name} for this subject (${subjectName}). Please ensure your faculty has uploaded materials for your batch.`,
+          error: `No approved question paper and suggested answers found for ${resolvedInstituteName || 'your institute'} for this subject (${subjectName}). Please ensure your faculty has uploaded materials for your batch.`,
         });
       }
 
       referenceMaterial = instMat;
     } else {
-      // Step A (Public): Personal Entitlement Check
-      entitlement = getStudentEntitlement(studentId, 'PUBLIC');
-      if (!entitlement.canEvaluate) {
-        return res.status(402).json({
-          error: entitlement.reason || 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
-        });
-      }
-
-      // Step B (Public): Material Validation (Official ICAI Admin Materials)
+      // Use ONLY global / official ICAI admin-approved materials
+      // Never mix institute materials into Public Evaluation
       let materialQuery = `
         SELECT * FROM evaluation_materials
         WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
@@ -587,31 +657,43 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
     // Step C: Initialize Evaluation Record with initial state and material tracking
     db.prepare(`
       INSERT INTO evaluations (
-        id, student_id, evaluation_source, institute_id, institute_enrollment_id, batch_id,
+        id, student_id, evaluation_source, material_source, sponsoring_institute_id,
+        institute_id, institute_enrollment_id, batch_id,
         level, material_type, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
-        checking_mode, original_filename, status, document_validation_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PROCESSING', 'VALID')
+        checking_mode, original_filename, status, document_validation_status,
+        entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, 'PROCESSING', 'VALID',
+        ?, 0, 0
+      )
     `).run(
       evaluationId,
       studentId,
-      isInstituteMode ? 'INSTITUTE' : 'PUBLIC',
-      resolvedInstituteId,
-      resolvedEnrollmentId,
-      resolvedBatchId,
+      requestedEvalSource,
+      materialSource,
+      resolvedSponsoringInstituteId,
+      resolvedSponsoringInstituteId,
+      resolvedSponsoringEnrollmentId,
+      resolvedSponsoringBatchId,
       level,
-      materialType || (isInstituteMode ? 'MOCK_EXAM' : 'MTP'),
+      materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP'),
       modelGroup || null,
       subjectKey,
       subjectName,
       referenceMaterial.paper || 'Paper 1',
-      attempt || (isInstituteMode ? 'Institute Series' : 'May 2026'),
+      attempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       referenceMaterial.syllabus_version || 'New Scheme 2024',
       referenceMaterial.id,
       referenceMaterial.version || '1.0',
       modelUsed,
       checkingMode || 'standard',
-      filename || 'ca_answer_sheet.pdf'
+      filename || 'ca_answer_sheet.pdf',
+      entitlementSource
     );
 
     // Step D: Document Validation (Verify it is a genuine student CA answer sheet)
@@ -756,43 +838,120 @@ router.post('/evaluate', async (req: AuthRequest, res: Response) => {
       evaluationId
     );
 
-    // Step H: Consume Credit ONLY ON SUCCESS
-    if (!entitlement.hasPermanentFreeAccess && !entitlement.instituteSponsored) {
-      if (entitlement.tier === 'PROMOTIONAL_AI30' && entitlement.referralRedemptionId) {
+    // Step H: Consume Credit / Quota ONLY ON SUCCESS
+    if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
+      const idempotencyKey = `inst_eval_${evaluationId}`;
+      const existingLedger = db.prepare('SELECT id FROM institute_usage_ledger WHERE idempotency_key = ?').get(idempotencyKey);
+      if (!existingLedger) {
+        // Atomic decrement of institute evaluation allowance
         db.prepare(`
-          UPDATE referral_redemptions
+          UPDATE institute_subscriptions
           SET evaluations_used = evaluations_used + 1,
-              evaluations_remaining = MAX(0, evaluations_remaining - 1),
-              status = CASE WHEN evaluations_remaining - 1 <= 0 THEN 'EXHAUSTED' ELSE status END
-          WHERE id = ?
-        `).run(entitlement.referralRedemptionId);
+              evaluations_remaining = MAX(0, evaluations_remaining - 1)
+          WHERE institute_id = ? AND status = 'ACTIVE'
+        `).run(resolvedSponsoringInstituteId);
 
-        // Ledger entry for promotional evaluation consumption
+        // Record in institute_usage_ledger
         db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-          VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, 'Consumed 1 promotional evaluation (${entitlement.referralCode || 'AI30'})')
+          INSERT INTO institute_usage_ledger (
+            id, institute_id, student_id, evaluation_id, usage_type,
+            evaluations_deducted, description, idempotency_key
+          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
         `).run(
-          `cld_${crypto.randomBytes(8).toString('hex')}`,
+          `usg_${crypto.randomBytes(8).toString('hex')}`,
+          resolvedSponsoringInstituteId,
           studentId,
-          Math.max(0, (entitlement.referralEvaluationsRemaining || 1) - 1),
-          evaluationId
+          evaluationId,
+          requestedEvalSource === 'PUBLIC' ? 'STUDENT_PUBLIC_EVALUATION' : 'STUDENT_EVALUATION',
+          `Sponsored ${requestedEvalSource} Evaluation (${subjectName}) for student`,
+          idempotencyKey
         );
-      } else if (entitlement.tier === 'FREE_TIER') {
-        db.prepare('UPDATE student_profiles SET free_evaluations_used = free_evaluations_used + 1 WHERE user_id = ?').run(studentId);
-        // Ledger entry for free tier consumption
+
+        // Update evaluation breakdown
         db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-          VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, 'Consumed 1 free tier evaluation')
+          UPDATE evaluations
+          SET consumed_from_institute_allocation = 1,
+              consumed_from_personal_credits = 0
+          WHERE id = ?
+        `).run(evaluationId);
+
+        // Audit log
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, ?, 'EVALUATION', ?, ?)
         `).run(
-          `cld_${crypto.randomBytes(8).toString('hex')}`,
+          `aud_${crypto.randomBytes(8).toString('hex')}`,
           studentId,
-          Math.max(0, entitlement.freeEvaluationsRemaining - 1),
-          evaluationId
+          requestedEvalSource === 'PUBLIC' ? 'EVALUATION_PUBLIC_INSTITUTE_SPONSORED' : 'EVALUATION_INSTITUTE_SPONSORED',
+          evaluationId,
+          `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
         );
-      } else if (entitlement.tier === 'PURCHASED_CREDITS') {
-        // Enforce First-Expiring, First-Out (FEFO) and 3-month validity check
-        consumeCreditFEFO(studentId, evaluationId);
       }
+    } else if (entitlementSource === 'PROMO' && personalEntitlement?.referralRedemptionId) {
+      db.prepare(`
+        UPDATE referral_redemptions
+        SET evaluations_used = evaluations_used + 1,
+            evaluations_remaining = MAX(0, evaluations_remaining - 1),
+            status = CASE WHEN evaluations_remaining - 1 <= 0 THEN 'EXHAUSTED' ELSE status END
+        WHERE id = ?
+      `).run(personalEntitlement.referralRedemptionId);
+
+      // Ledger entry for promotional evaluation consumption
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, 'Consumed 1 promotional evaluation (${personalEntitlement.referralCode || 'AI30'})')
+      `).run(
+        `cld_${crypto.randomBytes(8).toString('hex')}`,
+        studentId,
+        Math.max(0, (personalEntitlement.referralEvaluationsRemaining || 1) - 1),
+        evaluationId
+      );
+
+      db.prepare(`
+        UPDATE evaluations
+        SET consumed_from_institute_allocation = 0,
+            consumed_from_personal_credits = 0
+        WHERE id = ?
+      `).run(evaluationId);
+    } else if (entitlementSource === 'PERSONAL_FREE') {
+      db.prepare('UPDATE student_profiles SET free_evaluations_used = free_evaluations_used + 1 WHERE user_id = ?').run(studentId);
+      // Ledger entry for free tier consumption
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, 'Consumed 1 free tier evaluation')
+      `).run(
+        `cld_${crypto.randomBytes(8).toString('hex')}`,
+        studentId,
+        Math.max(0, (personalEntitlement?.freeEvaluationsRemaining || 1) - 1),
+        evaluationId
+      );
+
+      db.prepare(`
+        UPDATE evaluations
+        SET consumed_from_institute_allocation = 0,
+            consumed_from_personal_credits = 0
+        WHERE id = ?
+      `).run(evaluationId);
+    } else if (entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
+      // Enforce First-Expiring, First-Out (FEFO) and 3-month validity check
+      consumeCreditFEFO(studentId, evaluationId);
+
+      db.prepare(`
+        UPDATE evaluations
+        SET consumed_from_institute_allocation = 0,
+            consumed_from_personal_credits = 1
+        WHERE id = ?
+      `).run(evaluationId);
+
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'EVALUATION_PERSONAL_PURCHASED', 'EVALUATION', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        studentId,
+        evaluationId,
+        '1 personal purchased credit deducted via FEFO.'
+      );
     }
 
     // Notification
@@ -843,10 +1002,13 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       SELECT e.id, e.level, e.material_type, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
              e.rejection_reason, e.created_at, e.completed_at,
-             e.evaluation_source, e.institute_id, e.batch_id,
-             i.name as institute_name, b.name as batch_name
+             e.evaluation_source, e.material_source, e.sponsoring_institute_id,
+             e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
+             e.institute_id, e.batch_id,
+             i.name as institute_name, si.name as sponsoring_institute_name, b.name as batch_name
       FROM evaluations e
       LEFT JOIN institutes i ON i.id = e.institute_id
+      LEFT JOIN institutes si ON si.id = e.sponsoring_institute_id
       LEFT JOIN batches b ON b.id = e.batch_id
       WHERE e.student_id = ?
     `;
@@ -857,8 +1019,8 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(evaluationSource);
     }
     if (instituteId) {
-      query += ' AND e.institute_id = ?';
-      params.push(instituteId);
+      query += ' AND (e.institute_id = ? OR e.sponsoring_institute_id = ?)';
+      params.push(instituteId, instituteId);
     }
     if (subject) {
       query += ' AND e.subject_key = ?';
@@ -880,6 +1042,23 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('List evaluations error:', error);
     return res.status(500).json({ error: 'Failed to retrieve evaluations' });
+  }
+});
+
+// 3b. Student Entitlement Status
+router.get('/entitlement', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { evaluationSource, instituteId } = req.query;
+    const entitlement = getStudentEntitlement(
+      studentId,
+      evaluationSource as any,
+      instituteId as string | undefined
+    );
+    return res.json({ entitlement });
+  } catch (error: unknown) {
+    console.error('Get entitlement error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve entitlement status' });
   }
 });
 
@@ -919,11 +1098,16 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
 
     let resultJson: EvaluationResult | null = null;
     let instituteName: string | null = null;
+    let sponsoringInstituteName: string | null = null;
     let batchName: string | null = null;
 
     if (record.institute_id) {
       const inst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(record.institute_id as string) as { name: string } | undefined;
       instituteName = inst?.name || null;
+    }
+    if (record.sponsoring_institute_id) {
+      const sinst = db.prepare('SELECT name FROM institutes WHERE id = ?').get(record.sponsoring_institute_id as string) as { name: string } | undefined;
+      sponsoringInstituteName = sinst?.name || null;
     }
     if (record.batch_id) {
       const b = db.prepare('SELECT name FROM batches WHERE id = ?').get(record.batch_id as string) as { name: string } | undefined;
@@ -935,6 +1119,9 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
         resultJson = JSON.parse(record.result_json);
         if (resultJson) {
           resultJson.evaluationSource = (record.evaluation_source as any) || (record.institute_id ? 'INSTITUTE' : 'PUBLIC');
+          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
+          resultJson.sponsoringInstituteName = sponsoringInstituteName || instituteName || undefined;
+          resultJson.entitlementSource = (record.entitlement_source as any) || undefined;
           resultJson.instituteName = instituteName || undefined;
           resultJson.batchName = batchName || undefined;
         }
@@ -947,6 +1134,8 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
       evaluation: {
         ...record,
         institute_name: instituteName,
+        sponsoring_institute_name: sponsoringInstituteName || instituteName,
+        material_source: record.material_source || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL'),
         batch_name: batchName,
         resultJson,
         raw_result_json: record.result_json,
@@ -2189,7 +2378,7 @@ router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthReque
   }
 });
 
-router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], async (req: AuthRequest, res: Response) => {
+router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -2415,7 +2604,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], asyn
 });
 
 // 13. Submit Answer Sheet for Institute Material (100% Institute-Sponsored, Verified Enrollment Required)
-router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], async (req: AuthRequest, res: Response) => {
+router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;

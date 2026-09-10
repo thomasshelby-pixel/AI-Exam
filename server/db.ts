@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { scryptSync, randomBytes } from 'node:crypto';
+import { ATTEMPT_MASTER_CONFIG } from './config/attemptMaster.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -516,6 +517,11 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'original_model', 'TEXT');
   addColumnIfNotExists('evaluations', 'fallback_model', 'TEXT');
   addColumnIfNotExists('evaluations', 'audit_metadata_json', 'TEXT');
+  addColumnIfNotExists('evaluations', 'material_source', "TEXT DEFAULT 'GLOBAL'");
+  addColumnIfNotExists('evaluations', 'sponsoring_institute_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'entitlement_source', "TEXT DEFAULT 'PERSONAL_FREE'");
+  addColumnIfNotExists('evaluations', 'consumed_from_institute_allocation', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'consumed_from_personal_credits', 'INTEGER DEFAULT 0');
 
   // Ensure institute_memberships columns
   addColumnIfNotExists('institute_memberships', 'removed_at', 'TEXT');
@@ -687,6 +693,23 @@ function runMigrations() {
   addColumnIfNotExists('revocation_requests', 'admin_response', 'TEXT');
   addColumnIfNotExists('revocation_requests', 'reviewed_by', 'TEXT');
   addColumnIfNotExists('revocation_requests', 'submitted_at', 'TEXT');
+
+  // Centralized Exam Attempts and Attempt Master enhancements
+  addColumnIfNotExists('exam_attempts', 'ca_level', 'TEXT');
+  addColumnIfNotExists('exam_attempts', 'attempt_label', 'TEXT');
+  addColumnIfNotExists('exam_attempts', 'attempt_code', 'TEXT');
+  addColumnIfNotExists('exam_attempts', 'exam_month', 'TEXT');
+  addColumnIfNotExists('exam_attempts', 'exam_year', 'INTEGER');
+  addColumnIfNotExists('exam_attempts', 'sequence_order', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('exam_attempts', 'active', 'INTEGER DEFAULT 1');
+
+  // Evaluation materials attempt references
+  addColumnIfNotExists('evaluation_materials', 'attempt_id', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'attempt_code', 'TEXT');
+
+  // Evaluations attempt references
+  addColumnIfNotExists('evaluations', 'attempt_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'attempt_code', 'TEXT');
 
   // Strict Material Ownership Rule:
   // Identify legacy automatically seeded/demo materials and deactivate them
@@ -1007,39 +1030,49 @@ function seedMcqScoringRules() {
 }
 
 function seedExamAttempts() {
-  const attempts = [
-    // CA Foundation Attempts (January, May, September)
-    { id: 'att_fnd_sep27', course: 'FOUNDATION', month: 'September', year: 2027, display_name: 'September 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fnd_may27', course: 'FOUNDATION', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fnd_jan27', course: 'FOUNDATION', month: 'January', year: 2027, display_name: 'January 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fnd_sep26', course: 'FOUNDATION', month: 'September', year: 2026, display_name: 'September 2026', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fnd_may26', course: 'FOUNDATION', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fnd_jan26', course: 'FOUNDATION', month: 'January', year: 2026, display_name: 'January 2026', syllabus_version: 'New Scheme 2024' },
-
-    // CA Intermediate Attempts (January, May, September)
-    { id: 'att_int_jan28', course: 'INTERMEDIATE', month: 'January', year: 2028, display_name: 'January 2028', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_int_sep27', course: 'INTERMEDIATE', month: 'September', year: 2027, display_name: 'September 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_int_may27', course: 'INTERMEDIATE', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_int_jan27', course: 'INTERMEDIATE', month: 'January', year: 2027, display_name: 'January 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_int_sep26', course: 'INTERMEDIATE', month: 'September', year: 2026, display_name: 'September 2026', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_int_may26', course: 'INTERMEDIATE', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
-
-    // CA Final Attempts (May, November)
-    { id: 'att_fin_nov27', course: 'FINAL', month: 'November', year: 2027, display_name: 'November 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fin_may27', course: 'FINAL', month: 'May', year: 2027, display_name: 'May 2027', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fin_nov26', course: 'FINAL', month: 'November', year: 2026, display_name: 'November 2026', syllabus_version: 'New Scheme 2024' },
-    { id: 'att_fin_may26', course: 'FINAL', month: 'May', year: 2026, display_name: 'May 2026', syllabus_version: 'New Scheme 2024' },
-  ];
-
-  for (const att of attempts) {
-    const existing = db.prepare('SELECT id FROM exam_attempts WHERE id = ?').get(att.id);
-    if (!existing) {
+  for (const item of ATTEMPT_MASTER_CONFIG) {
+    const existing = db.prepare('SELECT id FROM exam_attempts WHERE id = ?').get(item.id);
+    if (existing) {
       db.prepare(`
-        INSERT INTO exam_attempts (id, course, month, year, display_name, syllabus_version, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-      `).run(att.id, att.course, att.month, att.year, att.display_name, att.syllabus_version);
+        UPDATE exam_attempts
+        SET course = ?, month = ?, year = ?, display_name = ?,
+            ca_level = ?, attempt_label = ?, attempt_code = ?, exam_month = ?, exam_year = ?,
+            sequence_order = ?, is_active = ?, active = ?, syllabus_version = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        item.caLevel, item.examMonth, item.examYear, item.attemptLabel,
+        item.caLevel, item.attemptLabel, item.attemptCode, item.examMonth, item.examYear,
+        item.sequenceOrder, item.active ? 1 : 0, item.active ? 1 : 0, item.syllabusVersion,
+        item.id
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO exam_attempts (
+          id, course, month, year, display_name,
+          ca_level, attempt_label, attempt_code, exam_month, exam_year,
+          sequence_order, is_active, active, syllabus_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        item.id, item.caLevel, item.examMonth, item.examYear, item.attemptLabel,
+        item.caLevel, item.attemptLabel, item.attemptCode, item.examMonth, item.examYear,
+        item.sequenceOrder, item.active ? 1 : 0, item.active ? 1 : 0, item.syllabusVersion
+      );
     }
   }
+
+  // Deactivate any out-of-schedule or stray records:
+  // - Any 2028 or later attempts
+  // - Foundation or Intermediate November attempts
+  // - Final September 2026, January 2027, September 2027
+  db.prepare(`
+    UPDATE exam_attempts
+    SET is_active = 0, active = 0
+    WHERE (year > 2027)
+       OR (course IN ('FOUNDATION', 'INTERMEDIATE') AND month = 'November')
+       OR (course = 'FINAL' AND year = 2026 AND month = 'September')
+       OR (course = 'FINAL' AND year = 2027 AND month IN ('January', 'September'))
+  `).run();
 }
 
 function seedInstitutePlans() {
@@ -2339,5 +2372,28 @@ function seedSampleInstitute() {
         VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10)
       `).run(uId);
     }
+  }
+
+  // Ensure active institutes have an active evaluation allowance record
+  try {
+    const allInstitutes = db.prepare("SELECT id FROM institutes WHERE status = 'ACTIVE'").all() as Array<{ id: string }>;
+    for (const inst of allInstitutes) {
+      const subExists = db.prepare("SELECT id FROM institute_subscriptions WHERE institute_id = ? AND status = 'ACTIVE'").get(inst.id);
+      if (!subExists) {
+        db.prepare(`
+          INSERT INTO institute_subscriptions (
+            id, institute_id, plan_id, billing_cycle, price_inr,
+            student_capacity, evaluation_allowance, evaluations_used, evaluations_remaining,
+            start_date, expiry_date, status
+          ) VALUES (
+            ?, ?, 'plan_inst_pro', 'YEARLY', 49999,
+            500, 500, 0, 500,
+            '2026-01-01T00:00:00.000Z', '2027-12-31T23:59:59.000Z', 'ACTIVE'
+          )
+        `).run(`sub_auto_${inst.id}`, inst.id);
+      }
+    }
+  } catch (err) {
+    console.warn('Institute subscription check warning:', err);
   }
 }

@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
+import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   Building2,
   LayoutDashboard,
@@ -90,6 +91,29 @@ export const InstitutePortal: React.FC = () => {
     targetAttempt: 'May 2026',
     description: '',
   });
+
+  const [batchAttempts, setBatchAttempts] = useState<ExamAttempt[]>(() =>
+    getAttemptsForLevel(newBatchForm.courseLevel)
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchExamAttempts(newBatchForm.courseLevel).then((attempts) => {
+      if (isMounted && attempts.length > 0) {
+        setBatchAttempts(attempts);
+        if (!attempts.some((a) => a.attemptLabel === newBatchForm.targetAttempt)) {
+          const defaultMay26 = attempts.find((a) => a.attemptLabel === 'May 2026');
+          setNewBatchForm((prev) => ({
+            ...prev,
+            targetAttempt: defaultMay26 ? defaultMay26.attemptLabel : attempts[0].attemptLabel,
+          }));
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [newBatchForm.courseLevel]);
   const [selectedBatchDetail, setSelectedBatchDetail] = useState<any>(null);
   const [showAddStudentToBatchModal, setShowAddStudentToBatchModal] = useState<boolean>(false);
   const [studentToAddId, setStudentToAddId] = useState<string>('');
@@ -1886,12 +1910,17 @@ export const InstitutePortal: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Target Attempt</label>
-                  <input
-                    type="text"
+                  <select
                     value={newBatchForm.targetAttempt}
                     onChange={(e) => setNewBatchForm({ ...newBatchForm, targetAttempt: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50"
-                  />
+                    className="w-full px-3 py-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800"
+                  >
+                    {batchAttempts.map((att) => (
+                      <option key={att.id} value={att.attemptLabel}>
+                        {att.attemptLabel}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1959,12 +1988,17 @@ export const InstitutePortal: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Target Attempt</label>
-                  <input
-                    type="text"
+                  <select
                     value={showEditBatchModal.target_attempt || showEditBatchModal.targetAttempt || ''}
                     onChange={(e) => setShowEditBatchModal({ ...showEditBatchModal, target_attempt: e.target.value, targetAttempt: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  />
+                  >
+                    {getAttemptsForLevel(showEditBatchModal.course_level || showEditBatchModal.courseLevel || 'INTERMEDIATE').map((att) => (
+                      <option key={att.id} value={att.attemptLabel}>
+                        {att.attemptLabel}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

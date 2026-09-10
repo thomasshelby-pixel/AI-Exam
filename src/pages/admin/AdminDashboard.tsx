@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   ShieldCheck,
   Users,
@@ -85,6 +86,26 @@ export const AdminDashboard: React.FC = () => {
   const [newMatSubKey, setNewMatSubKey] = useState<string>('inter_advanced_accounting');
   const [newMatSubName, setNewMatSubName] = useState<string>('Advanced Accounting');
   const [newMatAttempt, setNewMatAttempt] = useState<string>('May 2026');
+  const [newMatAvailableAttempts, setNewMatAvailableAttempts] = useState<ExamAttempt[]>(() =>
+    getAttemptsForLevel('INTERMEDIATE')
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchExamAttempts(newMatLevel).then((attempts) => {
+      if (isMounted && attempts.length > 0) {
+        setNewMatAvailableAttempts(attempts);
+        if (!attempts.some((a) => a.attemptLabel === newMatAttempt)) {
+          const defaultMay26 = attempts.find((a) => a.attemptLabel === 'May 2026');
+          setNewMatAttempt(defaultMay26 ? defaultMay26.attemptLabel : attempts[0].attemptLabel);
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [newMatLevel]);
+
   const [newMatTitle, setNewMatTitle] = useState<string>('');
   const [newMatPaper, setNewMatPaper] = useState<string>('');
   const [newMatSuggested, setNewMatSuggested] = useState<string>('');
@@ -480,12 +501,26 @@ export const AdminDashboard: React.FC = () => {
                     onChange={(e) => setNewMatType(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
                   >
-                    <option value="MTP">MTP</option>
-                    <option value="RTP">RTP</option>
-                    <option value="PAST_EXAM">Past Exam</option>
-                    <option value="MODEL">Model Paper</option>
+                    <option value="MTP">MTP (Mock Test Paper)</option>
+                    <option value="PYQ">PYQ (Past Year Question Paper)</option>
+                    <option value="MODEL_TEST_PAPER">Model Test Paper</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Exam Attempt</label>
+                <select
+                  value={newMatAttempt}
+                  onChange={(e) => setNewMatAttempt(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                >
+                  {newMatAvailableAttempts.map((att) => (
+                    <option key={att.id} value={att.attemptLabel}>
+                      {att.attemptLabel}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

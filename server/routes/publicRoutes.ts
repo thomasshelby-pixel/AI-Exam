@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { getValidAttemptsForLevel } from '../services/attemptService.js';
 
 const router = Router();
 
@@ -87,33 +88,33 @@ router.get('/pricing', (req: Request, res: Response) => {
   });
 });
 
-// Dynamic Exam Attempts lookup from database
+// Dynamic Centralized ICAI Exam Attempts lookup from Master Database
 router.get('/attempts', (req: Request, res: Response) => {
   try {
-    const { course, level } = req.query;
-    const targetCourse = (course || level || '').toString().toUpperCase();
+    const { course, level, includeInactive } = req.query;
+    const targetLevel = (level || course || '').toString().toUpperCase();
+    const activeOnly = includeInactive !== 'true';
 
-    let query = 'SELECT * FROM exam_attempts WHERE is_active = 1';
-    const params: any[] = [];
-
-    if (targetCourse && ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(targetCourse)) {
-      query += ' AND course = ?';
-      params.push(targetCourse);
-    }
-
-    query += ' ORDER BY year DESC, id ASC';
-    const attempts = db.prepare(query).all(...params) as any[];
+    const attempts = getValidAttemptsForLevel(targetLevel || undefined, activeOnly);
 
     return res.json({
       attempts: attempts.map((a) => ({
         id: a.id,
-        course: a.course,
-        month: a.month,
-        year: a.year,
-        displayName: a.display_name,
-        syllabusVersion: a.syllabus_version,
-        applicableMaterialVersion: a.applicable_material_version,
-        isActive: Boolean(a.is_active),
+        caLevel: a.caLevel,
+        attemptLabel: a.attemptLabel,
+        attemptCode: a.attemptCode,
+        examMonth: a.examMonth,
+        examYear: a.examYear,
+        sequenceOrder: a.sequenceOrder,
+        active: a.active,
+        syllabusVersion: a.syllabusVersion,
+        applicableMaterialVersion: a.applicableMaterialVersion || '1.0',
+        // Legacy backward-compatibility aliases:
+        course: a.caLevel,
+        month: a.examMonth,
+        year: a.examYear,
+        displayName: a.attemptLabel,
+        isActive: a.active,
       })),
     });
   } catch (error: unknown) {
