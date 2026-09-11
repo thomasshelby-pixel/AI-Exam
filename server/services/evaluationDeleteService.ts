@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../db.js';
+import { permanentlyDeleteFromFirestore, syncRecordToFirestore } from './firestoreSyncService.js';
+import { deletePersistentFile, deleteEvaluationCloudFiles } from './persistentStorageService.js';
 
 export interface DeleteEvaluationOptions {
   reason?: string;
@@ -317,6 +319,30 @@ export function deleteEvaluation(
     );
 
     db.exec('COMMIT');
+
+    // 5. Permanently remove from Cloud Firestore, delete cloud files, and persist audit log
+    try {
+      permanentlyDeleteFromFirestore('evaluations', evaluationId, options?.reason);
+      deleteEvaluationCloudFiles(evaluationId).catch(err => {
+        console.warn('[EvaluationDelete] Warning during Cloud Storage files purge:', err);
+      });
+      deletePersistentFile(evaluationId);
+      deletePersistentFile(`${evaluationId}_original`);
+      deletePersistentFile(`${evaluationId}_checked_copy`);
+      deletePersistentFile(`${evaluationId}_report`);
+      syncRecordToFirestore('audit_logs', auditLogId, {
+        id: auditLogId,
+        user_id: actor.id,
+        action: 'EVALUATION_DELETED',
+        entity_type: 'evaluations',
+        entity_id: evaluationId,
+        details: JSON.stringify(auditDetails),
+        ip_address: ipAddress || null,
+        created_at: new Date().toISOString(),
+      });
+    } catch (fsErr) {
+      console.warn('[EvaluationDelete] Firestore sync warning:', fsErr);
+    }
   } catch (err) {
     db.exec('ROLLBACK');
     console.error('[EvaluationDelete] Transaction failed, rolled back:', err);

@@ -1,6 +1,10 @@
 import express from 'express';
 import path from 'path';
+import { EventEmitter } from 'node:events';
 import { createServer as createViteServer } from 'vite';
+
+// Increase default max listeners to accommodate Cloud Storage and Vite pipeline PassThrough streams
+EventEmitter.defaultMaxListeners = 100;
 import { initDatabase } from './server/db.js';
 import authRoutes from './server/routes/authRoutes.js';
 import studentRoutes from './server/routes/studentRoutes.js';
@@ -9,10 +13,16 @@ import adminRoutes from './server/routes/adminRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
 import publicRoutes from './server/routes/publicRoutes.js';
 import pricingRoutes from './server/routes/pricingRoutes.js';
+import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
 
 async function startServer() {
   // Initialize Database schemas, indices, and baseline ICAI materials
   initDatabase();
+
+  // Hydrate persistent cloud data from Cloud Firestore (runs asynchronously)
+  hydrateFromFirestore()
+    .then(() => seedBaselineToFirestoreIfEmpty())
+    .catch((err) => console.warn('[Server] Firestore hydration note:', err));
 
   const app = express();
   const PORT = 3000;

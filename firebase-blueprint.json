@@ -1,0 +1,303 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User accounts including Super Admins, Institute Admins, and CA Students.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "password_hash": { "type": "string" },
+        "full_name": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["SUPER_ADMIN", "INSTITUTE_ADMIN", "STUDENT", "SUPPORT_ADMIN", "FACULTY"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED", "INACTIVE"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "role", "status"]
+    },
+    "StudentProfile": {
+      "title": "StudentProfile",
+      "description": "Extended student profile details and credit balances.",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "icai_registration_number": { "type": "string" },
+        "ca_level": { "type": "string", "enum": ["FOUNDATION", "INTERMEDIATE", "FINAL"] },
+        "free_evaluations_used": { "type": "number" },
+        "purchased_credits": { "type": "number" },
+        "institute_id": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id"]
+    },
+    "Institute": {
+      "title": "Institute",
+      "description": "CA coaching institute organization profile and settings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "logo_url": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "website": { "type": "string" },
+        "contact_person": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED", "INACTIVE"] },
+        "subscription_plan": { "type": "string" },
+        "subscription_expires_at": { "type": "string" },
+        "max_students": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "status"]
+    },
+    "Batch": {
+      "title": "Batch",
+      "description": "Academic cohort or batch within a coaching institute.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "institute_id": { "type": "string" },
+        "name": { "type": "string" },
+        "course_level": { "type": "string" },
+        "description": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "institute_id", "name"]
+    },
+    "InstituteMembership": {
+      "title": "InstituteMembership",
+      "description": "Enrollment and membership link connecting students to institutes and batches.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "institute_id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED", "REMOVED"] },
+        "sponsored_access": { "type": "number" },
+        "joined_at": { "type": "string", "format": "date-time" },
+        "removed_at": { "type": "string" }
+      },
+      "required": ["id", "institute_id", "student_id", "status"]
+    },
+    "EvaluationMaterial": {
+      "title": "EvaluationMaterial",
+      "description": "Official ICAI reference question papers, model answers, and marking rubrics.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "level": { "type": "string" },
+        "material_type": { "type": "string" },
+        "model_group": { "type": "string" },
+        "subject_key": { "type": "string" },
+        "subject_name": { "type": "string" },
+        "paper": { "type": "string" },
+        "attempt": { "type": "string" },
+        "syllabus_version": { "type": "string" },
+        "chapter_topic": { "type": "string" },
+        "question_paper_title": { "type": "string" },
+        "question_paper_text": { "type": "string" },
+        "suggested_answers_text": { "type": "string" },
+        "marking_scheme_text": { "type": "string" },
+        "reference_guidance_text": { "type": "string" },
+        "amendments_provisions_text": { "type": "string" },
+        "effective_date": { "type": "string" },
+        "version": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "DRAFT"] },
+        "source_type": { "type": "string" },
+        "admin_approved": { "type": "number" },
+        "file_id": { "type": "string" },
+        "uploaded_by": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "level", "subject_key", "status"]
+    },
+    "InstituteMaterial": {
+      "title": "InstituteMaterial",
+      "description": "Proprietary study and test material uploaded by a specific institute.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "institute_id": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "title": { "type": "string" },
+        "level": { "type": "string" },
+        "subject_key": { "type": "string" },
+        "subject_name": { "type": "string" },
+        "paper": { "type": "string" },
+        "material_type": { "type": "string" },
+        "question_paper_text": { "type": "string" },
+        "suggested_answers_text": { "type": "string" },
+        "marking_scheme_text": { "type": "string" },
+        "file_id": { "type": "string" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "institute_id", "title"]
+    },
+    "Evaluation": {
+      "title": "Evaluation",
+      "description": "Student exam answer sheet evaluation records, step marks, and examiner analysis.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "institute_id": { "type": "string" },
+        "sponsoring_institute_id": { "type": "string" },
+        "batch_id": { "type": "string" },
+        "level": { "type": "string" },
+        "material_type": { "type": "string" },
+        "subject_key": { "type": "string" },
+        "subject_name": { "type": "string" },
+        "paper": { "type": "string" },
+        "attempt": { "type": "string" },
+        "checking_mode": { "type": "string" },
+        "evaluation_source": { "type": "string" },
+        "material_source": { "type": "string" },
+        "entitlement_source": { "type": "string" },
+        "total_marks": { "type": "number" },
+        "maximum_marks": { "type": "number" },
+        "percentage": { "type": "number" },
+        "grade": { "type": "string" },
+        "confidence_score": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "PROCESSING", "COMPLETED", "FAILED"] },
+        "result_json": { "type": "string" },
+        "error_message": { "type": "string" },
+        "original_file_id": { "type": "string" },
+        "checked_copy_file_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string" }
+      },
+      "required": ["id", "student_id", "level", "subject_key", "status"]
+    },
+    "CreditLedger": {
+      "title": "CreditLedger",
+      "description": "Audit trail of student evaluation credits purchased, granted, and consumed.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "amount": { "type": "number" },
+        "source": { "type": "string" },
+        "balance_after": { "type": "number" },
+        "evaluation_id": { "type": "string" },
+        "payment_order_id": { "type": "string" },
+        "note": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "student_id", "amount", "source"]
+    },
+    "PaymentOrder": {
+      "title": "PaymentOrder",
+      "description": "Online payment records and credit purchase orders.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "plan_id": { "type": "string" },
+        "amount_inr": { "type": "number" },
+        "credits": { "type": "number" },
+        "status": { "type": "string" },
+        "razorpay_order_id": { "type": "string" },
+        "razorpay_payment_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "student_id", "amount_inr", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System and administrative action audit trail.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "action": { "type": "string" },
+        "entity_type": { "type": "string" },
+        "entity_id": { "type": "string" },
+        "details": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "action", "entity_type"]
+    },
+    "FileStorageMetadata": {
+      "title": "FileStorageMetadata",
+      "description": "Structured metadata and Firebase Cloud Storage reference for uploaded and generated PDF documents.",
+      "type": "object",
+      "properties": {
+        "fileId": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "originalFilename": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "number" },
+        "ownerUserId": { "type": "string" },
+        "instituteId": { "type": "string" },
+        "materialId": { "type": "string" },
+        "evaluationId": { "type": "string" },
+        "uploadTimestamp": { "type": "string", "format": "date-time" },
+        "version": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "PENDING_STORAGE_PROVISIONING", "STORAGE_UNAVAILABLE", "ARCHIVED", "DELETED"] },
+        "checksum": { "type": "string" }
+      },
+      "required": ["fileId", "storagePath", "originalFilename", "mimeType", "size", "ownerUserId", "uploadTimestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "All system users including super admin, institute admins, faculty, and students."
+    },
+    "/student_profiles/{userId}": {
+      "schema": { "$ref": "#/entities/StudentProfile" },
+      "description": "Student profile metadata and personal evaluation credits."
+    },
+    "/institutes/{instituteId}": {
+      "schema": { "$ref": "#/entities/Institute" },
+      "description": "CA coaching institutes and academies."
+    },
+    "/batches/{batchId}": {
+      "schema": { "$ref": "#/entities/Batch" },
+      "description": "Batches and academic groups within institutes."
+    },
+    "/institute_memberships/{membershipId}": {
+      "schema": { "$ref": "#/entities/InstituteMembership" },
+      "description": "Student enrollment linkages to coaching institutes."
+    },
+    "/evaluation_materials/{materialId}": {
+      "schema": { "$ref": "#/entities/EvaluationMaterial" },
+      "description": "ICAI reference question papers, model answers, and marking rubrics."
+    },
+    "/institute_materials/{materialId}": {
+      "schema": { "$ref": "#/entities/InstituteMaterial" },
+      "description": "Institute proprietary tests and answer keys."
+    },
+    "/evaluations/{evaluationId}": {
+      "schema": { "$ref": "#/entities/Evaluation" },
+      "description": "Student evaluated answer sheets, scores, and examiner feedback."
+    },
+    "/credit_ledger/{ledgerId}": {
+      "schema": { "$ref": "#/entities/CreditLedger" },
+      "description": "Immutable ledger of credit transactions."
+    },
+    "/payment_orders/{orderId}": {
+      "schema": { "$ref": "#/entities/PaymentOrder" },
+      "description": "Orders for purchasing evaluation credits."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit trail for system actions."
+    },
+    "/file_storage_metadata/{fileId}": {
+      "schema": { "$ref": "#/entities/FileStorageMetadata" },
+      "description": "Structured metadata and Cloud Storage references for stored PDF and document files."
+    }
+  }
+}

@@ -19,6 +19,8 @@ import {
   getValidStudentCreditBalance,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
+import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
+import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 
 const router = Router();
 
@@ -646,6 +648,20 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
 
       const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
       fs.writeFileSync(originalFilePath, pdfBuf);
+
+      // Persist to Firebase Cloud Storage (Metadata in Cloud Firestore)
+      savePersistentFile(
+        `${evaluationId}_original`,
+        `${evaluationId}_original.pdf`,
+        'application/pdf',
+        pdfBuf,
+        'EVALUATION_ORIGINAL',
+        {
+          ownerUserId: req.user!.id,
+          evaluationId,
+          instituteId: (req.user as any)?.instituteId || null,
+        }
+      ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
     } catch (saveErr) {
       console.warn('Could not cache original file to disk:', saveErr);
     }
@@ -775,6 +791,20 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
       fs.writeFileSync(checkedFilePath, checkedPdfBuf);
       checkedCopyStatus = 'GENERATED';
+
+      // Persist checked copy to Firebase Cloud Storage
+      savePersistentFile(
+        `${evaluationId}_checked_copy`,
+        `${evaluationId}_checked_copy.pdf`,
+        'application/pdf',
+        checkedPdfBuf,
+        'EVALUATION_CHECKED_COPY',
+        {
+          ownerUserId: req.user!.id,
+          evaluationId,
+          instituteId: (req.user as any)?.instituteId || null,
+        }
+      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
     } catch (annErr) {
       console.warn('Could not pre-generate checked copy PDF in background:', annErr);
     }
@@ -837,6 +867,16 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       checkedCopyStatus,
       evaluationId
     );
+
+    // Sync completed evaluation to Cloud Firestore
+    try {
+      const completedEvalRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      if (completedEvalRow) {
+        syncRecordToFirestore('evaluations', evaluationId, completedEvalRow as any);
+      }
+    } catch (syncErr) {
+      console.warn('[StudentRoutes] Error syncing completed evaluation to Firestore:', syncErr);
+    }
 
     // Step H: Consume Credit / Quota ONLY ON SUCCESS
     if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
@@ -1174,6 +1214,12 @@ router.get(
       const roleStr = String(userRole);
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
         record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
+        record = db.prepare(`
+          SELECT e.* FROM evaluations e
+          LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
+          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
       } else {
         record = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
       }
@@ -1206,6 +1252,14 @@ router.get(
         return res.send(cachedCheckedBuffer);
       }
 
+      // Check persistent cloud storage
+      const persistentChecked = await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`);
+      if (persistentChecked && persistentChecked.buffer) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}.pdf"`);
+        return res.send(persistentChecked.buffer);
+      }
+
       let resultJson: any = null;
       if (record.result_json) {
         try {
@@ -1220,30 +1274,36 @@ router.get(
       if (fs.existsSync(originalFilePath)) {
         originalPdfBuffer = fs.readFileSync(originalFilePath);
       } else {
-        // If original PDF is not on disk (e.g. server restart), dynamically generate candidate submission sheets
-        const studentRowForCopy = db.prepare('SELECT full_name FROM users WHERE id = ?').get(record.student_id) as any;
-        originalPdfBuffer = await generateOriginalSubmissionPdf(
-          {
-            id: record.id,
-            studentName: studentRowForCopy?.full_name || 'CA Student',
-            level: record.level,
-            subjectName: record.subject_name,
-            paper: record.paper,
-            attempt: record.attempt,
-            checkingMode: record.checking_mode,
-            totalMarks: record.total_marks,
-            maximumMarks: record.maximum_marks,
-            percentage: record.percentage,
-            grade: record.grade,
-            createdAt: record.created_at,
-          },
-          resultJson
-        );
-        try {
-          if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-          fs.writeFileSync(originalFilePath, originalPdfBuffer);
-        } catch {
-          // ignore
+        // Check persistent cloud store before regenerating
+        const persistentOrig = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
+        if (persistentOrig && persistentOrig.buffer) {
+          originalPdfBuffer = persistentOrig.buffer;
+        } else {
+          // If original PDF is not on disk or cloud, dynamically generate candidate submission sheets
+          const studentRowForCopy = db.prepare('SELECT full_name FROM users WHERE id = ?').get(record.student_id) as any;
+          originalPdfBuffer = await generateOriginalSubmissionPdf(
+            {
+              id: record.id,
+              studentName: studentRowForCopy?.full_name || 'CA Student',
+              level: record.level,
+              subjectName: record.subject_name,
+              paper: record.paper,
+              attempt: record.attempt,
+              checkingMode: record.checking_mode,
+              totalMarks: record.total_marks,
+              maximumMarks: record.maximum_marks,
+              percentage: record.percentage,
+              grade: record.grade,
+              createdAt: record.created_at,
+            },
+            resultJson
+          );
+          try {
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(originalFilePath, originalPdfBuffer);
+          } catch {
+            // ignore
+          }
         }
       }
 
@@ -1313,6 +1373,12 @@ router.get(
       const roleStr = String(userRole);
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
         record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
+        record = db.prepare(`
+          SELECT e.* FROM evaluations e
+          LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
+          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
       } else {
         record = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
       }
@@ -1377,6 +1443,20 @@ router.get(
         resultJson
       );
 
+      // Persist generated report to Firebase Cloud Storage
+      savePersistentFile(
+        `${evaluationId}_report`,
+        `Evaluation_Report_${evaluationId}.pdf`,
+        'application/pdf',
+        reportBuffer,
+        'EVALUATION_REPORT',
+        {
+          ownerUserId: record.student_id,
+          evaluationId,
+          instituteId: record.institute_id || null,
+        }
+      ).catch((e) => console.warn('[StudentRoutes] Report persist note:', e));
+
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
       return res.send(reportBuffer);
@@ -1428,6 +1508,14 @@ router.get(
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${evaluationId}.pdf`}"`);
       return res.sendFile(originalFilePath);
+    }
+
+    // Check persistent cloud storage
+    const persistentOriginal = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
+    if (persistentOriginal && persistentOriginal.buffer) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${evaluationId}.pdf`}"`);
+      return res.send(persistentOriginal.buffer);
     }
 
     // Check if alternate image file format exists
@@ -2522,6 +2610,18 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
+    savePersistentFile(
+      `${evaluationId}_original`,
+      `${evaluationId}_original.pdf`,
+      'application/pdf',
+      pdfBuf,
+      'EVALUATION_ORIGINAL',
+      {
+        ownerUserId: studentId,
+        evaluationId,
+        instituteId: test.institute_id || null,
+      }
+    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
 
     // Initial evaluation record (100% Institute Sponsored, zero student credit deduction)
     db.prepare(`
@@ -2593,6 +2693,18 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
       fs.writeFileSync(checkedFilePath, checkedPdfBuf);
       checkedCopyStatus = 'GENERATED';
+      savePersistentFile(
+        `${evaluationId}_checked_copy`,
+        `${evaluationId}_checked_copy.pdf`,
+        'application/pdf',
+        checkedPdfBuf,
+        'EVALUATION_CHECKED_COPY',
+        {
+          ownerUserId: studentId,
+          evaluationId,
+          instituteId: test.institute_id || null,
+        }
+      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
     } catch (annErr) {
       console.warn('Could not pre-generate checked copy for institute test:', annErr);
     }
@@ -2717,6 +2829,18 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
+    savePersistentFile(
+      `${evaluationId}_original`,
+      `${evaluationId}_original.pdf`,
+      'application/pdf',
+      pdfBuf,
+      'EVALUATION_ORIGINAL',
+      {
+        ownerUserId: studentId,
+        evaluationId,
+        instituteId: material.institute_id || null,
+      }
+    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
 
     // Initial evaluation record (100% Institute Sponsored, zero student credit deduction)
     db.prepare(`
@@ -2786,6 +2910,18 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
       fs.writeFileSync(checkedFilePath, checkedPdfBuf);
       checkedCopyStatus = 'GENERATED';
+      savePersistentFile(
+        `${evaluationId}_checked_copy`,
+        `${evaluationId}_checked_copy.pdf`,
+        'application/pdf',
+        checkedPdfBuf,
+        'EVALUATION_CHECKED_COPY',
+        {
+          ownerUserId: studentId,
+          evaluationId,
+          instituteId: material.institute_id || null,
+        }
+      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
     } catch (annErr) {
       console.warn('Could not pre-generate checked copy for institute material:', annErr);
     }

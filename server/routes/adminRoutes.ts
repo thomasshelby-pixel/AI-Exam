@@ -24,6 +24,8 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
+import { permanentlyDeleteFromFirestore } from '../services/firestoreSyncService.js';
+import { deleteMaterialCloudFiles } from '../services/persistentStorageService.js';
 
 const router = Router();
 
@@ -710,6 +712,16 @@ router.delete('/materials/:id', (req: AuthRequest, res: Response) => {
     }
 
     db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(req.params.id);
+
+    // Delete associated files from Firebase Cloud Storage and permanently tombstone from Firestore
+    try {
+      permanentlyDeleteFromFirestore('evaluation_materials', req.params.id, 'Administrative material deletion');
+      deleteMaterialCloudFiles(req.params.id).catch((e) => {
+        console.warn('[AdminRoutes] Warning deleting Cloud Storage files for material:', e);
+      });
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Warning during material cloud storage deletion:', fsErr);
+    }
 
     // Audit log
     db.prepare(`
@@ -3240,6 +3252,30 @@ router.post('/mcq-scoring-rules/reset-defaults', (req: AuthRequest, res: Respons
   } catch (error: unknown) {
     console.error('Reset MCQ scoring rules error:', error);
     return res.status(500).json({ error: 'Failed to reset MCQ scoring rules' });
+  }
+});
+
+// Cloud Storage Inspection & Verification (Architecture Requirement)
+router.get('/cloud-storage/status', async (req: AuthRequest, res: Response) => {
+  try {
+    const { inspectCloudStorageStatus } = await import('../services/firebaseCloudStorageService.js');
+    const status = await inspectCloudStorageStatus();
+    return res.json({ success: true, ...status });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return res.status(500).json({ error: 'Failed to inspect Cloud Storage status', details: msg });
+  }
+});
+
+// Run End-to-End Cloud Storage Persistence Test
+router.post('/cloud-storage/test-e2e', async (req: AuthRequest, res: Response) => {
+  try {
+    const { runEndToEndPersistenceTest } = await import('../scripts/testE2ECloudStorage.js');
+    const testResult = await runEndToEndPersistenceTest();
+    return res.json({ success: testResult.success, ...testResult });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return res.status(500).json({ success: false, error: 'E2E test failed', details: msg });
   }
 });
 

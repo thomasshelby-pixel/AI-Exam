@@ -1,0 +1,18 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // SECURE DEFAULT-DENY:
+    // Block all direct client, browser, and unauthenticated public read/write requests.
+    // In CA Exam Checker AI, all student answer sheets, evaluation reports, checked copies,
+    // and institute proprietary materials are strictly private.
+    // All file uploads, downloads, deletions, and retrievals are exclusively mediated by the
+    // authenticated Node.js/Express backend using privileged Google Cloud Storage access.
+    // The backend verifies application JWT tokens, user identities, roles (SUPER_ADMIN,
+    // STUDENT, INSTITUTE_ADMIN, FACULTY), student ownership, and institute boundaries
+    // before any storage operation is performed.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

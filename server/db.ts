@@ -2319,6 +2319,19 @@ Trading Account Gross Profit: ₹1,85,400 [6 Marks]. Net Profit: ₹1,12,600 [7 
 }
 
 function seedSampleInstitute() {
+  const seedDone = db.prepare("SELECT value FROM pricing_settings WHERE key = 'SYSTEM_INITIAL_SEED_DONE'").get() as { value: string } | undefined;
+  if (seedDone && seedDone.value === 'true') {
+    // Startup must NEVER re-insert demo/test records that were previously deleted
+    return;
+  }
+
+  // Check if demo institute or demo student were previously deleted
+  const wasDeleted = db.prepare("SELECT id FROM audit_logs WHERE (entity_id = 'inst_apex_academy_01' OR entity_id = 'usr_student_demo_001') AND action LIKE '%DELETE%'").get();
+  if (wasDeleted) {
+    db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
+    return;
+  }
+
   const instId = 'inst_apex_academy_01';
   const existing = db.prepare('SELECT id FROM institutes WHERE id = ?').get(instId);
   if (!existing) {
@@ -2432,5 +2445,11 @@ function seedSampleInstitute() {
     }
   } catch (err) {
     console.warn('Institute subscription check warning:', err);
+  }
+
+  try {
+    db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
+  } catch (err) {
+    // ignore
   }
 }

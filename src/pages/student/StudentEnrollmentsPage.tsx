@@ -66,14 +66,14 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
 }) => {
   const [enrollments, setEnrollments] = useState<EnrolledInstitute[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   // Join Institute Modal
   const [isJoinModalOpen, setIsJoinModalOpen] = useState<boolean>(false);
   const [instituteCodeInput, setInstituteCodeInput] = useState<string>('');
   const [isJoining, setIsJoining] = useState<boolean>(false);
-  const [joinModalError, setJoinModalError] = useState<string | null>(null);
-  const [joinModalSuccess, setJoinModalSuccess] = useState<string | null>(null);
+  const [joinModalError, setJoinModalError] = useState<string>('');
+  const [joinModalSuccess, setJoinModalSuccess] = useState<string>('');
 
   // Material inspection drawer/modal
   const [selectedInstituteForMaterials, setSelectedInstituteForMaterials] = useState<EnrolledInstitute | null>(null);
@@ -81,7 +81,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
   const fetchEnrollments = async () => {
     try {
       setIsLoading(true);
-      setErrorMessage(null);
+      setErrorMessage('');
       const res = await apiRequest<{
         success: boolean;
         enrollments: EnrolledInstitute[];
@@ -109,8 +109,8 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
 
     try {
       setIsJoining(true);
-      setJoinModalError(null);
-      setJoinModalSuccess(null);
+      setJoinModalError('');
+      setJoinModalSuccess('');
 
       const res = await apiRequest<{
         success: boolean;
@@ -126,7 +126,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
       await fetchEnrollments();
       setTimeout(() => {
         setIsJoinModalOpen(false);
-        setJoinModalSuccess(null);
+        setJoinModalSuccess('');
       }, 1500);
     } catch (err: any) {
       console.error('Failed to join institute:', err);
@@ -176,8 +176,8 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
-              setJoinModalError(null);
-              setJoinModalSuccess(null);
+              setJoinModalError('');
+              setJoinModalSuccess('');
               setInstituteCodeInput('');
               setIsJoinModalOpen(true);
             }}

@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.role == 'SUPER_ADMIN' ||
+         request.auth.token.email in ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com']);
+    }
+
+    // Default deny for unmatched documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Student Profiles
+    match /student_profiles/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Institutes & Batches
+    match /institutes/{instituteId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /batches/{batchId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /institute_memberships/{membershipId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // ICAI Reference Materials & Marking Schemes
+    match /evaluation_materials/{materialId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Institute Proprietary Materials
+    match /institute_materials/{materialId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Evaluations
+    match /evaluations/{evaluationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Credit Ledger (Append-only immutable audit trail)
+    match /credit_ledger/{ledgerId} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
+
+    // Payment Orders
+    match /payment_orders/{orderId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // System Audit Logs (Append-only immutable audit trail)
+    match /audit_logs/{logId} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
+
+    // Permanent Deletion Tombstones
+    match /tombstones/{tombstoneId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Persistent Cloud File Metadata & References (Binary is stored in Firebase Cloud Storage)
+    match /file_storage_metadata/{fileId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

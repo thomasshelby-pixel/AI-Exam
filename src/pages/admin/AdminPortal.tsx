@@ -2339,10 +2339,11 @@ export const AdminPortal: React.FC = () => {
                                             setDeleteEvalCustomReason('');
                                             setDeleteEvalError(null);
                                           }}
-                                          className="p-1.5 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition cursor-pointer"
+                                          className="px-2 py-1 rounded-md border border-rose-200 hover:border-rose-400 hover:bg-rose-50 text-rose-600 font-semibold transition cursor-pointer flex items-center gap-1 text-[11px]"
                                           title="Permanently Delete Evaluation (Super Admin)"
                                         >
-                                          <Trash2 className="w-3.5 h-3.5" />
+                                          <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                          <span>Delete</span>
                                         </button>
                                       )}
                                     </div>
