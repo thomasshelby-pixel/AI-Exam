@@ -1093,6 +1093,20 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
     }
 
     if (!record) {
+      const wasDeleted = db.prepare(`
+        SELECT details, created_at FROM audit_logs
+        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        ORDER BY created_at DESC LIMIT 1
+      `).get(evaluationId);
+
+      if (wasDeleted) {
+        return res.status(404).json({
+          error: 'Evaluation no longer exists.',
+          code: 'EVALUATION_DELETED',
+          message: 'This evaluation record was permanently removed by Super Admin.'
+        });
+      }
+
       return res.status(404).json({ error: 'Evaluation report not found.' });
     }
 
@@ -1165,6 +1179,19 @@ router.get(
       }
 
       if (!record) {
+        const wasDeleted = db.prepare(`
+          SELECT details, created_at FROM audit_logs
+          WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+          ORDER BY created_at DESC LIMIT 1
+        `).get(evaluationId);
+
+        if (wasDeleted) {
+          return res.status(404).json({
+            error: 'Evaluation no longer exists.',
+            code: 'EVALUATION_DELETED',
+            message: 'This evaluation record was permanently removed by Super Admin.'
+          });
+        }
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
@@ -1291,6 +1318,19 @@ router.get(
       }
 
       if (!record) {
+        const wasDeleted = db.prepare(`
+          SELECT details, created_at FROM audit_logs
+          WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+          ORDER BY created_at DESC LIMIT 1
+        `).get(evaluationId);
+
+        if (wasDeleted) {
+          return res.status(404).json({
+            error: 'Evaluation no longer exists.',
+            code: 'EVALUATION_DELETED',
+            message: 'This evaluation record was permanently removed by Super Admin.'
+          });
+        }
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
@@ -1365,6 +1405,19 @@ router.get(
     }
 
     if (!record) {
+      const wasDeleted = db.prepare(`
+        SELECT details, created_at FROM audit_logs
+        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        ORDER BY created_at DESC LIMIT 1
+      `).get(evaluationId);
+
+      if (wasDeleted) {
+        return res.status(404).json({
+          error: 'Evaluation no longer exists.',
+          code: 'EVALUATION_DELETED',
+          message: 'This evaluation record was permanently removed by Super Admin.'
+        });
+      }
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 

@@ -148,6 +148,33 @@ export const AdminPortal: React.FC = () => {
   // Evaluations
   const [evaluationsList, setEvaluationsList] = useState<any[]>([]);
   const [selectedEvalDetail, setSelectedEvalDetail] = useState<any>(null);
+  const [evalSearch, setEvalSearch] = useState<string>('');
+  const [evalLevelFilter, setEvalLevelFilter] = useState<string>('ALL');
+  const [evalStatusFilter, setEvalStatusFilter] = useState<string>('ALL');
+  const [evalClassificationFilter, setEvalClassificationFilter] = useState<string>('ALL');
+  const [evalSourceFilter, setEvalSourceFilter] = useState<string>('ALL');
+
+  // Single evaluation delete modal
+  const [deleteEvalModal, setDeleteEvalModal] = useState<{ evaluation: any } | null>(null);
+  const [deleteEvalConfirmText, setDeleteEvalConfirmText] = useState<string>('');
+  const [deleteEvalReason, setDeleteEvalReason] = useState<string>('Testing / Development cleanup');
+  const [deleteEvalCustomReason, setDeleteEvalCustomReason] = useState<string>('');
+  const [isDeletingEval, setIsDeletingEval] = useState<boolean>(false);
+  const [deleteEvalError, setDeleteEvalError] = useState<string | null>(null);
+
+  // Bulk evaluations delete modal
+  const [selectedEvaluationIds, setSelectedEvaluationIds] = useState<string[]>([]);
+  const [bulkDeleteEvalModalOpen, setBulkDeleteEvalModalOpen] = useState<boolean>(false);
+  const [bulkDeleteEvalConfirmText, setBulkDeleteEvalConfirmText] = useState<string>('');
+  const [bulkDeleteEvalReason, setBulkDeleteEvalReason] = useState<string>('Testing / Development cleanup');
+  const [bulkDeleteEvalCustomReason, setBulkDeleteEvalCustomReason] = useState<string>('');
+  const [isBulkDeletingEval, setIsBulkDeletingEval] = useState<boolean>(false);
+  const [bulkDeleteEvalError, setBulkDeleteEvalError] = useState<string | null>(null);
+
+  // View evaluation inspection details modal
+  const [viewEvaluationModal, setViewEvaluationModal] = useState<any | null>(null);
+  const [isLoadingEvaluationDetails, setIsLoadingEvaluationDetails] = useState<boolean>(false);
+  const [viewEvaluationDetailsError, setViewEvaluationDetailsError] = useState<string | null>(null);
 
   // Pricing
   const [pricingSettings, setPricingSettings] = useState<any>({});
@@ -163,10 +190,30 @@ export const AdminPortal: React.FC = () => {
   const [paymentsList, setPaymentsList] = useState<any[]>([]);
   const [paymentSearch, setPaymentSearch] = useState<string>('');
   const [paymentClassificationFilter, setPaymentClassificationFilter] = useState<string>('ALL');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('ALL');
+  
+  // Single delete modal
   const [deletePaymentModal, setDeletePaymentModal] = useState<{ order: any } | null>(null);
   const [deletePaymentConfirmText, setDeletePaymentConfirmText] = useState<string>('');
+  const [deletePaymentReason, setDeletePaymentReason] = useState<string>('Testing');
+  const [deletePaymentCustomReason, setDeletePaymentCustomReason] = useState<string>('');
   const [isDeletingPayment, setIsDeletingPayment] = useState<boolean>(false);
   const [deletePaymentError, setDeletePaymentError] = useState<string | null>(null);
+
+  // Bulk selection & bulk delete modal
+  const [selectedPaymentOrderIds, setSelectedPaymentOrderIds] = useState<string[]>([]);
+  const [bulkDeletePaymentModalOpen, setBulkDeletePaymentModalOpen] = useState<boolean>(false);
+  const [bulkDeletePaymentConfirmText, setBulkDeletePaymentConfirmText] = useState<string>('');
+  const [bulkDeletePaymentReason, setBulkDeletePaymentReason] = useState<string>('Testing');
+  const [bulkDeletePaymentCustomReason, setBulkDeletePaymentCustomReason] = useState<string>('');
+  const [isBulkDeletingPayment, setIsBulkDeletingPayment] = useState<boolean>(false);
+  const [bulkDeletePaymentError, setBulkDeletePaymentError] = useState<string | null>(null);
+
+  // View order details modal
+  const [viewPaymentOrderModal, setViewPaymentOrderModal] = useState<any | null>(null);
+  const [isLoadingOrderDetails, setIsLoadingOrderDetails] = useState<boolean>(false);
+  const [viewOrderDetailsError, setViewOrderDetailsError] = useState<string | null>(null);
+
   const [subscriptionsList, setSubscriptionsList] = useState<any[]>([]);
 
   // Analytics, Notifications, Support, Free-Access, Settings, Audit-Logs
@@ -264,7 +311,13 @@ export const AdminPortal: React.FC = () => {
           break;
         }
         case 'evaluations': {
-          const res = await apiRequest<{ evaluations: any[] }>('/api/admin/evaluations');
+          const queryParams = new URLSearchParams();
+          if (evalSearch.trim()) queryParams.set('search', evalSearch.trim());
+          if (evalLevelFilter !== 'ALL') queryParams.set('level', evalLevelFilter);
+          if (evalStatusFilter !== 'ALL') queryParams.set('status', evalStatusFilter);
+          if (evalClassificationFilter !== 'ALL') queryParams.set('classification', evalClassificationFilter);
+          if (evalSourceFilter !== 'ALL') queryParams.set('source', evalSourceFilter);
+          const res = await apiRequest<{ evaluations: any[] }>(`/api/admin/evaluations?${queryParams.toString()}`);
           setEvaluationsList(res.evaluations || []);
           break;
         }
@@ -341,7 +394,20 @@ export const AdminPortal: React.FC = () => {
     if (isAuthenticated && (user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN')) {
       loadActiveSectionData();
     }
-  }, [activeSection, revocationStatusFilter, studentSearch, studentLevelFilter, studentClassificationFilter, isAuthenticated, user]);
+  }, [
+    activeSection,
+    revocationStatusFilter,
+    studentSearch,
+    studentLevelFilter,
+    studentClassificationFilter,
+    evalSearch,
+    evalLevelFilter,
+    evalStatusFilter,
+    evalClassificationFilter,
+    evalSourceFilter,
+    isAuthenticated,
+    user,
+  ]);
 
   // Handle User Status toggle
   const handleToggleUserStatus = async (targetUser: any) => {
@@ -578,7 +644,22 @@ export const AdminPortal: React.FC = () => {
     }
   };
 
-  // Permanently Delete Test Payment Order (Super Admin Only)
+  // View Order Details
+  const handleViewOrderDetails = async (orderId: string) => {
+    setIsLoadingOrderDetails(true);
+    setViewOrderDetailsError(null);
+    try {
+      const res = await apiRequest<{ order: any }>(`/api/admin/payments/orders/${orderId}`);
+      setViewPaymentOrderModal(res.order);
+    } catch (err: any) {
+      setViewOrderDetailsError(err instanceof Error ? err.message : 'Failed to load order details');
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to load order details');
+    } finally {
+      setIsLoadingOrderDetails(false);
+    }
+  };
+
+  // Permanently Delete Single Payment Order (Super Admin)
   const handlePermanentlyDeletePayment = async () => {
     if (!deletePaymentModal) return;
     if (deletePaymentConfirmText.trim() !== 'DELETE') {
@@ -589,20 +670,181 @@ export const AdminPortal: React.FC = () => {
     setIsDeletingPayment(true);
     setDeletePaymentError(null);
 
+    const finalReason = deletePaymentReason === 'Other' && deletePaymentCustomReason.trim()
+      ? `Other: ${deletePaymentCustomReason.trim()}`
+      : deletePaymentReason;
+
     try {
       const res = await apiRequest<{ success: boolean; message: string }>(
         `/api/admin/payments/orders/${deletePaymentModal.order.id}`,
-        { method: 'DELETE' }
+        {
+          method: 'DELETE',
+          body: JSON.stringify({
+            reason: finalReason,
+            notes: deletePaymentCustomReason.trim(),
+          }),
+        }
       );
 
-      setSuccessMsg(res.message || `Test payment order ${deletePaymentModal.order.id} deleted successfully.`);
+      setSuccessMsg(res.message || `Payment order ${deletePaymentModal.order.id} deleted successfully.`);
+      const deletedId = deletePaymentModal.order.id;
       setDeletePaymentModal(null);
       setDeletePaymentConfirmText('');
+      setDeletePaymentReason('Testing');
+      setDeletePaymentCustomReason('');
+      if (viewPaymentOrderModal?.id === deletedId) {
+        setViewPaymentOrderModal(null);
+      }
+      setSelectedPaymentOrderIds((prev) => prev.filter((id) => id !== deletedId));
       loadActiveSectionData();
     } catch (err: any) {
       setDeletePaymentError(err instanceof Error ? err.message : 'Failed to delete payment order');
     } finally {
       setIsDeletingPayment(false);
+    }
+  };
+
+  // Bulk Delete Payment Orders (Super Admin)
+  const handleBulkDeletePayments = async () => {
+    if (selectedPaymentOrderIds.length === 0) return;
+    if (bulkDeletePaymentConfirmText.trim() !== 'DELETE') {
+      setBulkDeletePaymentError('You must type DELETE exactly to confirm bulk deletion.');
+      return;
+    }
+
+    setIsBulkDeletingPayment(true);
+    setBulkDeletePaymentError(null);
+
+    const finalReason = bulkDeletePaymentReason === 'Other' && bulkDeletePaymentCustomReason.trim()
+      ? `Other: ${bulkDeletePaymentCustomReason.trim()}`
+      : bulkDeletePaymentReason;
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string; deletedCount: number }>(
+        '/api/admin/payments/orders/bulk-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            orderIds: selectedPaymentOrderIds,
+            reason: finalReason,
+            notes: bulkDeletePaymentCustomReason.trim(),
+          }),
+        }
+      );
+
+      setSuccessMsg(res.message || `Successfully deleted ${res.deletedCount} payment orders.`);
+      setBulkDeletePaymentModalOpen(false);
+      setBulkDeletePaymentConfirmText('');
+      setBulkDeletePaymentReason('Testing');
+      setBulkDeletePaymentCustomReason('');
+      setSelectedPaymentOrderIds([]);
+      loadActiveSectionData();
+    } catch (err: any) {
+      setBulkDeletePaymentError(err instanceof Error ? err.message : 'Failed to bulk delete payment orders');
+    } finally {
+      setIsBulkDeletingPayment(false);
+    }
+  };
+
+  // View Evaluation Inspection Details (Super Admin & Admin)
+  const handleViewEvaluationDetails = async (evaluationId: string) => {
+    setIsLoadingEvaluationDetails(true);
+    setViewEvaluationDetailsError(null);
+    try {
+      const res = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/details`);
+      setViewEvaluationModal(res);
+    } catch (err: any) {
+      setViewEvaluationDetailsError(err instanceof Error ? err.message : 'Failed to load evaluation details');
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to load evaluation details');
+    } finally {
+      setIsLoadingEvaluationDetails(false);
+    }
+  };
+
+  // Permanently Delete Single Evaluation (Super Admin only)
+  const handlePermanentlyDeleteEvaluation = async () => {
+    if (!deleteEvalModal) return;
+    if (deleteEvalConfirmText.trim() !== 'DELETE') {
+      setDeleteEvalError('You must type DELETE exactly to confirm permanent deletion.');
+      return;
+    }
+
+    setIsDeletingEval(true);
+    setDeleteEvalError(null);
+
+    const finalReason = deleteEvalReason === 'Other' && deleteEvalCustomReason.trim()
+      ? `Other: ${deleteEvalCustomReason.trim()}`
+      : deleteEvalReason;
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        `/api/admin/evaluations/${deleteEvalModal.evaluation.id}`,
+        {
+          method: 'DELETE',
+          body: JSON.stringify({
+            reason: finalReason,
+            notes: deleteEvalCustomReason.trim(),
+          }),
+        }
+      );
+
+      setSuccessMsg(res.message || `Evaluation ${deleteEvalModal.evaluation.id} deleted successfully.`);
+      const deletedId = deleteEvalModal.evaluation.id;
+      setDeleteEvalModal(null);
+      setDeleteEvalConfirmText('');
+      setDeleteEvalReason('Testing / Development cleanup');
+      setDeleteEvalCustomReason('');
+      if (viewEvaluationModal?.evaluation?.id === deletedId) {
+        setViewEvaluationModal(null);
+      }
+      setSelectedEvaluationIds((prev) => prev.filter((id) => id !== deletedId));
+      loadActiveSectionData();
+    } catch (err: any) {
+      setDeleteEvalError(err instanceof Error ? err.message : 'Failed to delete evaluation');
+    } finally {
+      setIsDeletingEval(false);
+    }
+  };
+
+  // Bulk Delete Evaluations (Super Admin only)
+  const handleBulkDeleteEvaluations = async () => {
+    if (selectedEvaluationIds.length === 0) return;
+    if (bulkDeleteEvalConfirmText.trim() !== 'DELETE ALL') {
+      setBulkDeleteEvalError('You must type DELETE ALL exactly to confirm bulk deletion.');
+      return;
+    }
+
+    setIsBulkDeletingEval(true);
+    setBulkDeleteEvalError(null);
+
+    const finalReason = bulkDeleteEvalReason === 'Other' && bulkDeleteEvalCustomReason.trim()
+      ? `Other: ${bulkDeleteEvalCustomReason.trim()}`
+      : bulkDeleteEvalReason;
+
+    try {
+      const res = await apiRequest<{ success: boolean; message: string; deletedCount: number }>(
+        '/api/admin/evaluations/bulk-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            evaluationIds: selectedEvaluationIds,
+            reason: finalReason,
+            notes: bulkDeleteEvalCustomReason.trim(),
+          }),
+        }
+      );
+
+      setSuccessMsg(res.message || `Successfully deleted ${res.deletedCount} evaluations.`);
+      setBulkDeleteEvalModalOpen(false);
+      setBulkDeleteEvalConfirmText('');
+      setBulkDeleteEvalReason('Testing / Development cleanup');
+      setBulkDeleteEvalCustomReason('');
+      setSelectedEvaluationIds([]);
+      loadActiveSectionData();
+    } catch (err: any) {
+      setBulkDeleteEvalError(err instanceof Error ? err.message : 'Failed to bulk delete evaluations');
+    } finally {
+      setIsBulkDeletingEval(false);
     }
   };
 
@@ -1724,57 +1966,397 @@ export const AdminPortal: React.FC = () => {
               )}
 
               {/* 10. EVALUATIONS */}
-              {activeSection === 'evaluations' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Student Answer Sheet Evaluations</h3>
-                      <p className="text-xs text-slate-500">Real evaluation records across all students</p>
-                    </div>
-                    <span className="text-xs text-slate-500">{evaluationsList.length} records</span>
-                  </div>
+              {activeSection === 'evaluations' && (() => {
+                const filteredEvaluations = evaluationsList.filter((ev) => {
+                  const matchesSearch =
+                    !evalSearch.trim() ||
+                    (ev.id || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
+                    (ev.student_name || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
+                    (ev.student_email || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
+                    (ev.subject_name || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
+                    (ev.paper || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
+                    (ev.institute_name || '').toLowerCase().includes(evalSearch.toLowerCase());
+                  const matchesLevel = evalLevelFilter === 'ALL' || (ev.level || '').toUpperCase() === evalLevelFilter;
+                  const matchesStatus = evalStatusFilter === 'ALL' || (ev.status || '').toUpperCase() === evalStatusFilter;
+                  const matchesClassification =
+                    evalClassificationFilter === 'ALL' ||
+                    (ev.account_classification || 'NORMAL') === evalClassificationFilter;
+                  const matchesSource =
+                    evalSourceFilter === 'ALL' ||
+                    (ev.evaluation_source || 'PUBLIC') === evalSourceFilter;
+                  return matchesSearch && matchesLevel && matchesStatus && matchesClassification && matchesSource;
+                });
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                          <th className="py-2.5 px-3 font-bold">Evaluation ID</th>
-                          <th className="py-2.5 px-3 font-bold">Student</th>
-                          <th className="py-2.5 px-3 font-bold">Subject</th>
-                          <th className="py-2.5 px-3 font-bold">Marks</th>
-                          <th className="py-2.5 px-3 font-bold">Score %</th>
-                          <th className="py-2.5 px-3 font-bold">Status</th>
-                          <th className="py-2.5 px-3 font-bold">Date</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {evaluationsList.map((ev) => (
-                          <tr key={ev.id} className="hover:bg-slate-50/80">
-                            <td className="py-2.5 px-3 font-mono text-slate-500">{ev.id}</td>
-                            <td className="py-2.5 px-3">
-                              <p className="font-bold text-slate-800">{ev.student_name}</p>
-                              <p className="text-[10px] text-slate-400">{ev.student_email}</p>
-                            </td>
-                            <td className="py-2.5 px-3 font-medium">{ev.subject_name}</td>
-                            <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
-                              {ev.total_marks !== null ? `${ev.total_marks}/${ev.maximum_marks}` : '—'}
-                            </td>
-                            <td className="py-2.5 px-3 font-mono">{ev.percentage !== null ? `${ev.percentage}%` : '—'}</td>
-                            <td className="py-2.5 px-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                ev.status === 'COMPLETED' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                              }`}>
-                                {ev.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-400">{new Date(ev.created_at).toLocaleDateString()}</td>
+                const allVisibleSelected =
+                  filteredEvaluations.length > 0 &&
+                  filteredEvaluations.every((ev) => selectedEvaluationIds.includes(ev.id));
+                const someVisibleSelected =
+                  filteredEvaluations.some((ev) => selectedEvaluationIds.includes(ev.id)) && !allVisibleSelected;
+
+                const toggleSelectAll = () => {
+                  if (allVisibleSelected) {
+                    const visibleIds = new Set(filteredEvaluations.map((ev) => ev.id));
+                    setSelectedEvaluationIds((prev) => prev.filter((id) => !visibleIds.has(id)));
+                  } else {
+                    const visibleIds = filteredEvaluations.map((ev) => ev.id);
+                    setSelectedEvaluationIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                  }
+                };
+
+                const toggleSelectOne = (id: string) => {
+                  setSelectedEvaluationIds((prev) =>
+                    prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+                  );
+                };
+
+                const hasActiveFilters =
+                  evalSearch.trim() !== '' ||
+                  evalLevelFilter !== 'ALL' ||
+                  evalStatusFilter !== 'ALL' ||
+                  evalClassificationFilter !== 'ALL' ||
+                  evalSourceFilter !== 'ALL';
+
+                return (
+                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                          <FileCheck2 className="w-4 h-4 text-blue-600" />
+                          Student Answer Sheet Evaluations
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Audit, inspect, verify & permanently delete student evaluation records across all tiers
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-slate-500">
+                          {filteredEvaluations.length} of {evaluationsList.length} Evaluations
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Search & Filter Controls */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                        {/* Search Input */}
+                        <div className="lg:col-span-2 relative">
+                          <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Search student, email, ID, subject, paper..."
+                            value={evalSearch}
+                            onChange={(e) => setEvalSearch(e.target.value)}
+                            className="w-full pl-9 pr-8 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-hidden focus:border-blue-500 transition"
+                          />
+                          {evalSearch && (
+                            <button
+                              onClick={() => setEvalSearch('')}
+                              className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* CA Level Filter */}
+                        <div>
+                          <select
+                            value={evalLevelFilter}
+                            onChange={(e) => setEvalLevelFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                          >
+                            <option value="ALL">All CA Levels</option>
+                            <option value="FOUNDATION">CA Foundation</option>
+                            <option value="INTERMEDIATE">CA Intermediate</option>
+                            <option value="FINAL">CA Final</option>
+                          </select>
+                        </div>
+
+                        {/* Status Filter */}
+                        <div>
+                          <select
+                            value={evalStatusFilter}
+                            onChange={(e) => setEvalStatusFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                          >
+                            <option value="ALL">All Statuses</option>
+                            <option value="COMPLETED">Completed</option>
+                            <option value="PROCESSING">Processing</option>
+                            <option value="FAILED">Failed</option>
+                            <option value="PENDING">Pending</option>
+                          </select>
+                        </div>
+
+                        {/* Classification Filter (Test vs Normal) */}
+                        <div>
+                          <select
+                            value={evalClassificationFilter}
+                            onChange={(e) => setEvalClassificationFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-hidden focus:border-blue-500 cursor-pointer"
+                          >
+                            <option value="ALL">All Classifications</option>
+                            <option value="TEST">Test Records [TEST]</option>
+                            <option value="NORMAL">Production [NORMAL]</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Second Row: Source filter + Reset button */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-medium text-slate-500">Source:</span>
+                          <div className="flex items-center gap-1">
+                            {['ALL', 'PUBLIC', 'INSTITUTE'].map((src) => (
+                              <button
+                                key={src}
+                                onClick={() => setEvalSourceFilter(src)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer ${
+                                  evalSourceFilter === src
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                                }`}
+                              >
+                                {src === 'ALL' ? 'All Sources' : src === 'PUBLIC' ? 'Public Student' : 'Institute'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {hasActiveFilters && (
+                          <button
+                            onClick={() => {
+                              setEvalSearch('');
+                              setEvalLevelFilter('ALL');
+                              setEvalStatusFilter('ALL');
+                              setEvalClassificationFilter('ALL');
+                              setEvalSourceFilter('ALL');
+                            }}
+                            className="text-xs text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                            Reset All Filters
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Bulk Selection Bar */}
+                    {selectedEvaluationIds.length > 0 && (
+                      <div className="p-3 rounded-xl bg-blue-50/80 border border-blue-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+                          <span className="font-bold text-blue-900">
+                            {selectedEvaluationIds.length} evaluations selected
+                          </span>
+                          <button
+                            onClick={() => setSelectedEvaluationIds([])}
+                            className="text-[11px] text-blue-700 hover:text-blue-900 font-medium underline cursor-pointer ml-1"
+                          >
+                            Deselect all
+                          </button>
+                        </div>
+
+                        {user?.role === 'SUPER_ADMIN' && (
+                          <button
+                            onClick={() => {
+                              setBulkDeleteEvalModalOpen(true);
+                              setBulkDeleteEvalConfirmText('');
+                              setBulkDeleteEvalReason('Testing / Development cleanup');
+                              setBulkDeleteEvalCustomReason('');
+                              setBulkDeleteEvalError(null);
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete Selected ({selectedEvaluationIds.length})
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Evaluations Table */}
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                            <th className="py-2.5 px-3 w-8 text-center">
+                              <input
+                                type="checkbox"
+                                checked={allVisibleSelected}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = someVisibleSelected;
+                                }}
+                                onChange={toggleSelectAll}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                title="Select / deselect all visible evaluations"
+                              />
+                            </th>
+                            <th className="py-2.5 px-3 font-bold">Evaluation ID / Tags</th>
+                            <th className="py-2.5 px-3 font-bold">Student</th>
+                            <th className="py-2.5 px-3 font-bold">Subject & Paper</th>
+                            <th className="py-2.5 px-3 font-bold">Marks</th>
+                            <th className="py-2.5 px-3 font-bold">Score %</th>
+                            <th className="py-2.5 px-3 font-bold">Status</th>
+                            <th className="py-2.5 px-3 font-bold">Date</th>
+                            <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredEvaluations.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="py-8 text-center text-slate-400">
+                                No evaluations found matching the selected criteria.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredEvaluations.map((ev) => {
+                              const isSelected = selectedEvaluationIds.includes(ev.id);
+                              return (
+                                <tr
+                                  key={ev.id}
+                                  className={`transition ${
+                                    isSelected ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'
+                                  }`}
+                                >
+                                  {/* Checkbox */}
+                                  <td className="py-2.5 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleSelectOne(ev.id)}
+                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                    />
+                                  </td>
+
+                                  {/* Evaluation ID & Badges */}
+                                  <td className="py-2.5 px-3">
+                                    <div className="space-y-1">
+                                      <p className="font-mono font-medium text-slate-700">{ev.id}</p>
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        {ev.account_classification === 'TEST' && (
+                                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold">
+                                            TEST
+                                          </span>
+                                        )}
+                                        {ev.evaluation_source === 'INSTITUTE' || ev.institute_name ? (
+                                          <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[9px] font-bold truncate max-w-[120px]" title={ev.institute_name || 'Institute'}>
+                                            {ev.institute_name || 'INSTITUTE'}
+                                          </span>
+                                        ) : (
+                                          <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[9px] font-medium">
+                                            PUBLIC
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  {/* Student */}
+                                  <td className="py-2.5 px-3">
+                                    <p className="font-bold text-slate-800">{ev.student_name || '—'}</p>
+                                    <p className="text-[10px] text-slate-400 truncate max-w-[160px]" title={ev.student_email}>
+                                      {ev.student_email || '—'}
+                                    </p>
+                                    {ev.icai_registration_number && (
+                                      <span className="text-[9px] font-mono text-slate-500">
+                                        ICAI: {ev.icai_registration_number}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  {/* Subject & Paper */}
+                                  <td className="py-2.5 px-3">
+                                    <p className="font-semibold text-slate-800">{ev.subject_name || '—'}</p>
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-0.5">
+                                      <span className="font-medium text-blue-600">{ev.level}</span>
+                                      {ev.attempt && <span>• {ev.attempt}</span>}
+                                      {ev.paper && <span>• Paper {ev.paper}</span>}
+                                    </div>
+                                  </td>
+
+                                  {/* Marks */}
+                                  <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
+                                    {ev.total_marks !== null ? `${ev.total_marks}/${ev.maximum_marks || 100}` : '—'}
+                                  </td>
+
+                                  {/* Score % */}
+                                  <td className="py-2.5 px-3">
+                                    <div className="flex items-center gap-1 font-mono">
+                                      <span className="font-bold text-slate-800">
+                                        {ev.percentage !== null ? `${ev.percentage}%` : '—'}
+                                      </span>
+                                      {ev.grade && (
+                                        <span className="px-1 py-0.2 rounded bg-slate-100 text-slate-700 text-[9px] font-bold">
+                                          {ev.grade}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* Status */}
+                                  <td className="py-2.5 px-3">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                        ev.status === 'COMPLETED'
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                          : ev.status === 'FAILED'
+                                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      }`}
+                                    >
+                                      {ev.status}
+                                    </span>
+                                  </td>
+
+                                  {/* Date */}
+                                  <td className="py-2.5 px-3 text-slate-400 text-[11px] whitespace-nowrap">
+                                    {new Date(ev.created_at).toLocaleDateString()}
+                                  </td>
+
+                                  {/* Actions: View & Delete */}
+                                  <td className="py-2.5 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {/* View Details Action */}
+                                      <button
+                                        onClick={() => handleViewEvaluationDetails(ev.id)}
+                                        className="p-1.5 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50 text-slate-500 hover:text-blue-600 transition cursor-pointer"
+                                        title="View Evaluation Details"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+
+                                      {/* Super Admin Permanent Delete Action */}
+                                      {user?.role === 'SUPER_ADMIN' && (
+                                        <button
+                                          onClick={() => {
+                                            setDeleteEvalModal({ evaluation: ev });
+                                            setDeleteEvalConfirmText('');
+                                            setDeleteEvalReason(
+                                              ev.account_classification === 'TEST'
+                                                ? 'Testing / Development cleanup'
+                                                : 'Administrative cleanup'
+                                            );
+                                            setDeleteEvalCustomReason('');
+                                            setDeleteEvalError(null);
+                                          }}
+                                          className="p-1.5 rounded-lg border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-500 hover:text-rose-600 transition cursor-pointer"
+                                          title="Permanently Delete Evaluation (Super Admin)"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* 11. PRICING */}
               {activeSection === 'pricing' && (
@@ -1848,159 +2430,290 @@ export const AdminPortal: React.FC = () => {
               )}
 
               {/* 12. PAYMENTS */}
-              {activeSection === 'payments' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Razorpay Payment Orders & Transactions</h3>
-                      <p className="text-xs text-slate-500">Cryptographically verifiable transactions with statutory audit preservation</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-500">
-                        {paymentsList.filter((p) => {
-                          const matchesSearch =
-                            (p.razorpay_order_id || p.id || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                            (p.student_name || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                            (p.student_email || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                            (p.razorpay_payment_id || '').toLowerCase().includes(paymentSearch.toLowerCase());
-                          const matchesClassification =
-                            paymentClassificationFilter === 'ALL' ||
-                            (p.account_classification || 'NORMAL') === paymentClassificationFilter;
-                          return matchesSearch && matchesClassification;
-                        }).length} of {paymentsList.length} Orders
-                      </span>
-                    </div>
-                  </div>
+              {activeSection === 'payments' && (() => {
+                const filteredOrders = paymentsList.filter((p) => {
+                  const matchesSearch =
+                    !paymentSearch.trim() ||
+                    (p.razorpay_order_id || p.id || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                    (p.student_name || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                    (p.student_email || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
+                    (p.razorpay_payment_id || '').toLowerCase().includes(paymentSearch.toLowerCase());
+                  const matchesClassification =
+                    paymentClassificationFilter === 'ALL' ||
+                    (p.account_classification || 'NORMAL') === paymentClassificationFilter;
+                  const matchesStatus =
+                    paymentStatusFilter === 'ALL' ||
+                    (p.status || '').toUpperCase() === paymentStatusFilter;
+                  return matchesSearch && matchesClassification && matchesStatus;
+                });
 
-                  {/* Filter & Search Bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          placeholder="Search order ID, student, payment ID..."
-                          value={paymentSearch}
-                          onChange={(e) => setPaymentSearch(e.target.value)}
-                          className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 w-56 sm:w-72"
-                        />
+                const allVisibleSelected =
+                  filteredOrders.length > 0 &&
+                  filteredOrders.every((p) => selectedPaymentOrderIds.includes(p.id));
+                const someVisibleSelected =
+                  filteredOrders.some((p) => selectedPaymentOrderIds.includes(p.id)) && !allVisibleSelected;
+
+                const toggleSelectAll = () => {
+                  if (allVisibleSelected) {
+                    const visibleIds = new Set(filteredOrders.map((p) => p.id));
+                    setSelectedPaymentOrderIds((prev) => prev.filter((id) => !visibleIds.has(id)));
+                  } else {
+                    const visibleIds = filteredOrders.map((p) => p.id);
+                    setSelectedPaymentOrderIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                  }
+                };
+
+                const toggleSelectOne = (id: string) => {
+                  setSelectedPaymentOrderIds((prev) =>
+                    prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+                  );
+                };
+
+                return (
+                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                          <CreditCard className="w-4 h-4 text-blue-600" />
+                          Razorpay Payment Orders & Transactions
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Complete payment ledger management, verification & administrative record cleanup
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-slate-500">
+                          {filteredOrders.length} of {paymentsList.length} Orders
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Search order ID, student, payment ID..."
+                            value={paymentSearch}
+                            onChange={(e) => setPaymentSearch(e.target.value)}
+                            className="pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 w-56 sm:w-72"
+                          />
+                        </div>
+
+                        {/* Classification Filter */}
+                        <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                          <FlaskConical className="w-3 h-3 text-amber-500" />
+                          <span className="text-slate-500 text-[11px] font-medium">Type:</span>
+                          <select
+                            value={paymentClassificationFilter}
+                            onChange={(e) => setPaymentClassificationFilter(e.target.value)}
+                            className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                          >
+                            <option value="ALL">All Types</option>
+                            <option value="NORMAL">Production (Normal)</option>
+                            <option value="TEST">Test Orders</option>
+                          </select>
+                        </div>
+
+                        {/* Status Filter */}
+                        <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
+                          <Filter className="w-3 h-3 text-blue-500" />
+                          <span className="text-slate-500 text-[11px] font-medium">Status:</span>
+                          <select
+                            value={paymentStatusFilter}
+                            onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                            className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                          >
+                            <option value="ALL">All Statuses</option>
+                            <option value="SUCCESS">SUCCESS</option>
+                            <option value="PENDING">PENDING</option>
+                            <option value="FAILED">FAILED</option>
+                          </select>
+                        </div>
                       </div>
 
-                      {/* Classification Filter */}
-                      <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
-                        <FlaskConical className="w-3 h-3 text-amber-500" />
-                        <span className="text-slate-500 text-[11px] font-medium">Type:</span>
-                        <select
-                          value={paymentClassificationFilter}
-                          onChange={(e) => setPaymentClassificationFilter(e.target.value)}
-                          className="bg-transparent border-none text-xs font-semibold text-slate-700 focus:outline-hidden cursor-pointer"
+                      {(paymentSearch || paymentClassificationFilter !== 'ALL' || paymentStatusFilter !== 'ALL') && (
+                        <button
+                          onClick={() => {
+                            setPaymentSearch('');
+                            setPaymentClassificationFilter('ALL');
+                            setPaymentStatusFilter('ALL');
+                          }}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
                         >
-                          <option value="ALL">All Orders</option>
-                          <option value="NORMAL">Production (Statutory)</option>
-                          <option value="TEST">Test Orders</option>
-                        </select>
-                      </div>
+                          Reset Filters
+                        </button>
+                      )}
                     </div>
 
-                    {(paymentSearch || paymentClassificationFilter !== 'ALL') && (
-                      <button
-                        onClick={() => {
-                          setPaymentSearch('');
-                          setPaymentClassificationFilter('ALL');
-                        }}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
-                      >
-                        Reset Filters
-                      </button>
+                    {/* Bulk Selection Bar */}
+                    {selectedPaymentOrderIds.length > 0 && (
+                      <div className="flex items-center justify-between p-3 bg-rose-50/80 border border-rose-200 rounded-xl text-xs text-rose-900 transition-all">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span className="font-bold">
+                            {selectedPaymentOrderIds.length} {selectedPaymentOrderIds.length === 1 ? 'order' : 'orders'} selected
+                          </span>
+                          <span className="text-slate-500 font-normal">
+                            (Total amount: ₹{
+                              paymentsList
+                                .filter((p) => selectedPaymentOrderIds.includes(p.id))
+                                .reduce((sum, p) => sum + (p.amount_paise || 0) / 100, 0)
+                            })
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedPaymentOrderIds([])}
+                            className="px-2.5 py-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-lg font-semibold transition cursor-pointer"
+                          >
+                            Deselect All
+                          </button>
+                          <button
+                            onClick={() => {
+                              setBulkDeletePaymentModalOpen(true);
+                              setBulkDeletePaymentConfirmText('');
+                              setBulkDeletePaymentError(null);
+                              setBulkDeletePaymentReason('Testing');
+                              setBulkDeletePaymentCustomReason('');
+                            }}
+                            className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete Selected ({selectedPaymentOrderIds.length})
+                          </button>
+                        </div>
+                      </div>
                     )}
-                  </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                          <th className="py-2.5 px-3 font-bold">Order ID & Type</th>
-                          <th className="py-2.5 px-3 font-bold">Student</th>
-                          <th className="py-2.5 px-3 font-bold">Credits</th>
-                          <th className="py-2.5 px-3 font-bold">Amount (INR)</th>
-                          <th className="py-2.5 px-3 font-bold">Status</th>
-                          <th className="py-2.5 px-3 font-bold">Razorpay Payment ID</th>
-                          <th className="py-2.5 px-3 font-bold">Created At</th>
-                          <th className="py-2.5 px-3 font-bold text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {paymentsList
-                          .filter((p) => {
-                            const matchesSearch =
-                              (p.razorpay_order_id || p.id || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                              (p.student_name || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                              (p.student_email || '').toLowerCase().includes(paymentSearch.toLowerCase()) ||
-                              (p.razorpay_payment_id || '').toLowerCase().includes(paymentSearch.toLowerCase());
-                            const matchesClassification =
-                              paymentClassificationFilter === 'ALL' ||
-                              (p.account_classification || 'NORMAL') === paymentClassificationFilter;
-                            return matchesSearch && matchesClassification;
-                          })
-                          .map((p) => (
-                            <tr key={p.id} className="hover:bg-slate-50/80">
-                              <td className="py-2.5 px-3 font-mono text-slate-700">
-                                <div className="flex items-center gap-1.5">
-                                  <span>{p.razorpay_order_id || p.id}</span>
-                                  {p.account_classification === 'TEST' ? (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                                      TEST
-                                    </span>
-                                  ) : (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600">
-                                      PROD
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <p className="font-bold text-slate-900">{p.student_name}</p>
-                                <p className="text-[10px] text-slate-400">{p.student_email}</p>
-                              </td>
-                              <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{p.quantity}</td>
-                              <td className="py-2.5 px-3 font-mono font-bold">₹{p.amount_paise / 100}</td>
-                              <td className="py-2.5 px-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  p.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                                }`}>
-                                  {p.status}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 font-mono text-slate-500">{p.razorpay_payment_id || '—'}</td>
-                              <td className="py-2.5 px-3 text-slate-400">{new Date(p.created_at).toLocaleDateString()}</td>
-                              <td className="py-2.5 px-3 text-right">
-                                {p.account_classification === 'TEST' ? (
-                                  <button
-                                    onClick={() => {
-                                      setDeletePaymentModal({ order: p });
-                                      setDeletePaymentConfirmText('');
-                                      setDeletePaymentError(null);
-                                    }}
-                                    className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-                                    title="Delete test order"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                    Delete
-                                  </button>
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-1" title="Statutory Financial Record protected by law">
-                                    <Lock className="w-2.5 h-2.5" />
-                                    Statutory
-                                  </span>
-                                )}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                            <th className="py-2.5 px-3 w-10 text-center">
+                              <input
+                                type="checkbox"
+                                checked={allVisibleSelected}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = someVisibleSelected;
+                                }}
+                                onChange={toggleSelectAll}
+                                className="w-3.5 h-3.5 rounded text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
+                                title="Select all visible orders"
+                              />
+                            </th>
+                            <th className="py-2.5 px-3 font-bold">Order ID & Type</th>
+                            <th className="py-2.5 px-3 font-bold">Student</th>
+                            <th className="py-2.5 px-3 font-bold">Credits</th>
+                            <th className="py-2.5 px-3 font-bold">Amount (INR)</th>
+                            <th className="py-2.5 px-3 font-bold">Status</th>
+                            <th className="py-2.5 px-3 font-bold">Razorpay Payment ID</th>
+                            <th className="py-2.5 px-3 font-bold">Created At</th>
+                            <th className="py-2.5 px-3 font-bold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="py-8 text-center text-slate-400">
+                                No payment orders match your filter criteria.
                               </td>
                             </tr>
-                          ))}
-                      </tbody>
-                    </table>
+                          ) : (
+                            filteredOrders.map((p) => {
+                              const isSelected = selectedPaymentOrderIds.includes(p.id);
+                              return (
+                                <tr
+                                  key={p.id}
+                                  className={`transition-colors ${
+                                    isSelected ? 'bg-rose-50/40 hover:bg-rose-50/60' : 'hover:bg-slate-50/80'
+                                  }`}
+                                >
+                                  <td className="py-2.5 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleSelectOne(p.id)}
+                                      className="w-3.5 h-3.5 rounded text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
+                                    />
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono text-slate-700">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-semibold">{p.razorpay_order_id || p.id}</span>
+                                      {p.account_classification === 'TEST' ? (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                          TEST
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                          PROD
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <p className="font-bold text-slate-900">{p.student_name}</p>
+                                    <p className="text-[10px] text-slate-400">{p.student_email}</p>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{p.quantity}</td>
+                                  <td className="py-2.5 px-3 font-mono font-bold">₹{p.amount_paise / 100}</td>
+                                  <td className="py-2.5 px-3">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                        p.status === 'SUCCESS'
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                          : p.status === 'FAILED'
+                                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      }`}
+                                    >
+                                      {p.status}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono text-slate-500">
+                                    {p.razorpay_payment_id || '—'}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-400">
+                                    {new Date(p.created_at).toLocaleDateString()}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        onClick={() => handleViewOrderDetails(p.id)}
+                                        className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                                        title="View order details"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                        View
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setDeletePaymentModal({ order: p });
+                                          setDeletePaymentConfirmText('');
+                                          setDeletePaymentReason('Testing');
+                                          setDeletePaymentCustomReason('');
+                                          setDeletePaymentError(null);
+                                        }}
+                                        className="px-2 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                                        title="Delete payment order record"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* 13. SUBSCRIPTIONS */}
               {activeSection === 'subscriptions' && (
@@ -3193,7 +3906,7 @@ export const AdminPortal: React.FC = () => {
         </div>
       )}
 
-      {/* Delete Payment Modal (Test Orders Only) */}
+      {/* Delete Payment Modal (Single Order - Super Admin) */}
       {deletePaymentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white border border-rose-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
@@ -3202,13 +3915,14 @@ export const AdminPortal: React.FC = () => {
                 <AlertOctagon className="w-5 h-5" />
               </div>
               <div className="flex-1">
-                <h3 className="text-base font-bold text-slate-900">Delete Test Payment Order</h3>
+                <h3 className="text-base font-bold text-slate-900">Delete Payment Order</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Permanent removal of sandbox or test transaction record
+                  Permanent removal of payment & transaction record from database
                 </p>
               </div>
             </div>
 
+            {/* Order Summary */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-4 text-xs space-y-2">
               <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
                 <span className="text-slate-500 font-medium">Order ID:</span>
@@ -3218,24 +3932,89 @@ export const AdminPortal: React.FC = () => {
               </div>
               <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
                 <span className="text-slate-500 font-medium">Student:</span>
-                <span className="font-semibold text-slate-800">{deletePaymentModal.order.student_name}</span>
+                <div className="text-right">
+                  <p className="font-semibold text-slate-800">{deletePaymentModal.order.student_name}</p>
+                  <p className="text-[10px] text-slate-400">{deletePaymentModal.order.student_email}</p>
+                </div>
               </div>
               <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
                 <span className="text-slate-500 font-medium">Amount:</span>
-                <span className="font-mono font-bold text-slate-900">₹{deletePaymentModal.order.amount_paise / 100}</span>
+                <span className="font-mono font-bold text-slate-900">
+                  ₹{(deletePaymentModal.order.amount_paise || 0) / 100}
+                </span>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
                 <span className="text-slate-500 font-medium">Credits:</span>
                 <span className="font-mono font-bold text-blue-600">{deletePaymentModal.order.quantity}</span>
               </div>
+              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                <span className="text-slate-500 font-medium">Status:</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    deletePaymentModal.order.status === 'SUCCESS'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-amber-50 text-amber-700'
+                  }`}
+                >
+                  {deletePaymentModal.order.status}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Created Date:</span>
+                <span className="text-slate-700">
+                  {new Date(deletePaymentModal.order.created_at).toLocaleString()}
+                </span>
+              </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs mb-4">
-              <p className="text-[11px] leading-relaxed">
-                This test order and its associated test ledger entries will be permanently removed. Only test orders can be deleted; production statutory transactions remain locked.
-              </p>
+            {/* Clear Warning About Razorpay Reversal */}
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs mb-4">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-950">Important Razorpay Notice:</p>
+                  <p className="text-[11px] leading-relaxed text-amber-900">
+                    Local records will be deleted without reversing Razorpay payments. Deleting this local order record removes it from the CA Exam Checker database and credit ledger. It does NOT automatically trigger a refund or reversal on Razorpay. Any financial refund must be processed separately through your Razorpay merchant dashboard.
+                  </p>
+                </div>
+              </div>
             </div>
 
+            {/* Deletion Reason Dropdown */}
+            <div className="mb-3">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Reason for Deletion:
+              </label>
+              <select
+                value={deletePaymentReason}
+                onChange={(e) => setDeletePaymentReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 cursor-pointer"
+              >
+                <option value="Testing">Testing</option>
+                <option value="Duplicate">Duplicate</option>
+                <option value="Incorrect test transaction">Incorrect test transaction</option>
+                <option value="Development data">Development data</option>
+                <option value="Other">Other (specify below)</option>
+              </select>
+            </div>
+
+            {/* Custom Notes / Explanation if 'Other' */}
+            {deletePaymentReason === 'Other' && (
+              <div className="mb-3">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Explanation / Notes:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter short explanation..."
+                  value={deletePaymentCustomReason}
+                  onChange={(e) => setDeletePaymentCustomReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+                />
+              </div>
+            )}
+
+            {/* Confirmation Input */}
             <div className="mb-4">
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 To confirm deletion, type <span className="font-mono text-rose-600 font-black">DELETE</span>:
@@ -3261,6 +4040,8 @@ export const AdminPortal: React.FC = () => {
                 onClick={() => {
                   setDeletePaymentModal(null);
                   setDeletePaymentConfirmText('');
+                  setDeletePaymentReason('Testing');
+                  setDeletePaymentCustomReason('');
                   setDeletePaymentError(null);
                 }}
                 disabled={isDeletingPayment}
@@ -3284,6 +4065,811 @@ export const AdminPortal: React.FC = () => {
                     Delete Order
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Payment Modal (Super Admin) */}
+      {bulkDeletePaymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                <AlertOctagon className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  Bulk Delete Payment Orders ({selectedPaymentOrderIds.length})
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Permanent removal of selected payment orders & transactions from database
+                </p>
+              </div>
+            </div>
+
+            {/* Orders Summary List */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 text-xs">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200">
+                <span className="font-bold text-slate-700">
+                  {selectedPaymentOrderIds.length} Selected Orders
+                </span>
+                <span className="font-mono font-bold text-slate-900">
+                  Total: ₹{
+                    paymentsList
+                      .filter((p) => selectedPaymentOrderIds.includes(p.id))
+                      .reduce((sum, p) => sum + (p.amount_paise || 0) / 100, 0)
+                  }
+                </span>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                {paymentsList
+                  .filter((p) => selectedPaymentOrderIds.includes(p.id))
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between py-1 px-2 rounded bg-white border border-slate-100 text-[11px]"
+                    >
+                      <div className="truncate flex items-center gap-1.5">
+                        <span className="font-mono font-medium text-slate-800">
+                          {p.razorpay_order_id || p.id}
+                        </span>
+                        <span className="text-slate-400">({p.student_name})</span>
+                      </div>
+                      <span className="font-mono font-bold text-slate-700">₹{(p.amount_paise || 0) / 100}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* Clear Warning About Razorpay Reversal */}
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs mb-4">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-950">Important Razorpay Notice:</p>
+                  <p className="text-[11px] leading-relaxed text-amber-900">
+                    Local records will be deleted without reversing Razorpay payments. All selected local order records will be removed from the CA Exam Checker database and credit ledger. Razorpay transactions are not automatically refunded. If refunds are needed, please issue them manually via your Razorpay merchant dashboard.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Deletion Reason Dropdown */}
+            <div className="mb-3">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Reason for Bulk Deletion:
+              </label>
+              <select
+                value={bulkDeletePaymentReason}
+                onChange={(e) => setBulkDeletePaymentReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 cursor-pointer"
+              >
+                <option value="Testing">Testing</option>
+                <option value="Duplicate">Duplicate</option>
+                <option value="Incorrect test transaction">Incorrect test transaction</option>
+                <option value="Development data">Development data</option>
+                <option value="Other">Other (specify below)</option>
+              </select>
+            </div>
+
+            {/* Custom Notes / Explanation if 'Other' */}
+            {bulkDeletePaymentReason === 'Other' && (
+              <div className="mb-3">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Explanation / Notes:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter short explanation..."
+                  value={bulkDeletePaymentCustomReason}
+                  onChange={(e) => setBulkDeletePaymentCustomReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+                />
+              </div>
+            )}
+
+            {/* Confirmation Input */}
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                To confirm deletion of all {selectedPaymentOrderIds.length} orders, type{' '}
+                <span className="font-mono text-rose-600 font-black">DELETE</span>:
+              </label>
+              <input
+                type="text"
+                value={bulkDeletePaymentConfirmText}
+                onChange={(e) => setBulkDeletePaymentConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-xs font-mono focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500 transition"
+              />
+            </div>
+
+            {bulkDeletePaymentError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{bulkDeletePaymentError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2.5 justify-end pt-2 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  setBulkDeletePaymentModalOpen(false);
+                  setBulkDeletePaymentConfirmText('');
+                  setBulkDeletePaymentReason('Testing');
+                  setBulkDeletePaymentCustomReason('');
+                  setBulkDeletePaymentError(null);
+                }}
+                disabled={isBulkDeletingPayment}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDeletePayments}
+                disabled={bulkDeletePaymentConfirmText !== 'DELETE' || isBulkDeletingPayment}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+              >
+                {isBulkDeletingPayment ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting {selectedPaymentOrderIds.length} Orders...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Permanently Delete ({selectedPaymentOrderIds.length}) Orders
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Payment Order Details Modal */}
+      {viewPaymentOrderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Payment Order Details</h3>
+                  <p className="text-xs font-mono text-slate-500">{viewPaymentOrderModal.id}</p>
+                </div>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  viewPaymentOrderModal.status === 'SUCCESS'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : viewPaymentOrderModal.status === 'FAILED'
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}
+              >
+                {viewPaymentOrderModal.status}
+              </span>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              {/* Classification Banner */}
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-slate-500 font-medium">Record Classification:</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    viewPaymentOrderModal.account_classification === 'TEST'
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  }`}
+                >
+                  {viewPaymentOrderModal.account_classification || 'NORMAL'}
+                </span>
+              </div>
+
+              {/* Student Details */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Student Information</p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Name:</span>
+                    <span className="font-semibold text-slate-900">{viewPaymentOrderModal.student_name || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Email:</span>
+                    <span className="font-semibold text-slate-900">{viewPaymentOrderModal.student_email || '—'}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-400 block text-[10px]">Student ID:</span>
+                    <span className="font-mono text-slate-600">{viewPaymentOrderModal.student_id || '—'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Financial & Order Details */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Financials & Quantities</p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Amount:</span>
+                    <span className="font-mono font-bold text-slate-900 text-sm">
+                      ₹{(viewPaymentOrderModal.amount_paise || 0) / 100}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Credits Included:</span>
+                    <span className="font-mono font-bold text-blue-600 text-sm">
+                      {viewPaymentOrderModal.quantity}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Currency:</span>
+                    <span className="font-mono text-slate-700">{viewPaymentOrderModal.currency || 'INR'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Amount in Paise:</span>
+                    <span className="font-mono text-slate-700">{viewPaymentOrderModal.amount_paise}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Razorpay Gateway Information */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Razorpay Gateway References</p>
+                <div className="space-y-1.5 pt-1 font-mono text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans text-[10px]">Razorpay Order ID:</span>
+                    <span className="text-slate-800 font-semibold">{viewPaymentOrderModal.razorpay_order_id || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans text-[10px]">Razorpay Payment ID:</span>
+                    <span className="text-slate-800 font-semibold">{viewPaymentOrderModal.razorpay_payment_id || '—'}</span>
+                  </div>
+                  {viewPaymentOrderModal.transactions?.map((t: any) => (
+                    <div key={t.id} className="pt-1 border-t border-slate-200/80 flex items-center justify-between">
+                      <span className="text-slate-400 font-sans text-[10px]">Tx ID / Status:</span>
+                      <span className="text-slate-700">{t.id} ({t.status})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Timestamps */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Timestamps</p>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Created At:</span>
+                    <span className="text-slate-700">
+                      {new Date(viewPaymentOrderModal.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  {viewPaymentOrderModal.paid_at && (
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Paid At:</span>
+                      <span className="text-slate-700">
+                        {new Date(viewPaymentOrderModal.paid_at).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-100 text-xs">
+              <button
+                onClick={() => {
+                  setDeletePaymentModal({ order: viewPaymentOrderModal });
+                  setDeletePaymentConfirmText('');
+                  setDeletePaymentReason('Testing');
+                  setDeletePaymentCustomReason('');
+                  setDeletePaymentError(null);
+                }}
+                className="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete This Order
+              </button>
+
+              <button
+                onClick={() => setViewPaymentOrderModal(null)}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 1. Permanently Delete Single Evaluation Modal (Super Admin Only) */}
+      {deleteEvalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-800">
+            <div className="flex items-center gap-3 pb-4 border-b border-rose-100">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Permanently Delete Evaluation</h3>
+                <p className="text-xs text-rose-600 font-medium">Irreversible Super Admin Operation</p>
+              </div>
+            </div>
+
+            {/* Evaluation Summary */}
+            <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Evaluation ID:</span>
+                <span className="font-mono font-bold text-slate-800">{deleteEvalModal.evaluation.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Student:</span>
+                <span className="font-semibold text-slate-900">
+                  {deleteEvalModal.evaluation.student_name} ({deleteEvalModal.evaluation.student_email})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Subject / Paper:</span>
+                <span className="text-slate-700">
+                  {deleteEvalModal.evaluation.subject_name || deleteEvalModal.evaluation.subject} ({deleteEvalModal.evaluation.level})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Classification:</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    deleteEvalModal.evaluation.account_classification === 'TEST'
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                      : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {deleteEvalModal.evaluation.account_classification || 'NORMAL'}
+                </span>
+              </div>
+            </div>
+
+            {/* Safety Warning */}
+            <div className="mt-3 p-3 bg-rose-50/80 rounded-xl border border-rose-200 text-[11px] text-rose-800 space-y-1">
+              <p className="font-bold flex items-center gap-1.5 text-rose-900">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                This will permanently delete:
+              </p>
+              <ul className="list-disc list-inside space-y-0.5 text-[10px] text-rose-700 pl-1">
+                <li>The evaluation record and all question scores & step feedbacks</li>
+                <li>Associated assignment submission records</li>
+                <li>Uploaded student answer sheets and generated evaluated PDFs from disk</li>
+                <li>Associated analytics contributions</li>
+              </ul>
+              <p className="text-[10px] text-slate-500 pt-1 italic">
+                * Question papers, global model answers, student accounts, and institute materials remain untouched.
+              </p>
+            </div>
+
+            {/* Deletion Reason */}
+            <div className="mt-4 space-y-2 text-xs">
+              <label className="block font-bold text-slate-700">Reason for Deletion:</label>
+              <select
+                value={deleteEvalReason}
+                onChange={(e) => setDeleteEvalReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 focus:outline-hidden focus:border-rose-400 cursor-pointer"
+              >
+                <option value="Testing / Development cleanup">Testing / Development cleanup</option>
+                <option value="Malformed / corrupted submission">Malformed / corrupted submission</option>
+                <option value="Duplicate evaluation">Duplicate evaluation</option>
+                <option value="Student requested deletion">Student requested deletion</option>
+                <option value="Administrative cleanup">Administrative cleanup</option>
+                <option value="Other">Other (specify below)</option>
+              </select>
+
+              {deleteEvalReason === 'Other' && (
+                <textarea
+                  placeholder="Enter detailed deletion reason..."
+                  value={deleteEvalCustomReason}
+                  onChange={(e) => setDeleteEvalCustomReason(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-hidden focus:border-rose-400"
+                />
+              )}
+            </div>
+
+            {/* Confirmation Typing */}
+            <div className="mt-4 space-y-1.5 text-xs">
+              <label className="block font-bold text-slate-700">
+                Type <span className="font-mono text-rose-600 bg-rose-50 px-1 py-0.5 rounded border border-rose-200 font-black">DELETE</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteEvalConfirmText}
+                onChange={(e) => setDeleteEvalConfirmText(e.target.value)}
+                placeholder="Type DELETE"
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-xs focus:outline-hidden focus:border-rose-500 bg-white"
+              />
+            </div>
+
+            {deleteEvalError && (
+              <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{deleteEvalError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-slate-100 text-xs">
+              <button
+                type="button"
+                onClick={() => setDeleteEvalModal(null)}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                disabled={isDeletingEval}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePermanentlyDeleteEvaluation}
+                disabled={deleteEvalConfirmText.trim() !== 'DELETE' || isDeletingEval}
+                className={`px-4 py-2 rounded-lg font-bold text-white transition flex items-center gap-1.5 cursor-pointer ${
+                  deleteEvalConfirmText.trim() === 'DELETE' && !isDeletingEval
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-xs'
+                    : 'bg-slate-300 cursor-not-allowed text-slate-500'
+                }`}
+              >
+                {isDeletingEval ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Permanently Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Bulk Permanently Delete Evaluations Modal (Super Admin Only) */}
+      {bulkDeleteEvalModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-rose-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-800">
+            <div className="flex items-center gap-3 pb-4 border-b border-rose-100">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Bulk Delete Evaluations</h3>
+                <p className="text-xs text-rose-600 font-medium">
+                  {selectedEvaluationIds.length} records selected for permanent removal
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-rose-50/80 rounded-xl border border-rose-200 text-[11px] text-rose-800 space-y-1">
+              <p className="font-bold flex items-center gap-1.5 text-rose-900">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                High Impact Action:
+              </p>
+              <p className="text-[11px] text-rose-700 leading-relaxed">
+                You are about to permanently delete <strong className="font-bold">{selectedEvaluationIds.length}</strong> evaluation records, including all student answer uploads, step marking records, and generated evaluated PDF artifacts.
+              </p>
+            </div>
+
+            {/* Deletion Reason */}
+            <div className="mt-4 space-y-2 text-xs">
+              <label className="block font-bold text-slate-700">Reason for Bulk Deletion:</label>
+              <select
+                value={bulkDeleteEvalReason}
+                onChange={(e) => setBulkDeleteEvalReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 focus:outline-hidden focus:border-rose-400 cursor-pointer"
+              >
+                <option value="Testing / Development cleanup">Testing / Development cleanup</option>
+                <option value="Batch cleanup of malformed submissions">Batch cleanup of malformed submissions</option>
+                <option value="Administrative bulk purge">Administrative bulk purge</option>
+                <option value="Other">Other (specify below)</option>
+              </select>
+
+              {bulkDeleteEvalReason === 'Other' && (
+                <textarea
+                  placeholder="Enter detailed bulk deletion notes..."
+                  value={bulkDeleteEvalCustomReason}
+                  onChange={(e) => setBulkDeleteEvalCustomReason(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-hidden focus:border-rose-400"
+                />
+              )}
+            </div>
+
+            {/* Confirmation Typing */}
+            <div className="mt-4 space-y-1.5 text-xs">
+              <label className="block font-bold text-slate-700">
+                Type <span className="font-mono text-rose-600 bg-rose-50 px-1 py-0.5 rounded border border-rose-200 font-black">DELETE ALL</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={bulkDeleteEvalConfirmText}
+                onChange={(e) => setBulkDeleteEvalConfirmText(e.target.value)}
+                placeholder="Type DELETE ALL"
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono text-xs focus:outline-hidden focus:border-rose-500 bg-white"
+              />
+            </div>
+
+            {bulkDeleteEvalError && (
+              <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{bulkDeleteEvalError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-slate-100 text-xs">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteEvalModalOpen(false)}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+                disabled={isBulkDeletingEval}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBulkDeleteEvaluations}
+                disabled={bulkDeleteEvalConfirmText.trim() !== 'DELETE ALL' || isBulkDeletingEval}
+                className={`px-4 py-2 rounded-lg font-bold text-white transition flex items-center gap-1.5 cursor-pointer ${
+                  bulkDeleteEvalConfirmText.trim() === 'DELETE ALL' && !isBulkDeletingEval
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-xs'
+                    : 'bg-slate-300 cursor-not-allowed text-slate-500'
+                }`}
+              >
+                {isBulkDeletingEval ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Deleting {selectedEvaluationIds.length}...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Permanently Delete ({selectedEvaluationIds.length})
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. View Evaluation Inspection Details Modal */}
+      {viewEvaluationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <FileCheck2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Evaluation Inspection Details</h3>
+                  <p className="text-xs font-mono text-slate-500">{viewEvaluationModal.evaluation?.id}</p>
+                </div>
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  viewEvaluationModal.evaluation?.status === 'COMPLETED'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : viewEvaluationModal.evaluation?.status === 'FAILED'
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}
+              >
+                {viewEvaluationModal.evaluation?.status}
+              </span>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              {/* Classification & Metadata Badges */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-medium">Record Classification:</span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      viewEvaluationModal.evaluation?.account_classification === 'TEST'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    }`}
+                  >
+                    {viewEvaluationModal.evaluation?.account_classification || 'NORMAL'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-medium">Source:</span>
+                  <span className="px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700 text-[10px] font-semibold">
+                    {viewEvaluationModal.evaluation?.evaluation_source || 'PUBLIC'}
+                    {viewEvaluationModal.evaluation?.institute_name && ` (${viewEvaluationModal.evaluation?.institute_name})`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Student Information */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Student Information</p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Name:</span>
+                    <span className="font-semibold text-slate-900">{viewEvaluationModal.student?.name || viewEvaluationModal.evaluation?.student_name || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Email:</span>
+                    <span className="font-semibold text-slate-900">{viewEvaluationModal.student?.email || viewEvaluationModal.evaluation?.student_email || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Student ID:</span>
+                    <span className="font-mono text-slate-600">{viewEvaluationModal.student?.id || viewEvaluationModal.evaluation?.student_id || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">ICAI Reg Number:</span>
+                    <span className="font-mono text-slate-600">{viewEvaluationModal.student?.icai_registration_number || '—'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Examination & Academic Subject */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Examination & Paper</p>
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Subject:</span>
+                    <span className="font-semibold text-slate-900">{viewEvaluationModal.evaluation?.subject_name || viewEvaluationModal.evaluation?.subject || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">CA Level:</span>
+                    <span className="font-semibold text-blue-600">{viewEvaluationModal.evaluation?.level || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Attempt / Paper:</span>
+                    <span className="text-slate-700">{viewEvaluationModal.evaluation?.attempt || '—'} / Paper {viewEvaluationModal.evaluation?.paper || '—'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scores & Grading Summary */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Evaluation Scores & Grade</p>
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Marks Obtained:</span>
+                    <span className="font-mono font-bold text-blue-600 text-sm">
+                      {viewEvaluationModal.evaluation?.total_marks !== null ? `${viewEvaluationModal.evaluation?.total_marks} / ${viewEvaluationModal.evaluation?.maximum_marks || 100}` : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Percentage:</span>
+                    <span className="font-mono font-bold text-slate-900 text-sm">
+                      {viewEvaluationModal.evaluation?.percentage !== null ? `${viewEvaluationModal.evaluation?.percentage}%` : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Grade:</span>
+                    <span className="font-mono font-bold text-slate-700 text-sm">
+                      {viewEvaluationModal.evaluation?.grade || '—'}
+                    </span>
+                  </div>
+                </div>
+                {viewEvaluationModal.evaluation?.overall_feedback && (
+                  <div className="pt-2 border-t border-slate-200/80">
+                    <span className="text-slate-400 block text-[10px]">Overall Feedback:</span>
+                    <p className="text-slate-700 italic pt-0.5">{viewEvaluationModal.evaluation?.overall_feedback}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* File Artifacts */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Storage & File Artifacts</p>
+                <div className="space-y-1.5 pt-1 font-mono text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans text-[10px]">Answer Sheet Path:</span>
+                    <span className="text-slate-700 truncate max-w-[320px]" title={viewEvaluationModal.evaluation?.file_path}>
+                      {viewEvaluationModal.evaluation?.file_path || 'None'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans text-[10px]">Evaluated PDF:</span>
+                    <span className="text-slate-700 truncate max-w-[320px]" title={viewEvaluationModal.evaluation?.evaluated_pdf_path}>
+                      {viewEvaluationModal.evaluation?.evaluated_pdf_path || 'None'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-sans text-[10px]">Physical Files Status:</span>
+                    <span className="text-slate-700 font-sans">
+                      {viewEvaluationModal.files?.length > 0
+                        ? `${viewEvaluationModal.files.length} file(s) identified on disk`
+                        : 'No direct files pending cleanup'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step Marks & Questions Breakdown */}
+              {viewEvaluationModal.answers && viewEvaluationModal.answers.length > 0 && (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">
+                    Question Breakdown ({viewEvaluationModal.answers.length} items)
+                  </p>
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                    {viewEvaluationModal.answers.map((ans: any, idx: number) => (
+                      <div key={ans.id || idx} className="p-2 bg-white rounded border border-slate-200 text-[11px] space-y-1">
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-slate-800">
+                            Question {ans.question_number || `#${idx + 1}`}
+                          </span>
+                          <span className="font-mono font-bold text-blue-600">
+                            {ans.marks_obtained !== null ? `${ans.marks_obtained} / ${ans.maximum_marks || 0}` : '—'}
+                          </span>
+                        </div>
+                        {ans.feedback && (
+                          <p className="text-slate-600 text-[10px] leading-relaxed line-clamp-2">
+                            {ans.feedback}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Timestamps */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Timestamps</p>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Created At:</span>
+                    <span className="text-slate-700">
+                      {viewEvaluationModal.evaluation?.created_at ? new Date(viewEvaluationModal.evaluation.created_at).toLocaleString() : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Completed At:</span>
+                    <span className="text-slate-700">
+                      {viewEvaluationModal.evaluation?.completed_at ? new Date(viewEvaluationModal.evaluation.completed_at).toLocaleString() : '—'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-100 text-xs">
+              {user?.role === 'SUPER_ADMIN' ? (
+                <button
+                  onClick={() => {
+                    const ev = viewEvaluationModal.evaluation;
+                    setDeleteEvalModal({ evaluation: ev });
+                    setDeleteEvalConfirmText('');
+                    setDeleteEvalReason(
+                      ev?.account_classification === 'TEST'
+                        ? 'Testing / Development cleanup'
+                        : 'Administrative cleanup'
+                    );
+                    setDeleteEvalCustomReason('');
+                    setDeleteEvalError(null);
+                  }}
+                  className="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete This Evaluation
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <button
+                onClick={() => setViewEvaluationModal(null)}
+                className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

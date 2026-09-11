@@ -13,6 +13,17 @@ import {
   bulkDeleteTestCategory,
   bulkDeleteAllTestData,
 } from '../services/testDataCleanupService.js';
+import {
+  getPaymentOrderDetails,
+  deletePaymentOrder,
+  bulkDeletePaymentOrders,
+  deletePaymentTransaction,
+} from '../services/paymentDeleteService.js';
+import {
+  getEvaluationDetails,
+  deleteEvaluation,
+  bulkDeleteEvaluations,
+} from '../services/evaluationDeleteService.js';
 
 const router = Router();
 
@@ -871,13 +882,32 @@ router.get('/payments', (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete Test Payment Order
+// View Single Payment Order Details
+router.get('/payments/orders/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const details = getPaymentOrderDetails(req.params.id, req.user!);
+    return res.json(details);
+  } catch (error: any) {
+    console.error('Get payment order details error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to load payment order details' });
+  }
+});
+
+// Delete Payment Order (Super Admin can delete ANY payment order)
 router.delete('/payments/orders/:id', (req: AuthRequest, res: Response) => {
   try {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
-    const userAgent = req.headers['user-agent'] || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+    const reason = (req.body?.reason || req.query?.reason || 'Testing') as string;
+    const notes = (req.body?.notes || req.query?.notes || '') as string;
 
-    const result = deleteSingleTestRecord('ORDERS', req.params.id, req.user!, ipAddress, userAgent);
+    const result = deletePaymentOrder(
+      req.params.id,
+      req.user!,
+      { reason, notes },
+      ipAddress,
+      userAgent
+    );
     return res.json(result);
   } catch (error: any) {
     console.error('Delete payment order error:', error);
@@ -885,13 +915,46 @@ router.delete('/payments/orders/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete Test Payment Transaction
+// Bulk Delete Payment Orders (Super Admin)
+router.post('/payments/orders/bulk-delete', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+    const { orderIds, reason, notes } = req.body || {};
+
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ error: 'Please provide an array of orderIds to delete.' });
+    }
+
+    const result = bulkDeletePaymentOrders(
+      orderIds,
+      req.user!,
+      { reason: reason || 'Testing', notes: notes || '' },
+      ipAddress,
+      userAgent
+    );
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Bulk delete payment orders error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to bulk delete payment orders' });
+  }
+});
+
+// Delete Payment Transaction
 router.delete('/payments/transactions/:id', (req: AuthRequest, res: Response) => {
   try {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
-    const userAgent = req.headers['user-agent'] || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+    const reason = (req.body?.reason || req.query?.reason || 'Testing') as string;
+    const notes = (req.body?.notes || req.query?.notes || '') as string;
 
-    const result = deleteSingleTestRecord('PAYMENTS', req.params.id, req.user!, ipAddress, userAgent);
+    const result = deletePaymentTransaction(
+      req.params.id,
+      req.user!,
+      { reason, notes },
+      ipAddress,
+      userAgent
+    );
     return res.json(result);
   } catch (error: any) {
     console.error('Delete payment transaction error:', error);
@@ -1627,17 +1690,21 @@ router.put('/model-answers/:id', (req: AuthRequest, res: Response) => {
 // 15. Evaluations Management
 router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
-    const { status, level, search } = req.query;
+    const { status, level, search, classification, source } = req.query;
     let query = `
       SELECT e.id, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
-             e.attempt, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
+             e.paper, e.attempt, e.evaluation_source, e.institute_id, e.sponsoring_institute_id,
+             e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
              e.grade, e.confidence_score, e.status, e.document_validation_status,
-             e.original_filename, e.created_at, e.completed_at,
+             e.original_filename, COALESCE(e.account_classification, 'NORMAL') as account_classification,
+             e.created_at, e.completed_at,
              u.full_name as student_name, u.email as student_email,
-             p.icai_registration_number
+             p.icai_registration_number,
+             i.name as institute_name
       FROM evaluations e
       JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -1650,12 +1717,20 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       query += ' AND e.level = ?';
       params.push(level);
     }
+    if (classification && classification !== 'ALL') {
+      query += " AND COALESCE(e.account_classification, 'NORMAL') = ?";
+      params.push(classification);
+    }
+    if (source && source !== 'ALL') {
+      query += ' AND e.evaluation_source = ?';
+      params.push(source);
+    }
     if (search) {
-      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ? OR e.paper LIKE ? OR i.name LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    query += ' ORDER BY e.created_at DESC LIMIT 150';
+    query += ' ORDER BY e.created_at DESC LIMIT 300';
     const evaluations = db.prepare(query).all(...params);
     return res.json({ evaluations });
   } catch (error: unknown) {
@@ -1667,14 +1742,31 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
 router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
   try {
     const evaluation = db.prepare(`
-      SELECT e.*, u.full_name as student_name, u.email as student_email, p.icai_registration_number
+      SELECT e.*, u.full_name as student_name, u.email as student_email, p.icai_registration_number,
+             i.name as institute_name
       FROM evaluations e
       JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
       WHERE e.id = ?
     `).get(req.params.id);
 
     if (!evaluation) {
+      // Check if deleted
+      const wasDeleted = db.prepare(`
+        SELECT details, created_at FROM audit_logs
+        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        ORDER BY created_at DESC LIMIT 1
+      `).get(req.params.id);
+
+      if (wasDeleted) {
+        return res.status(404).json({
+          error: 'Evaluation no longer exists.',
+          code: 'EVALUATION_DELETED',
+          message: 'This evaluation record was permanently removed by Super Admin.'
+        });
+      }
+
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
@@ -1682,6 +1774,73 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get evaluation detail error:', error);
     return res.status(500).json({ error: 'Failed to load evaluation detail' });
+  }
+});
+
+// View Evaluation Details for Inspection / Deletion Modal
+router.get('/evaluations/:id/details', (req: AuthRequest, res: Response) => {
+  try {
+    const details = getEvaluationDetails(req.params.id, req.user!);
+    return res.json(details);
+  } catch (error: any) {
+    console.error('Get evaluation inspection details error:', error);
+    return res.status(error.statusCode || 500).json({
+      error: error.message || 'Failed to load evaluation details',
+      code: error.code || undefined,
+    });
+  }
+});
+
+// Delete Single Evaluation (Super Admin can delete ANY evaluation)
+router.delete('/evaluations/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+    const reason = (req.body?.reason || req.query?.reason || 'Administrative cleanup') as string;
+    const notes = (req.body?.notes || req.query?.notes || '') as string;
+
+    const result = deleteEvaluation(
+      req.params.id,
+      req.user!,
+      { reason, notes },
+      ipAddress,
+      userAgent
+    );
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Delete evaluation error:', error);
+    return res.status(error.statusCode || 500).json({
+      error: error.message || 'Failed to delete evaluation',
+      code: error.code || undefined,
+    });
+  }
+});
+
+// Bulk Delete Evaluations (Super Admin)
+router.post('/evaluations/bulk-delete', (req: AuthRequest, res: Response) => {
+  try {
+    const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+    const { evaluationIds, reason, notes } = req.body || {};
+
+    if (!Array.isArray(evaluationIds) || evaluationIds.length === 0) {
+      return res.status(400).json({ error: 'Please provide an array of evaluationIds to delete.' });
+    }
+
+    const result = bulkDeleteEvaluations(
+      evaluationIds,
+      req.user!,
+      { reason: reason || 'Administrative cleanup', notes: notes || '' },
+      ipAddress,
+      userAgent
+    );
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Bulk delete evaluations error:', error);
+    return res.status(error.statusCode || 500).json({
+      error: error.message || 'Failed to bulk delete evaluations',
+      code: error.code || undefined,
+    });
   }
 });
 
