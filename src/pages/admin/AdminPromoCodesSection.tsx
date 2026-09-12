@@ -1114,16 +1114,12 @@ export function AdminPromoCodesSection() {
 
             <div className="text-center space-y-1.5">
               <h3 className="text-base font-bold text-slate-900">
-                {(deletingCampaign.successfulRedemptions ?? deletingCampaign.used_redemptions ?? 0) > 0
-                  ? `Archive Promo Code ${deletingCampaign.code}?`
-                  : `Delete Promo Code ${deletingCampaign.code}?`}
+                Are you sure you want to delete this promo code?
               </h3>
               <p className="text-xs text-slate-500">
                 {(deletingCampaign.successfulRedemptions ?? deletingCampaign.used_redemptions ?? 0) > 0
-                  ? `This code has ${
-                      deletingCampaign.successfulRedemptions ?? deletingCampaign.used_redemptions
-                    } historical student redemptions. To safeguard student audit logs and access histories, it will be safely archived and disabled rather than permanently deleted.`
-                  : `This code has not been redeemed by any students yet. It can be safely removed from the system.`}
+                  ? 'This promo code has active or historical redemptions. It will be archived and disabled to preserve student access and audit logs, but cannot be permanently deleted.'
+                  : 'This promo code has never been redeemed and will be permanently removed.'}
               </p>
             </div>
 

@@ -83,8 +83,8 @@ console.log('\n--- 2. Testing Credit Lot Creation and Balance Calculation ---');
 
   // Create mock student in database
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role)
-    VALUES (?, ?, 'dummy_hash', 'Test Student Expiry', 'STUDENT')
+    INSERT INTO users (id, email, password_hash, full_name, role, is_test, test_marker)
+    VALUES (?, ?, 'dummy_hash', 'Test Student Expiry', 'STUDENT', 1, 'AUTOMATED_TEST_RUNNER')
   `).run(testUserId, `${testUserId}@example.com`);
 
   db.prepare(`
@@ -125,8 +125,8 @@ console.log('\n--- 3. Testing Real-time Expiry Exclusion ---');
   const testUserId2 = `test_user_exp_${crypto.randomBytes(4).toString('hex')}`;
 
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role)
-    VALUES (?, ?, 'dummy_hash', 'Test Student Expired Lot', 'STUDENT')
+    INSERT INTO users (id, email, password_hash, full_name, role, is_test, test_marker)
+    VALUES (?, ?, 'dummy_hash', 'Test Student Expired Lot', 'STUDENT', 1, 'AUTOMATED_TEST_RUNNER')
   `).run(testUserId2, `${testUserId2}@example.com`);
 
   db.prepare(`
@@ -180,8 +180,8 @@ console.log('\n--- 4. Testing First-Expiring, First-Out (FEFO) Consumption ---')
   const testUserId3 = `test_user_fefo_${crypto.randomBytes(4).toString('hex')}`;
 
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role)
-    VALUES (?, ?, 'dummy_hash', 'Test Student FEFO', 'STUDENT')
+    INSERT INTO users (id, email, password_hash, full_name, role, is_test, test_marker)
+    VALUES (?, ?, 'dummy_hash', 'Test Student FEFO', 'STUDENT', 1, 'AUTOMATED_TEST_RUNNER')
   `).run(testUserId3, `${testUserId3}@example.com`);
 
   db.prepare(`
@@ -245,8 +245,8 @@ console.log('\n--- 5. Testing Expiring Soon Breakdown ---');
   const testUserId4 = `test_user_stat_${crypto.randomBytes(4).toString('hex')}`;
 
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role)
-    VALUES (?, ?, 'dummy_hash', 'Test Student Status', 'STUDENT')
+    INSERT INTO users (id, email, password_hash, full_name, role, is_test, test_marker)
+    VALUES (?, ?, 'dummy_hash', 'Test Student Status', 'STUDENT', 1, 'AUTOMATED_TEST_RUNNER')
   `).run(testUserId4, `${testUserId4}@example.com`);
 
   db.prepare(`

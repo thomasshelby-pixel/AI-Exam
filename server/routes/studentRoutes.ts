@@ -21,6 +21,8 @@ import {
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
+import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
 
 const router = Router();
 
@@ -531,91 +533,44 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       }
     }
 
-    // 4. Reference Material Validation (Strict separation of sources)
-    let referenceMaterial: {
-      id: string;
-      version: string;
-      paper: string;
-      syllabus_version: string;
-      question_paper_title: string;
-      question_paper_text: string;
-      suggested_answers_text: string;
-      marking_scheme_text: string;
-      reference_guidance_text?: string;
-      amendments_provisions_text?: string;
-    };
-
-    if (materialSource === 'INSTITUTE') {
-      // Use ONLY private materials belonging to the selected active institute
-      let instMat: any = null;
-      if (instituteMaterialId) {
-        instMat = db.prepare(`
-          SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
-                 '1.0' as version, 'Institute Curriculum' as syllabus_version,
-                 question_paper_text, suggested_answers_text, marking_scheme_text
-          FROM institute_materials
-          WHERE id = ? AND institute_id = ? AND status = 'ACTIVE'
-        `).get(instituteMaterialId, resolvedSponsoringInstituteId);
-      }
-
-      if (!instMat) {
-        instMat = db.prepare(`
-          SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
-                 '1.0' as version, 'Institute Curriculum' as syllabus_version,
-                 question_paper_text, suggested_answers_text, marking_scheme_text
-          FROM institute_materials
-          WHERE institute_id = ? AND level = ? AND subject_key = ? AND status = 'ACTIVE'
-            AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
-            AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
-          ORDER BY created_at DESC LIMIT 1
-        `).get(resolvedSponsoringInstituteId, level, subjectKey);
-      }
-
-      if (!instMat || !instMat.question_paper_text || !instMat.suggested_answers_text) {
-        return res.status(400).json({
-          error: `No approved question paper and suggested answers found for ${resolvedInstituteName || 'your institute'} for this subject (${subjectName}). Please ensure your faculty has uploaded materials for your batch.`,
-        });
-      }
-
-      referenceMaterial = instMat;
-    } else {
-      // Use ONLY global / official ICAI admin-approved materials
-      // Never mix institute materials into Public Evaluation
-      let materialQuery = `
-        SELECT * FROM evaluation_materials
-        WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
-        AND source_type = 'ADMIN' AND admin_approved = 1
-        AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
-        AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
-      `;
-      const materialParams: any[] = [level, subjectKey];
-
-      if (attempt && attempt !== 'Current' && attempt !== 'All') {
-        materialQuery += " AND (attempt = ? OR attempt = 'All')";
-        materialParams.push(attempt);
-      }
-
-      if (req.body.paper && req.body.paper !== 'All') {
-        materialQuery += " AND (paper = ? OR paper = 'All')";
-        materialParams.push(req.body.paper);
-      }
-
-      if (materialType && materialType !== 'ALL') {
-        materialQuery += " AND (material_type = ? OR material_type = 'ALL')";
-        materialParams.push(materialType);
-      }
-
-      materialQuery += ' ORDER BY created_at DESC LIMIT 1';
-      const globalMaterial = db.prepare(materialQuery).get(...materialParams) as any;
-
-      if (!globalMaterial || !globalMaterial.question_paper_text || !globalMaterial.suggested_answers_text) {
-        return res.status(400).json({
-          error: `Evaluation material is not available for the selected paper and attempt (${level} – ${subjectName} – ${attempt || 'Selected Attempt'}) yet. Please try again once the required material has been uploaded.`,
-        });
-      }
-
-      referenceMaterial = globalMaterial;
+    // 4. Authoritative Reference Material Hard-Gate
+    let verifiedPackage: VerifiedReferencePackage;
+    try {
+      verifiedPackage = enforceMaterialHardGate({
+        evaluationId,
+        level,
+        subjectKey,
+        subjectName,
+        paper: req.body.paper,
+        attempt,
+        syllabusVersion: req.body.syllabusVersion,
+        materialType,
+        evaluationSource: requestedEvalSource,
+        instituteId: resolvedSponsoringInstituteId || undefined,
+        instituteMaterialId,
+      });
+    } catch (gateErr: any) {
+      return res.status(400).json({
+        error:
+          gateErr.message ||
+          'Evaluation material is not available for this paper yet. Please try again once the required material has been added.',
+      });
     }
+
+    const referenceMaterial = {
+      id: verifiedPackage.id,
+      version: verifiedPackage.version,
+      paper: verifiedPackage.paper,
+      syllabus_version: verifiedPackage.syllabusVersion,
+      official_max_marks: verifiedPackage.officialPaperMaxMarks,
+      question_paper_title: verifiedPackage.questionPaperTitle,
+      question_paper_text: verifiedPackage.questionPaperText,
+      suggested_answers_text: verifiedPackage.suggestedAnswersText,
+      marking_scheme_text: verifiedPackage.markingSchemeText,
+      reference_guidance_text: verifiedPackage.referenceGuidanceText,
+      amendments_provisions_text: verifiedPackage.amendmentsProvisionsText,
+      manifest: verifiedPackage.manifest,
+    };
 
     // Save uploaded file to uploads directory for original & checked copy generation
     let pdfBuf = Buffer.from(fileBase64, 'base64');
@@ -748,8 +703,10 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       materialType: materialType as MaterialType,
       subjectKey,
       subjectName,
+      paper: referenceMaterial.paper,
       attempt,
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
+      officialPaperMaxMarks: referenceMaterial.official_max_marks,
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
       mimeType: mimeType || 'application/pdf',
@@ -809,9 +766,19 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       console.warn('Could not pre-generate checked copy PDF in background:', annErr);
     }
 
+    // Validate authoritative consistency before finalizing (Rule 14 & Rule 15)
+    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
+    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
+    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
+
+    if (!consistencyReport.isValid) {
+      console.warn(`[EvaluationIntegrity] Evaluation ${evaluationId} failed consistency checks:`, consistencyReport.errors);
+    }
+
     db.prepare(`
       UPDATE evaluations
-      SET status = 'COMPLETED',
+      SET status = ?,
+          rejection_reason = ?,
           confidence_score = ?,
           total_marks = ?,
           maximum_marks = ?,
@@ -840,6 +807,8 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
           completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
+      finalStatus,
+      validationReason,
       evaluationResult.confidenceScore,
       evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
@@ -1241,6 +1210,15 @@ router.get(
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
+      if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {
+        return res.status(409).json({
+          error: 'Evaluation consistency verification required before checked copy can be downloaded.',
+          code: 'EVALUATION_INCONSISTENCY',
+          status: record.status,
+          reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
+        });
+      }
+
       const uploadsDir = path.join(process.cwd(), 'uploads');
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
 
@@ -1398,6 +1376,15 @@ router.get(
           });
         }
         return res.status(404).json({ error: 'Evaluation not found' });
+      }
+
+      if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {
+        return res.status(409).json({
+          error: 'Evaluation consistency verification required before report can be downloaded.',
+          code: 'EVALUATION_INCONSISTENCY',
+          status: record.status,
+          reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
+        });
       }
 
       let resultJson: any = null;

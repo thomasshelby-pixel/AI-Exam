@@ -1905,24 +1905,38 @@ export function seedPricingPlans() {
 }
 
 function seedModelConfigs() {
-  // 1. Purge all invalid, non-approved, or legacy models
+  const approvedIds = [
+    'gemini-3.8-flash',
+    'claude-opus-5',
+    'gpt-5.6-sol',
+    'claude-sonnet-5',
+    'gpt-5.6-terra',
+    'gemini-3.1-pro-preview',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
+  ];
+  const placeholders = approvedIds.map(() => '?').join(',');
+
+  // 1. Purge all invalid, non-approved, or legacy models (GPT-4o, Claude 3.5, Gemini 1.5/2.5)
   db.prepare(`
     DELETE FROM model_configs
-    WHERE id NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash')
-  `).run();
+    WHERE id NOT IN (${placeholders})
+  `).run(...approvedIds);
 
   // 2. Synchronize active pricing_settings so old models are never chosen
   db.prepare(`
     UPDATE pricing_settings
     SET value = 'gemini-3.8-flash'
-    WHERE key = 'EVAL_MODEL_PROVIDER' AND (value IN ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-3.8-pro') OR value NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'))
-  `).run();
+    WHERE key = 'EVAL_MODEL_PROVIDER' AND (value NOT IN (${placeholders}))
+  `).run(...approvedIds);
 
   db.prepare(`
     UPDATE pricing_settings
-    SET value = 'gemini-3.6-flash'
-    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value IN ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-3.8-pro') OR value NOT IN ('gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'))
-  `).run();
+    SET value = 'claude-opus-5'
+    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}))
+  `).run(...approvedIds);
 
   db.prepare(`
     UPDATE pricing_settings
@@ -1933,91 +1947,166 @@ function seedModelConfigs() {
 
   // Ensure is_primary is only on gemini-3.8-flash unless admin explicitly switched to another approved model
   const currentPrimary = db.prepare("SELECT id FROM model_configs WHERE is_primary = 1").all() as any[];
-  if (currentPrimary.length !== 1 || !['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(currentPrimary[0]?.id)) {
+  if (currentPrimary.length !== 1 || !approvedIds.includes(currentPrimary[0]?.id)) {
     db.prepare("UPDATE model_configs SET is_primary = CASE WHEN id = 'gemini-3.8-flash' THEN 1 ELSE 0 END").run();
   }
 
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
-  const defaultStatus = geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED';
+  const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 5);
+  const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 5);
 
-  // 3. Approved Gemini Models with Deterministic Priorities (1 to 5)
+  // 3. Approved Production Multi-Provider Models with Deterministic Priorities (Primary + 8 Fallbacks)
   const models = [
     {
       id: 'gemini-3.8-flash',
       provider: 'gemini',
       display_name: 'Google Gemini 3.8 Flash',
-      role: 'Primary',
+      role: 'Primary CA Evaluation',
       is_primary: 1,
-      fallback_order: 1,
+      fallback_order: 0,
       thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-    },
-    {
-      id: 'gemini-3.1-pro-preview',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Pro (Preview)',
-      role: 'Deep Reasoning',
-      is_primary: 0,
-      fallback_order: 2,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
       id: 'gemini-3.7-flash',
       provider: 'gemini',
       display_name: 'Google Gemini 3.7 Flash',
-      role: 'Fast Multimodal',
+      role: 'Fast Multimodal Evaluation / Direct Fallback',
+      is_primary: 0,
+      fallback_order: 1,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.6-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.6 Flash',
+      role: 'Standard Fallback',
+      is_primary: 0,
+      fallback_order: 2,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.5-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.5 Flash',
+      role: 'High-Volume Emergency Backup',
       is_primary: 0,
       fallback_order: 3,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.6-flash',
+      id: 'gemini-3.1-flash-lite',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.6 Flash',
-      role: 'Fallback #1',
+      display_name: 'Google Gemini 3.1 Flash Lite',
+      role: 'Fast Multimodal & High-Volume Fallback',
       is_primary: 0,
       fallback_order: 4,
-      thinking_level: 'MEDIUM',
+      thinking_level: 'LOW',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.5-flash',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.5 Flash',
-      role: 'Fallback #2',
+      id: 'claude-opus-5',
+      provider: 'anthropic',
+      display_name: 'Claude Opus 5 (Anthropic)',
+      role: 'Deep Legal / Accounting / Audit Evaluation',
       is_primary: 0,
       fallback_order: 5,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gpt-5.6-sol',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Sol',
+      role: 'Deep Reasoning & Calculation Cross-Check',
+      is_primary: 0,
+      fallback_order: 6,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      display_name: 'Claude Sonnet 5 (Anthropic)',
+      role: 'Balanced CA Evaluation / Fallback',
+      is_primary: 0,
+      fallback_order: 7,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
+      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gpt-5.6-terra',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Terra',
+      role: 'Fast High-Volume / Multimodal / Low Latency',
+      is_primary: 0,
+      fallback_order: 8,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.1-pro-preview',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.1 Pro (Preview)',
+      role: 'Deep Reasoning (Preview)',
+      is_primary: 0,
+      fallback_order: 9,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
   ];
 
   for (const m of models) {
-    const existing = db.prepare('SELECT id FROM model_configs WHERE id = ?').get(m.id);
+    const existing = db.prepare('SELECT id, is_primary FROM model_configs WHERE id = ?').get(m.id) as any;
     if (!existing) {
       db.prepare(`
         INSERT INTO model_configs (id, provider, display_name, role, is_primary, fallback_order, thinking_level, temperature, top_p, max_tokens, is_enabled, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-      `).run(m.id, m.provider, m.display_name, m.role, m.is_primary, m.fallback_order, m.thinking_level, m.temperature, m.top_p, m.max_tokens, defaultStatus);
+      `).run(m.id, m.provider, m.display_name, m.role, m.is_primary, m.fallback_order, m.thinking_level, m.temperature, m.top_p, m.max_tokens, m.status);
     } else {
       db.prepare(`
         UPDATE model_configs SET
           provider = ?, display_name = ?, role = ?, fallback_order = ?, thinking_level = ?, max_tokens = ?,
-          status = CASE WHEN status = 'RETIRED' THEN ? ELSE status END
+          status = CASE
+            WHEN status = 'RETIRED' THEN 'RETIRED'
+            WHEN ? = 1 AND provider = 'gemini' THEN 'AVAILABLE'
+            ELSE status
+          END
         WHERE id = ?
-      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, defaultStatus, m.id);
+      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, geminiConfigured ? 1 : 0, m.id);
     }
   }
 }

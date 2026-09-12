@@ -81,6 +81,62 @@ export interface Batch {
   createdAt: string;
 }
 
+export type MarkingComponentType =
+  | 'PROVISION'
+  | 'PRINCIPLE'
+  | 'CONDITION'
+  | 'APPLICATION'
+  | 'CALCULATION'
+  | 'WORKING'
+  | 'TREATMENT'
+  | 'REASONING'
+  | 'CONCLUSION'
+  | 'PRESENTATION'
+  | 'MCQ';
+
+export type AssessmentStatus = 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT' | 'OMITTED';
+
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+}
+
+export interface MarkingComponent {
+  componentId: string;
+  componentType: MarkingComponentType;
+  expectedRequirement: string;
+  studentEvidence: string;
+  assessment: AssessmentStatus;
+  marksAvailable: number;
+  marksAwarded: number;
+  marksDeducted: number;
+  deductionReason?: string;
+  supportingProvision?: string;
+  confidence: number;
+  pageNumber?: number;
+  boundingBox?: BoundingBox;
+  annotationInstructions?: string;
+}
+
+export interface StructuredMarkingEvidence {
+  questionId: string;
+  subQuestionId?: string;
+  questionNumber: string;
+  subQuestion?: string;
+  maxMarks: number;
+  obtainedMarks: number;
+  marksAwarded: number;
+  marksLost: number;
+  markingComponents: MarkingComponent[];
+  finalConclusionAssessment: string;
+  overallReason: string;
+  confidence: number;
+  flags: string[];
+  isDerivedAllocation?: boolean;
+}
+
 export interface QuestionEvaluation {
   questionNumber: string;
   subQuestion?: string;
@@ -97,6 +153,14 @@ export interface QuestionEvaluation {
   examinerComment?: string;
   consequentialErrorDetected?: boolean;
   consequentialErrorNotes?: string;
+  markingComponents?: MarkingComponent[];
+  structuredEvidence?: StructuredMarkingEvidence;
+  finalConclusionAssessment?: string;
+  overallReason?: string;
+  flags?: string[];
+  isDerivedAllocation?: boolean;
+  pageNumber?: number;
+  boundingBox?: BoundingBox;
   stepMarkingBreakdown?: {
     step: string;
     marksAwarded: number;
@@ -105,6 +169,16 @@ export interface QuestionEvaluation {
   }[];
   applicableProvisions?: string[];
   accountingStandardNotes?: string;
+}
+
+export interface ScoreCalculationAuditItem {
+  questionNumber: string;
+  subQuestion?: string;
+  maxMarks: number;
+  awardedMarks: number;
+  deductions: number;
+  componentsCount: number;
+  consequentialCredited?: boolean;
 }
 
 export interface EvaluationResult {
@@ -119,6 +193,9 @@ export interface EvaluationResult {
   evaluationDate: string;
   totalMarks: number;
   maximumMarks: number;
+  officialPaperMaxMarks?: number;
+  selectedEvaluatedMaxMarks?: number;
+  attemptedMaxMarks?: number;
   percentage: number;
   grade: string;
   confidenceScore: number;
@@ -154,11 +231,14 @@ export interface EvaluationResult {
   };
   recommendations: string[];
   questions: QuestionEvaluation[];
+  structuredMarkingEvidence?: StructuredMarkingEvidence[];
+  scoreCalculationAudit?: ScoreCalculationAuditItem[];
+  evaluationStandardDisclaimer?: string;
   isMcqPaper?: boolean;
   modelUsed?: string;
   modelDisplayName?: string;
   modelProvider?: string;
-  thinkingLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
+  thinkingLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
   routingReason?: string;
   originalModel?: string;
   fallbackModel?: string;

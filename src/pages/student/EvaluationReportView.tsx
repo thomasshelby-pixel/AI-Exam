@@ -93,6 +93,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     evaluationDate,
     totalMarks,
     maximumMarks,
+    officialPaperMaxMarks,
+    selectedEvaluatedMaxMarks,
+    attemptedMaxMarks,
     percentage,
     grade,
     confidenceScore,
@@ -106,6 +109,11 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     questions,
     isMcqPaper,
   } = evaluationResult;
+
+  // The official paper maximum is authoritative (e.g. 100 for CA Intermediate/Final papers)
+  const officialMax = officialPaperMaxMarks || (maximumMarks >= 100 ? maximumMarks : 100);
+  const attemptedOrEvaluatedMax =
+    selectedEvaluatedMaxMarks || attemptedMaxMarks || (maximumMarks < officialMax ? maximumMarks : undefined);
 
   const isExemption = percentage >= 60;
   const isPass = percentage >= 40;
@@ -211,10 +219,18 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   )}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-                  <Globe className="w-3 h-3" />
-                  <span>Public AI Evaluation</span>
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                    <Globe className="w-3 h-3" />
+                    <span>Public AI Evaluation</span>
+                  </span>
+                  {(evaluationResult.sponsoringInstituteName || evaluationResult.instituteName) && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                      <Building2 className="w-3 h-3" />
+                      <span>Sponsored by {evaluationResult.sponsoringInstituteName || evaluationResult.instituteName}</span>
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 print:text-black">{subjectName}</h1>
@@ -225,7 +241,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
           <div className="text-left sm:text-right text-xs text-slate-500 print:text-gray-600">
             <p className="font-bold text-slate-800 print:text-black">{studentName}</p>
-            <p className="font-mono mt-0.5">ICAI Reg: {icaiRegistrationNumber}</p>
+            <p className="font-mono mt-0.5">
+              Roll / Reg: {!icaiRegistrationNumber || icaiRegistrationNumber === '000' || icaiRegistrationNumber === 'N/A' || icaiRegistrationNumber === 'NA' || icaiRegistrationNumber === 'WRO0987654' ? 'Not provided' : icaiRegistrationNumber}
+            </p>
             <p className="mt-0.5">
               Evaluated on {new Date(evaluationDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
             </p>
@@ -238,9 +256,15 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Marks Obtained</p>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-slate-900 print:text-black">{totalMarks}</span>
-              <span className="text-xs text-slate-500">/ {maximumMarks}</span>
+              <span className="text-xs text-slate-500">/ {officialMax}</span>
             </div>
-            <p className="text-[10px] text-slate-400 mt-0.5">Step sum verified</p>
+            {attemptedOrEvaluatedMax && attemptedOrEvaluatedMax < officialMax ? (
+              <p className="text-[10px] text-blue-700 mt-0.5 font-medium">
+                Marks evaluated: {totalMarks} / {attemptedOrEvaluatedMax} attempted/evaluable marks
+              </p>
+            ) : (
+              <p className="text-[10px] text-slate-400 mt-0.5">Step sum verified</p>
+            )}
           </div>
 
           <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 print:bg-gray-50 print:border-gray-200">
@@ -369,6 +393,110 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
         </div>
       </div>
 
+      {/* How Was My Score Calculated? Transparent Audit Section */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4 print:border-gray-200 print:bg-white">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Scale className="w-4 h-4 text-blue-600" />
+              <span>How Was My Score Calculated? (Step-Wise Audit)</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Strict step-wise component audit: marks are awarded for genuine reasoning, provisions, and working notes, not merely final numerical answers.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-blue-50 text-blue-800 border border-blue-200 self-start sm:self-auto">
+              {totalMarks} / {officialMax} Marks ({percentage}%)
+            </span>
+            {attemptedOrEvaluatedMax && attemptedOrEvaluatedMax < officialMax && (
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                Attempted: {totalMarks} / {attemptedOrEvaluatedMax}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Component Summation</span>
+            <p className="font-semibold text-slate-800">
+              {questions.reduce((sum, q) => sum + (q.markingComponents?.length || 1), 0)} Audited Steps
+            </p>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Every provision citation, working note, and application is awarded discrete fractional marks.
+            </p>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Consequential Marking</span>
+            <p className="font-semibold text-slate-800">
+              {questions.some((q) => q.consequentialErrorDetails?.isConsequential) ? 'Protected & Credited' : 'No Cascading Penalties'}
+            </p>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Prior arithmetic slips do not cancel downstream marks if subsequent legal or conceptual logic is sound.
+            </p>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Substance Over Form</span>
+            <p className="font-semibold text-slate-800">Cognitive Equivalence</p>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Alternative valid statutory approaches and equivalent legal wording receive full proportional credit.
+            </p>
+          </div>
+        </div>
+
+        {/* Audit summary table */}
+        <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                <th className="py-2 px-3">Q#</th>
+                <th className="py-2 px-3">Max</th>
+                <th className="py-2 px-3">Awarded</th>
+                <th className="py-2 px-3">Lost</th>
+                <th className="py-2 px-3">Steps / Components</th>
+                <th className="py-2 px-3">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {questions.map((q, i) => {
+                const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
+                const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
+                return (
+                  <tr key={i} className="hover:bg-slate-50/50">
+                    <td className="py-2 px-3 font-bold font-mono text-slate-800">Q{q.questionNumber}</td>
+                    <td className="py-2 px-3 font-mono text-slate-600">{q.maximumMarks}</td>
+                    <td className="py-2 px-3 font-mono font-bold text-emerald-700">+{q.marksAwarded}</td>
+                    <td className="py-2 px-3 font-mono text-rose-700">-{q.marksLost}</td>
+                    <td className="py-2 px-3 text-slate-600">
+                      <span>{compsCount} step{compsCount > 1 ? 's' : ''}</span>
+                      {isConseq && (
+                        <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                          Consequential
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3">
+                      <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                        q.status === 'correct'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : q.status === 'partially_correct'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-rose-100 text-rose-800'
+                      }`}>
+                        {q.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Question-Wise Step Marking Breakdown */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5 shadow-sm print:border-gray-300 print:bg-white print:text-black">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -380,7 +508,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               </span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Verified against ICAI guideline answers and official paper-specific MCQ scoring rules.
+              Component-level evaluation referencing statutory provisions, working notes, and suggested answers.
             </p>
           </div>
 
@@ -414,6 +542,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                 ? 'border-rose-200 bg-rose-50/40 text-slate-800'
                 : 'border-slate-200 bg-slate-50 text-slate-800';
 
+            const comps = q.markingComponents || q.structuredEvidence?.markingComponents || [];
+            const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
+
             return (
               <div
                 key={idx}
@@ -438,6 +569,21 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   </div>
                 </div>
 
+                {/* Consequential error alert */}
+                {isConseq && (
+                  <div className="mt-3 p-2.5 rounded-md bg-blue-50 border border-blue-200 text-xs text-blue-900 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold uppercase tracking-wider text-[10px] text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded mr-1.5">
+                        Consequential Marking Credit
+                      </span>
+                      <span>
+                        {q.consequentialErrorDetails?.reason || 'Earlier arithmetic slip isolated. Downstream methodology and calculations credited.'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Feedback and Reason */}
                 <div className="mt-2.5 pt-2.5 border-t border-slate-200/80 text-xs space-y-1.5 print:border-gray-200">
                   <p className="text-slate-700 print:text-gray-800">
@@ -461,6 +607,56 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                           {prov}
                         </span>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Component-level breakdown items if available */}
+                  {comps.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-200/60 space-y-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-600 flex items-center justify-between">
+                        <span>Step Components ({comps.length})</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {comps.map((c, cIdx) => {
+                          const isCompCorrect = c.assessment === 'CORRECT' || c.marksAwarded >= c.marksAvailable;
+                          const isCompPartial = c.assessment === 'PARTIALLY_CORRECT' || (c.marksAwarded > 0 && c.marksAwarded < c.marksAvailable);
+                          return (
+                            <div
+                              key={cIdx}
+                              className={`p-2 rounded border text-xs ${
+                                isCompCorrect
+                                  ? 'bg-emerald-50/60 border-emerald-200'
+                                  : isCompPartial
+                                  ? 'bg-amber-50/60 border-amber-200'
+                                  : 'bg-rose-50/60 border-rose-200'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-white border border-slate-200 font-mono">
+                                    [{c.componentType}]
+                                  </span>
+                                  <span className="font-semibold text-slate-900">{c.expectedRequirement}</span>
+                                </div>
+                                <span className={`font-mono font-bold ${isCompCorrect ? 'text-emerald-700' : isCompPartial ? 'text-amber-700' : 'text-rose-700'}`}>
+                                  +{c.marksAwarded} / {c.marksAvailable}m
+                                  {c.marksDeducted > 0 && <span className="text-rose-600 ml-1">(-{c.marksDeducted})</span>}
+                                </span>
+                              </div>
+                              {c.studentEvidence && (
+                                <p className="text-[11px] text-slate-600 mt-1">
+                                  <span className="font-medium text-slate-700">Script:</span> {c.studentEvidence}
+                                </p>
+                              )}
+                              {c.deductionReason && (
+                                <p className="text-[11px] text-rose-700 mt-0.5">
+                                  <span className="font-medium">Deduction:</span> {c.deductionReason}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

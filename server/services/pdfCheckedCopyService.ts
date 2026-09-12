@@ -162,9 +162,9 @@ export function buildStructuredAnnotations(
       targetPage = (idx % safeTotalPages) + 1;
     }
 
-    const steps = q.stepMarkingBreakdown || q.stepsEvaluated || [
-      { stepName: 'Statutory Provision / Standard Verification', marksAwarded: Math.min(2, q.marksAwarded || 2), maxMarks: 2, status: 'CORRECT', comment: 'Provision accurately cited' },
-      { stepName: 'Methodology & Working Notes', marksAwarded: Math.max(0, (q.marksAwarded || 2) - 2), maxMarks: Math.max(2, (q.maxMarks || 4) - 2), status: q.marksAwarded >= q.maxMarks ? 'CORRECT' : 'PARTIALLY_CORRECT', comment: 'Calculations verified' },
+    const steps = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [
+      { componentType: 'PROVISION', stepName: 'Statutory Provision Verification', marksAwarded: Math.min(2, q.marksAwarded || 2), maxMarks: 2, marksAvailable: 2, status: 'CORRECT', studentEvidence: 'Provision accurately cited' },
+      { componentType: 'APPLICATION', stepName: 'Methodology & Working Notes', marksAwarded: Math.max(0, (q.marksAwarded || 2) - 2), maxMarks: Math.max(2, (q.maxMarks || 4) - 2), marksAvailable: Math.max(2, (q.maxMarks || 4) - 2), status: q.marksAwarded >= q.maxMarks ? 'CORRECT' : 'PARTIALLY_CORRECT', studentEvidence: 'Calculations verified' },
     ];
 
     const annotation: PageAnnotation = {
@@ -172,13 +172,23 @@ export function buildStructuredAnnotations(
       questionNumber: String(q.questionNumber || `Q${idx + 1}`),
       marksAwarded: Number(q.marksAwarded ?? 0),
       maxMarks: Number(q.maxMarks || q.maximumMarks || 5),
-      steps: steps.map((s: any) => ({
-        stepName: s.step || s.stepName || 'Step',
-        marksAwarded: Number(s.marksAwarded ?? 0),
-        maxMarks: Number(s.maximumMarks || s.maxMarks || 2),
-        status: s.status || (s.marksAwarded >= (s.maximumMarks || 2) ? 'CORRECT' : s.marksAwarded > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT'),
-        comment: s.remarks || s.comment || '',
-      })),
+      steps: steps.map((s: any) => {
+        const cType = s.componentType || (s.stepName && s.stepName.startsWith('[') ? '' : 'STEP');
+        const prefix = cType ? `[${cType}] ` : '';
+        const name = s.expectedRequirement || s.step || s.stepName || 'Step';
+        const sMax = Number(s.marksAvailable || s.maximumMarks || s.maxMarks || 1);
+        const sAward = Number(s.marksAwarded ?? 0);
+        const sStatus = s.assessment || s.status || (sAward >= sMax ? 'CORRECT' : sAward > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT');
+        const sDeduction = s.deductionReason ? `Deduction: ${s.deductionReason}` : (s.remarks || s.comment || s.studentEvidence || '');
+
+        return {
+          stepName: `${prefix}${name}`.trim(),
+          marksAwarded: sAward,
+          maxMarks: sMax,
+          status: sStatus,
+          comment: sDeduction,
+        };
+      }),
     };
 
     pagesMap.get(targetPage)!.push(annotation);
@@ -285,8 +295,8 @@ export async function generateCheckedCopyPdf(
       }
     );
 
-    safeDrawText(page, 'ICAI STEP-CHECKED', {
-      x: width - 110,
+    safeDrawText(page, 'AI STEP-CHECKED', {
+      x: width - 100,
       y: height - 17,
       size: 7.5,
       font: helveticaBold,
@@ -295,9 +305,9 @@ export async function generateCheckedCopyPdf(
 
     // (B) Right Margin Question & Step Marks Overlay
     // Positioned strictly in the right margin so candidate's handwritten body is never obscured
-    const marginWidth = 125;
-    const marginX = width - marginWidth - 10;
-    let currY = height - 75;
+    const marginWidth = 140;
+    const marginX = width - marginWidth - 8;
+    let currY = height - 70;
 
     for (const qAnn of pageAnnotations) {
       if (currY < 120) break; // Don't overflow bottom margin
@@ -305,9 +315,9 @@ export async function generateCheckedCopyPdf(
       // Question Score Box
       page.drawRectangle({
         x: marginX,
-        y: currY - 36,
+        y: currY - 34,
         width: marginWidth,
-        height: 38,
+        height: 36,
         color: rgb(1, 0.97, 0.97),
         borderColor: redExaminer,
         borderWidth: 1.2,
@@ -316,36 +326,66 @@ export async function generateCheckedCopyPdf(
       safeDrawText(page, `Q.${qAnn.questionNumber}`, {
         x: marginX + 6,
         y: currY - 14,
-        size: 10,
+        size: 9.5,
         font: helveticaBold,
         color: redExaminer,
       });
 
       safeDrawText(page, `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
-        x: marginX + 44,
+        x: marginX + 46,
         y: currY - 14,
-        size: 11,
+        size: 10.5,
         font: helveticaBold,
         color: redExaminer,
       });
 
-      safeDrawText(page, 'STEP EVALUATED', {
+      safeDrawText(page, 'STEP-WISE EVALUATION', {
         x: marginX + 6,
-        y: currY - 30,
+        y: currY - 28,
         size: 6.5,
         font: helveticaBold,
         color: darkSlate,
       });
 
-      currY -= 48;
+      currY -= 44;
 
       // Render Individual Step Markings
-      for (const st of qAnn.steps.slice(0, 3)) {
-        if (currY < 100) break;
+      for (const st of qAnn.steps.slice(0, 4)) {
+        if (currY < 90) break;
 
         const isCorrect = st.status === 'CORRECT';
         const isPartial = st.status === 'PARTIALLY_CORRECT';
         const markColor = isCorrect ? greenExaminer : isPartial ? amberExaminer : redExaminer;
+
+        // Step container
+        const commentLines = [];
+        const rawComment = st.comment || st.stepName;
+        if (rawComment) {
+          // Wrap words across lines of max 26 characters
+          const words = rawComment.split(/\s+/);
+          let line = '';
+          for (const w of words) {
+            if ((line + ' ' + w).trim().length <= 26) {
+              line = (line + ' ' + w).trim();
+            } else {
+              if (line) commentLines.push(line);
+              line = w;
+            }
+          }
+          if (line) commentLines.push(line);
+        }
+        const displayLines = commentLines.slice(0, 2);
+        const boxHeight = 16 + displayLines.length * 9;
+
+        page.drawRectangle({
+          x: marginX,
+          y: currY - boxHeight + 8,
+          width: marginWidth,
+          height: boxHeight,
+          color: isCorrect ? rgb(0.97, 1, 0.97) : isPartial ? rgb(1, 0.99, 0.94) : rgb(1, 0.96, 0.96),
+          borderColor: isCorrect ? rgb(0.6, 0.85, 0.6) : isPartial ? rgb(0.9, 0.75, 0.4) : rgb(0.9, 0.6, 0.6),
+          borderWidth: 0.5,
+        });
 
         if (isCorrect) {
           drawCheckmark(page, marginX + 4, currY, greenExaminer);
@@ -362,34 +402,44 @@ export async function generateCheckedCopyPdf(
           drawCrossmark(page, marginX + 4, currY, redExaminer);
         }
 
-        safeDrawText(page, `+${st.marksAwarded}m`, {
-          x: marginX + 20,
+        safeDrawText(page, `+${st.marksAwarded}/${st.maxMarks}`, {
+          x: marginX + 18,
           y: currY,
-          size: 8,
+          size: 7.5,
           font: helveticaBold,
           color: markColor,
         });
 
-        const commentText = st.comment || st.stepName;
-        if (commentText) {
-          safeDrawText(page, commentText.substring(0, 22), {
-            x: marginX + 4,
-            y: currY - 10,
-            size: 6.2,
+        // Step Name / Component tag
+        safeDrawText(page, st.stepName.substring(0, 22), {
+          x: marginX + 54,
+          y: currY,
+          size: 6.2,
+          font: helveticaBold,
+          color: darkSlate,
+        });
+
+        let lineY = currY - 9;
+        for (const cl of displayLines) {
+          safeDrawText(page, cl, {
+            x: marginX + 6,
+            y: lineY,
+            size: 5.8,
             font: helvetica,
-            color: darkSlate,
+            color: isPartial ? darkSlate : isCorrect ? darkSlate : redExaminer,
           });
+          lineY -= 8.5;
         }
 
-        currY -= 26;
+        currY -= (boxHeight + 4);
       }
 
-      currY -= 8;
+      currY -= 6;
     }
 
     // (C) Official Examiner Final Verification Seal (Overlay on LAST page bottom margin)
     if (pageIdx === originalPageCount - 1) {
-      const sealWidth = 240;
+      const sealWidth = 260;
       const sealHeight = 44;
       const sealX = width - sealWidth - 15;
       const sealY = 24;
@@ -404,7 +454,7 @@ export async function generateCheckedCopyPdf(
         borderWidth: 1.5,
       });
 
-      safeDrawText(page, 'OFFICIAL CA EXAMINER STEP VERIFICATION', {
+      safeDrawText(page, 'CA EXAM CHECKER AI | STEP-WISE VERIFICATION SEAL', {
         x: sealX + 8,
         y: sealY + 31,
         size: 7,
@@ -414,7 +464,7 @@ export async function generateCheckedCopyPdf(
 
       safeDrawText(
         page,
-        `TOTAL MARKS: ${totalAwarded.toFixed(1)} / ${maxMarks} (${percentage.toFixed(1)}%)  |  RESULT: ${resultStatus}`,
+        `TOTAL: ${totalAwarded.toFixed(1)} / ${maxMarks} (${percentage.toFixed(1)}%)  |  RESULT: ${resultStatus}`,
         {
           x: sealX + 8,
           y: sealY + 18,
@@ -426,7 +476,7 @@ export async function generateCheckedCopyPdf(
 
       safeDrawText(
         page,
-        `Evaluator: Senior CA Examiner AI  |  Auth ID: ${evalData.id.slice(0, 16)}`,
+        `Evaluator: Senior CA Examiner AI | Ref ID: ${evalData.id.slice(0, 16)}`,
         {
           x: sealX + 8,
           y: sealY + 7,
@@ -440,7 +490,7 @@ export async function generateCheckedCopyPdf(
     // (D) Bottom Page Footer Note
     safeDrawText(
       page,
-      `Page ${pageNumber} of ${originalPageCount}  |  Red ink annotations indicate step evaluation against official suggested guidelines.`,
+      `Page ${pageNumber} of ${originalPageCount} | Independent AI diagnostic benchmark based on verified marking guidelines. Not affiliated with ICAI.`,
       {
         x: 20,
         y: 10,
@@ -501,7 +551,7 @@ export async function generateOriginalSubmissionPdf(
     color: blueNavy,
   });
 
-  safeDrawText(cover, 'THE INSTITUTE OF CHARTERED ACCOUNTANTS OF INDIA', {
+  safeDrawText(cover, 'CA EXAM CHECKER AI', {
     x: 40,
     y: height - 38,
     size: 15,
@@ -509,7 +559,7 @@ export async function generateOriginalSubmissionPdf(
     color: rgb(1, 1, 1),
   });
 
-  safeDrawText(cover, 'CANDIDATE ANSWER BOOKLET ARCHIVE  |  MAIN DESCRIPTIVE EXAMINATION', {
+  safeDrawText(cover, 'CANDIDATE ANSWER SCRIPT ARCHIVE  |  AI STEP-WISE EVALUATION BENCHMARK', {
     x: 40,
     y: height - 58,
     size: 9,
@@ -536,7 +586,7 @@ export async function generateOriginalSubmissionPdf(
     borderWidth: 1,
   });
 
-  safeDrawText(cover, `Candidate Name: ${evalData.studentName || 'Verified Candidate'}`, {
+  safeDrawText(cover, `Candidate Name: ${evalData.studentName || 'Candidate'}`, {
     x: 50,
     y: height - 130,
     size: 11,
@@ -544,7 +594,16 @@ export async function generateOriginalSubmissionPdf(
     color: darkSlate,
   });
 
-  safeDrawText(cover, `ICAI Reg. No.: ${evalData.icaiRegistrationNumber || 'WRO0987654'}`, {
+  const validRegNo =
+    evalData.icaiRegistrationNumber &&
+    evalData.icaiRegistrationNumber !== 'WRO0987654' &&
+    evalData.icaiRegistrationNumber !== '000' &&
+    evalData.icaiRegistrationNumber !== 'N/A' &&
+    evalData.icaiRegistrationNumber !== 'NA'
+      ? evalData.icaiRegistrationNumber
+      : 'Not provided';
+
+  safeDrawText(cover, `Roll / Reg. No.: ${validRegNo}`, {
     x: 50,
     y: height - 150,
     size: 9.5,
@@ -689,7 +748,7 @@ export async function generateOriginalSubmissionPdf(
 
   safeDrawText(
     cover,
-    'I hereby certify that this answer script contains my original examination work written in accordance with ICAI guidelines.',
+    'I hereby certify that this answer script contains candidate examination work submitted for diagnostic evaluation.',
     {
       x: 45,
       y: 130,
@@ -699,7 +758,7 @@ export async function generateOriginalSubmissionPdf(
     }
   );
 
-  safeDrawText(cover, `Signature of Candidate: ${evalData.studentName || 'Verified Candidate'}`, {
+  safeDrawText(cover, `Signature of Candidate: ${evalData.studentName || 'Candidate'}`, {
     x: 45,
     y: 106,
     size: 8,
@@ -707,7 +766,7 @@ export async function generateOriginalSubmissionPdf(
     color: blueNavy,
   });
 
-  safeDrawText(cover, 'Invigilator Signature: ICAI AI Proctor', {
+  safeDrawText(cover, 'Evaluation System: CA Exam Checker AI Engine', {
     x: width - 240,
     y: 106,
     size: 8,

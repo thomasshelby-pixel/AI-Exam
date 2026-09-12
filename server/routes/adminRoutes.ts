@@ -2505,10 +2505,11 @@ router.get('/ai-settings', (req: AuthRequest, res: Response) => {
         geminiConfigured: !!process.env.GEMINI_API_KEY,
         availableModels: [
           { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Primary CA Evaluation)' },
-          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Secondary Complex & Legal Reasoning)' },
-          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Fast Review & MCQ Evaluator)' },
+          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Fast Review & High-Volume Fallback)' },
           { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Primary Fallback Model)' },
           { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash (Secondary Fallback Model)' },
+          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (Ultra-Fast Fallback Model)' },
+          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Complex & Legal Reasoning)' },
         ],
       },
     });
@@ -3168,22 +3169,45 @@ router.get('/models', (req: AuthRequest, res: Response) => {
 
     const providerStatus = {
       gemini: {
+        provider: 'gemini',
+        name: 'Google Gemini',
         configured: Boolean(geminiKey && geminiKey.length > 5),
-        keyMasked: geminiKey ? `${geminiKey.slice(0, 4)}...${geminiKey.slice(-4)}` : 'Not Configured',
+        keyMasked: geminiKey ? `${geminiKey.slice(0, 4)}••••${geminiKey.slice(-4)}` : 'Not Configured',
+        modelsCount: models.filter((m) => m.provider === 'gemini').length,
       },
       openai: {
+        provider: 'openai',
+        name: 'OpenAI',
         configured: Boolean(openaiKey && openaiKey.length > 5),
-        keyMasked: openaiKey ? `${openaiKey.slice(0, 4)}...${openaiKey.slice(-4)}` : 'Not Configured',
+        keyMasked: openaiKey ? `${openaiKey.slice(0, 3)}••••${openaiKey.slice(-4)}` : 'Not Configured',
+        modelsCount: models.filter((m) => m.provider === 'openai').length,
       },
       anthropic: {
+        provider: 'anthropic',
+        name: 'Anthropic',
         configured: Boolean(anthropicKey && anthropicKey.length > 5),
-        keyMasked: anthropicKey ? `${anthropicKey.slice(0, 4)}...${anthropicKey.slice(-4)}` : 'Not Configured',
+        keyMasked: anthropicKey ? `${anthropicKey.slice(0, 4)}••••${anthropicKey.slice(-4)}` : 'Not Configured',
+        modelsCount: models.filter((m) => m.provider === 'anthropic').length,
       },
     };
+
+    const fallbackHierarchy = [
+      { order: 0, modelId: 'gemini-3.8-flash', provider: 'gemini', role: 'Primary CA Evaluation' },
+      { order: 1, modelId: 'gemini-3.7-flash', provider: 'gemini', role: 'Fast Multimodal' },
+      { order: 2, modelId: 'gemini-3.6-flash', provider: 'gemini', role: 'Standard Fallback' },
+      { order: 3, modelId: 'gemini-3.5-flash', provider: 'gemini', role: 'High-Volume Backup' },
+      { order: 4, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Ultra-Fast Fallback' },
+      { order: 5, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Reasoning (Legal/Tax/Audit)' },
+      { order: 6, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
+      { order: 7, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
+      { order: 8, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
+      { order: 9, modelId: 'gemini-3.1-pro-preview', provider: 'gemini', role: 'Deep Reasoning Preview' },
+    ];
 
     return res.json({
       models,
       providerStatus,
+      fallbackHierarchy,
     });
   } catch (error: unknown) {
     console.error('Get models error:', error);
@@ -3279,6 +3303,36 @@ router.post('/models/test-connection', async (req: AuthRequest, res: Response) =
     return res.status(500).json({
       success: false,
       message: error?.message || 'Connection test failed',
+    });
+  }
+});
+
+router.post('/models/test-provider', async (req: AuthRequest, res: Response) => {
+  try {
+    const { provider } = req.body;
+    if (!provider || !['gemini', 'openai', 'anthropic'].includes(provider)) {
+      return res.status(400).json({ error: 'Valid provider (gemini, openai, anthropic) is required' });
+    }
+
+    const { testModelConnection, APPROVED_MODELS } = await import('../models/modelRegistry.js');
+    const providerModels = APPROVED_MODELS.filter((m) => m.provider === provider);
+    const results = [];
+
+    for (const m of providerModels) {
+      const resTest = await testModelConnection(m.id);
+      results.push(resTest);
+    }
+
+    return res.json({
+      provider,
+      results,
+      allPassed: results.every((r) => r.success),
+    });
+  } catch (error: any) {
+    console.error('Test provider error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Provider connection test failed',
     });
   }
 });

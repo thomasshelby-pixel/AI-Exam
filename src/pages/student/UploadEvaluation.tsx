@@ -101,12 +101,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const purchasedCredits = studentProfile?.purchased_credits || 0;
 
   // Active membership check
-  const activeInstitute = enrolledInstitutes.find((inst) => inst.institute_id === selectedInstituteId);
+  const activeInstitute = enrolledInstitutes.find((inst) => inst.institute_id === selectedInstituteId) || enrolledInstitutes[0];
   const isInstituteEnrolled = enrolledInstitutes.length > 0;
   const hasAccess =
-    evaluationSource === 'INSTITUTE'
-      ? !!activeInstitute
-      : user?.hasPermanentFreeAccess || freeRemaining > 0 || purchasedCredits > 0;
+    isInstituteEnrolled || user?.hasPermanentFreeAccess || freeRemaining > 0 || purchasedCredits > 0;
 
   // Fetch student enrollments
   useEffect(() => {
@@ -333,7 +331,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           mimeType: file.type || 'application/pdf',
           filename: file.name,
           evaluationSource,
-          instituteId: evaluationSource === 'INSTITUTE' ? selectedInstituteId : undefined,
+          instituteId: selectedInstituteId || undefined,
+          sponsoringInstituteId: isInstituteEnrolled ? selectedInstituteId : undefined,
           instituteMaterialId: evaluationSource === 'INSTITUTE' ? selectedInstituteMaterialId : undefined,
         }),
       });
@@ -376,7 +375,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           <div>
             <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Available Balance</p>
             <p className="text-xs sm:text-sm font-bold text-slate-800">
-              {user?.hasPermanentFreeAccess ? (
+              {isInstituteEnrolled ? (
+                <span className="text-blue-600">Sponsored ({activeInstitute?.institute_name || 'Institute'})</span>
+              ) : user?.hasPermanentFreeAccess ? (
                 <span className="text-blue-600">Active</span>
               ) : studentProfile?.institute_name ? (
                 <span className="text-blue-600">Institute Sponsored</span>
@@ -387,7 +388,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               )}
             </p>
           </div>
-          {!user?.hasPermanentFreeAccess && !studentProfile?.institute_name && freeRemaining === 0 && purchasedCredits === 0 && (
+          {!isInstituteEnrolled && !user?.hasPermanentFreeAccess && !studentProfile?.institute_name && freeRemaining === 0 && purchasedCredits === 0 && (
             <button
               onClick={onOpenCreditsModal}
               className="ml-1 px-2.5 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
@@ -498,10 +499,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               )}
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Checked against official ICAI MTP, RTP & Suggested Answers. Uses personal evaluation credits.
+              Checked against official ICAI MTP, RTP & Suggested Answers. {isInstituteEnrolled ? 'Fully covered by institute evaluation allocation.' : 'Uses personal evaluation credits.'}
             </p>
             <div className="mt-2 text-[10px] font-bold text-blue-700 bg-blue-100/60 rounded px-2 py-0.5 inline-block">
-              {user?.hasPermanentFreeAccess
+              {isInstituteEnrolled
+                ? `Sponsored by ${activeInstitute?.institute_name || 'Institute'} (0 Personal Credits)`
+                : user?.hasPermanentFreeAccess
                 ? 'Unlimited Access'
                 : freeRemaining > 0
                 ? `${freeRemaining} Free Left`
@@ -636,6 +639,44 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               </div>
             ) : (
               <>
+                {/* Institute Sponsorship info banner for Public Evaluation */}
+                {isInstituteEnrolled && (
+                  <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold flex items-center gap-1.5 text-blue-900">
+                        <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                        Coaching Institute Sponsorship
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded">
+                        0 Personal Credits
+                      </span>
+                    </div>
+                    {enrolledInstitutes.length > 1 ? (
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-1 font-medium">Charge Evaluation to Academy:</label>
+                        <select
+                          value={selectedInstituteId}
+                          onChange={(e) => setSelectedInstituteId(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs rounded bg-white border border-blue-300 text-slate-800 focus:outline-none focus:border-blue-600 font-medium"
+                        >
+                          {enrolledInstitutes.map((inst) => (
+                            <option key={inst.institute_id} value={inst.institute_id}>
+                              {inst.institute_name} {inst.batch_name ? `(${inst.batch_name})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-blue-800 font-medium">
+                        Sponsored by {activeInstitute?.institute_name || enrolledInstitutes[0]?.institute_name}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-blue-600">
+                      Evaluated using official global ICAI papers. Cost is billed to your academy's allocation.
+                    </p>
+                  </div>
+                )}
+
                 {/* Level selection */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">CA Examination Level</label>

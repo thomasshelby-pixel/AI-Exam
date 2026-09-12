@@ -202,10 +202,17 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                             )}
                           </div>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded w-fit">
-                            <Globe className="w-3 h-3" />
-                            Public AI
-                          </span>
+                          <div className="flex flex-col">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded w-fit">
+                              <Globe className="w-3 h-3" />
+                              Public AI
+                            </span>
+                            {ev.institute_name && (
+                              <span className="text-[10px] text-slate-500 font-medium mt-0.5 truncate max-w-[150px]" title={`Sponsored by ${ev.institute_name}`}>
+                                Via {ev.institute_name}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-4">

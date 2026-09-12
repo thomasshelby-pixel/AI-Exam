@@ -44,7 +44,7 @@ export async function generateDetailedReportPdf(
       color: brandBlue,
     });
 
-    safeDrawText(page, 'THE INSTITUTE OF CHARTERED ACCOUNTANTS OF INDIA', {
+    safeDrawText(page, 'CA EXAM CHECKER AI', {
       x: 36,
       y: height - 28,
       size: 11,
@@ -52,7 +52,7 @@ export async function generateDetailedReportPdf(
       color: rgb(1, 1, 1),
     });
 
-    safeDrawText(page, 'AI STEP-MARKING & DETAILED EVALUATION REPORT', {
+    safeDrawText(page, 'STEP-WISE CA EXAMINER EVALUATION & MARKING REPORT', {
       x: 36,
       y: height - 42,
       size: 8.5,
@@ -76,10 +76,10 @@ export async function generateDetailedReportPdf(
       color: borderGray,
     });
 
-    safeDrawText(page, 'CA Exam Checker AI - Verified Authentic ICAI Evaluation Standard', {
+    safeDrawText(page, 'CA Exam Checker AI - Independent diagnostic benchmark referencing verified marking schemes | Not affiliated with ICAI', {
       x: 36,
       y: 22,
-      size: 7.5,
+      size: 7,
       font: helvetica,
       color: mutedSlate,
     });
@@ -128,7 +128,16 @@ export async function generateDetailedReportPdf(
     color: darkSlate,
   });
 
-  safeDrawText(p1, `ICAI Reg No: ${evalData.icaiRegistrationNumber || 'N/A'}`, {
+  const cleanRegNo =
+    evalData.icaiRegistrationNumber &&
+    evalData.icaiRegistrationNumber !== 'N/A' &&
+    evalData.icaiRegistrationNumber !== 'NA' &&
+    evalData.icaiRegistrationNumber !== '000' &&
+    evalData.icaiRegistrationNumber !== 'WRO0987654'
+      ? evalData.icaiRegistrationNumber
+      : 'Not provided';
+
+  safeDrawText(p1, `Roll / Reg No: ${cleanRegNo}`, {
     x: 48,
     y: y - 52,
     size: 8.5,
@@ -147,7 +156,7 @@ export async function generateDetailedReportPdf(
   const sourceLabel =
     evalData.evaluationSource === 'INSTITUTE' || evalData.instituteName
       ? `Institute: ${evalData.instituteName || 'Academy'}${evalData.batchName ? ` (${evalData.batchName})` : ''}`
-      : 'Evaluation: Public AI (Official ICAI Answers)';
+      : 'Evaluation: AI Step-Wise Diagnostic Engine (Verified Standards)';
 
   safeDrawText(p1, sourceLabel, {
     x: 48,
@@ -173,7 +182,7 @@ export async function generateDetailedReportPdf(
     color: darkSlate,
   });
 
-  safeDrawText(p1, `Checking Mode: ${evalData.checkingMode || 'STRICT_ICAI'}`, {
+  safeDrawText(p1, `Checking Mode: ${evalData.checkingMode || 'STANDARD_CA'}`, {
     x: 280,
     y: y - 68,
     size: 8.5,
@@ -243,7 +252,7 @@ export async function generateDetailedReportPdf(
     font: helveticaBold,
     color: statusColor,
   });
-  safeDrawText(p1, isExemption ? 'Eligible for Subject Exemption' : isPass ? 'Meets ICAI Passing Standard' : 'Requires Further Revision', {
+  safeDrawText(p1, isExemption ? 'Eligible for Subject Exemption (>=60)' : isPass ? 'Meets Passing Benchmark (>=40)' : 'Requires Targeted Revision (<40)', {
     x: 46 + boxWidth + 10,
     y: y - 62,
     size: 7.5,
@@ -251,7 +260,7 @@ export async function generateDetailedReportPdf(
     color: statusColor,
   });
 
-  // Box 3: Grade & ICAI Step Marking Index
+  // Box 3: Grade & Step Marking Rubric
   p1.drawRectangle({
     x: 36 + (boxWidth + 10) * 2,
     y: y - 70,
@@ -275,7 +284,7 @@ export async function generateDetailedReportPdf(
     font: helveticaBold,
     color: accentGold,
   });
-  safeDrawText(p1, 'ICAI Evaluated Step Standard', {
+  safeDrawText(p1, 'Step-Wise CA Rubric Evaluated', {
     x: 46 + (boxWidth + 10) * 2,
     y: y - 62,
     size: 7.5,
@@ -457,7 +466,7 @@ export async function generateDetailedReportPdf(
     let { page: currentStepPage, width: pW, height: pH } = createReportPage(pageNum);
     let stepY = pH - 75;
 
-    safeDrawText(currentStepPage, 'DETAILED ICAI STEP-BY-STEP MARKING BREAKDOWN', {
+    safeDrawText(currentStepPage, 'COMPONENT-LEVEL STEP-WISE MARKING BREAKDOWN & EVIDENCE', {
       x: 36,
       y: stepY,
       size: 10,
@@ -472,11 +481,15 @@ export async function generateDetailedReportPdf(
       const qNum = String(q.questionNumber || `Q${i + 1}`);
       const qMarks = Number(q.marksAwarded ?? 0);
       const qMax = Number(q.maxMarks || q.maximumMarks || 5);
-      const steps = q.stepMarkingBreakdown || q.stepsEvaluated || [];
+      const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [];
+      const hasConsequential = Boolean(q.consequentialErrorDetails?.isConsequential);
 
-      // Check if page overflow
-      const neededHeight = 45 + steps.length * 20;
-      if (stepY - neededHeight < 60) {
+      // Estimate needed height for this question
+      const perComponentHeight = 36;
+      const questionHeaderHeight = hasConsequential ? 48 : 32;
+      const totalQuestionHeight = questionHeaderHeight + Math.max(1, components.length) * perComponentHeight;
+
+      if (stepY - totalQuestionHeight < 60 && stepY < pH - 150) {
         pageNum++;
         const newP = createReportPage(pageNum);
         currentStepPage = newP.page;
@@ -507,70 +520,132 @@ export async function generateDetailedReportPdf(
         y: stepY - 15,
         size: 8.5,
         font: helveticaBold,
-        color: darkSlate,
+        color: qMarks >= qMax ? passGreen : darkSlate,
       });
 
-      stepY -= 28;
+      stepY -= 26;
 
-      // Question Step Items
-      if (steps.length === 0) {
-        safeDrawText(currentStepPage, `Remarks: ${q.examinerRemarks || 'Candidate solution evaluated according to standard.'}`, {
-          x: 48,
-          y: stepY - 10,
+      // Consequential Error Callout Banner if applicable
+      if (hasConsequential) {
+        currentStepPage.drawRectangle({
+          x: 44,
+          y: stepY - 16,
+          width: pW - 88,
+          height: 16,
+          color: rgb(0.95, 0.98, 1),
+          borderColor: brandBlue,
+          borderWidth: 0.5,
+        });
+
+        safeDrawText(currentStepPage, `[CONSEQUENTIAL MARKING] Prior arithmetic slip isolated. Downstream reasoning credited.`, {
+          x: 52,
+          y: stepY - 11,
+          size: 7,
+          font: helveticaBold,
+          color: brandBlue,
+        });
+
+        stepY -= 20;
+      }
+
+      // Render Components / Steps
+      if (components.length === 0) {
+        currentStepPage.drawRectangle({
+          x: 44,
+          y: stepY - 22,
+          width: pW - 88,
+          height: 22,
+          color: lightBg,
+          borderColor: borderGray,
+          borderWidth: 0.5,
+        });
+
+        safeDrawText(currentStepPage, `Remarks: ${q.examinerRemarks || 'Candidate solution evaluated according to standard CA step-marking rubric.'}`, {
+          x: 52,
+          y: stepY - 14,
           size: 7.5,
           font: helvetica,
           color: darkSlate,
         });
-        stepY -= 22;
+        stepY -= 28;
       } else {
-        steps.forEach((s: any) => {
-          const sName = s.step || s.stepName || 'Evaluation Step';
-          const sMarks = s.marksAwarded ?? 0;
-          const sMax = s.maximumMarks || s.maxMarks || 1;
-          const sComment = s.remarks || s.comment || '';
-          const isCorrect = s.status === 'CORRECT' || sMarks >= sMax;
+        components.forEach((c: any) => {
+          if (stepY < 75) {
+            pageNum++;
+            const newP = createReportPage(pageNum);
+            currentStepPage = newP.page;
+            stepY = pH - 75;
+          }
+
+          const cType = c.componentType || (c.stepName?.startsWith('[') ? '' : 'STEP');
+          const prefix = cType ? `[${cType}] ` : '';
+          const name = c.expectedRequirement || c.step || c.stepName || 'Requirement';
+          const sAward = Number(c.marksAwarded ?? 0);
+          const sMax = Number(c.marksAvailable || c.maximumMarks || c.maxMarks || 1);
+          const sDeducted = Number(c.marksDeducted ?? Math.max(0, sMax - sAward));
+          const isCorrect = c.assessment === 'CORRECT' || sAward >= sMax;
+          const isPartial = c.assessment === 'PARTIALLY_CORRECT' || (sAward > 0 && sAward < sMax);
+
+          const studentEvidence = c.studentEvidence ? `Script: ${String(c.studentEvidence).substring(0, 65)}` : '';
+          const deductionReason = c.deductionReason ? `Deduction: ${String(c.deductionReason).substring(0, 70)}` : '';
+
+          const boxH = (studentEvidence || deductionReason) ? 32 : 20;
 
           currentStepPage.drawRectangle({
-            x: 46,
-            y: stepY - 18,
-            width: pW - 92,
-            height: 18,
-            color: isCorrect ? rgb(0.97, 0.99, 0.97) : rgb(0.99, 0.97, 0.97),
-            borderColor: borderGray,
+            x: 44,
+            y: stepY - boxH,
+            width: pW - 88,
+            height: boxH,
+            color: isCorrect ? rgb(0.97, 0.99, 0.97) : isPartial ? rgb(1, 0.99, 0.95) : rgb(1, 0.96, 0.96),
+            borderColor: isCorrect ? rgb(0.7, 0.9, 0.7) : isPartial ? rgb(0.9, 0.8, 0.5) : rgb(0.9, 0.7, 0.7),
             borderWidth: 0.5,
           });
 
-          safeDrawText(currentStepPage, sName.substring(0, 50), {
-            x: 54,
+          // Component title
+          safeDrawText(currentStepPage, `${prefix}${name}`.substring(0, 55), {
+            x: 52,
             y: stepY - 12,
             size: 7.5,
             font: helveticaBold,
             color: darkSlate,
           });
 
-          safeDrawText(currentStepPage, `${sMarks} / ${sMax}`, {
-            x: pW - 140,
+          // Marks awarded and deduction
+          const markLabel = sDeducted > 0 ? `+${sAward} / ${sMax} (-${sDeducted})` : `+${sAward} / ${sMax}`;
+          safeDrawText(currentStepPage, markLabel, {
+            x: pW - 145,
             y: stepY - 12,
             size: 7.5,
             font: helveticaBold,
-            color: isCorrect ? passGreen : failRed,
+            color: isCorrect ? passGreen : isPartial ? accentGold : failRed,
           });
 
-          if (sComment) {
-            safeDrawText(currentStepPage, sComment.substring(0, 35), {
-              x: pW - 270,
-              y: stepY - 12,
-              size: 7,
+          // Detail line (student evidence / deduction reason)
+          let subY = stepY - 22;
+          if (deductionReason) {
+            safeDrawText(currentStepPage, deductionReason, {
+              x: 52,
+              y: subY,
+              size: 6.8,
+              font: helvetica,
+              color: failRed,
+            });
+            subY -= 9;
+          } else if (studentEvidence) {
+            safeDrawText(currentStepPage, studentEvidence, {
+              x: 52,
+              y: subY,
+              size: 6.8,
               font: helvetica,
               color: mutedSlate,
             });
           }
 
-          stepY -= 20;
+          stepY -= (boxH + 4);
         });
       }
 
-      stepY -= 10;
+      stepY -= 8;
     }
   }
 
