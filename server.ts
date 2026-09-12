@@ -13,6 +13,7 @@ import adminRoutes from './server/routes/adminRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
 import publicRoutes from './server/routes/publicRoutes.js';
 import pricingRoutes from './server/routes/pricingRoutes.js';
+import legalRoutes from './server/routes/legalRoutes.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
 
 async function startServer() {
@@ -58,6 +59,7 @@ async function startServer() {
   app.use('/api/payments', paymentRoutes);
   app.use('/api/public', publicRoutes);
   app.use('/api/pricing', pricingRoutes);
+  app.use('/api/legal', legalRoutes);
 
   // Vite middleware in development vs static file serving in production
   if (process.env.NODE_ENV !== 'production') {

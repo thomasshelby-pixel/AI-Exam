@@ -7,6 +7,8 @@ import { EvaluationControls } from '../../components/admin/EvaluationControls.js
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
 import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
+import { AdminLegalSection } from '../../components/admin/AdminLegalSection.js';
+import { AdminPricingSection } from './AdminPricingSection.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -29,6 +31,7 @@ import {
   Sparkles,
   Settings,
   ScrollText,
+  Scale,
   Search,
   Plus,
   RefreshCw,
@@ -1049,6 +1052,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'promo-codes', label: 'Promo Codes', icon: Sparkles },
     { id: 'revocation-requests', label: 'Revocation Requests', icon: ShieldAlert },
     { id: 'data-cleanup', label: 'Test Data Cleanup', icon: Trash2 },
+    { id: 'legal', label: 'Legal & Policies', icon: Scale },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'audit-logs', label: 'Audit Logs', icon: ScrollText },
   ];
@@ -1212,6 +1216,11 @@ export const AdminPortal: React.FC = () => {
                     else setErrorMsg(msg);
                   }}
                 />
+              )}
+
+              {/* LEGAL & REGULATORY POLICIES MANAGEMENT */}
+              {activeSection === 'legal' && (
+                <AdminLegalSection />
               )}
 
               {/* 1. DASHBOARD */}
@@ -2361,73 +2370,17 @@ export const AdminPortal: React.FC = () => {
 
               {/* 11. PRICING */}
               {activeSection === 'pricing' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl">
-                  <div className="mb-5">
-                    <h3 className="text-sm font-bold text-slate-900">System Pricing & Evaluation Quota</h3>
-                    <p className="text-xs text-slate-500">Database-driven pricing rules applied across platform</p>
-                  </div>
-
-                  <div className="space-y-4 text-xs">
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Price Per Credit (INR)</label>
-                      <input
-                        type="number"
-                        value={pricingForm.pricePerCredit}
-                        onChange={(e) => setPricingForm({ ...pricingForm, pricePerCredit: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-600"
-                      />
-                      <span className="text-[10px] text-slate-400">Default: ₹10 per paper evaluation</span>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Free Tier Evaluations (Individual Students)</label>
-                      <input
-                        type="number"
-                        value={pricingForm.freeTierEvaluations}
-                        onChange={(e) => setPricingForm({ ...pricingForm, freeTierEvaluations: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-600"
-                      />
-                      <span className="text-[10px] text-slate-400">Default: 2 free evaluations</span>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Default Institute Student Quota</label>
-                      <input
-                        type="number"
-                        value={pricingForm.defaultInstituteQuota}
-                        onChange={(e) => setPricingForm({ ...pricingForm, defaultInstituteQuota: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Official Support Email</label>
-                      <input
-                        type="text"
-                        value={pricingForm.supportEmail}
-                        onChange={(e) => setPricingForm({ ...pricingForm, supportEmail: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Official Instagram Link</label>
-                      <input
-                        type="text"
-                        value={pricingForm.instagramUrl}
-                        onChange={(e) => setPricingForm({ ...pricingForm, instagramUrl: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-600"
-                      />
-                    </div>
-
-                    <button
-                      onClick={handleSavePricing}
-                      className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs transition"
-                    >
-                      Save Pricing Settings
-                    </button>
-                  </div>
-                </div>
+                <AdminPricingSection
+                  onNotify={(msg, type) => {
+                    if (type === 'success') {
+                      setSuccessMsg(msg);
+                      setErrorMsg(null);
+                    } else {
+                      setErrorMsg(msg);
+                      setSuccessMsg(null);
+                    }
+                  }}
+                />
               )}
 
               {/* 12. PAYMENTS */}

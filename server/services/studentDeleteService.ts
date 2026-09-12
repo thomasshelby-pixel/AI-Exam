@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 
 export interface DeleteStudentResult {
   success: boolean;
@@ -212,6 +213,17 @@ export function deleteStudentAccount(
 
     // Commit atomic transaction
     db.exec('COMMIT');
+
+    // 7I. Cloud Firestore Synchronization & Tombstoning (Prevents resurrection upon restart)
+    try {
+      permanentlyDeleteFromFirestore('users', studentId, `Super admin permanently deleted student ${targetUser.email}`);
+      permanentlyDeleteFromFirestore('student_profiles', studentId, `Deleted student profile for ${studentId}`);
+      for (const ev of studentEvaluations) {
+        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`);
+      }
+    } catch (fsErr) {
+      console.warn('[StudentDeleteService] Firestore permanent deletion warning:', fsErr);
+    }
 
     return {
       success: true,

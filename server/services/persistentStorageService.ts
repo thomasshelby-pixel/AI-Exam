@@ -6,7 +6,7 @@ import {
   downloadFileFromCloudStorage,
   deleteFileFromCloudStorage,
   deleteEvaluationCloudFiles,
-  deleteMaterialCloudFiles,
+  deleteMaterialCloudFiles as deleteMaterialCloudFilesFromFirebase,
   type CloudFileMetadata,
   type UploadOptions
 } from './firebaseCloudStorageService.js';
@@ -129,7 +129,7 @@ export async function getPersistentFile(
  * Permanently deletes a file from Firebase Cloud Storage,
  * deletes its Firestore metadata record, and removes any local file traces.
  */
-export async function deletePersistentFile(fileId: string): Promise<boolean> {
+export async function deletePersistentFile(fileId: string, explicitPath?: string): Promise<boolean> {
   let deletedFromDisk = false;
 
   // 1. Remove from local directories
@@ -156,7 +156,7 @@ export async function deletePersistentFile(fileId: string): Promise<boolean> {
 
   // 2. Remove from Firebase Cloud Storage & Firestore metadata
   try {
-    await deleteFileFromCloudStorage(fileId);
+    await deleteFileFromCloudStorage(fileId, explicitPath);
   } catch (err) {
     console.warn(`[PersistentStorage] Error deleting from Cloud Storage for ${fileId}:`, err);
   }
@@ -164,7 +164,33 @@ export async function deletePersistentFile(fileId: string): Promise<boolean> {
   return deletedFromDisk;
 }
 
+/**
+ * Deletes all Cloud Storage files, Firestore metadata, and local disk files associated with a material.
+ */
+export async function deleteMaterialCloudFiles(materialId: string): Promise<number> {
+  const dirs = [UPLOADS_DIR, DATA_UPLOADS_DIR];
+  for (const dir of dirs) {
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          if (file.includes(materialId)) {
+            try {
+              fs.unlinkSync(path.join(dir, file));
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return await deleteMaterialCloudFilesFromFirebase(materialId);
+}
+
 export {
-  deleteEvaluationCloudFiles,
-  deleteMaterialCloudFiles
+  deleteEvaluationCloudFiles
 };

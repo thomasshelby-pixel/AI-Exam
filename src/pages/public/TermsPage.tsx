@@ -1,10 +1,10 @@
 import React, { useEffect } from 'react';
 import { LegalDocumentView } from './LegalDocumentView.js';
 
-export const LegalPage: React.FC = () => {
+export const TermsPage: React.FC = () => {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    document.title = 'Legal & Terms | CA Exam Checker AI';
+    document.title = 'Terms of Service | CA Exam Checker AI';
   }, []);
 
   return <LegalDocumentView activeDocType="TERMS" />;

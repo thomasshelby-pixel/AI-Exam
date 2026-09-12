@@ -16,6 +16,9 @@ import { LandingPage } from './pages/public/LandingPage.js';
 import { PricingPage } from './pages/public/PricingPage.js';
 import { HowItWorksPage } from './pages/public/HowItWorksPage.js';
 import { LegalPage } from './pages/public/LegalPage.js';
+import { TermsPage } from './pages/public/TermsPage.js';
+import { PrivacyPolicyPage } from './pages/public/PrivacyPolicyPage.js';
+import { RefundPolicyPage } from './pages/public/RefundPolicyPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
@@ -400,6 +403,48 @@ const AppRoutes: React.FC = () => {
               <LegalPage />
             </PublicAndStudentLayout>
           }
+        />
+
+        <Route
+          path="/terms"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <TermsPage />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/terms-of-service"
+          element={<Navigate to="/terms" replace />}
+        />
+
+        <Route
+          path="/privacy-policy"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <PrivacyPolicyPage />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/privacy"
+          element={<Navigate to="/privacy-policy" replace />}
+        />
+
+        <Route
+          path="/refund-policy"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <RefundPolicyPage />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/refund"
+          element={<Navigate to="/refund-policy" replace />}
         />
 
         <Route

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { BrandLogo } from '../common/BrandLogo';
 import { FileCheck2, ShieldCheck, Mail, Instagram, ExternalLink, Award } from 'lucide-react';
 
@@ -95,27 +96,27 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
           {/* Legal & Compliance */}
           <div className="space-y-2.5">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900">Legal & Terms</h4>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900">Legal & Policies</h4>
             <ul className="space-y-1.5 text-xs">
               <li>
-                <button onClick={() => onNavigate('legal')} className="hover:text-blue-600 transition">
+                <Link to="/terms" className="hover:text-blue-600 transition">
                   Terms of Service
-                </button>
+                </Link>
               </li>
               <li>
-                <button onClick={() => onNavigate('legal')} className="hover:text-blue-600 transition">
+                <Link to="/privacy-policy" className="hover:text-blue-600 transition">
                   Privacy Policy
-                </button>
+                </Link>
               </li>
               <li>
-                <button onClick={() => onNavigate('legal')} className="hover:text-blue-600 transition">
-                  Refund Policy
-                </button>
+                <Link to="/refund-policy" className="hover:text-blue-600 transition">
+                  Refund & Cancellation
+                </Link>
               </li>
               <li>
-                <button onClick={() => onNavigate('legal')} className="hover:text-blue-600 transition">
-                  ICAI Disclaimer
-                </button>
+                <Link to="/terms" className="hover:text-blue-600 transition">
+                  ICAI Non-Affiliation Notice
+                </Link>
               </li>
             </ul>
           </div>

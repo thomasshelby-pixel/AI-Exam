@@ -312,28 +312,54 @@ export interface PaymentOrder {
 export interface EvaluationMaterial {
   id: string;
   level: CALevel;
-  materialType: MaterialType;
+  materialType?: MaterialType;
+  material_type?: MaterialType;
   modelGroup?: ModelGroup;
-  subjectKey: string;
-  subjectName: string;
+  model_group?: ModelGroup;
+  subjectKey?: string;
+  subject_key?: string;
+  subjectName?: string;
+  subject_name?: string;
   paper?: string;
   attempt?: string;
   syllabusVersion?: string;
+  syllabus_version?: string;
   chapterTopic?: string;
-  questionPaperTitle: string;
+  chapter_topic?: string;
+  questionPaperTitle?: string;
+  question_paper_title?: string;
   questionPaperText?: string;
+  question_paper_text?: string;
   suggestedAnswersText?: string;
+  suggested_answers_text?: string;
   markingSchemeText?: string;
+  marking_scheme_text?: string;
   referenceGuidanceText?: string;
+  reference_guidance_text?: string;
   amendmentsProvisionsText?: string;
+  amendments_provisions_text?: string;
   effectiveDate?: string;
+  effective_date?: string;
   version?: string;
   status: 'ACTIVE' | 'INACTIVE';
   hasQuestionPaper?: boolean;
   hasSuggestedAnswer?: boolean;
-  uploadedBy: string;
-  createdAt: string;
+  uploadedBy?: string;
+  uploaded_by?: string;
+  file_id?: string;
+  storage_path?: string;
+  file_name?: string;
+  file_size?: number;
+  download_url?: string;
+  qp_chars?: number;
+  sa_chars?: number;
+  ms_chars?: number;
+  rg_chars?: number;
+  ap_chars?: number;
+  createdAt?: string;
+  created_at?: string;
   updatedAt?: string;
+  updated_at?: string;
 }
 
 export interface InstituteAssignment {
@@ -396,3 +422,44 @@ export interface AuditLog {
   ipAddress?: string;
   createdAt: string;
 }
+
+export type LegalDocType = 'TERMS' | 'PRIVACY' | 'REFUND';
+export type LegalDocStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
+export interface LegalDocument {
+  id: string;
+  doc_type: LegalDocType;
+  title: string;
+  version: string;
+  effective_date: string;
+  last_updated_date: string;
+  content: string;
+  raw_content?: string;
+  status: LegalDocStatus;
+  changelog?: string;
+  published_by?: string;
+  created_at: string;
+  updated_at: string;
+  published_at?: string;
+}
+
+export interface LegalSettings {
+  legal_entity_name: string;
+  business_address: string;
+  privacy_email: string;
+  support_email: string;
+  instagram_url: string;
+  governing_law: string;
+  dispute_jurisdiction: string;
+  updated_at?: string;
+}
+
+export interface LegalAcknowledgement {
+  id: string;
+  user_id: string;
+  doc_type: LegalDocType;
+  version: string;
+  acknowledged_at: string;
+  ip_address?: string;
+}
+

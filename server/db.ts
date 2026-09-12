@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { scryptSync, randomBytes } from 'node:crypto';
 import { ATTEMPT_MASTER_CONFIG } from './config/attemptMaster.js';
+import {
+  DEFAULT_TERMS_OF_SERVICE,
+  DEFAULT_PRIVACY_POLICY,
+  DEFAULT_REFUND_POLICY,
+  DEFAULT_LEGAL_SETTINGS,
+} from './services/legalConstants.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -15,11 +21,53 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 
 const DB_FILE = path.join(DATA_DIR, 'ca_exam_checker.db');
-export const db = new DatabaseSync(DB_FILE);
 
-// Turn on WAL mode for fast concurrency
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA foreign_keys = ON;');
+function openDatabaseWithIntegrityCheck(): DatabaseSync {
+  let conn: DatabaseSync;
+  let needsRepair = false;
+
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      conn = new DatabaseSync(DB_FILE);
+      const check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
+      const isOk = check.length === 1 && check[0].quick_check === 'ok';
+      if (!isOk) {
+        console.error('[DB Integrity] Database failed quick_check on startup:', check);
+        needsRepair = true;
+        try { conn.close(); } catch {}
+      } else {
+        conn.exec('PRAGMA journal_mode = WAL;');
+        conn.exec('PRAGMA synchronous = NORMAL;');
+        conn.exec('PRAGMA foreign_keys = ON;');
+        return conn;
+      }
+    } catch (err) {
+      console.error('[DB Integrity] Error during initial connection, scheduling auto-repair:', err);
+      needsRepair = true;
+    }
+  }
+
+  if (needsRepair && fs.existsSync(DB_FILE)) {
+    try {
+      const backupPath = path.join(DATA_DIR, `ca_exam_checker.corrupt.${Date.now()}.db`);
+      fs.copyFileSync(DB_FILE, backupPath);
+      console.log(`[DB Integrity] Preserved corrupted database backup at ${backupPath}`);
+      try { fs.unlinkSync(DB_FILE); } catch {}
+      try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
+      try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
+    } catch (bkErr) {
+      console.error('[DB Integrity] Failed during backup/unlink:', bkErr);
+    }
+  }
+
+  conn = new DatabaseSync(DB_FILE);
+  conn.exec('PRAGMA journal_mode = WAL;');
+  conn.exec('PRAGMA synchronous = NORMAL;');
+  conn.exec('PRAGMA foreign_keys = ON;');
+  return conn;
+}
+
+export const db = openDatabaseWithIntegrityCheck();
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
@@ -134,6 +182,12 @@ export function initDatabase() {
       version TEXT DEFAULT '1.0',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       uploaded_by TEXT DEFAULT 'ADMIN',
+      file_id TEXT,
+      storage_path TEXT,
+      file_name TEXT,
+      file_size INTEGER,
+      checksum TEXT,
+      download_url TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -483,6 +537,12 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'marking_scheme_pdf_base64', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'reference_guidance_pdf_base64', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'amendments_pdf_base64', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'file_id', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'storage_path', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'file_name', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'file_size', 'INTEGER');
+  addColumnIfNotExists('evaluation_materials', 'checksum', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'download_url', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT');
 
   // Ensure evaluations has all enhanced columns
@@ -698,6 +758,42 @@ function runMigrations() {
       notes TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
+  `);
+
+  addColumnIfNotExists('institute_subscriptions', 'plan_name', 'TEXT');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS legal_documents (
+      id TEXT PRIMARY KEY,
+      doc_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      version TEXT NOT NULL,
+      effective_date TEXT NOT NULL,
+      last_updated_date TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'DRAFT',
+      changelog TEXT,
+      published_by TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      published_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS legal_acknowledgements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      doc_type TEXT NOT NULL,
+      version TEXT NOT NULL,
+      acknowledged_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      ip_address TEXT,
+      user_agent TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS legal_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -957,6 +1053,9 @@ function seedInitialData() {
 
   // 9. Seed Official ICAI Configurable MCQ Scoring Rules
   seedMcqScoringRules();
+
+  // 10. Seed Official Legal Documents (Terms, Privacy, Refund v1.0) and Settings
+  seedLegalDocuments();
 }
 
 function seedMcqScoringRules() {
@@ -1114,24 +1213,24 @@ function seedExamAttempts() {
 
 function seedInstitutePlans() {
   const institutePlans = [
-    // MONTHLY
+    // === TIER 1: INDIVIDUAL (0–500 students) ===
     {
-      id: 'institute-starter-monthly',
-      name: 'Starter',
-      price_inr: 3999,
+      id: 'inst_individual_monthly',
+      name: 'Individual Institute (Monthly)',
+      price_inr: 80000,
       billing_period: 'MONTHLY',
-      student_quota: 2000,
-      evaluation_credits: 2500,
+      student_quota: 500,
+      evaluation_credits: 1000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 1,000 evaluations/month',
+        'Effective rate: ₹80 per paper evaluated',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 2,000 students',
-        'AI evaluation allowance: 2,500 evaluations/month',
-        'Student management & Batch management',
+        'All subjects included with standard ICAI-compliant step marking',
+        'Student management & batch management modules',
         'Tests & Assignments module',
-        'AI evaluation with Question-wise grading',
         'Detailed diagnostic reports & Checked-copy PDF',
-        'Basic analytics & Standard email support',
+        'Standard email & portal support',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -1141,22 +1240,21 @@ function seedInstitutePlans() {
       sort_order: 1,
     },
     {
-      id: 'institute-growth-monthly',
-      name: 'Growth',
-      price_inr: 7999,
-      billing_period: 'MONTHLY',
-      student_quota: 5000,
-      evaluation_credits: 6000,
+      id: 'inst_individual_quarterly',
+      name: 'Individual Institute (Quarterly)',
+      price_inr: 129999,
+      billing_period: 'QUARTERLY',
+      student_quota: 500,
+      evaluation_credits: 2000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 2,000 evaluations/quarter',
+        'Effective rate: ₹65 per paper evaluated (~19% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 5,000 students',
-        'AI evaluation allowance: 6,000 evaluations/month',
-        'Includes everything in Starter plus:',
-        'Advanced analytics & Batch performance analytics',
-        'Advanced tests & Full 3-Hour Mock tests',
-        'Faculty and admin tools with role permissions',
-        'Priority support (WhatsApp & Email)',
+        'All subjects included with ICAI rubric verification',
+        'Batch performance analytics & diagnostic insights',
+        'Tests, Assignments, and Mock test scheduling',
+        'Priority email support',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -1166,22 +1264,21 @@ function seedInstitutePlans() {
       sort_order: 2,
     },
     {
-      id: 'institute-professional-monthly',
-      name: 'Professional',
-      price_inr: 14999,
-      billing_period: 'MONTHLY',
-      student_quota: 10000,
-      evaluation_credits: 12000,
+      id: 'inst_individual_annual',
+      name: 'Individual Institute (Annual)',
+      price_inr: 349999,
+      billing_period: 'ANNUAL',
+      student_quota: 500,
+      evaluation_credits: 10000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 10,000 evaluations/year',
+        'Effective rate: ₹35 per paper evaluated (~56% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 10,000 students',
-        'AI evaluation allowance: 12,000 evaluations/month',
-        'Large student management & Advanced batch management',
-        'Advanced comparative analytics & Faculty tools',
-        'Tests, Assignments, and Mock tests',
-        'Detailed reports & Authentic evaluated copies',
-        'Priority support with fast response SLA',
+        'All subjects with comprehensive step marking & working notes check',
+        'Full mock test series support & AIR prediction index',
+        'Complete student progress tracking & verified PDF reports',
+        'Dedicated onboarding & priority support',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -1190,144 +1287,146 @@ function seedInstitutePlans() {
       is_active: 1,
       sort_order: 3,
     },
+
+    // === TIER 2: MID INSTITUTE (501–1,500 students) ===
     {
-      id: 'institute-enterprise-monthly',
-      name: 'Enterprise',
-      price_inr: 29999,
+      id: 'inst_mid_monthly',
+      name: 'Mid Institute (Monthly)',
+      price_inr: 109999,
       billing_period: 'MONTHLY',
-      student_quota: 25000,
-      evaluation_credits: 27500,
+      student_quota: 1500,
+      evaluation_credits: 2000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 1,500 students',
+        'AI evaluation allowance: 2,000 evaluations/month',
+        'Effective rate: ₹55 per paper evaluated',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 25,000 students',
-        'AI evaluation allowance: 27,500 evaluations/month',
-        'Enterprise analytics & Large-scale batch management',
-        'Advanced institutional reporting & Multi-faculty accounts',
-        'Higher processing capacity & Queue prioritization',
-        'Priority support with Dedicated Account Lead',
+        'Multi-faculty sub-accounts & batch management',
+        'Full ICAI step marking & working note validation',
+        'Advanced batch performance analytics',
+        'Priority email & WhatsApp support',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
       analytics_enabled: 1,
-      support_tier: 'DEDICATED_SLA',
+      support_tier: 'PRIORITY',
       is_active: 1,
       sort_order: 4,
     },
     {
-      id: 'institute-scale-monthly',
-      name: 'Scale',
-      price_inr: 54999,
-      billing_period: 'MONTHLY',
-      student_quota: 50000,
-      evaluation_credits: 55000,
+      id: 'inst_mid_quarterly',
+      name: 'Mid Institute (Quarterly)',
+      price_inr: 329999,
+      billing_period: 'QUARTERLY',
+      student_quota: 1500,
+      evaluation_credits: 8000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 1,500 students',
+        'AI evaluation allowance: 8,000 evaluations/quarter',
+        'Effective rate: ₹41 per paper evaluated (~25% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 50,000 students',
-        'AI evaluation allowance: 55,000 evaluations/month',
-        'Advanced institutional analytics & Multi-campus reporting',
-        'Large-scale tests & High-concurrency processing',
-        'Advanced batch & faculty management',
-        '24/7 Priority support & Dedicated SLA',
+        'Full ICAI step marking & working notes check',
+        'Batch performance breakdown & weak-topic heatmaps',
+        'Multi-evaluator management with permission controls',
+        'Priority WhatsApp & phone support SLA',
+      ]),
+      assignments_enabled: 1,
+      tests_enabled: 1,
+      analytics_enabled: 1,
+      support_tier: 'PRIORITY',
+      is_active: 1,
+      sort_order: 5,
+    },
+    {
+      id: 'inst_mid_annual',
+      name: 'Mid Institute (Annual)',
+      price_inr: 899999,
+      billing_period: 'ANNUAL',
+      student_quota: 1500,
+      evaluation_credits: 30000,
+      features_json: JSON.stringify([
+        'Student capacity: Up to 1,500 students',
+        'AI evaluation allowance: 30,000 evaluations/year',
+        'Effective rate: ₹30 per paper evaluated (~45% savings)',
+        'Foundation, Intermediate, Final (All levels included)',
+        'Multi-faculty and administrative role hierarchy',
+        'Customizable evaluation rubrics and grading notes',
+        'Complete year-round mock test campaign management',
+        'Dedicated Technical Account Manager & 99.9% uptime SLA',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
       analytics_enabled: 1,
       support_tier: 'DEDICATED_SLA',
       is_active: 1,
-      sort_order: 5,
-    },
-    // ANNUAL PLANS (~17% SAVINGS)
-    {
-      id: 'institute-starter-annual',
-      name: 'Starter',
-      price_inr: 39999,
-      billing_period: 'ANNUAL',
-      student_quota: 2000,
-      evaluation_credits: 30000,
-      features_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 2,000 students',
-        'AI evaluation allowance: 30,000 evaluations/year',
-        'Save ~17% with annual commitment',
-        'Student management & Batch management',
-        'Tests, Assignments, Question-wise step marking',
-        'Detailed diagnostic reports & Checked-copy PDF',
-        'Basic analytics & Standard support',
-      ]),
-      assignments_enabled: 1,
-      tests_enabled: 1,
-      analytics_enabled: 1,
-      support_tier: 'STANDARD',
-      is_active: 1,
       sort_order: 6,
     },
+
+    // === TIER 3: ENTERPRISE INSTITUTE (1,501–5,000 students) ===
     {
-      id: 'institute-growth-annual',
-      name: 'Growth',
-      price_inr: 79999,
-      billing_period: 'ANNUAL',
+      id: 'inst_enterprise_monthly',
+      name: 'Enterprise Institute (Monthly)',
+      price_inr: 275000,
+      billing_period: 'MONTHLY',
       student_quota: 5000,
-      evaluation_credits: 72000,
+      evaluation_credits: 5500,
       features_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
         'Student capacity: Up to 5,000 students',
-        'AI evaluation allowance: 72,000 evaluations/year',
-        'Save ~17% with annual commitment',
-        'Advanced analytics & Batch performance benchmarks',
-        'Advanced tests, Full Mock tests & Faculty tools',
-        'Priority support (WhatsApp & Email)',
+        'AI evaluation allowance: 5,500 evaluations/month',
+        'Effective rate: ₹50 per paper evaluated',
+        'Foundation, Intermediate, Final (All levels included)',
+        'Multi-campus isolation and central director dashboard',
+        'High-throughput prioritized processing cluster',
+        'Enterprise analytics & custom executive reporting',
+        '24/7 dedicated support & SLA guarantee',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
       analytics_enabled: 1,
-      support_tier: 'PRIORITY',
+      support_tier: 'DEDICATED_SLA',
       is_active: 1,
       sort_order: 7,
     },
     {
-      id: 'institute-professional-annual',
-      name: 'Professional',
-      price_inr: 149999,
-      billing_period: 'ANNUAL',
-      student_quota: 10000,
-      evaluation_credits: 144000,
+      id: 'inst_enterprise_quarterly',
+      name: 'Enterprise Institute (Quarterly)',
+      price_inr: 684000,
+      billing_period: 'QUARTERLY',
+      student_quota: 5000,
+      evaluation_credits: 18000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 18,000 evaluations/quarter',
+        'Effective rate: ₹38 per paper evaluated (~24% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 10,000 students',
-        'AI evaluation allowance: 144,000 evaluations/year',
-        'Save ~17% with annual commitment',
-        'Large student management & Advanced batch management',
-        'Advanced analytics, Faculty tools & Mock tests',
-        'Priority support with expedited resolution SLA',
+        'Automated batch progression & multi-center isolation',
+        'Custom institutional watermarked PDF copies',
+        'High-speed parallel evaluation queue',
+        'Dedicated Senior Account Executive & fast escalation',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
       analytics_enabled: 1,
-      support_tier: 'PRIORITY',
+      support_tier: 'DEDICATED_SLA',
       is_active: 1,
       sort_order: 8,
     },
     {
-      id: 'institute-enterprise-annual',
-      name: 'Enterprise',
-      price_inr: 299999,
+      id: 'inst_enterprise_annual',
+      name: 'Enterprise Institute (Annual)',
+      price_inr: 1500000,
       billing_period: 'ANNUAL',
-      student_quota: 25000,
-      evaluation_credits: 330000,
+      student_quota: 5000,
+      evaluation_credits: 60000,
       features_json: JSON.stringify([
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 60,000 evaluations/year',
+        'Effective rate: ₹25 per paper evaluated (~50% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 25,000 students',
-        'AI evaluation allowance: 330,000 evaluations/year',
-        'Save ~17% with annual commitment',
-        'Enterprise analytics & Large-scale batch management',
-        'Advanced institutional reporting & Multi-faculty accounts',
-        'Higher processing capacity & Dedicated Account Lead',
+        'Complete institutional autonomy with ERP/API integration',
+        'Dedicated cloud instance & queue isolation',
+        'Private institutional grading models & rubrics',
+        '24/7 Dedicated Technical Account Manager + 99.99% uptime SLA',
       ]),
       assignments_enabled: 1,
       tests_enabled: 1,
@@ -1335,30 +1434,6 @@ function seedInstitutePlans() {
       support_tier: 'DEDICATED_SLA',
       is_active: 1,
       sort_order: 9,
-    },
-    {
-      id: 'institute-scale-annual',
-      name: 'Scale',
-      price_inr: 549999,
-      billing_period: 'ANNUAL',
-      student_quota: 50000,
-      evaluation_credits: 660000,
-      features_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 50,000 students',
-        'AI evaluation allowance: 660,000 evaluations/year',
-        'Save ~17% with annual commitment',
-        'Advanced analytics & Multi-campus institutional reporting',
-        'Large-scale tests & High-volume processing',
-        'Faculty/admin management & 24/7 Dedicated SLA',
-      ]),
-      assignments_enabled: 1,
-      tests_enabled: 1,
-      analytics_enabled: 1,
-      support_tier: 'DEDICATED_SLA',
-      is_active: 1,
-      sort_order: 10,
     },
   ];
 
@@ -1389,437 +1464,267 @@ function seedInstitutePlans() {
 
 export function seedPricingPlans() {
   const plans = [
-    // === 1. INSTITUTE MONTHLY PLANS ===
+    // === 1. INSTITUTE PLANS (3 TIERS × 3 FREQUENCIES = 9 PLANS) ===
+    // TIER 1: INDIVIDUAL (0–500 students)
     {
-      id: 'institute-starter-monthly',
-      name: 'Starter',
+      id: 'inst_individual_monthly',
+      name: 'Individual Institute (Monthly)',
       category: 'INSTITUTE',
       billing_period: 'MONTHLY',
-      price_inr: 3999,
-      original_price_inr: 4999,
-      evaluation_allowance: 2500,
-      student_capacity: 2000,
+      price_inr: 80000,
+      original_price_inr: 99999,
+      evaluation_allowance: 1000,
+      student_capacity: 500,
       unlimited_badge: 0,
-      badge: null,
-      min_students: 1,
-      max_students: 2000,
-      tier_code: 'STARTER',
+      badge: '₹80/paper',
+      min_students: 0,
+      max_students: 500,
+      tier_code: 'INDIVIDUAL',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 1,000 evaluations/month',
+        'Effective rate: ₹80 per paper evaluated',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 2,000 students',
-        'AI evaluation allowance: 2,500 evaluations/month',
-        'Student management & Batch management',
+        'All subjects included with standard ICAI-compliant step marking',
+        'Student management & batch management modules',
         'Tests & Assignments module',
-        'AI evaluation with Question-wise grading',
         'Detailed diagnostic reports & Checked-copy PDF',
-        'Basic analytics & Standard email support',
+        'Standard email & portal support',
       ]),
       is_active: 1,
       sort_order: 1,
     },
     {
-      id: 'institute-growth-monthly',
-      name: 'Growth',
+      id: 'inst_individual_quarterly',
+      name: 'Individual Institute (Quarterly)',
       category: 'INSTITUTE',
-      billing_period: 'MONTHLY',
-      price_inr: 7999,
-      original_price_inr: 9999,
-      evaluation_allowance: 6000,
-      student_capacity: 5000,
+      billing_period: 'QUARTERLY',
+      price_inr: 129999,
+      original_price_inr: 169999,
+      evaluation_allowance: 2000,
+      student_capacity: 500,
       unlimited_badge: 0,
-      badge: 'MOST POPULAR',
-      min_students: 2001,
-      max_students: 5000,
-      tier_code: 'GROWTH',
+      badge: '₹65/paper',
+      min_students: 0,
+      max_students: 500,
+      tier_code: 'INDIVIDUAL',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 2,000 evaluations/quarter',
+        'Effective rate: ₹65 per paper evaluated (~19% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 5,000 students',
-        'AI evaluation allowance: 6,000 evaluations/month',
-        'Includes everything in Starter plus:',
-        'Advanced analytics & Batch performance analytics',
-        'Advanced tests & Full 3-Hour Mock tests',
-        'Faculty and admin tools with role permissions',
-        'Priority support (WhatsApp & Email)',
+        'All subjects included with ICAI rubric verification',
+        'Batch performance analytics & diagnostic insights',
+        'Tests, Assignments, and Mock test scheduling',
+        'Priority email support',
       ]),
       is_active: 1,
       sort_order: 2,
     },
     {
-      id: 'institute-professional-monthly',
-      name: 'Professional',
+      id: 'inst_individual_annual',
+      name: 'Individual Institute (Annual)',
       category: 'INSTITUTE',
-      billing_period: 'MONTHLY',
-      price_inr: 14999,
-      original_price_inr: 18999,
-      evaluation_allowance: 12000,
-      student_capacity: 10000,
+      billing_period: 'ANNUAL',
+      price_inr: 349999,
+      original_price_inr: 450000,
+      evaluation_allowance: 10000,
+      student_capacity: 500,
       unlimited_badge: 0,
-      badge: null,
-      min_students: 5001,
-      max_students: 10000,
-      tier_code: 'PROFESSIONAL',
+      badge: 'Best Value (₹35/paper)',
+      min_students: 0,
+      max_students: 500,
+      tier_code: 'INDIVIDUAL',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 500 students',
+        'AI evaluation allowance: 10,000 evaluations/year',
+        'Effective rate: ₹35 per paper evaluated (~56% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 10,000 students',
-        'AI evaluation allowance: 12,000 evaluations/month',
-        'Large student management & Advanced batch management',
-        'Advanced comparative analytics & Faculty tools',
-        'Tests, Assignments, and Mock tests',
-        'Detailed reports & Authentic evaluated copies',
-        'Priority support with fast response SLA',
+        'All subjects with comprehensive step marking & working notes check',
+        'Full mock test series support & AIR prediction index',
+        'Complete student progress tracking & verified PDF reports',
+        'Dedicated onboarding & priority support',
       ]),
       is_active: 1,
       sort_order: 3,
     },
+
+    // TIER 2: MID INSTITUTE (501–1,500 students)
     {
-      id: 'institute-enterprise-monthly',
-      name: 'Enterprise',
+      id: 'inst_mid_monthly',
+      name: 'Mid Institute (Monthly)',
       category: 'INSTITUTE',
       billing_period: 'MONTHLY',
-      price_inr: 29999,
-      original_price_inr: 37999,
-      evaluation_allowance: 27500,
-      student_capacity: 25000,
+      price_inr: 109999,
+      original_price_inr: 139999,
+      evaluation_allowance: 2000,
+      student_capacity: 1500,
       unlimited_badge: 0,
-      badge: null,
-      min_students: 10001,
-      max_students: 25000,
-      tier_code: 'ENTERPRISE',
+      badge: '₹55/paper',
+      min_students: 501,
+      max_students: 1500,
+      tier_code: 'MID',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 1,500 students',
+        'AI evaluation allowance: 2,000 evaluations/month',
+        'Effective rate: ₹55 per paper evaluated',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 25,000 students',
-        'AI evaluation allowance: 27,500 evaluations/month',
-        'Enterprise analytics & Large-scale batch management',
-        'Advanced institutional reporting & Multi-faculty accounts',
-        'Higher processing capacity & Queue prioritization',
-        'Priority support with Dedicated Account Lead',
+        'Multi-faculty sub-accounts & batch management',
+        'Full ICAI step marking & working note validation',
+        'Advanced batch performance analytics',
+        'Priority email & WhatsApp support',
       ]),
       is_active: 1,
       sort_order: 4,
     },
     {
-      id: 'institute-scale-monthly',
-      name: 'Scale',
+      id: 'inst_mid_quarterly',
+      name: 'Mid Institute (Quarterly)',
       category: 'INSTITUTE',
-      billing_period: 'MONTHLY',
-      price_inr: 54999,
-      original_price_inr: 69999,
-      evaluation_allowance: 55000,
-      student_capacity: 50000,
+      billing_period: 'QUARTERLY',
+      price_inr: 329999,
+      original_price_inr: 399999,
+      evaluation_allowance: 8000,
+      student_capacity: 1500,
       unlimited_badge: 0,
-      badge: null,
-      min_students: 25001,
-      max_students: 50000,
-      tier_code: 'SCALE',
+      badge: '₹41/paper',
+      min_students: 501,
+      max_students: 1500,
+      tier_code: 'MID',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 1,500 students',
+        'AI evaluation allowance: 8,000 evaluations/quarter',
+        'Effective rate: ₹41 per paper evaluated (~25% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 50,000 students',
-        'AI evaluation allowance: 55,000 evaluations/month',
-        'Advanced institutional analytics & Multi-campus reporting',
-        'Large-scale tests & High-concurrency processing',
-        'Advanced batch & faculty management',
-        '24/7 Priority support & Dedicated SLA',
+        'Full ICAI step marking & working notes check',
+        'Batch performance breakdown & weak-topic heatmaps',
+        'Multi-evaluator management with permission controls',
+        'Priority WhatsApp & phone support SLA',
       ]),
       is_active: 1,
       sort_order: 5,
     },
-
-    // === 2. INSTITUTE ANNUAL PLANS (SAVE ~17%) ===
     {
-      id: 'institute-starter-annual',
-      name: 'Starter',
+      id: 'inst_mid_annual',
+      name: 'Mid Institute (Annual)',
       category: 'INSTITUTE',
       billing_period: 'ANNUAL',
-      price_inr: 39999,
-      original_price_inr: 47988,
+      price_inr: 899999,
+      original_price_inr: 1099999,
       evaluation_allowance: 30000,
-      student_capacity: 2000,
+      student_capacity: 1500,
       unlimited_badge: 0,
-      badge: 'Save 17%',
-      min_students: 1,
-      max_students: 2000,
-      tier_code: 'STARTER',
+      badge: 'Most Popular (₹30/paper)',
+      min_students: 501,
+      max_students: 1500,
+      tier_code: 'MID',
       is_custom: 0,
       benefits_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 2,000 students',
+        'Student capacity: Up to 1,500 students',
         'AI evaluation allowance: 30,000 evaluations/year',
-        'Save ~17% compared to monthly billing',
-        'Student management & Batch management',
-        'Tests, Assignments & AI evaluation',
-        'Detailed diagnostic reports & Checked-copy PDF',
-        'Basic analytics & Standard support',
+        'Effective rate: ₹30 per paper evaluated (~45% savings)',
+        'Foundation, Intermediate, Final (All levels included)',
+        'Multi-faculty and administrative role hierarchy',
+        'Customizable evaluation rubrics and grading notes',
+        'Complete year-round mock test campaign management',
+        'Dedicated Technical Account Manager & 99.9% uptime SLA',
       ]),
       is_active: 1,
       sort_order: 6,
     },
+
+    // TIER 3: ENTERPRISE INSTITUTE (1,501–5,000 students)
     {
-      id: 'institute-growth-annual',
-      name: 'Growth',
+      id: 'inst_enterprise_monthly',
+      name: 'Enterprise Institute (Monthly)',
       category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 79999,
-      original_price_inr: 95988,
-      evaluation_allowance: 72000,
+      billing_period: 'MONTHLY',
+      price_inr: 275000,
+      original_price_inr: 349999,
+      evaluation_allowance: 5500,
       student_capacity: 5000,
       unlimited_badge: 0,
-      badge: 'MOST POPULAR (Save 17%)',
-      min_students: 2001,
+      badge: '₹50/paper',
+      min_students: 1501,
       max_students: 5000,
-      tier_code: 'GROWTH',
+      tier_code: 'ENTERPRISE',
       is_custom: 0,
       benefits_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
         'Student capacity: Up to 5,000 students',
-        'AI evaluation allowance: 72,000 evaluations/year',
-        'Save ~17% compared to monthly billing',
-        'Advanced analytics & Batch performance analytics',
-        'Advanced tests & Mock tests',
-        'Faculty and admin tools with role permissions',
-        'Priority support (WhatsApp & Email)',
+        'AI evaluation allowance: 5,500 evaluations/month',
+        'Effective rate: ₹50 per paper evaluated',
+        'Foundation, Intermediate, Final (All levels included)',
+        'Multi-campus isolation and central director dashboard',
+        'High-throughput prioritized processing cluster',
+        'Enterprise analytics & custom executive reporting',
+        '24/7 dedicated support & SLA guarantee',
       ]),
       is_active: 1,
       sort_order: 7,
     },
     {
-      id: 'institute-professional-annual',
-      name: 'Professional',
+      id: 'inst_enterprise_quarterly',
+      name: 'Enterprise Institute (Quarterly)',
       category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 149999,
-      original_price_inr: 179988,
-      evaluation_allowance: 144000,
-      student_capacity: 10000,
+      billing_period: 'QUARTERLY',
+      price_inr: 684000,
+      original_price_inr: 849999,
+      evaluation_allowance: 18000,
+      student_capacity: 5000,
       unlimited_badge: 0,
-      badge: 'Save 17%',
-      min_students: 5001,
-      max_students: 10000,
-      tier_code: 'PROFESSIONAL',
+      badge: '₹38/paper',
+      min_students: 1501,
+      max_students: 5000,
+      tier_code: 'ENTERPRISE',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 18,000 evaluations/quarter',
+        'Effective rate: ₹38 per paper evaluated (~24% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 10,000 students',
-        'AI evaluation allowance: 144,000 evaluations/year',
-        'Save ~17% compared to monthly billing',
-        'Large student management & Advanced batch management',
-        'Advanced comparative analytics & Faculty tools',
-        'Tests, Assignments, and Mock tests',
-        'Priority support with fast response SLA',
+        'Automated batch progression & multi-center isolation',
+        'Custom institutional watermarked PDF copies',
+        'High-speed parallel evaluation queue',
+        'Dedicated Senior Account Executive & fast escalation',
       ]),
       is_active: 1,
       sort_order: 8,
     },
     {
-      id: 'institute-enterprise-annual',
-      name: 'Enterprise',
+      id: 'inst_enterprise_annual',
+      name: 'Enterprise Institute (Annual)',
       category: 'INSTITUTE',
       billing_period: 'ANNUAL',
-      price_inr: 299999,
-      original_price_inr: 359988,
-      evaluation_allowance: 330000,
-      student_capacity: 25000,
+      price_inr: 1500000,
+      original_price_inr: 1899999,
+      evaluation_allowance: 60000,
+      student_capacity: 5000,
       unlimited_badge: 0,
-      badge: 'Save 17%',
-      min_students: 10001,
-      max_students: 25000,
+      badge: 'Best Enterprise Rate (₹25/paper)',
+      min_students: 1501,
+      max_students: 5000,
       tier_code: 'ENTERPRISE',
       is_custom: 0,
       benefits_json: JSON.stringify([
+        'Student capacity: Up to 5,000 students',
+        'AI evaluation allowance: 60,000 evaluations/year',
+        'Effective rate: ₹25 per paper evaluated (~50% savings)',
         'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 25,000 students',
-        'AI evaluation allowance: 330,000 evaluations/year',
-        'Save ~17% compared to monthly billing',
-        'Enterprise analytics & Large-scale batch management',
-        'Advanced institutional reporting & Multi-faculty accounts',
-        'Priority support with Dedicated Account Lead',
+        'Complete institutional autonomy with ERP/API integration',
+        'Dedicated cloud instance & queue isolation',
+        'Private institutional grading models & rubrics',
+        '24/7 Dedicated Technical Account Manager + 99.99% uptime SLA',
       ]),
       is_active: 1,
       sort_order: 9,
     },
-    {
-      id: 'institute-scale-annual',
-      name: 'Scale',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 549999,
-      original_price_inr: 659988,
-      evaluation_allowance: 660000,
-      student_capacity: 50000,
-      unlimited_badge: 0,
-      badge: 'Save 17%',
-      min_students: 25001,
-      max_students: 50000,
-      tier_code: 'SCALE',
-      is_custom: 0,
-      benefits_json: JSON.stringify([
-        'Foundation, Intermediate, Final (All levels included)',
-        'All Subjects included',
-        'Student capacity: Up to 50,000 students',
-        'AI evaluation allowance: 660,000 evaluations/year',
-        'Save ~17% compared to monthly billing',
-        'Advanced analytics & Multi-campus institutional reporting',
-        'Large-scale tests & High-volume processing capacity',
-        'Faculty/admin management & 24/7 Dedicated SLA',
-      ]),
-      is_active: 1,
-      sort_order: 10,
-    },
 
-    // === 3. 50,000+ MEGA ENTERPRISE TIERS (ANNUAL ONLY) ===
-    {
-      id: 'institute-mega-50k-75k',
-      name: 'Mega Enterprise (50k–75k Students)',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 749999,
-      original_price_inr: 899999,
-      evaluation_allowance: 85000,
-      student_capacity: 75000,
-      unlimited_badge: 0,
-      badge: 'Annual-Only Mega Tier',
-      min_students: 50001,
-      max_students: 75000,
-      tier_code: 'MEGA_75K',
-      is_custom: 0,
-      benefits_json: JSON.stringify([
-        '50,001 to 75,000 enrolled students',
-        '85,000 evaluations/year pool',
-        'Foundation, Intermediate, Final — All Subjects',
-        'Dedicated cloud computing cluster',
-        'Full institutional API & ERP integration',
-        'Multi-center and pan-India branch isolation',
-        'Custom institutional report templates',
-        '24/7 Dedicated Technical Account Manager',
-      ]),
-      is_active: 1,
-      sort_order: 11,
-    },
-    {
-      id: 'institute-mega-75k-100k',
-      name: 'Mega Enterprise (75k–100k Students)',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 999999,
-      original_price_inr: 1199999,
-      evaluation_allowance: 115000,
-      student_capacity: 100000,
-      unlimited_badge: 0,
-      badge: 'Annual-Only Mega Tier',
-      min_students: 75001,
-      max_students: 100000,
-      tier_code: 'MEGA_100K',
-      is_custom: 0,
-      benefits_json: JSON.stringify([
-        '75,001 to 100,000 enrolled students',
-        '115,000 evaluations/year pool',
-        'Foundation, Intermediate, Final — All Subjects',
-        'Custom fine-tuned evaluation rubric support',
-        'Unlimited faculty/evaluator sub-accounts',
-        'SSO (Single Sign-On) integration',
-        'Institutional AIR prediction index',
-        '24/7 Priority SLA response guarantee',
-      ]),
-      is_active: 1,
-      sort_order: 12,
-    },
-    {
-      id: 'institute-mega-100k-150k',
-      name: 'Mega Enterprise (100k–150k Students)',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 1499999,
-      original_price_inr: 1799999,
-      evaluation_allowance: 175000,
-      student_capacity: 150000,
-      unlimited_badge: 0,
-      badge: 'Annual-Only Mega Tier',
-      min_students: 100001,
-      max_students: 150000,
-      tier_code: 'MEGA_150K',
-      is_custom: 0,
-      benefits_json: JSON.stringify([
-        '100,001 to 150,000 enrolled students',
-        '175,000 evaluations/year pool',
-        'Foundation, Intermediate, Final — All Subjects',
-        'Private institutional evaluation models',
-        'Comprehensive multi-tier audit trail',
-        'Automated batch progression workflows',
-        'Executive dashboard for Board & Directors',
-        'Enterprise SLA with 99.9% uptime commitment',
-      ]),
-      is_active: 1,
-      sort_order: 13,
-    },
-    {
-      id: 'institute-mega-150k-250k',
-      name: 'Mega Enterprise (150k–250k Students)',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 2499999,
-      original_price_inr: 2999999,
-      evaluation_allowance: 300000,
-      student_capacity: 250000,
-      unlimited_badge: 0,
-      badge: 'Annual-Only Mega Tier',
-      min_students: 150001,
-      max_students: 250000,
-      tier_code: 'MEGA_250K',
-      is_custom: 0,
-      benefits_json: JSON.stringify([
-        '150,001 to 250,000 enrolled students',
-        '300,000 evaluations/year pool',
-        'Foundation, Intermediate, Final — All Subjects',
-        'Enterprise-scale distributed evaluation cluster',
-        'Custom question bank & test authoring suite',
-        'Dedicated senior engineering & pedagogical team',
-        'Annual contract with custom payment schedules',
-      ]),
-      is_active: 1,
-      sort_order: 14,
-    },
-    {
-      id: 'institute-mega-custom',
-      name: 'Custom Enterprise (250,000+ Students)',
-      category: 'INSTITUTE',
-      billing_period: 'ANNUAL',
-      price_inr: 0,
-      original_price_inr: 0,
-      evaluation_allowance: 9999999,
-      student_capacity: 500000,
-      unlimited_badge: 1,
-      badge: 'Custom Architecture',
-      min_students: 250001,
-      max_students: 1000000,
-      tier_code: 'CUSTOM_ENTERPRISE',
-      is_custom: 1,
-      benefits_json: JSON.stringify([
-        '250,000+ Students scale',
-        'Tailored annual evaluation capacity',
-        'Foundation, Intermediate, Final — All Subjects',
-        'On-premises / Private cloud deployment option',
-        'Custom bespoke AI models and grading criteria',
-        'Full custom contract & tailored commercial terms',
-        'Direct hotline to Engineering Leadership',
-      ]),
-      is_active: 1,
-      sort_order: 15,
-    },
-
-    // === 4. STUDENT / CANDIDATE INDIVIDUAL TIERS ===
+    // === 2. STUDENT / CANDIDATE INDIVIDUAL TIERS ===
     {
       id: 'student-free-tier',
       name: 'Free Starter Trial',
@@ -1843,7 +1748,7 @@ export function seedPricingPlans() {
         'Valid for Foundation, Inter & Final',
       ]),
       is_active: 1,
-      sort_order: 16,
+      sort_order: 10,
     },
     {
       id: 'student-pay-per-paper',
@@ -1869,7 +1774,7 @@ export function seedPricingPlans() {
         'Credits valid for 3 months from purchase',
       ]),
       is_active: 1,
-      sort_order: 17,
+      sort_order: 11,
     },
     {
       id: 'student-5-pack',
@@ -1894,7 +1799,7 @@ export function seedPricingPlans() {
         'Credits valid for 3 months from purchase',
       ]),
       is_active: 1,
-      sort_order: 18,
+      sort_order: 12,
     },
     {
       id: 'student-10-pack',
@@ -1906,7 +1811,7 @@ export function seedPricingPlans() {
       evaluation_allowance: 10,
       student_capacity: 1,
       unlimited_badge: 0,
-      badge: 'Most Popular',
+      badge: 'Popular',
       min_students: 1,
       max_students: 1,
       tier_code: 'STUDENT_10',
@@ -1920,7 +1825,7 @@ export function seedPricingPlans() {
         'Credits valid for 3 months from purchase',
       ]),
       is_active: 1,
-      sort_order: 19,
+      sort_order: 13,
     },
     {
       id: 'student-20-pack',
@@ -1947,23 +1852,22 @@ export function seedPricingPlans() {
         'Credits valid for 3 months from purchase',
       ]),
       is_active: 1,
-      sort_order: 20,
+      sort_order: 14,
     },
   ];
 
-  // Clean up any legacy erroneous plans like "Single Subject Pro" or "Both Groups Pro"
+  // Clean up any legacy obsolete plans
+  const validPricingIds = plans.map(p => p.id);
   try {
     db.prepare(`
       DELETE FROM pricing_plans 
-      WHERE id IN ('single-subject-pro-monthly', 'both-groups-pro-monthly', 'all-levels-ultimate-monthly',
-                   'single-subject-pro-annual', 'both-groups-pro-annual', 'all-levels-ultimate-annual',
-                   'plan_inst_starter', 'plan_inst_growth', 'plan_inst_enterprise')
-    `).run();
+      WHERE id NOT IN (${validPricingIds.map(() => '?').join(',')})
+    `).run(...validPricingIds);
     db.prepare(`
       DELETE FROM institute_plans 
-      WHERE id IN ('single-subject-pro-monthly', 'both-groups-pro-monthly', 'all-levels-ultimate-monthly',
-                   'single-subject-pro-annual', 'both-groups-pro-annual', 'all-levels-ultimate-annual',
-                   'plan_inst_starter', 'plan_inst_growth', 'plan_inst_enterprise')
+      WHERE id NOT IN ('inst_individual_monthly', 'inst_individual_quarterly', 'inst_individual_annual',
+                       'inst_mid_monthly', 'inst_mid_quarterly', 'inst_mid_annual',
+                       'inst_enterprise_monthly', 'inst_enterprise_quarterly', 'inst_enterprise_annual')
     `).run();
   } catch (err) {
     console.warn('Legacy plan cleanup warning:', err);
@@ -2451,5 +2355,85 @@ function seedSampleInstitute() {
     db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
   } catch (err) {
     // ignore
+  }
+}
+
+export function seedLegalDocuments() {
+  try {
+    // 1. Seed legal settings if not exist
+    for (const [key, val] of Object.entries(DEFAULT_LEGAL_SETTINGS)) {
+      const existing = db.prepare('SELECT value FROM legal_settings WHERE key = ?').get(key);
+      if (!existing) {
+        db.prepare('INSERT INTO legal_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)').run(key, val);
+      }
+    }
+
+    // 2. Seed default published documents if none exist for doc_type
+    const defaultDocs = [
+      {
+        id: 'terms_v1_0',
+        doc_type: 'TERMS',
+        title: 'CA EXAM CHECKER AI — TERMS OF SERVICE',
+        version: '1.0',
+        effective_date: '12 September 2026',
+        last_updated_date: '12 September 2026',
+        content: DEFAULT_TERMS_OF_SERVICE,
+        status: 'PUBLISHED',
+        changelog: 'Official v1.0 baseline Terms of Service for CA Exam Checker AI.',
+        published_by: 'system@caexamchecker.ai',
+        published_at: '2026-09-12T00:00:00.000Z',
+      },
+      {
+        id: 'privacy_v1_0',
+        doc_type: 'PRIVACY',
+        title: 'CA EXAM CHECKER AI — PRIVACY POLICY',
+        version: '1.0',
+        effective_date: '12 September 2026',
+        last_updated_date: '12 September 2026',
+        content: DEFAULT_PRIVACY_POLICY,
+        status: 'PUBLISHED',
+        changelog: 'Official v1.0 baseline Privacy Policy for CA Exam Checker AI.',
+        published_by: 'system@caexamchecker.ai',
+        published_at: '2026-09-12T00:00:00.000Z',
+      },
+      {
+        id: 'refund_v1_0',
+        doc_type: 'REFUND',
+        title: 'CA EXAM CHECKER AI — REFUND & CANCELLATION POLICY',
+        version: '1.0',
+        effective_date: '12 September 2026',
+        last_updated_date: '12 September 2026',
+        content: DEFAULT_REFUND_POLICY,
+        status: 'PUBLISHED',
+        changelog: 'Official v1.0 baseline Refund & Cancellation Policy for CA Exam Checker AI.',
+        published_by: 'system@caexamchecker.ai',
+        published_at: '2026-09-12T00:00:00.000Z',
+      },
+    ];
+
+    for (const doc of defaultDocs) {
+      const existing = db.prepare('SELECT id, content FROM legal_documents WHERE doc_type = ? AND status = ?').get(doc.doc_type, 'PUBLISHED') as { id: string; content: string } | undefined;
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO legal_documents (
+            id, doc_type, title, version, effective_date, last_updated_date,
+            content, status, changelog, published_by, created_at, updated_at, published_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+          ON CONFLICT(id) DO NOTHING
+        `).run(
+          doc.id, doc.doc_type, doc.title, doc.version, doc.effective_date, doc.last_updated_date,
+          doc.content, doc.status, doc.changelog, doc.published_by, doc.published_at
+        );
+      } else if (existing.content.includes('[LEGAL_ENTITY_NAME]') || existing.content.includes('https://insta.openinapp.co/utw2r')) {
+        // Upgrade baseline content to remove raw placeholders and raw URLs
+        db.prepare(`
+          UPDATE legal_documents
+          SET content = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(doc.content, existing.id);
+      }
+    }
+  } catch (err) {
+    console.warn('seedLegalDocuments error:', err);
   }
 }

@@ -280,6 +280,19 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
             </>
           )}
         </button>
+
+        {/* Legal Consent & Disclosures */}
+        <p className="mt-3 text-[11px] text-center text-slate-500 leading-normal">
+          By proceeding, you agree to our{' '}
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+            Terms of Service
+          </a>{' '}
+          and{' '}
+          <a href="/refund-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+            Refund & Cancellation Policy
+          </a>
+          . Credits are valid for 3 months from issuance and are non-refundable after delivery.
+        </p>
       </div>
     </div>
   );

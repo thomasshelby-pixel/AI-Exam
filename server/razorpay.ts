@@ -313,8 +313,7 @@ export async function createInstituteSubscriptionOrder(params: CreateInstituteOr
     throw new Error(`Institute not found: ${instituteId}`);
   }
 
-  const multiplier = billingPeriod === 'ANNUAL' ? 10 : 1; // 2 months free on annual
-  const amountPaise = plan.price_inr * multiplier * 100;
+  const amountPaise = plan.price_inr * 100;
   const internalOrderId = `ord_inst_${crypto.randomBytes(8).toString('hex')}`;
 
   let razorpayOrderId = '';
@@ -400,8 +399,44 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
     }
   }
 
-  // Calculate expiration date: +30 days
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Calculate expiration date based on plan billing period
+  let durationDays = 30;
+  if (plan.billing_period === 'ANNUAL') {
+    durationDays = 365;
+  } else if (plan.billing_period === 'QUARTERLY') {
+    durationDays = 90;
+  }
+  const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Archive any previous active subscriptions for this institute
+  db.prepare(`
+    UPDATE institute_subscriptions
+    SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+    WHERE institute_id = ? AND status = 'ACTIVE'
+  `).run(instituteId);
+
+  // Insert new active subscription
+  const subId = `sub_${crypto.randomBytes(8).toString('hex')}`;
+  db.prepare(`
+    INSERT INTO institute_subscriptions (
+      id, institute_id, plan_id, plan_name, billing_cycle, price_inr,
+      student_capacity, evaluation_allowance, evaluations_used, evaluations_remaining,
+      payment_order_ref, payment_id, start_date, expiry_date, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(
+    subId,
+    instituteId,
+    plan.id,
+    plan.name,
+    plan.billing_period || 'MONTHLY',
+    plan.price_inr,
+    plan.student_quota,
+    plan.evaluation_credits,
+    plan.evaluation_credits,
+    razorpayOrderId,
+    razorpayPaymentId,
+    expiresAt
+  );
 
   // Update institute in DB
   db.prepare(`
@@ -411,10 +446,30 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
       max_students = ?,
       subscription_expires_at = ?
     WHERE id = ?
-  `).run(plan.id, plan.student_quota, expiresAt, instituteId);
+  `).run(plan.name, plan.student_quota, expiresAt, instituteId);
 
   // Update payment_order
   db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE razorpay_order_id = ?").run(razorpayOrderId);
+
+  // Record in payment_transactions for financial and audit integrity
+  const txId = `tx_${crypto.randomBytes(8).toString('hex')}`;
+  const orderRow = db.prepare('SELECT id FROM payment_orders WHERE razorpay_order_id = ?').get(razorpayOrderId) as { id: string } | undefined;
+  if (orderRow) {
+    db.prepare(`
+      INSERT OR IGNORE INTO payment_transactions (
+        id, order_id, student_id, razorpay_payment_id, razorpay_signature,
+        amount_paise, status, idempotency_key, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?, CURRENT_TIMESTAMP)
+    `).run(
+      txId,
+      orderRow.id,
+      `inst_${instituteId}`,
+      razorpayPaymentId,
+      razorpaySignature || 'DIRECT_AUTH',
+      plan.price_inr * 100,
+      `idem_${razorpayPaymentId}`
+    );
+  }
 
   // Audit log
   db.prepare(`
@@ -424,7 +479,7 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
     `log_${crypto.randomBytes(8).toString('hex')}`,
     inst.admin_user_id || instituteId,
     instituteId,
-    `Subscribed to ${plan.name} (Quota: ${plan.student_quota} students). Payment ID: ${razorpayPaymentId}`
+    `Subscribed to ${plan.name} (${plan.billing_period}, Student Quota: ${plan.student_quota}, Allowance: ${plan.evaluation_credits}). Payment ID: ${razorpayPaymentId}`
   );
 
   return {

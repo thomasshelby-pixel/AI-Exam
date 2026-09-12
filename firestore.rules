@@ -94,5 +94,23 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // Official Legal Documents & Versioning (Terms, Privacy, Refund)
+    match /legal_documents/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Legal Document Acceptance & Audit Trail
+    match /legal_acknowledgements/{ackId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Legal Settings & Business Entity Configuration
+    match /legal_settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

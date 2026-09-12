@@ -24,6 +24,7 @@ import {
   Upload,
   FileUp,
   FileCheck,
+  FileDown,
 } from 'lucide-react';
 
 interface MaterialManagementProps {
@@ -145,7 +146,15 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
           const ext = res.extracted || {};
           setFormData((prev) => {
-            const next = { ...prev };
+            const next = {
+              ...prev,
+              attachedFile: {
+                name: file.name,
+                size: file.size,
+                type: file.type || 'application/pdf',
+                base64,
+              },
+            };
             if (targetField === 'ALL' || targetField === 'questionPaperText') {
               if (ext.questionPaperText) next.questionPaperText = ext.questionPaperText;
             }
@@ -287,13 +296,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
   // Delete Material
   const handleDelete = async (mat: EvaluationMaterial) => {
-    if (!window.confirm(`Are you sure you want to delete "${mat.questionPaperTitle}"? This cannot be undone.`)) {
+    const title = mat.question_paper_title || mat.questionPaperTitle || 'this material';
+    if (!window.confirm(`Are you sure you want to permanently delete "${title}" and all associated cloud files? This cannot be undone.`)) {
       return;
     }
     try {
       await apiRequest(`/api/admin/materials/${mat.id}`, { method: 'DELETE' });
-      onNotify?.('Material deleted successfully', 'success');
-      fetchMaterials();
+      onNotify?.('Material and cloud files permanently deleted', 'success');
+      await fetchMaterials();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete material';
       onNotify?.(msg, 'error');
@@ -553,6 +563,17 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {(m.file_id || m.file_name || m.download_url) && (
+                          <a
+                            href={m.download_url || `/api/admin/materials/${m.id}/file`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer"
+                            title={`View PDF: ${m.file_name || 'Attached PDF'}`}
+                          >
+                            <FileDown className="w-3.5 h-3.5" />
+                          </a>
+                        )}
                         <button
                           onClick={() => handleInspect(m)}
                           className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition cursor-pointer"

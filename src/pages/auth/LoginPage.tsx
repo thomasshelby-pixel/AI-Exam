@@ -464,6 +464,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 </>
               )}
             </button>
+
+            <p className="text-[11px] text-center text-slate-500 pt-1">
+              By creating an account, you agree to our{' '}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+                Terms of Service
+              </a>{' '}
+              and{' '}
+              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+                Privacy Policy
+              </a>
+              .
+            </p>
           </form>
         )}
 

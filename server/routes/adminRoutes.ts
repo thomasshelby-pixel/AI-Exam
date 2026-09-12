@@ -24,8 +24,15 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { permanentlyDeleteFromFirestore } from '../services/firestoreSyncService.js';
-import { deleteMaterialCloudFiles } from '../services/persistentStorageService.js';
+import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { permanentlyDeleteFromFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import {
+  savePersistentFile,
+  getPersistentFile,
+  deletePersistentFile,
+  deleteMaterialCloudFiles
+} from '../services/persistentStorageService.js';
+import path from 'node:path';
 
 const router = Router();
 
@@ -418,14 +425,100 @@ router.delete('/free-access/:id', (req: AuthRequest, res: Response) => {
 });
 
 // 4. Reference Evaluation Materials Management
-router.get('/materials', (req: AuthRequest, res: Response) => {
+router.get('/materials', async (req: AuthRequest, res: Response) => {
   try {
     const { level, materialType, subjectKey, status, search } = req.query;
+
+    // 1. Sync from Cloud Firestore (single persistent source of truth)
+    try {
+      const tombstones = await getAllFirestoreDocs<any>('tombstones');
+      const tombstoneSet = new Set(
+        tombstones.flatMap((t: any) => [
+          `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
+          `${t.collectionName || t.entity_type}:${t.targetId || t.entity_id || t.id}`,
+          t.targetId,
+          t.entity_id,
+          t.id,
+        ].filter(Boolean))
+      );
+
+      // Purge any tombstoned materials from local SQLite
+      for (const t of tombstones) {
+        if ((t.collectionName === 'evaluation_materials' || t.collectionName === 'materials') && (t.targetId || t.id)) {
+          const idToDelete = t.targetId || t.id.replace(/^(evaluation_materials_|materials_)/, '');
+          try {
+            db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(idToDelete);
+          } catch {}
+        }
+      }
+
+      // Sync non-tombstoned Firestore materials into local SQLite
+      const firestoreMaterials = await getAllFirestoreDocs<any>('evaluation_materials');
+      for (const m of firestoreMaterials) {
+        if (tombstoneSet.has(`evaluation_materials_${m.id}`) || tombstoneSet.has(`materials_${m.id}`) || tombstoneSet.has(m.id)) {
+          continue;
+        }
+        try {
+          db.prepare(`
+            INSERT INTO evaluation_materials (
+              id, level, material_type, model_group, subject_key, subject_name,
+              paper, attempt, syllabus_version, chapter_topic,
+              question_paper_title, question_paper_text, suggested_answers_text,
+              marking_scheme_text, reference_guidance_text, amendments_provisions_text,
+              effective_date, version, status, source_type, admin_approved,
+              file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+              level = excluded.level,
+              material_type = excluded.material_type,
+              model_group = excluded.model_group,
+              subject_key = excluded.subject_key,
+              subject_name = excluded.subject_name,
+              paper = excluded.paper,
+              attempt = excluded.attempt,
+              syllabus_version = excluded.syllabus_version,
+              chapter_topic = excluded.chapter_topic,
+              question_paper_title = excluded.question_paper_title,
+              question_paper_text = excluded.question_paper_text,
+              suggested_answers_text = excluded.suggested_answers_text,
+              marking_scheme_text = excluded.marking_scheme_text,
+              reference_guidance_text = excluded.reference_guidance_text,
+              amendments_provisions_text = excluded.amendments_provisions_text,
+              effective_date = excluded.effective_date,
+              version = excluded.version,
+              status = excluded.status,
+              source_type = excluded.source_type,
+              admin_approved = excluded.admin_approved,
+              file_id = excluded.file_id,
+              storage_path = excluded.storage_path,
+              file_name = excluded.file_name,
+              file_size = excluded.file_size,
+              checksum = excluded.checksum,
+              download_url = excluded.download_url,
+              updated_at = CURRENT_TIMESTAMP
+          `).run(
+            m.id, m.level, m.material_type, m.model_group || null, m.subject_key, m.subject_name,
+            m.paper || 'Paper 1', m.attempt || 'Current', m.syllabus_version || 'New Scheme 2024',
+            m.chapter_topic || null, m.question_paper_title, m.question_paper_text || '',
+            m.suggested_answers_text || '', m.marking_scheme_text || '', m.reference_guidance_text || null,
+            m.amendments_provisions_text || null, m.effective_date || null, m.version || '1.0',
+            m.status || 'ACTIVE', m.source_type || 'ADMIN', m.admin_approved !== undefined ? m.admin_approved : 1,
+            m.file_id || null, m.storage_path || null, m.file_name || null, m.file_size || null, m.checksum || null, m.download_url || null,
+            m.uploaded_by || 'ADMIN', m.created_at || null
+          );
+        } catch {}
+      }
+    } catch (syncErr) {
+      console.warn('[AdminRoutes] Note: Firestore materials sync notice:', syncErr);
+    }
+
     let query = `
       SELECT id, level, material_type, model_group, subject_key, subject_name,
              paper, attempt, syllabus_version, chapter_topic,
              question_paper_title, effective_date, version, status,
              uploaded_by, created_at, updated_at,
+             file_id, storage_path, file_name, file_size, download_url,
              LENGTH(COALESCE(question_paper_text, '')) as qp_chars,
              LENGTH(COALESCE(suggested_answers_text, '')) as sa_chars,
              LENGTH(COALESCE(marking_scheme_text, '')) as ms_chars,
@@ -488,11 +581,12 @@ router.post('/materials/extract-pdf', async (req: AuthRequest, res: Response) =>
   }
 });
 
-router.get('/materials/:id', (req: AuthRequest, res: Response) => {
+router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const material = db.prepare(`
-      SELECT * FROM evaluation_materials WHERE id = ?
-    `).get(req.params.id);
+    let material = await getFirestoreDoc<any>('evaluation_materials', req.params.id);
+    if (!material) {
+      material = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(req.params.id) as any;
+    }
 
     if (!material) {
       return res.status(404).json({ error: 'Evaluation material not found' });
@@ -505,7 +599,34 @@ router.get('/materials/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/materials', (req: AuthRequest, res: Response) => {
+router.get('/materials/:id/file', async (req: AuthRequest, res: Response) => {
+  try {
+    const materialId = req.params.id;
+    let mat = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(materialId) as any;
+    if (!mat) {
+      mat = await getFirestoreDoc<any>('evaluation_materials', materialId);
+    }
+    if (!mat) {
+      return res.status(404).json({ error: 'Material not found' });
+    }
+
+    const fileId = mat.file_id || `${materialId}_qp` || materialId;
+    const fileData = await getPersistentFile(fileId, mat.file_name || `${materialId}.pdf`);
+    if (!fileData) {
+      return res.status(404).json({ error: 'Attached document not found in persistent storage' });
+    }
+
+    res.setHeader('Content-Type', fileData.metadata?.mimeType || 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${mat.file_name || fileData.metadata?.filename || 'material.pdf'}"`);
+    res.setHeader('Content-Length', fileData.buffer.length);
+    return res.send(fileData.buffer);
+  } catch (error: unknown) {
+    console.error('Download material file error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve material file' });
+  }
+});
+
+router.post('/materials', async (req: AuthRequest, res: Response) => {
   try {
     const {
       level,
@@ -526,6 +647,7 @@ router.post('/materials', (req: AuthRequest, res: Response) => {
       effectiveDate,
       version,
       status,
+      attachedFile,
     } = req.body;
 
     if (!level || !materialType || !subjectKey || !subjectName || !questionPaperTitle || !questionPaperText || !suggestedAnswersText) {
@@ -533,58 +655,147 @@ router.post('/materials', (req: AuthRequest, res: Response) => {
     }
 
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
+    let fileInfo: {
+      fileId: string;
+      storagePath: string;
+      filename: string;
+      size: number;
+      checksum: string;
+      downloadUrl: string;
+    } | null = null;
+
+    if (attachedFile && attachedFile.base64) {
+      try {
+        const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
+        const fileBuffer = Buffer.from(rawBase64, 'base64');
+        const fileId = `mat_file_${crypto.randomBytes(8).toString('hex')}`;
+        const fileName = attachedFile.name || `${materialId}.pdf`;
+        const mimeType = attachedFile.type || 'application/pdf';
+
+        const savedMeta = await savePersistentFile(
+          fileId,
+          fileName,
+          mimeType,
+          fileBuffer,
+          'MATERIAL_QUESTION_PAPER',
+          {
+            materialId,
+            ownerUserId: req.user!.id,
+          }
+        );
+
+        fileInfo = {
+          fileId: savedMeta.fileId,
+          storagePath: savedMeta.storagePath,
+          filename: savedMeta.filename,
+          size: savedMeta.size,
+          checksum: savedMeta.checksum,
+          downloadUrl: savedMeta.downloadUrl,
+        };
+      } catch (uploadErr) {
+        console.warn('[AdminRoutes] Error persisting attached file to Cloud Storage:', uploadErr);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const materialRecord = {
+      id: materialId,
+      level,
+      material_type: materialType,
+      model_group: modelGroup || null,
+      subject_key: subjectKey,
+      subject_name: subjectName,
+      paper: paper || 'Paper 1',
+      attempt: attempt || 'Current',
+      syllabus_version: syllabusVersion || 'New Scheme 2024',
+      chapter_topic: chapterTopic || null,
+      question_paper_title: questionPaperTitle.trim(),
+      question_paper_text: questionPaperText.trim(),
+      suggested_answers_text: suggestedAnswersText.trim(),
+      marking_scheme_text: markingSchemeText?.trim() || '',
+      reference_guidance_text: referenceGuidanceText?.trim() || '',
+      amendments_provisions_text: amendmentsProvisionsText?.trim() || '',
+      effective_date: effectiveDate || nowIso.split('T')[0],
+      version: version || '1.0',
+      status: status || 'ACTIVE',
+      source_type: 'ADMIN',
+      admin_approved: 1,
+      file_id: fileInfo?.fileId || null,
+      storage_path: fileInfo?.storagePath || null,
+      file_name: fileInfo?.filename || null,
+      file_size: fileInfo?.size || null,
+      checksum: fileInfo?.checksum || null,
+      download_url: fileInfo?.downloadUrl || null,
+      uploaded_by: req.user!.email,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    // 1. Persist to Cloud Firestore (source of truth)
+    try {
+      await setFirestoreDoc('evaluation_materials', materialId, materialRecord);
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Warning persisting material to Firestore:', fsErr);
+    }
+
+    // 2. Insert into SQLite
     db.prepare(`
       INSERT INTO evaluation_materials (
         id, level, material_type, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, chapter_topic,
         question_paper_title, question_paper_text, suggested_answers_text,
         marking_scheme_text, reference_guidance_text, amendments_provisions_text,
-        effective_date, version, status, uploaded_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        effective_date, version, status, source_type, admin_approved,
+        file_id, storage_path, file_name, file_size, checksum, download_url,
+        uploaded_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      materialId,
-      level,
-      materialType,
-      modelGroup || null,
-      subjectKey,
-      subjectName,
-      paper || 'Paper 1',
-      attempt || 'Current',
-      syllabusVersion || 'New Scheme 2024',
-      chapterTopic || null,
-      questionPaperTitle.trim(),
-      questionPaperText.trim(),
-      suggestedAnswersText.trim(),
-      markingSchemeText?.trim() || '',
-      referenceGuidanceText?.trim() || '',
-      amendmentsProvisionsText?.trim() || '',
-      effectiveDate || new Date().toISOString().split('T')[0],
-      version || '1.0',
-      status || 'ACTIVE',
-      req.user!.email
+      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.model_group,
+      materialRecord.subject_key, materialRecord.subject_name, materialRecord.paper, materialRecord.attempt,
+      materialRecord.syllabus_version, materialRecord.chapter_topic, materialRecord.question_paper_title,
+      materialRecord.question_paper_text, materialRecord.suggested_answers_text, materialRecord.marking_scheme_text,
+      materialRecord.reference_guidance_text, materialRecord.amendments_provisions_text, materialRecord.effective_date,
+      materialRecord.version, materialRecord.status, materialRecord.source_type, materialRecord.admin_approved,
+      materialRecord.file_id, materialRecord.storage_path, materialRecord.file_name, materialRecord.file_size,
+      materialRecord.checksum, materialRecord.download_url, materialRecord.uploaded_by, materialRecord.created_at,
+      materialRecord.updated_at
     );
 
-    // Audit log
+    // 3. Audit log in SQLite and Firestore
+    const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const logDoc = {
+      id: logId,
+      user_id: req.user!.id,
+      action: 'UPLOAD_MATERIAL',
+      entity_type: 'MATERIAL',
+      entity_id: materialId,
+      details: `Uploaded ${materialType} for ${subjectName} (${attempt || 'Current'}) v${version || '1.0'} with file: ${fileInfo?.filename || 'none'}`,
+      created_at: nowIso,
+    };
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, ?, 'UPLOAD_MATERIAL', 'MATERIAL', ?, ?)
-    `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
-      req.user!.id,
-      materialId,
-      `Uploaded ${materialType} for ${subjectName} (${attempt || 'Current'}) v${version || '1.0'}`
-    );
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(logDoc.id, logDoc.user_id, logDoc.action, logDoc.entity_type, logDoc.entity_id, logDoc.details);
 
-    return res.status(201).json({ success: true, materialId, message: 'Evaluation material uploaded successfully.' });
+    try {
+      await syncRecordToFirestore('audit_logs', logId, logDoc);
+    } catch {}
+
+    return res.status(201).json({
+      success: true,
+      materialId,
+      material: materialRecord,
+      message: 'Evaluation material uploaded and persisted successfully.',
+    });
   } catch (error: unknown) {
     console.error('Upload material error:', error);
     return res.status(500).json({ error: 'Failed to save evaluation material' });
   }
 });
 
-router.put('/materials/:id', (req: AuthRequest, res: Response) => {
+router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const existing = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    const existing = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(req.params.id) as any;
     if (!existing) {
       return res.status(404).json({ error: 'Material not found' });
     }
@@ -608,7 +819,51 @@ router.put('/materials/:id', (req: AuthRequest, res: Response) => {
       effectiveDate,
       version,
       status,
+      attachedFile,
     } = req.body;
+
+    let fileId = existing.file_id;
+    let storagePath = existing.storage_path;
+    let fileName = existing.file_name;
+    let fileSize = existing.file_size;
+    let checksum = existing.checksum;
+    let downloadUrl = existing.download_url;
+
+    if (attachedFile && attachedFile.base64) {
+      try {
+        if (existing.file_id) {
+          await deletePersistentFile(existing.file_id, existing.storage_path).catch(() => {});
+        }
+        const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
+        const fileBuffer = Buffer.from(rawBase64, 'base64');
+        const newFileId = `mat_file_${crypto.randomBytes(8).toString('hex')}`;
+        const newFileName = attachedFile.name || `${req.params.id}.pdf`;
+        const mimeType = attachedFile.type || 'application/pdf';
+
+        const savedMeta = await savePersistentFile(
+          newFileId,
+          newFileName,
+          mimeType,
+          fileBuffer,
+          'MATERIAL_QUESTION_PAPER',
+          {
+            materialId: req.params.id,
+            ownerUserId: req.user!.id,
+          }
+        );
+
+        fileId = savedMeta.fileId;
+        storagePath = savedMeta.storagePath;
+        fileName = savedMeta.filename;
+        fileSize = savedMeta.size;
+        checksum = savedMeta.checksum;
+        downloadUrl = savedMeta.downloadUrl;
+      } catch (fileErr) {
+        console.warn('[AdminRoutes] Warning replacing material file:', fileErr);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
 
     db.prepare(`
       UPDATE evaluation_materials
@@ -630,6 +885,12 @@ router.put('/materials/:id', (req: AuthRequest, res: Response) => {
           effective_date = COALESCE(?, effective_date),
           version = COALESCE(?, version),
           status = COALESCE(?, status),
+          file_id = COALESCE(?, file_id),
+          storage_path = COALESCE(?, storage_path),
+          file_name = COALESCE(?, file_name),
+          file_size = COALESCE(?, file_size),
+          checksum = COALESCE(?, checksum),
+          download_url = COALESCE(?, download_url),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
@@ -651,19 +912,43 @@ router.put('/materials/:id', (req: AuthRequest, res: Response) => {
       effectiveDate || null,
       version || null,
       status || null,
+      fileId || null,
+      storagePath || null,
+      fileName || null,
+      fileSize || null,
+      checksum || null,
+      downloadUrl || null,
       req.params.id
     );
 
+    const updatedRow = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(req.params.id) as any;
+
+    // Update Firestore
+    try {
+      await setFirestoreDoc('evaluation_materials', req.params.id, updatedRow);
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Error updating material in Firestore:', fsErr);
+    }
+
     // Audit log
+    const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const logDoc = {
+      id: logId,
+      user_id: req.user!.id,
+      action: 'UPDATE_MATERIAL',
+      entity_type: 'MATERIAL',
+      entity_id: req.params.id,
+      details: `Updated material ${existing.question_paper_title} (v${version || existing.version})`,
+      created_at: nowIso,
+    };
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, ?, 'UPDATE_MATERIAL', 'MATERIAL', ?, ?)
-    `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
-      req.user!.id,
-      req.params.id,
-      `Updated material ${existing.question_paper_title} (v${version || 'updated'})`
-    );
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(logDoc.id, logDoc.user_id, logDoc.action, logDoc.entity_type, logDoc.entity_id, logDoc.details);
+
+    try {
+      await syncRecordToFirestore('audit_logs', logId, logDoc);
+    } catch {}
 
     return res.json({ success: true, message: 'Evaluation material updated successfully' });
   } catch (error: unknown) {
@@ -672,30 +957,46 @@ router.put('/materials/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/materials/:id/status', (req: AuthRequest, res: Response) => {
+router.put('/materials/:id/status', async (req: AuthRequest, res: Response) => {
   try {
     const { status } = req.body;
     if (!status || !['ACTIVE', 'INACTIVE'].includes(status)) {
       return res.status(400).json({ error: 'Status must be ACTIVE or INACTIVE' });
     }
 
-    const material = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    const material = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(req.params.id) as any;
     if (!material) {
       return res.status(404).json({ error: 'Material not found' });
     }
 
     db.prepare('UPDATE evaluation_materials SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, req.params.id);
 
+    const updatedRow = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(req.params.id) as any;
+    try {
+      await setFirestoreDoc('evaluation_materials', req.params.id, updatedRow);
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Error updating material status in Firestore:', fsErr);
+    }
+
     // Audit log
+    const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const logDoc = {
+      id: logId,
+      user_id: req.user!.id,
+      action: 'CHANGE_MATERIAL_STATUS',
+      entity_type: 'MATERIAL',
+      entity_id: req.params.id,
+      details: `Set status of material ${material.question_paper_title} to ${status}`,
+      created_at: new Date().toISOString(),
+    };
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, ?, 'CHANGE_MATERIAL_STATUS', 'MATERIAL', ?, ?)
-    `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
-      req.user!.id,
-      req.params.id,
-      `Set status of material ${material.question_paper_title} to ${status}`
-    );
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(logDoc.id, logDoc.user_id, logDoc.action, logDoc.entity_type, logDoc.entity_id, logDoc.details);
+
+    try {
+      await syncRecordToFirestore('audit_logs', logId, logDoc);
+    } catch {}
 
     return res.json({ success: true, message: `Material status changed to ${status}` });
   } catch (error: unknown) {
@@ -704,37 +1005,63 @@ router.put('/materials/:id/status', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.delete('/materials/:id', (req: AuthRequest, res: Response) => {
+router.delete('/materials/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const material = db.prepare('SELECT id, question_paper_title FROM evaluation_materials WHERE id = ?').get(req.params.id) as { id: string; question_paper_title: string } | undefined;
+    const materialId = req.params.id;
+    let material = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(materialId) as any;
+    if (!material) {
+      material = await getFirestoreDoc<any>('evaluation_materials', materialId);
+    }
     if (!material) {
       return res.status(404).json({ error: 'Material not found' });
     }
 
-    db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(req.params.id);
-
-    // Delete associated files from Firebase Cloud Storage and permanently tombstone from Firestore
+    // 1. Delete associated files from Firebase Cloud Storage and clean up Firestore file_storage_metadata
+    let filesDeleted = 0;
     try {
-      permanentlyDeleteFromFirestore('evaluation_materials', req.params.id, 'Administrative material deletion');
-      deleteMaterialCloudFiles(req.params.id).catch((e) => {
-        console.warn('[AdminRoutes] Warning deleting Cloud Storage files for material:', e);
-      });
-    } catch (fsErr) {
-      console.warn('[AdminRoutes] Warning during material cloud storage deletion:', fsErr);
+      if (material.file_id) {
+        await deletePersistentFile(material.file_id, material.storage_path).catch(() => {});
+      }
+      filesDeleted = await deleteMaterialCloudFiles(materialId);
+    } catch (storageErr) {
+      console.warn('[AdminRoutes] Error deleting Cloud Storage files for material:', storageErr);
     }
 
-    // Audit log
+    // 2. Permanently delete from Cloud Firestore and record tombstone to prevent resurrection
+    try {
+      await permanentlyDeleteFromFirestore('evaluation_materials', materialId, 'Administrative material deletion');
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Error permanently deleting material from Firestore:', fsErr);
+    }
+
+    // 3. Delete from local SQLite
+    db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(materialId);
+
+    // 4. Record audit log in SQLite and Firestore
+    const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const logDoc = {
+      id: logId,
+      user_id: req.user!.id,
+      action: 'DELETE_MATERIAL',
+      entity_type: 'MATERIAL',
+      entity_id: materialId,
+      details: `Permanently deleted material ${material.question_paper_title || materialId} (${material.material_type || 'MATERIAL'}) and ${filesDeleted} associated cloud storage files`,
+      created_at: new Date().toISOString(),
+    };
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, ?, 'DELETE_MATERIAL', 'MATERIAL', ?, ?)
-    `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
-      req.user!.id,
-      req.params.id,
-      `Deleted material: ${material.question_paper_title}`
-    );
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(logDoc.id, logDoc.user_id, logDoc.action, logDoc.entity_type, logDoc.entity_id, logDoc.details);
 
-    return res.json({ success: true, message: 'Material deleted successfully' });
+    try {
+      await syncRecordToFirestore('audit_logs', logId, logDoc);
+    } catch {}
+
+    return res.json({
+      success: true,
+      message: 'Evaluation material and associated cloud storage files permanently deleted.',
+      filesDeleted,
+    });
   } catch (error: unknown) {
     console.error('Delete material error:', error);
     return res.status(500).json({ error: 'Failed to delete material' });

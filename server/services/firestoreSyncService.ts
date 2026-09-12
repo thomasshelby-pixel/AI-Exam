@@ -160,9 +160,21 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 6. Hydrate Evaluation Materials (ICAI Question Papers, Suggested Answers, Rubrics)
+    // First remove any tombstoned materials from local SQLite
+    for (const t of tombstones) {
+      if ((t.collectionName === 'evaluation_materials' || t.collectionName === 'materials') && (t.targetId || t.id)) {
+        const idToDelete = t.targetId || t.id.replace(/^(evaluation_materials_|materials_)/, '');
+        try {
+          db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(idToDelete);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     const materials = await getAllFirestoreDocs<any>('evaluation_materials');
     for (const m of materials) {
-      if (tombstoneSet.has(`evaluation_materials_${m.id}`)) continue;
+      if (tombstoneSet.has(`evaluation_materials_${m.id}`) || tombstoneSet.has(`materials_${m.id}`)) continue;
       try {
         db.prepare(`
           INSERT INTO evaluation_materials (
@@ -170,18 +182,37 @@ export async function hydrateFromFirestore(): Promise<void> {
             paper, attempt, syllabus_version, chapter_topic,
             question_paper_title, question_paper_text, suggested_answers_text,
             marking_scheme_text, reference_guidance_text, amendments_provisions_text,
-            effective_date, version, status, source_type, admin_approved, file_id, uploaded_by,
+            effective_date, version, status, source_type, admin_approved,
+            file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
+            level = excluded.level,
+            material_type = excluded.material_type,
+            model_group = excluded.model_group,
+            subject_key = excluded.subject_key,
+            subject_name = excluded.subject_name,
+            paper = excluded.paper,
+            attempt = excluded.attempt,
+            syllabus_version = excluded.syllabus_version,
+            chapter_topic = excluded.chapter_topic,
             question_paper_title = excluded.question_paper_title,
             question_paper_text = excluded.question_paper_text,
             suggested_answers_text = excluded.suggested_answers_text,
             marking_scheme_text = excluded.marking_scheme_text,
             reference_guidance_text = excluded.reference_guidance_text,
             amendments_provisions_text = excluded.amendments_provisions_text,
+            effective_date = excluded.effective_date,
+            version = excluded.version,
             status = excluded.status,
+            source_type = excluded.source_type,
+            admin_approved = excluded.admin_approved,
             file_id = excluded.file_id,
+            storage_path = excluded.storage_path,
+            file_name = excluded.file_name,
+            file_size = excluded.file_size,
+            checksum = excluded.checksum,
+            download_url = excluded.download_url,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           m.id, m.level, m.material_type, m.model_group || null, m.subject_key, m.subject_name,
@@ -190,10 +221,11 @@ export async function hydrateFromFirestore(): Promise<void> {
           m.suggested_answers_text, m.marking_scheme_text, m.reference_guidance_text || null,
           m.amendments_provisions_text || null, m.effective_date || null, m.version || '1.0',
           m.status || 'ACTIVE', m.source_type || 'ADMIN', m.admin_approved !== undefined ? m.admin_approved : 1,
-          m.file_id || null, m.uploaded_by || 'ADMIN', m.created_at || null
+          m.file_id || null, m.storage_path || null, m.file_name || null, m.file_size || null, m.checksum || null, m.download_url || null,
+          m.uploaded_by || 'ADMIN', m.created_at || null
         );
-      } catch {
-        // ignore
+      } catch (matErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate material ${m.id}:`, matErr);
       }
     }
 
@@ -270,7 +302,50 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
-    console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations, ${users.length} users, ${tombstones.length} tombstones from Firestore.`);
+    // 10. Hydrate Legal Documents
+    const legalDocs = await getAllFirestoreDocs<any>('legal_documents');
+    for (const ld of legalDocs) {
+      try {
+        db.prepare(`
+          INSERT INTO legal_documents (
+            id, doc_type, title, version, effective_date, last_updated_date,
+            content, status, changelog, published_by, created_at, updated_at, published_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            version = excluded.version,
+            effective_date = excluded.effective_date,
+            last_updated_date = excluded.last_updated_date,
+            content = excluded.content,
+            status = excluded.status,
+            changelog = excluded.changelog,
+            published_by = excluded.published_by,
+            published_at = excluded.published_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          ld.id, ld.doc_type, ld.title, ld.version, ld.effective_date, ld.last_updated_date,
+          ld.content, ld.status, ld.changelog || null, ld.published_by || null, ld.created_at || null, ld.published_at || null
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    // 11. Hydrate Legal Settings
+    const legalSettings = await getAllFirestoreDocs<any>('legal_settings');
+    for (const ls of legalSettings) {
+      try {
+        db.prepare(`
+          INSERT INTO legal_settings (key, value, updated_at)
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).run(ls.key || ls.id, ls.value);
+      } catch {
+        // ignore
+      }
+    }
+
+    console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations, ${users.length} users, ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
   }
@@ -284,14 +359,39 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
   if (!fdb) return;
 
   try {
+    const tombstones = await getAllFirestoreDocs<any>('tombstones');
+    const tombstoneSet = new Set(
+      tombstones.flatMap((t: any) => [
+        `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
+        `${t.collectionName || t.entity_type}:${t.targetId || t.entity_id || t.id}`,
+        t.targetId,
+        t.entity_id,
+        t.id,
+      ].filter(Boolean))
+    );
+
+    const seedDoneSetting = db.prepare("SELECT value FROM pricing_settings WHERE key = 'SYSTEM_INITIAL_SEED_DONE'").get() as { value?: string } | undefined;
+    const isSeedDone = seedDoneSetting?.value === 'true';
+
     const existingMaterials = await getAllFirestoreDocs('evaluation_materials');
-    if (existingMaterials.length === 0) {
-      console.log('[FirestoreSync] Seeding baseline ICAI evaluation materials to Cloud Firestore...');
+    if (!isSeedDone && existingMaterials.length === 0) {
+      console.log('[FirestoreSync] Initializing baseline ICAI evaluation materials to Cloud Firestore...');
       const localMaterials = db.prepare('SELECT * FROM evaluation_materials').all() as any[];
+      let seeded = 0;
       for (const m of localMaterials) {
-        await setFirestoreDoc('evaluation_materials', m.id, m);
+        if (!tombstoneSet.has(`evaluation_materials_${m.id}`) && !tombstoneSet.has(`materials_${m.id}`) && !tombstoneSet.has(m.id)) {
+          await setFirestoreDoc('evaluation_materials', m.id, m);
+          seeded++;
+        }
       }
-      console.log(`[FirestoreSync] Seeded ${localMaterials.length} materials to Firestore.`);
+      if (seeded > 0) {
+        console.log(`[FirestoreSync] Seeded ${seeded} baseline materials to Firestore.`);
+      }
+      try {
+        db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
+      } catch {}
+    } else {
+      console.log('[FirestoreSync] Baseline materials already initialized or intentionally managed by admin; skipping automatic re-seeding.');
     }
 
     const existingUsers = await getAllFirestoreDocs('users');
@@ -300,6 +400,19 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       const localUsers = db.prepare("SELECT * FROM users WHERE role IN ('SUPER_ADMIN', 'SUPPORT_ADMIN')").all() as any[];
       for (const u of localUsers) {
         await setFirestoreDoc('users', u.id, u);
+      }
+    }
+
+    const existingLegal = await getAllFirestoreDocs('legal_documents');
+    if (existingLegal.length === 0) {
+      console.log('[FirestoreSync] Seeding baseline published legal documents to Cloud Firestore...');
+      const localLegal = db.prepare('SELECT * FROM legal_documents').all() as any[];
+      for (const ld of localLegal) {
+        await setFirestoreDoc('legal_documents', ld.id, ld);
+      }
+      const localSettings = db.prepare('SELECT * FROM legal_settings').all() as any[];
+      for (const ls of localSettings) {
+        await setFirestoreDoc('legal_settings', ls.key, ls);
       }
     }
   } catch (err) {
@@ -326,8 +439,16 @@ export async function migrateAllDataToFirestore(): Promise<{
   }
 
   // Check tombstones first
-  const tombstones = await getAllFirestoreDocs<{ id: string; entity_type: string; entity_id: string }>('tombstones');
-  const tombstoneMap = new Set(tombstones.map((t) => `${t.entity_type}:${t.entity_id}`));
+  const tombstones = await getAllFirestoreDocs<any>('tombstones');
+  const tombstoneMap = new Set(
+    tombstones.flatMap((t: any) => [
+      `${t.collectionName || t.entity_type}:${t.targetId || t.entity_id || t.id}`,
+      `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
+      t.targetId,
+      t.entity_id,
+      t.id,
+    ].filter(Boolean))
+  );
 
   let mCount = 0;
   let uCount = 0;

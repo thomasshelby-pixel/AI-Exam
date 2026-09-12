@@ -79,6 +79,7 @@ export interface CloudFileMetadata {
   fileId: string;
   storagePath: string;
   originalFilename: string;
+  filename?: string;
   mimeType: string;
   size: number;
   ownerUserId: string;
@@ -245,6 +246,7 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
     fileId: options.fileId,
     storagePath,
     originalFilename: options.filename,
+    filename: options.filename,
     mimeType: options.mimeType,
     size: options.buffer.length,
     ownerUserId: options.ownerUserId || 'system',
@@ -425,26 +427,61 @@ export async function deleteEvaluationCloudFiles(evaluationId: string): Promise<
 export async function deleteMaterialCloudFiles(materialId: string): Promise<number> {
   const db = getFirestoreDb();
   let deletedCount = 0;
+  const processedDocIds = new Set<string>();
 
   if (db) {
     try {
+      // 1. Query where materialId == materialId
       const q = query(
         collection(db, 'file_storage_metadata'),
         where('materialId', '==', materialId)
       );
       const snap = await getDocs(q);
-      console.log(`[PrivilegedStorage] Found ${snap.size} associated files to delete for material ${materialId}`);
+      console.log(`[PrivilegedStorage] Found ${snap.size} associated files by query for material ${materialId}`);
 
       for (const docSnap of snap.docs) {
+        processedDocIds.add(docSnap.id);
         const data = docSnap.data() as CloudFileMetadata;
-        await deleteFileFromCloudStorage(data.fileId, data.storagePath);
+        await deleteFileFromCloudStorage(data.fileId || docSnap.id, data.storagePath);
+        await deleteDoc(doc(db, 'file_storage_metadata', docSnap.id)).catch(() => {});
         deletedCount++;
+      }
+
+      // 2. Scan all file_storage_metadata to catch any doc matching materialId in ID, fileId, or path
+      const allFiles = await getDocs(collection(db, 'file_storage_metadata'));
+      for (const d of allFiles.docs) {
+        if (processedDocIds.has(d.id)) continue;
+        const data = d.data() as CloudFileMetadata;
+        if (
+          d.id.includes(materialId) ||
+          data.fileId?.includes(materialId) ||
+          data.storagePath?.includes(materialId) ||
+          data.materialId === materialId
+        ) {
+          processedDocIds.add(d.id);
+          await deleteFileFromCloudStorage(data.fileId || d.id, data.storagePath);
+          await deleteDoc(doc(db, 'file_storage_metadata', d.id)).catch(() => {});
+          deletedCount++;
+        }
       }
     } catch (err) {
       console.warn(`[PrivilegedStorage] Error querying material files for ${materialId}:`, err);
     }
   }
 
-  await deleteFileFromCloudStorage(materialId);
+  // Also clean up standard fallback keys
+  const fallbackKeys = [
+    materialId,
+    `${materialId}_qp`,
+    `${materialId}_sa`,
+    `mat_${materialId}_qp`,
+    `mat_${materialId}`,
+  ];
+  for (const k of fallbackKeys) {
+    if (!processedDocIds.has(k)) {
+      await deleteFileFromCloudStorage(k);
+    }
+  }
+
   return deletedCount;
 }
