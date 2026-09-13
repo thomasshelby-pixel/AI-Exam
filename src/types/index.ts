@@ -178,6 +178,16 @@ export interface QuestionEvaluation {
   }[];
   applicableProvisions?: string[];
   accountingStandardNotes?: string;
+  candidateSelectedOption?: string;
+  officialCorrectOption?: string;
+  isCorrect?: boolean;
+  markingRule?: string;
+  negativeMarking?: number;
+  sourceMaterialId?: string;
+  sourceMaterialVersion?: string;
+  suggestedAnswerReference?: string;
+  explanation?: string;
+  reviewerAdjustmentNotes?: string;
 }
 
 export interface ScoreCalculationAuditItem {
@@ -268,6 +278,51 @@ export interface EvaluationResult {
     wrongPenalty: number;
     description?: string;
   };
+  attemptedPercentage?: number;
+  coverageMap?: any;
+  completionGateReport?: HardCompletionGateReport;
+  validationStatus?: 'VALID' | 'NEEDS_REVIEW';
+  validationErrors?: string[];
+  integrityAudit?: any;
+  version?: 'v1' | 'v2' | string;
+  recheckStatus?: 'PENDING' | 'RECHECK_AFFIRMED' | 'RECHECKED_ACCEPTED' | 'RECHECKED_REJECTED';
+  recheckResolutionDate?: string;
+  recheckDelta?: number;
+  reviewerNotes?: string;
+  originalTotalMarks?: number;
+  recheckHistory?: Array<{
+    recheckId: string;
+    requestedAt: string;
+    resolvedAt?: string;
+    requestedQuestions: string[];
+    subQuestion?: string;
+    reason: string;
+    studentNotes?: string;
+    status: string;
+    reviewerId?: string;
+    reviewerNotes?: string;
+    originalScore?: number;
+    recheckedScore?: number;
+    scoreDelta?: number;
+    overallOldTotal?: number;
+    overallNewTotal?: number;
+  }>;
+  originalEvaluationSnapshot?: any;
+}
+
+export interface HardCompletionGateCheck {
+  ruleId: string;
+  name: string;
+  passed: boolean;
+  details: string;
+}
+
+export interface HardCompletionGateReport {
+  isPassed: boolean;
+  passedCount: number;
+  failedCount: number;
+  checks: HardCompletionGateCheck[];
+  timestamp: string;
 }
 
 export interface McqScoringRule {

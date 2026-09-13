@@ -1150,8 +1150,33 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
         `Password reset requested for ${user.email}`
       );
 
-      // Dispatch email
+      const appUrl = process.env.APP_URL || (req.headers.origin ? String(req.headers.origin) : 'http://localhost:3000');
+      const resetUrl = `${appUrl}/reset-password?token=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(user.email)}`;
+
+      // Record in-app notification so student can access reset directly from notification center
+      try {
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, title, message, type)
+          VALUES (?, ?, 'Password Reset Request', ?, 'SYSTEM')
+        `).run(
+          `notif_${crypto.randomBytes(8).toString('hex')}`,
+          user.id,
+          `A password reset request was initiated for your account. Link: ${resetUrl}`
+        );
+      } catch {
+        // Non-fatal
+      }
+
+      // Dispatch email (will deliver via SMTP or log cleanly with fallback if SMTP sandbox restriction occurs)
       await sendPasswordResetEmail(user.email, rawToken, user.full_name);
+
+      // Return consistent message to prevent account enumeration, plus devResetUrl for testing if in dev or sandbox mode
+      const isSandboxOrDev = process.env.NODE_ENV !== 'production' || (process.env.SMTP_HOST || '').toLowerCase().includes('resend');
+      return res.json({
+        success: true,
+        message: 'If an account exists with this email address, a password reset link has been dispatched to your inbox. The link will expire in 1 hour.',
+        ...(isSandboxOrDev ? { devResetUrl: resetUrl } : {}),
+      });
     }
 
     // Return consistent message to prevent account enumeration

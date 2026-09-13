@@ -3718,7 +3718,8 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
     }
 
     const recheck = db.prepare(`
-      SELECT r.*, e.raw_result_json, e.total_marks, e.subject_name, u.email as student_email, u.full_name as student_name
+      SELECT r.*, e.result_json, e.total_marks, e.percentage, e.grade, e.subject_name, e.audit_metadata_json, e.created_at as eval_created_at,
+             u.email as student_email, u.full_name as student_name
       FROM recheck_requests r
       JOIN evaluations e ON e.id = r.evaluation_id
       JOIN users u ON u.id = r.student_id
@@ -3731,24 +3732,63 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
 
     const nowIso = new Date().toISOString();
     let newTotalMarks = recheck.total_marks;
-    let newPercentage = 0;
+    let newPercentage = recheck.percentage || 0;
+    let originalScoreForQ = 0;
+    let newQScore = 0;
+
+    let auditMeta: any = {};
+    try {
+      if (recheck.audit_metadata_json) {
+        auditMeta = JSON.parse(recheck.audit_metadata_json);
+      }
+    } catch {
+      auditMeta = {};
+    }
+
+    // Ensure historical original snapshot is preserved immutably
+    if (!auditMeta.originalEvaluationSnapshot && recheck.result_json) {
+      auditMeta.originalEvaluationSnapshot = {
+        totalMarks: recheck.total_marks,
+        percentage: recheck.percentage,
+        grade: recheck.grade,
+        resultJson: recheck.result_json,
+        version: 'v1',
+        savedAt: nowIso,
+      };
+    }
 
     if (resolution === 'ADJUSTED' && adjustedMarks !== undefined && Number.isFinite(Number(adjustedMarks))) {
-      const newScore = Number(adjustedMarks);
+      newQScore = Number(adjustedMarks);
       // Update the evaluation result JSON if available
-      if (recheck.raw_result_json) {
+      if (recheck.result_json) {
         try {
-          const evalResult = JSON.parse(recheck.raw_result_json);
+          const evalResult = JSON.parse(recheck.result_json);
           if (Array.isArray(evalResult.questions)) {
-            const qTarget = evalResult.questions.find((q: any) =>
-              String(q.questionNumber).toLowerCase() === String(recheck.question_number).toLowerCase() ||
-              `Q${q.questionNumber}`.toLowerCase() === String(recheck.question_number).toLowerCase()
-            );
+            const isAllPaper = String(recheck.question_number).toUpperCase() === 'ALL' ||
+                               String(recheck.question_number).toUpperCase() === 'COMPLETE_EVALUATION';
+
+            let qTarget: any = null;
+            if (!isAllPaper) {
+              qTarget = evalResult.questions.find((q: any) =>
+                String(q.questionNumber).toLowerCase() === String(recheck.question_number).toLowerCase() ||
+                `Q${q.questionNumber}`.toLowerCase() === String(recheck.question_number).toLowerCase() ||
+                `MCQ ${q.questionNumber}`.toLowerCase() === String(recheck.question_number).toLowerCase() ||
+                String(q.questionNumber).toLowerCase().replace(/[^a-z0-9]/g, '') === String(recheck.question_number).toLowerCase().replace(/[^a-z0-9]/g, '')
+              );
+            }
+
             if (qTarget) {
-              const diff = newScore - qTarget.marksAwarded;
-              qTarget.marksAwarded = newScore;
-              qTarget.marksLost = Math.max(0, qTarget.maximumMarks - newScore);
+              originalScoreForQ = qTarget.marksAwarded;
+              qTarget.marksAwarded = newQScore;
+              qTarget.marksLost = Math.max(0, qTarget.maximumMarks - newQScore);
+              qTarget.status = newQScore >= qTarget.maximumMarks ? 'correct' : newQScore > 0 ? 'partially_correct' : 'incorrect';
               qTarget.reviewerAdjustmentNotes = reviewerNotes || 'Score adjusted on senior examiner recheck review';
+
+              if (Array.isArray(qTarget.markingComponents) && qTarget.markingComponents.length > 0) {
+                qTarget.markingComponents[0].marksAwarded = newQScore;
+                qTarget.markingComponents[0].assessment = newQScore >= qTarget.maximumMarks ? 'CORRECT' : newQScore > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT';
+                qTarget.markingComponents[0].annotationInstructions = `[RECHECK ADJUSTED] Awarded ${newQScore}/${qTarget.maximumMarks} (${reviewerNotes || 'Senior review'})`;
+              }
 
               // Recalculate total
               const recalcTotal = evalResult.questions.reduce((sum: number, q: any) => sum + (Number(q.marksAwarded) || 0), 0);
@@ -3757,19 +3797,80 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
               evalResult.percentage = Math.round((recalcTotal / maxTotal) * 1000) / 10;
               newTotalMarks = recalcTotal;
               newPercentage = evalResult.percentage;
-
-              db.prepare(`
-                UPDATE evaluations
-                SET total_marks = ?, percentage = ?, raw_result_json = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-              `).run(newTotalMarks, newPercentage, JSON.stringify(evalResult), recheck.evaluation_id);
+            } else if (isAllPaper) {
+              // Direct total marks adjustment
+              originalScoreForQ = recheck.total_marks;
+              newTotalMarks = newQScore;
+              const maxTotal = Number(evalResult.maximumMarks) || 100;
+              newPercentage = Math.round((newTotalMarks / maxTotal) * 1000) / 10;
+              evalResult.totalMarks = newTotalMarks;
+              evalResult.percentage = newPercentage;
             }
+
+            // Mark evaluation object with version v2
+            evalResult.version = 'v2';
+            evalResult.recheckStatus = 'RECHECKED_ACCEPTED';
+            evalResult.recheckResolutionDate = nowIso;
+            evalResult.recheckDelta = newTotalMarks - recheck.total_marks;
+            evalResult.reviewerNotes = reviewerNotes || 'Score adjusted upon senior academic recheck review.';
+
+            auditMeta.currentVersion = 'v2';
+            auditMeta.lastRecheckedAt = nowIso;
+
+            db.prepare(`
+              UPDATE evaluations
+              SET total_marks = ?, percentage = ?, result_json = ?, audit_metadata_json = ?, checked_copy_status = 'PENDING_REGEN'
+              WHERE id = ?
+            `).run(newTotalMarks, newPercentage, JSON.stringify(evalResult), JSON.stringify(auditMeta), recheck.evaluation_id);
           }
         } catch (jsonErr) {
-          console.warn('[AdminRoutes] Error updating evaluation raw_result_json during recheck:', jsonErr);
+          console.warn('[AdminRoutes] Error updating evaluation result_json during recheck:', jsonErr);
         }
       }
+    } else {
+      // APPROVED (Original stands) or REJECTED
+      try {
+        if (recheck.result_json) {
+          const evalResult = JSON.parse(recheck.result_json);
+          evalResult.recheckStatus = resolution === 'APPROVED' ? 'RECHECK_AFFIRMED' : 'RECHECKED_REJECTED';
+          evalResult.recheckResolutionDate = nowIso;
+          evalResult.reviewerNotes = reviewerNotes || '';
+          db.prepare(`
+            UPDATE evaluations
+            SET result_json = ?, audit_metadata_json = ?
+            WHERE id = ?
+          `).run(JSON.stringify(evalResult), JSON.stringify(auditMeta), recheck.evaluation_id);
+        }
+      } catch (jsonErr) {
+        console.warn('[AdminRoutes] Error recording recheck metadata in evaluation:', jsonErr);
+      }
     }
+
+    // Append to recheckHistory in auditMeta
+    auditMeta.recheckHistory = auditMeta.recheckHistory || [];
+    auditMeta.recheckHistory.push({
+      recheckId: requestId,
+      requestedAt: recheck.created_at,
+      resolvedAt: nowIso,
+      requestedQuestions: [recheck.question_number],
+      subQuestion: recheck.sub_question,
+      reason: recheck.reason,
+      studentNotes: recheck.student_notes,
+      status: resolution,
+      reviewerId: req.user!.id,
+      reviewerNotes: reviewerNotes || '',
+      originalScore: originalScoreForQ,
+      recheckedScore: resolution === 'ADJUSTED' ? newQScore : originalScoreForQ,
+      scoreDelta: resolution === 'ADJUSTED' ? (newTotalMarks - recheck.total_marks) : 0,
+      overallOldTotal: recheck.total_marks,
+      overallNewTotal: newTotalMarks,
+    });
+
+    db.prepare(`
+      UPDATE evaluations
+      SET audit_metadata_json = ?
+      WHERE id = ?
+    `).run(JSON.stringify(auditMeta), recheck.evaluation_id);
 
     // Update recheck request
     db.prepare(`

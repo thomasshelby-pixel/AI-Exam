@@ -8,6 +8,7 @@ import {
   useLocation,
   useParams,
 } from 'react-router-dom';
+import { ShieldAlert, Clock } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
@@ -178,6 +179,7 @@ const EvaluationReportWrapper: React.FC = () => {
     <EvaluationReportView
       evaluationResult={report}
       onBack={() => navigate('/student/dashboard')}
+      onRefresh={fetchReport}
     />
   );
 };
@@ -338,8 +340,59 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 const AppRoutes: React.FC = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, logout } = useAuth();
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState<boolean>(false);
+  const [sessionTimedOut, setSessionTimedOut] = useState<boolean>(false);
+
+  // Global 30-minute Inactivity Session Timeout Handler (Security Compliance)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // 30 minutes in milliseconds
+    const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+    let timeoutId: NodeJS.Timeout;
+
+    const performAutoLogout = async () => {
+      try {
+        await logout();
+      } catch (err) {
+        console.warn('[SessionTimeout] Logout failed:', err);
+      } finally {
+        setSessionTimedOut(true);
+      }
+    };
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(performAutoLogout, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const userActivityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+    let lastActivity = Date.now();
+
+    const handleActivity = () => {
+      const now = Date.now();
+      // Throttle event handlers to once every 2 seconds
+      if (now - lastActivity > 2000) {
+        lastActivity = now;
+        resetTimer();
+      }
+    };
+
+    userActivityEvents.forEach((event) => {
+      window.addEventListener(event, handleActivity, { passive: true });
+    });
+
+    // Start initial timer
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      userActivityEvents.forEach((event) => {
+        window.removeEventListener(event, handleActivity);
+      });
+    };
+  }, [isAuthenticated, logout]);
 
   return (
     <>
@@ -592,6 +645,36 @@ const AppRoutes: React.FC = () => {
         onClose={() => setIsCreditsModalOpen(false)}
         onSuccess={() => setIsCreditsModalOpen(false)}
       />
+
+      {/* Global Inactivity Session Timeout Compliance Modal */}
+      {sessionTimedOut && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-600 border border-amber-200">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Session Timed Out</h3>
+              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                For your security and regulatory examination compliance, your session was automatically logged out after 30 minutes of inactivity.
+              </p>
+            </div>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center gap-2.5 text-left text-xs text-slate-600">
+              <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>Unsaved progress is protected. Please log in again to resume your examination workspace.</span>
+            </div>
+            <button
+              onClick={() => {
+                setSessionTimedOut(false);
+                navigate('/login');
+              }}
+              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm cursor-pointer"
+            >
+              Log In to Continue
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 };

@@ -20,21 +20,31 @@ import {
   RefreshCw,
   Building2,
   Globe,
+  RotateCcw,
+  ShieldCheck,
+  CheckSquare,
+  History,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo.js';
+import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
 
 interface EvaluationReportViewProps {
   evaluationResult: EvaluationResult;
   onBack: () => void;
+  onRefresh?: () => void;
 }
 
 export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   evaluationResult,
   onBack,
+  onRefresh,
 }) => {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
+  const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
+  const [recheckTargetQuestion, setRecheckTargetQuestion] = useState<string | null>(null);
+  const [showOriginalSnapshot, setShowOriginalSnapshot] = useState<boolean>(false);
 
   const handleDownload = async (type: 'report' | 'checked-copy' | 'original') => {
     try {
@@ -185,7 +195,21 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <span>Original Sheet</span>
           </button>
 
-          {/* 4. Print */}
+          {/* 4. Request Recheck Button */}
+          <button
+            id="request-recheck-btn"
+            onClick={() => {
+              setRecheckTargetQuestion(null);
+              setIsRecheckModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Request official senior examiner recheck / review for specific questions or the entire paper"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Request Rechecking</span>
+          </button>
+
+          {/* 5. Print */}
           <button
             id="print-report-btn"
             onClick={() => window.print()}
@@ -197,6 +221,77 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Version 2 Rechecked Result Banner */}
+      {(evaluationResult.version === 'v2' || evaluationResult.recheckStatus === 'RECHECKED_ACCEPTED' || (evaluationResult.recheckDelta !== undefined && evaluationResult.recheckDelta !== 0)) && (
+        <div className="bg-emerald-50 border-2 border-emerald-500/80 rounded-xl p-4 shadow-sm text-emerald-950 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
+                  Official Recheck Result (Version 2.0)
+                </span>
+                {evaluationResult.recheckResolutionDate && (
+                  <span className="text-[11px] text-emerald-700 font-medium">
+                    Resolved on {new Date(evaluationResult.recheckResolutionDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-semibold text-emerald-900 mt-1">
+                Senior Academic Faculty rechecked this answer sheet against official ICAI Suggested Answers.
+              </p>
+              {evaluationResult.reviewerNotes && (
+                <p className="text-xs text-emerald-800 mt-0.5 bg-white/70 border border-emerald-200 rounded-md p-2">
+                  <span className="font-bold text-emerald-950">Examiner Review Resolution:</span> {evaluationResult.reviewerNotes}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 bg-white border border-emerald-200 rounded-xl px-4 py-2.5 shrink-0">
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Marks History</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-xs line-through text-slate-400 font-mono font-bold">
+                  v1: {evaluationResult.originalTotalMarks ?? (totalMarks - (evaluationResult.recheckDelta || 0))}m
+                </span>
+                <span className="text-base font-black text-emerald-700 font-mono">
+                  v2: {totalMarks}m
+                </span>
+                {evaluationResult.recheckDelta !== undefined && evaluationResult.recheckDelta !== 0 && (
+                  <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-mono">
+                    {evaluationResult.recheckDelta > 0 ? `+${evaluationResult.recheckDelta}` : evaluationResult.recheckDelta}m
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Recheck Notice Banner */}
+      {(evaluationResult.recheckStatus === 'PENDING' || (evaluationResult as any).recheck_requests?.some((r: any) => r.status === 'PENDING')) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 shadow-xs text-amber-900 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <RotateCcw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            <div>
+              <span className="font-bold">Recheck Request Under Review:</span> A grievance or recheck ticket is actively being audited by senior faculty against verified suggested answers.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setRecheckTargetQuestion(null);
+              setIsRecheckModalOpen(true);
+            }}
+            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] shrink-0"
+          >
+            View Ticket Status
+          </button>
+        </div>
+      )}
 
       {/* Official ICAI Pattern Report Header Card */}
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black">
@@ -551,7 +646,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                 className={`rounded-lg border p-4 transition ${statusColor} print:border-gray-200 print:bg-white print:text-black`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-sm text-slate-900 print:text-black">
                       Question {q.questionNumber}
                       {q.subQuestion ? ` (${q.subQuestion})` : ''}
@@ -559,15 +654,77 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-700">
                       {q.status.replace('_', ' ')}
                     </span>
+                    {q.reviewerAdjustmentNotes && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3 text-emerald-700" />
+                        Rechecked (v2)
+                      </span>
+                    )}
                   </div>
 
-                  {/* Marks Pills */}
-                  <div className="flex items-center gap-3 text-xs font-mono font-bold">
-                    <span className="text-emerald-700">+{q.marksAwarded} Awarded</span>
-                    {q.marksLost > 0 && <span className="text-rose-700">-{q.marksLost} Lost</span>}
-                    <span className="text-slate-500 font-normal">Max: {q.maximumMarks}</span>
+                  {/* Marks Pills & Contest Button */}
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2 text-xs font-mono font-bold">
+                      <span className="text-emerald-700">+{q.marksAwarded} Awarded</span>
+                      {q.marksLost > 0 && <span className="text-rose-700">-{q.marksLost} Lost</span>}
+                      <span className="text-slate-500 font-normal">Max: {q.maximumMarks}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecheckTargetQuestion(q.questionNumber);
+                        setIsRecheckModalOpen(true);
+                      }}
+                      className="print:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-[11px] font-semibold text-slate-700 hover:text-amber-900 transition shadow-xs cursor-pointer"
+                      title={`Request recheck for Question ${q.questionNumber}`}
+                    >
+                      <RotateCcw className="w-3 h-3 text-amber-600" />
+                      <span>Contest / Recheck</span>
+                    </button>
                   </div>
                 </div>
+
+                {/* Dedicated MCQ Verified Key & Option Comparison Box */}
+                {(q.questionNumber.startsWith('MCQ') || Boolean(q.candidateSelectedOption) || Boolean(q.officialCorrectOption)) && (
+                  <div className="mt-3 p-3 rounded-lg bg-white border border-slate-200 text-xs space-y-2">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1">
+                        <CheckSquare className="w-3.5 h-3.5 text-blue-600" />
+                        MCQ Suggested Answer Verification
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
+                        q.marksAwarded >= q.maximumMarks ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                      }`}>
+                        {q.marksAwarded >= q.maximumMarks ? 'MATCHED OFFICIAL KEY' : 'OPTION MISMATCH'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div className={`p-2.5 rounded-lg border ${
+                        q.marksAwarded >= q.maximumMarks ? 'bg-emerald-50/60 border-emerald-200' : 'bg-rose-50/60 border-rose-200'
+                      }`}>
+                        <span className="text-[10px] uppercase font-bold text-slate-500">Candidate Selected Option</span>
+                        <p className="font-mono font-bold text-sm text-slate-900 mt-0.5">
+                          {q.candidateSelectedOption ? `Option (${q.candidateSelectedOption})` : 'Option extracted from script'}
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 rounded-lg border bg-blue-50/60 border-blue-200">
+                        <span className="text-[10px] uppercase font-bold text-blue-700">Official Suggested Answer Key</span>
+                        <p className="font-mono font-bold text-sm text-blue-950 mt-0.5">
+                          {q.officialCorrectOption ? `Option (${q.officialCorrectOption})` : 'Authoritative Answer Key'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {q.suggestedAnswerReference && (
+                      <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-md border border-slate-100">
+                        <span className="font-semibold text-slate-800">Verified Citation:</span> {q.suggestedAnswerReference}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Consequential error alert */}
                 {isConseq && (
@@ -693,6 +850,19 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           This evaluation is an AI-powered diagnostic benchmark generated according to published ICAI Suggested Answers, Marking Schemes, and Accounting/Tax Standards. CA Exam Checker is an independent educational technology platform and is not affiliated with, authorized, or endorsed by the Institute of Chartered Accountants of India (ICAI). Official marks are awarded exclusively by ICAI-appointed examiners during examination sessions.
         </p>
       </div>
+
+      {/* Student Recheck Request Modal */}
+      <RecheckRequestModal
+        isOpen={isRecheckModalOpen}
+        onClose={() => setIsRecheckModalOpen(false)}
+        evaluationResult={evaluationResult}
+        preselectedQuestionNumber={recheckTargetQuestion}
+        onRecheckSubmitted={() => {
+          if (onRefresh) {
+            onRefresh();
+          }
+        }}
+      />
     </div>
   );
 };

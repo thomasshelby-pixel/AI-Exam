@@ -1140,6 +1140,19 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
       batchName = b?.name || null;
     }
 
+    let auditMeta: any = {};
+    if (record.audit_metadata_json) {
+      try {
+        auditMeta = JSON.parse(record.audit_metadata_json as string);
+      } catch {
+        auditMeta = {};
+      }
+    }
+
+    const recheckRequests = db.prepare(`
+      SELECT * FROM recheck_requests WHERE evaluation_id = ? ORDER BY created_at DESC
+    `).all(evaluationId);
+
     if (record.result_json) {
       try {
         resultJson = JSON.parse(record.result_json);
@@ -1150,6 +1163,9 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
           resultJson.entitlementSource = (record.entitlement_source as any) || undefined;
           resultJson.instituteName = instituteName || undefined;
           resultJson.batchName = batchName || undefined;
+          resultJson.version = auditMeta.currentVersion || (resultJson as any).version || 'v1';
+          resultJson.recheckHistory = auditMeta.recheckHistory || [];
+          resultJson.originalEvaluationSnapshot = auditMeta.originalEvaluationSnapshot || null;
         }
       } catch {
         // ignore
@@ -1165,6 +1181,11 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
         batch_name: batchName,
         resultJson,
         raw_result_json: record.result_json,
+        audit_metadata: auditMeta,
+        recheck_requests: recheckRequests,
+        version: auditMeta.currentVersion || (resultJson as any)?.version || 'v1',
+        original_snapshot: auditMeta.originalEvaluationSnapshot || null,
+        recheck_history: auditMeta.recheckHistory || [],
       },
     });
   } catch (error: unknown) {
@@ -2829,10 +2850,16 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       console.warn('Could not pre-generate checked copy for institute test:', annErr);
     }
 
+    // Validate authoritative consistency before finalizing
+    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
+    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
+    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
+
     // Persist final result
     db.prepare(`
       UPDATE evaluations
-      SET status = 'COMPLETED',
+      SET status = ?,
+          rejection_reason = ?,
           confidence_score = ?,
           total_marks = ?,
           maximum_marks = ?,
@@ -2854,6 +2881,8 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
           completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
+      finalStatus,
+      validationReason,
       evaluationResult.confidenceScore,
       evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
@@ -3046,9 +3075,15 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       console.warn('Could not pre-generate checked copy for institute material:', annErr);
     }
 
+    // Validate authoritative consistency before finalizing
+    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
+    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
+    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
+
     db.prepare(`
       UPDATE evaluations
-      SET status = 'COMPLETED',
+      SET status = ?,
+          rejection_reason = ?,
           confidence_score = ?,
           total_marks = ?,
           maximum_marks = ?,
@@ -3070,6 +3105,8 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
           completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
+      finalStatus,
+      validationReason,
       evaluationResult.confidenceScore,
       evaluationResult.totalMarks,
       evaluationResult.maximumMarks,

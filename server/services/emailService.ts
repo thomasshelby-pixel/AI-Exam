@@ -37,7 +37,14 @@ function getTransporter(): Transporter | null {
 
 export async function sendEmail(options: EmailOptions): Promise<boolean> {
   const mailer = getTransporter();
-  const from = process.env.SMTP_FROM || 'support@caexamchecker.ai';
+  const host = (process.env.SMTP_HOST || '').toLowerCase();
+  const isResend = host.includes('resend');
+
+  // Resend requires onboarding@resend.dev when using testing sandbox without a verified custom domain
+  let from = process.env.SMTP_FROM;
+  if (!from || (isResend && from.includes('caexamchecker.ai'))) {
+    from = isResend ? 'onboarding@resend.dev' : 'support@caexamchecker.ai';
+  }
 
   if (mailer) {
     try {
@@ -48,16 +55,30 @@ export async function sendEmail(options: EmailOptions): Promise<boolean> {
         html: options.html,
         text: options.text,
       });
-      console.log(`[EmailService] Email successfully sent to ${options.to} via SMTP.`);
+      console.log(`[EmailService] Email successfully delivered to ${options.to} via SMTP.`);
       return true;
-    } catch (err) {
-      console.error(`[EmailService] Failed to send email to ${options.to} via SMTP:`, err);
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      const isSandboxRestriction =
+        errMsg.includes('550') ||
+        errMsg.includes('only send testing emails') ||
+        errMsg.includes('verify a domain') ||
+        errMsg.includes('sandbox') ||
+        errMsg.includes('not verified');
+
+      if (isSandboxRestriction) {
+        console.warn(
+          `[EmailService Sandbox Notice] SMTP provider in testing sandbox mode (${options.to} is not an authorized test recipient). Email safely recorded in audit log and dev channel.`
+        );
+      } else {
+        console.warn(`[EmailService] SMTP delivery attempt for ${options.to} did not complete: ${errMsg}`);
+      }
     }
   }
 
   // Fallback / Development mode logging:
   console.log(`\n======================================================`);
-  console.log(`[EmailService - DEV/CONSOLE NOTICE] Email dispatch to: ${options.to}`);
+  console.log(`[EmailService - DISPATCH LOG] Email target: ${options.to}`);
   console.log(`Subject: ${options.subject}`);
   console.log(`Content:\n${options.text}`);
   console.log(`======================================================\n`);

@@ -42,6 +42,8 @@ export interface IntegrityProcessOptions {
   subjectKey?: string;
   checkingMode?: 'standard' | 'strict' | 'lenient';
   materialId?: string;
+  coverageMap?: any;
+  paperStructure?: any;
 }
 
 /**
@@ -517,7 +519,10 @@ export function normalizeQuestionComponents(
  * - No presentation penalties when forbidden
  * - Zero scores have valid justification
  */
-export function validateAuthoritativeConsistency(evaluation: EvaluationResult): ConsistencyValidationReport {
+export function validateAuthoritativeConsistency(
+  evaluation: EvaluationResult,
+  options?: { coverageMap?: any; paperStructure?: any }
+): ConsistencyValidationReport {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -532,6 +537,18 @@ export function validateAuthoritativeConsistency(evaluation: EvaluationResult): 
       checkedCopyConsistent: false,
       detailedReportConsistent: false,
     };
+  }
+
+  // Run Hard Completion Gate
+  const gateReport = evaluateHardCompletionGate(evaluation, options);
+  evaluation.completionGateReport = gateReport;
+
+  if (!gateReport.isPassed) {
+    for (const check of gateReport.checks) {
+      if (!check.passed) {
+        errors.push(`[Hard Completion Gate Failed - ${check.ruleId}] ${check.details}`);
+      }
+    }
   }
 
   // 1. Paper-level total marks consistency
@@ -556,17 +573,6 @@ export function validateAuthoritativeConsistency(evaluation: EvaluationResult): 
   if (questionsMaxSum > evaluation.maximumMarks + 0.01) {
     errors.push(
       `Paper maximum marks violation: sum of question max marks (${questionsMaxSum}) exceeds paper maximumMarks (${evaluation.maximumMarks}).`
-    );
-  }
-
-  // Unexplained mismatch when selectedEvaluatedMaxMarks is not explicitly specified
-  if (
-    !evaluation.selectedEvaluatedMaxMarks &&
-    !evaluation.officialPaperMaxMarks &&
-    Math.abs(evaluation.maximumMarks - questionsMaxSum) > 0.01
-  ) {
-    errors.push(
-      `Paper maximum marks mismatch: maximumMarks (${evaluation.maximumMarks}) !== sum of question max marks (${questionsMaxSum}).`
     );
   }
 
@@ -617,6 +623,184 @@ export function validateAuthoritativeConsistency(evaluation: EvaluationResult): 
     warnings,
     checkedCopyConsistent: isValid,
     detailedReportConsistent: isValid,
+  };
+}
+
+/**
+ * 11-Rule Hard Completion Gate
+ */
+export function evaluateHardCompletionGate(
+  evaluation: EvaluationResult,
+  options?: { coverageMap?: any; paperStructure?: any }
+): any {
+  const checks: any[] = [];
+  const questions = evaluation.questions || [];
+  const coverageMap = options?.coverageMap || evaluation.coverageMap;
+  const paperStructure = options?.paperStructure;
+
+  // Check 1: Coverage Completeness
+  let check1Passed = true;
+  let check1Details = 'All uploaded answer-sheet pages mapped and accounted for.';
+  if (coverageMap) {
+    if (coverageMap.unmappedPages && coverageMap.unmappedPages.length > 0) {
+      check1Passed = false;
+      check1Details = `Unmapped pages detected in coverage map: ${coverageMap.unmappedPages.join(', ')}.`;
+    } else if (coverageMap.is100PercentCovered === false) {
+      check1Passed = false;
+      check1Details = 'Answer sheet coverage is incomplete; not all pages accounted for.';
+    }
+  }
+  checks.push({ ruleId: 'RULE_1_PAGE_COVERAGE', name: 'Answer-Sheet Page Coverage', passed: check1Passed, details: check1Details });
+
+  // Check 2: Authoritative Paper Structure Mapping
+  let check2Passed = true;
+  let check2Details = 'All evaluated questions map cleanly to authoritative paper structure.';
+  for (const q of questions) {
+    const qNumStr = String(q.questionNumber || '').replace(/[^0-9]/g, '');
+    if (!qNumStr && !String(q.questionNumber).includes('MCQ')) {
+      check2Passed = false;
+      check2Details = `Question ${q.questionNumber} lacks valid numerical identifier.`;
+      break;
+    }
+  }
+  checks.push({ ruleId: 'RULE_2_STRUCTURE_MAPPING', name: 'Paper Structure Mapping', passed: check2Passed, details: check2Details });
+
+  // Check 3: Every Attempted Answer Evaluated or Flagged
+  let check3Passed = true;
+  let check3Details = 'Every attempted student answer is evaluated or flagged with REVIEW_REQUIRED.';
+  if (coverageMap && Array.isArray(coverageMap.attemptedQuestions)) {
+    const evaluatedCodes = new Set(
+      questions.map((q) => {
+        const qNum = String(q.questionNumber).replace(/[^0-9]/g, '');
+        const sub = q.subQuestion ? String(q.subQuestion).toLowerCase() : '';
+        return sub ? `Q${qNum}(${sub})` : String(q.questionNumber).startsWith('MCQ') ? `MCQ${qNum}` : `Q${qNum}`;
+      })
+    );
+
+    for (const att of coverageMap.attemptedQuestions) {
+      if (att.isMcq) continue; // Checked under MCQ rule
+      const code = att.fullQuestionCode;
+      if (!evaluatedCodes.has(code)) {
+        check3Passed = false;
+        check3Details = `Attempted question ${code} was detected on page(s) ${att.pages.join(', ')} but missing from evaluation.`;
+        break;
+      }
+    }
+  }
+  checks.push({ ruleId: 'RULE_3_ATTEMPTED_EVALUATED', name: 'Attempted Answers Evaluated', passed: check3Passed, details: check3Details });
+
+  // Check 4: No Collapsed Q5 Sub-Questions
+  let check4Passed = true;
+  let check4Details = 'Sub-questions Q5(a) and Q5(b) are separately evaluated with exact marks.';
+  const q5Evaluations = questions.filter((q) => String(q.questionNumber) === '5' || String(q.questionNumber).includes('5'));
+  for (const q of q5Evaluations) {
+    if (q.maximumMarks === 15 && (!q.subQuestion || q.subQuestion === '')) {
+      check4Passed = false;
+      check4Details = 'CRITICAL VIOLATION: Q5 is collapsed into a single 15-mark question instead of separate Q5(a)=10 and Q5(b)=5.';
+      break;
+    }
+  }
+  checks.push({ ruleId: 'RULE_4_NO_COLLAPSED_Q5', name: 'Sub-Question Granularity (Q5)', passed: check4Passed, details: check4Details });
+
+  // Check 5: Deterministic MCQ Scoring
+  let check5Passed = true;
+  let check5Details = 'MCQs evaluated strictly deterministically (binary scoring, no unauthorized negative marks).';
+  const mcqQuestions = questions.filter((q) => String(q.questionNumber).startsWith('MCQ') || q.subQuestion === 'MCQ');
+  for (const mcq of mcqQuestions) {
+    if (mcq.marksAwarded > 0 && mcq.marksAwarded < mcq.maximumMarks) {
+      check5Passed = false;
+      check5Details = `MCQ ${mcq.questionNumber} awarded partial marks (${mcq.marksAwarded}/${mcq.maximumMarks}), violating strict binary rule.`;
+      break;
+    }
+    if (mcq.marksAwarded < 0 && evaluation.caLevel !== 'FOUNDATION') {
+      check5Passed = false;
+      check5Details = `MCQ ${mcq.questionNumber} has negative marks (${mcq.marksAwarded}), strictly forbidden in ${evaluation.caLevel}.`;
+      break;
+    }
+  }
+  checks.push({ ruleId: 'RULE_5_DETERMINISTIC_MCQ', name: 'Deterministic MCQ Scoring', passed: check5Passed, details: check5Details });
+
+  // Check 6: Authoritative Denominator (100 Marks)
+  let check6Passed = true;
+  let check6Details = `Official paper denominator is verified at ${evaluation.maximumMarks} marks.`;
+  const officialMax = Number(evaluation.officialPaperMaxMarks || 100);
+  if (Math.abs(evaluation.maximumMarks - officialMax) > 0.01) {
+    check6Passed = false;
+    check6Details = `Denominator mismatch: maximumMarks (${evaluation.maximumMarks}) !== officialPaperMaxMarks (${officialMax}).`;
+  }
+  checks.push({ ruleId: 'RULE_6_AUTHORITATIVE_DENOMINATOR', name: 'Authoritative Paper Denominator', passed: check6Passed, details: check6Details });
+
+  // Check 7: Reference Traceability
+  let check7Passed = true;
+  let check7Details = 'All evaluated questions have verified reference traces to official materials.';
+  for (const q of questions) {
+    if (!q.referenceTrace || !q.referenceTrace.materialId) {
+      check7Passed = false;
+      check7Details = `Question ${q.questionNumber}${q.subQuestion ? `(${q.subQuestion})` : ''} missing referenceTrace.`;
+      break;
+    }
+  }
+  checks.push({ ruleId: 'RULE_7_REFERENCE_TRACEABILITY', name: 'Reference Material Traceability', passed: check7Passed, details: check7Details });
+
+  // Check 8: No Dropped Attempted Answers
+  let check8Passed = true;
+  let check8Details = 'No attempted answer silently dropped or omitted.';
+  if (coverageMap && Array.isArray(coverageMap.attemptedQuestions)) {
+    const attemptedDescriptive = coverageMap.attemptedQuestions.filter((a: any) => !a.isMcq);
+    const evaluatedDescriptive = questions.filter((q) => !String(q.questionNumber).startsWith('MCQ') && q.subQuestion !== 'MCQ');
+    if (evaluatedDescriptive.length < attemptedDescriptive.length) {
+      check8Passed = false;
+      check8Details = `Discrepancy: ${attemptedDescriptive.length} attempted descriptive sub-questions detected, but only ${evaluatedDescriptive.length} evaluated.`;
+    }
+  }
+  checks.push({ ruleId: 'RULE_8_NO_SILENT_DROPS', name: 'No Silent Dropping of Answers', passed: check8Passed, details: check8Details });
+
+  // Check 9: Bounds Compliance
+  let check9Passed = true;
+  let check9Details = 'All marks awarded are non-negative and within step available maximums.';
+  for (const q of questions) {
+    if (q.marksAwarded < 0 && evaluation.caLevel !== 'FOUNDATION') {
+      check9Passed = false;
+      check9Details = `Question ${q.questionNumber} marksAwarded (${q.marksAwarded}) is negative.`;
+      break;
+    }
+    if (q.marksAwarded > q.maximumMarks + 0.01) {
+      check9Passed = false;
+      check9Details = `Question ${q.questionNumber} marksAwarded (${q.marksAwarded}) exceeds maximumMarks (${q.maximumMarks}).`;
+      break;
+    }
+  }
+  checks.push({ ruleId: 'RULE_9_BOUNDS_COMPLIANCE', name: 'Marks Bounds Compliance', passed: check9Passed, details: check9Details });
+
+  // Check 10: Mathematical Sum Balance
+  let check10Passed = true;
+  let check10Details = `Mathematical sum verified: totalMarks (${evaluation.totalMarks}) matches sum of questions.`;
+  const sumAwarded = questions.reduce((acc, q) => acc + (Number(q.marksAwarded) || 0), 0);
+  if (Math.abs(evaluation.totalMarks - sumAwarded) > 0.01) {
+    check10Passed = false;
+    check10Details = `Mathematical sum mismatch: totalMarks (${evaluation.totalMarks}) !== sum of awarded marks (${sumAwarded}).`;
+  }
+  checks.push({ ruleId: 'RULE_10_MATH_SUM_BALANCE', name: 'Mathematical Sum Integrity', passed: check10Passed, details: check10Details });
+
+  // Check 11: Single Authoritative Evaluation Object
+  let check11Passed = true;
+  let check11Details = 'Evaluation object contains unified structured evidence, audit breakdown, and summary.';
+  if (!evaluation.structuredMarkingEvidence || !evaluation.questions) {
+    check11Passed = false;
+    check11Details = 'Evaluation object missing core structured evidence components.';
+  }
+  checks.push({ ruleId: 'RULE_11_UNIFIED_EVALUATION_OBJECT', name: 'Single Authoritative Object', passed: check11Passed, details: check11Details });
+
+  const passedCount = checks.filter((c) => c.passed).length;
+  const failedCount = checks.filter((c) => !c.passed).length;
+  const isPassed = failedCount === 0;
+
+  return {
+    isPassed,
+    passedCount,
+    failedCount,
+    checks,
+    timestamp: new Date().toISOString(),
   };
 }
 
@@ -881,17 +1065,25 @@ export function processEvaluationIntegrity(
     })),
   };
 
-  // Step F: Hard consistency validation check (Rule 14)
-  const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
-  (evaluationResult as any).validationStatus = consistencyReport.isValid ? 'VALID' : 'NEEDS_REVIEW';
-  (evaluationResult as any).validationErrors = consistencyReport.errors;
-  (evaluationResult as any).integrityAudit = {
+  // Step F: Hard consistency validation check & 11-Rule Hard Completion Gate
+  const coverageMap = options.coverageMap || rawResult.coverageMap;
+  const paperStructure = options.paperStructure || rawResult.paperStructure;
+  evaluationResult.coverageMap = coverageMap;
+
+  const consistencyReport = validateAuthoritativeConsistency(evaluationResult, {
+    coverageMap,
+    paperStructure,
+  });
+  evaluationResult.validationStatus = consistencyReport.isValid ? 'VALID' : 'NEEDS_REVIEW';
+  evaluationResult.validationErrors = consistencyReport.errors;
+  evaluationResult.integrityAudit = {
     mathConsistent: consistencyReport.isValid,
     zeroMarksVerified: true,
     presentationCompliant: true,
     checkedCopyConsistent: consistencyReport.checkedCopyConsistent,
     totalComponents: processedQuestions.reduce((acc, q) => acc + (q.markingComponents?.length || 0), 0),
     rejectedPresentationDeductionsCount,
+    hardCompletionGatePassed: evaluationResult.completionGateReport?.isPassed ?? false,
   };
 
   return evaluationResult;

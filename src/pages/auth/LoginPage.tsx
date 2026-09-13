@@ -42,6 +42,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
+  const [devResetUrl, setDevResetUrl] = useState<string | null>(null);
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -124,6 +125,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
       });
       const data = await res.json();
       setForgotPasswordMsg(data.message || 'Password reset link sent to your registered email.');
+      if (data.devResetUrl) {
+        setDevResetUrl(data.devResetUrl);
+      } else {
+        setDevResetUrl(null);
+      }
     } catch {
       setErrorMessage('Failed to request password reset. Please contact support.');
     }
@@ -229,9 +235,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {forgotPasswordMsg && (
-          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-            <span>{forgotPasswordMsg}</span>
+          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>{forgotPasswordMsg}</span>
+            </div>
+            {devResetUrl && (
+              <div className="mt-1 pt-1.5 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
+                <span className="text-emerald-700 font-medium">Testing Link:</span>
+                <a
+                  href={devResetUrl}
+                  className="font-bold underline text-emerald-900 hover:text-emerald-950"
+                >
+                  Open Password Reset Page →
+                </a>
+              </div>
+            )}
           </div>
         )}
 

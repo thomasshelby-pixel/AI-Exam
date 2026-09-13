@@ -185,3 +185,228 @@ export function applyDeterministicMcqScoring(
     return q;
   });
 }
+
+export interface AuthoritativeMcqDef {
+  fullQuestionCode: string;
+  questionNumber: string;
+  subQuestionNumber?: string;
+  questionText?: string;
+  maximumMarks: number;
+  officialKey?: string;
+  officialExplanation?: string;
+  provision?: string;
+  topic?: string;
+  section: string;
+  division?: string;
+  sourceMaterialId?: string;
+  sourceMaterialVersion?: string;
+  sourceMaterialTitle?: string;
+}
+
+/**
+ * Creates fully evaluated QuestionEvaluation records for all authoritative MCQs
+ * using the candidate's detected choices from the coverage map.
+ * Strictly strictly matches candidate choice against verified server answer keys.
+ */
+export function evaluateAllAuthoritativeMcqs(
+  mcqs: AuthoritativeMcqDef[],
+  mcqSelections: Record<string, string>,
+  config: McqScoringConfig & {
+    sourceMaterialId?: string;
+    sourceMaterialVersion?: string;
+    sourceMaterialTitle?: string;
+  }
+): QuestionEvaluation[] {
+  const level = (config.caLevel || 'INTERMEDIATE').toUpperCase();
+  const isFoundationObjective =
+    level === 'FOUNDATION' &&
+    (
+      String(config.paper).includes('Paper 3') ||
+      String(config.paper).includes('Paper 4') ||
+      String(config.subjectKey).includes('quantitative') ||
+      String(config.subjectKey).includes('economics')
+    );
+
+  const matTitle = config.sourceMaterialTitle || 'ICAI Official Suggested Answers (Mock Test Paper Series)';
+  const matVersion = config.sourceMaterialVersion || 'v1.0';
+  const matId = config.sourceMaterialId || 'ICAI_OFFICIAL_SUGGESTED';
+
+  return mcqs.map((mcq) => {
+    const qNum = mcq.questionNumber;
+    const studentChoice = (mcqSelections[qNum] || '').trim().toUpperCase();
+    const officialKey = (mcq.officialKey || '').trim().toUpperCase();
+    const maxMarks = mcq.maximumMarks;
+
+    const isAttempted = Boolean(studentChoice);
+    const isCorrect = isAttempted && officialKey && studentChoice === officialKey;
+
+    let marksAwarded = 0;
+    let marksDeducted = maxMarks;
+    let assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT' = 'INCORRECT';
+    let deductionReason: string | undefined = undefined;
+
+    const markingRule = isFoundationObjective
+      ? 'ICAI Foundation Rule (+1.0 for correct, -0.25 for incorrect, 0.0 for unattempted)'
+      : `ICAI ${level} Strict Binary Scoring (+${maxMarks}.0 for correct, 0.0 for incorrect, NO negative marking, NO partial credit)`;
+
+    const negativeMarking = isFoundationObjective ? (isAttempted && !isCorrect ? -0.25 : 0) : 0;
+
+    if (isCorrect) {
+      marksAwarded = maxMarks;
+      marksDeducted = 0;
+      assessment = 'CORRECT';
+    } else if (!isAttempted) {
+      marksAwarded = 0;
+      marksDeducted = maxMarks;
+      assessment = 'INCORRECT';
+      deductionReason = 'MCQ not attempted. 0 marks awarded.';
+    } else {
+      marksAwarded = isFoundationObjective ? -0.25 : 0;
+      marksDeducted = isFoundationObjective ? maxMarks + 0.25 : maxMarks;
+      assessment = 'INCORRECT';
+      deductionReason = `Selected option (${studentChoice}) does not match verified official key (${officialKey}). 0/${maxMarks} awarded.`;
+    }
+
+    const defaultExp = mcq.officialExplanation || `Official verified answer is Option (${officialKey}).`;
+    const provision = mcq.provision || (
+      mcq.topic?.includes('24(b)') ? 'Section 24(b) of the Income-tax Act, 1961' :
+      mcq.topic?.includes('194-IB') ? 'Section 194-IB of the Income-tax Act, 1961' :
+      mcq.topic?.includes('208') ? 'Section 208 of the Income-tax Act, 1961' :
+      mcq.topic?.includes('43B(h)') ? 'Section 43B(h) of the Income-tax Act, 1961' :
+      mcq.topic?.includes('115BBE') ? 'Section 115BBE of the Income-tax Act, 1961' :
+      mcq.topic?.includes('9(5)') ? 'Section 9(5) of the CGST Act, 2017' :
+      mcq.topic?.includes('31(5)') ? 'Section 31(5) of the CGST Act, 2017' :
+      mcq.topic?.includes('34') ? 'Section 34 of the CGST Act, 2017' :
+      mcq.topic?.includes('Rule 28') ? 'Rule 28 / Schedule I of the CGST Rules, 2017' :
+      'No specific verified provision citation is provided in the supplied reference material.'
+    );
+
+    let detailedFeedback = '';
+    if (isCorrect) {
+      detailedFeedback = [
+        `✓ CORRECT`,
+        ``,
+        `Candidate Answer: Option (${studentChoice})`,
+        `Correct Answer: Option (${officialKey})`,
+        `Marks: ${marksAwarded}/${maxMarks}`,
+        ``,
+        `EXPLANATION / BENCHMARK:`,
+        `${defaultExp}`,
+        ``,
+        `APPLICABLE PROVISION / RULE / CONCEPT:`,
+        `${provision}`,
+        ``,
+        `REFERENCE:`,
+        `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
+      ].join('\n');
+    } else if (!isAttempted) {
+      detailedFeedback = [
+        `⭕ UNATTEMPTED`,
+        ``,
+        `Candidate Answer: None (Left blank)`,
+        `Correct Answer: Option (${officialKey})`,
+        `Marks: 0/${maxMarks}`,
+        ``,
+        `CORRECT ANSWER / CONCEPT:`,
+        `${defaultExp}`,
+        ``,
+        `APPLICABLE PROVISION / RULE / CONCEPT:`,
+        `${provision}`,
+        ``,
+        `REFERENCE:`,
+        `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
+      ].join('\n');
+    } else {
+      detailedFeedback = [
+        `❌ WRONG`,
+        ``,
+        `Candidate Answer:`,
+        `Option (${studentChoice})`,
+        ``,
+        `Correct Answer:`,
+        `Option (${officialKey})`,
+        ``,
+        `Marks:`,
+        `${marksAwarded}/${maxMarks}`,
+        ``,
+        `WHY YOUR ANSWER IS WRONG:`,
+        `Candidate selected Option (${studentChoice}), which is factually incorrect under the verified ICAI solution benchmark. The question requires the precise application of statutory criteria where only Option (${officialKey}) satisfies all conditions.`,
+        ``,
+        `CORRECT ANSWER / CONCEPT:`,
+        `${defaultExp}`,
+        ``,
+        `APPLICABLE PROVISION / RULE / CONCEPT:`,
+        `${provision}`,
+        ``,
+        `REFERENCE:`,
+        `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
+      ].join('\n');
+    }
+
+    const component: MarkingComponent = {
+      componentId: `${mcq.fullQuestionCode}_c1`,
+      componentType: 'MCQ',
+      expectedRequirement: `Correct option: (${officialKey}) - ${defaultExp.slice(0, 120)}`,
+      studentEvidence: isAttempted ? `Candidate selected option: (${studentChoice})` : 'Candidate left question unattempted',
+      assessment,
+      marksAvailable: maxMarks,
+      marksAwarded,
+      marksDeducted,
+      deductionReason,
+      supportingProvision: provision,
+      confidence: 100,
+      pageNumber: parseInt(qNum, 10) >= 9 ? 6 : 10,
+      annotationInstructions: isCorrect ? `[OK] Option (${officialKey}) (+${maxMarks}/${maxMarks})` : `[X] Selected (${studentChoice || 'None'}), Official (${officialKey}) (0/${maxMarks})`,
+    };
+
+    const status = isCorrect ? 'correct' : !isAttempted ? 'not_attempted' : 'incorrect';
+
+    const qEval: QuestionEvaluation = {
+      questionNumber: `MCQ ${qNum}`,
+      subQuestion: undefined,
+      maximumMarks: maxMarks,
+      marksAwarded,
+      marksLost: Math.max(0, maxMarks - marksAwarded),
+      status,
+      reasonForDeduction: deductionReason || 'Correct option selected according to official key.',
+      detailedFeedback,
+      confidence: 100,
+      technicalEvaluation: `Deterministic MCQ comparison: Student (${studentChoice || 'NONE'}) vs Official Key (${officialKey}). Marking Rule: ${markingRule}.`,
+      markingComponents: [component],
+      pageNumber: parseInt(qNum, 10) >= 9 ? 6 : 10,
+      referenceTrace: {
+        materialId: matId,
+        markingSchemeSection: `Section ${mcq.section} - Division A (MCQ ${qNum})`,
+        suggestedAnswerRef: `MCQ ${qNum}: Option (${officialKey})`,
+        deductionReason: deductionReason || 'Correct answer matches official key.',
+        verifiedGroundTruthSnippet: `MCQ ${qNum} Official Answer: (${officialKey}) [${maxMarks} Mark(s)]`,
+      },
+      structuredEvidence: {
+        questionId: mcq.fullQuestionCode,
+        questionNumber: `MCQ ${qNum}`,
+        maxMarks,
+        obtainedMarks: marksAwarded,
+        marksAwarded,
+        marksLost: Math.max(0, maxMarks - marksAwarded),
+        markingComponents: [component],
+        finalConclusionAssessment: isCorrect ? 'Correct option selected.' : 'Incorrect option selected.',
+        overallReason: deductionReason || 'Full marks awarded for correct option.',
+        confidence: 100,
+        flags: [],
+        isDerivedAllocation: false,
+      },
+      // Store authoritative MCQ metadata for transparent audit & student report display
+      candidateSelectedOption: studentChoice || 'NOT_ATTEMPTED',
+      officialCorrectOption: officialKey,
+      isCorrect,
+      negativeMarking,
+      markingRule,
+      sourceMaterialId: matId,
+      sourceMaterialVersion: matVersion,
+      suggestedAnswerReference: `Section ${mcq.section} Division A MCQ ${qNum}`,
+      explanation: defaultExp,
+    } as any;
+
+    return qEval;
+  });
+}
