@@ -137,6 +137,14 @@ export interface StructuredMarkingEvidence {
   isDerivedAllocation?: boolean;
 }
 
+export interface ReferenceTrace {
+  materialId?: string;
+  markingSchemeSection?: string;
+  suggestedAnswerRef?: string;
+  deductionReason?: string;
+  verifiedGroundTruthSnippet?: string;
+}
+
 export interface QuestionEvaluation {
   questionNumber: string;
   subQuestion?: string;
@@ -155,6 +163,7 @@ export interface QuestionEvaluation {
   consequentialErrorNotes?: string;
   markingComponents?: MarkingComponent[];
   structuredEvidence?: StructuredMarkingEvidence;
+  referenceTrace?: ReferenceTrace;
   finalConclusionAssessment?: string;
   overallReason?: string;
   flags?: string[];

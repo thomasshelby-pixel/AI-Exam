@@ -674,6 +674,90 @@ console.log('\n--- TEST O: Correct Final Amount with Invalid Tax Treatment ---')
   );
 }
 
+// --------------------------------------------------------------------------
+// TEST P: Question-wise Reference Trace & Authoritative Denominator
+// Enforce referenceTrace metadata and paper maximum denominator
+// --------------------------------------------------------------------------
+console.log('\n--- TEST P: Reference Trace & Authoritative Denominator ---');
+{
+  const testEval = processEvaluationIntegrity(
+    {
+      evaluationId: 'eval_p',
+      studentName: 'Candidate P',
+      questions: [
+        {
+          questionNumber: '1',
+          subQuestion: 'a',
+          maximumMarks: 10,
+          marksAwarded: 8,
+          markingComponents: [
+            { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 5, marksAwarded: 4, expectedRequirement: 'Sec 115BAC provision' },
+            { componentId: 'c2', componentType: 'CALCULATION', marksAvailable: 5, marksAwarded: 4, expectedRequirement: 'Tax liability computation' },
+          ],
+        },
+      ],
+    },
+    {
+      officialPaperMaxMarks: 100,
+      materialId: 'MAT_ICAI_TAX_2025',
+      checkingMode: 'strict',
+    }
+  );
+
+  const q = testEval.questions[0];
+  assert(
+    Boolean(q.referenceTrace && q.referenceTrace.materialId === 'MAT_ICAI_TAX_2025'),
+    'TEST P.1: Question-wise referenceTrace records source material ID'
+  );
+  assert(
+    Boolean(q.referenceTrace && q.referenceTrace.deductionReason),
+    'TEST P.2: Question-wise referenceTrace records deduction reason'
+  );
+  assert(
+    testEval.percentage === 8.0,
+    'TEST P.3: Paper percentage computed strictly against official paper maximum (8 / 100 = 8%)'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST Q: Handwriting / Degraded Scan Safety Guard
+// Enforce that unclear handwriting is not awarded an unqualified zero
+// --------------------------------------------------------------------------
+console.log('\n--- TEST Q: Handwriting & Degraded Scan Safety Guard ---');
+{
+  const testEval = processEvaluationIntegrity(
+    {
+      evaluationId: 'eval_q',
+      studentName: 'Candidate Q',
+      questions: [
+        {
+          questionNumber: '2',
+          subQuestion: 'b',
+          maximumMarks: 5,
+          marksAwarded: 0,
+          detailedFeedback: 'The student handwriting is blurry and partially illegible scan',
+          technicalEvaluation: 'OCR unreadable handwriting on lines 3-6',
+        },
+      ],
+    },
+    {}
+  );
+
+  const q = testEval.questions[0];
+  assert(
+    q.status === 'unclear',
+    'TEST Q.1: Illegible/blurry handwriting classified as unclear status'
+  );
+  assert(
+    Boolean(q.flags && q.flags.includes('HANDWRITING_UNCLEAR')),
+    'TEST Q.2: HANDWRITING_UNCLEAR flag attached to question'
+  );
+  assert(
+    (q as any).zeroScoreReason === 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED',
+    'TEST Q.3: Zero score classified as HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED for recheck'
+  );
+}
+
 console.log('\n================================================================');
 console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
 console.log('================================================================');

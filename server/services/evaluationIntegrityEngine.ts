@@ -12,7 +12,8 @@ export type ZeroScoreReason =
   | 'NO_ANSWER'
   | 'WHOLLY_IRRELEVANT'
   | 'NO_CREDITWORTHY_COMPONENT'
-  | 'MATERIALLY_INCORRECT_WITH_NO_CREDITABLE_STEP';
+  | 'MATERIALLY_INCORRECT_WITH_NO_CREDITABLE_STEP'
+  | 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED';
 
 export interface ZeroMarkValidationResult {
   isZeroAllowed: boolean;
@@ -39,6 +40,8 @@ export interface IntegrityProcessOptions {
   caLevel?: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
   paper?: string;
   subjectKey?: string;
+  checkingMode?: 'standard' | 'strict' | 'lenient';
+  materialId?: string;
 }
 
 /**
@@ -339,6 +342,17 @@ export function evaluateZeroMarkSafetyGate(params: {
   ) {
     zeroReason = 'WHOLLY_IRRELEVANT';
     zeroEvidence = 'Content written by candidate is entirely unrelated to the question asked.';
+  } else if (
+    combinedEvidence.includes('illegible') ||
+    combinedEvidence.includes('unreadable') ||
+    combinedEvidence.includes('blurry scan') ||
+    combinedEvidence.includes('cannot decipher') ||
+    combinedEvidence.includes('handwriting unclear') ||
+    status === 'unclear'
+  ) {
+    zeroReason = 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED';
+    zeroEvidence = 'Candidate script appears attempted, but handwriting or scan clarity prevented automated optical verification. Preserved for recheck review.';
+    auditNotes.push('[Handwriting Safety Gate] Attempted script handwriting/scan unclear. Classified for faculty recheck rather than unverified zero penalty.');
   } else if (
     combinedEvidence.includes('fundamental premise incorrect') ||
     combinedEvidence.includes('materially incorrect') ||
@@ -685,10 +699,23 @@ export function processEvaluationIntegrity(
     const verifiedLost = Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
 
     let status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear' = 'correct';
-    if (verifiedAwarded <= 0) {
+    const isHandwritingUnclear =
+      rawQ.status === 'unclear' ||
+      Boolean(rawQ.detailedFeedback && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.detailedFeedback)) ||
+      Boolean(rawQ.technicalEvaluation && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.technicalEvaluation));
+
+    if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
+      status = 'unclear';
+    } else if (verifiedAwarded <= 0) {
       status = rawQ.status === 'not_attempted' ? 'not_attempted' : 'incorrect';
     } else if (verifiedAwarded < maxMarks) {
       status = 'partially_correct';
+    }
+
+    const questionFlags: string[] = Array.isArray(rawQ.flags) ? [...rawQ.flags] : [];
+    if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
+      if (!questionFlags.includes('HANDWRITING_UNCLEAR')) questionFlags.push('HANDWRITING_UNCLEAR');
+      if (!questionFlags.includes('RECHECK_RECOMMENDED')) questionFlags.push('RECHECK_RECOMMENDED');
     }
 
     const structuredEv: StructuredMarkingEvidence = {
@@ -704,8 +731,16 @@ export function processEvaluationIntegrity(
       finalConclusionAssessment: rawQ.finalConclusionAssessment || 'Conclusion assessed against reference standards.',
       overallReason: rawQ.reasonForDeduction || rawQ.detailedFeedback || 'Evaluated against official marking scheme.',
       confidence: Math.max(80, Math.min(99, Number(rawQ.confidence) || 94)),
-      flags: Array.isArray(rawQ.flags) ? rawQ.flags : [],
+      flags: questionFlags,
       isDerivedAllocation: !Array.isArray(rawQ.markingComponents) || rawQ.markingComponents.length === 0,
+    };
+
+    const referenceTrace = {
+      materialId: options.materialId || rawResult.materialId || rawQ.referenceTrace?.materialId || 'ICAI_OFFICIAL_SUGGESTED',
+      markingSchemeSection: rawQ.referenceTrace?.markingSchemeSection || (balancedComponents.length > 0 ? balancedComponents.map(c => c.componentType).join(', ') : `Q${qNum} Marking Guideline`),
+      suggestedAnswerRef: rawQ.referenceTrace?.suggestedAnswerRef || `Q${qNum}${subQ ? `(${subQ})` : ''}`,
+      deductionReason: rawQ.reasonForDeduction || (verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on official guideline variance.` : 'Full marks awarded.'),
+      verifiedGroundTruthSnippet: rawQ.referenceTrace?.verifiedGroundTruthSnippet || balancedComponents[0]?.expectedRequirement || undefined,
     };
 
     const questionItem: QuestionEvaluation = {
@@ -726,9 +761,10 @@ export function processEvaluationIntegrity(
       consequentialErrorNotes: rawQ.consequentialErrorNotes || undefined,
       markingComponents: balancedComponents,
       structuredEvidence: structuredEv,
+      referenceTrace,
       finalConclusionAssessment: rawQ.finalConclusionAssessment,
       overallReason: structuredEv.overallReason,
-      flags: structuredEv.flags,
+      flags: questionFlags,
       isDerivedAllocation: structuredEv.isDerivedAllocation,
       pageNumber: Number(rawQ.pageNumber) || idx + 1,
       stepMarkingBreakdown: balancedComponents.map((c) => ({

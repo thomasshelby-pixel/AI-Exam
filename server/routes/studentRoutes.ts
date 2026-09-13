@@ -396,7 +396,10 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
 // 2. Upload and Evaluate Answer Sheet
 router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   const studentId = req.user!.id;
-  const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+  const evaluationId =
+    req.body?.evaluationId && typeof req.body.evaluationId === 'string' && req.body.evaluationId.startsWith('eval_')
+      ? req.body.evaluationId
+      : `eval_${crypto.randomBytes(8).toString('hex')}`;
 
   try {
     const {
@@ -1566,6 +1569,136 @@ router.get(
   }
 });
 
+// 4.5. Student Rechecking & Review Escalation Routes
+router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const evaluationId = req.params.id;
+    const { questionNumber, subQuestion, reason, studentNotes, requestedMode } = req.body;
+
+    if (!questionNumber || !reason) {
+      return res.status(400).json({ error: 'Question number and specific reason for rechecking are required.' });
+    }
+
+    // Verify evaluation exists and belongs to student
+    const evaluation = db.prepare(`
+      SELECT id, student_id, status, subject_name, paper, total_marks, percentage
+      FROM evaluations 
+      WHERE id = ?
+    `).get(evaluationId) as {
+      id: string;
+      student_id: string;
+      status: string;
+      subject_name: string;
+      paper: string;
+      total_marks: number;
+      percentage: number;
+    } | undefined;
+
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    if (evaluation.student_id !== studentId && req.user!.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Unauthorized to request recheck for this evaluation' });
+    }
+
+    if (evaluation.status !== 'COMPLETED') {
+      return res.status(400).json({ error: 'Rechecking can only be requested for completed evaluations.' });
+    }
+
+    // Check for existing pending request
+    const existing = db.prepare(`
+      SELECT id FROM recheck_requests 
+      WHERE evaluation_id = ? AND question_number = ? AND status = 'PENDING'
+    `).get(evaluationId, questionNumber);
+
+    if (existing) {
+      return res.status(409).json({ error: 'A pending review request already exists for this question.' });
+    }
+
+    const requestId = `rck_${crypto.randomBytes(8).toString('hex')}`;
+    const nowIso = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO recheck_requests (
+        id, evaluation_id, student_id, question_number, sub_question,
+        reason, student_notes, status, requested_mode, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+    `).run(
+      requestId,
+      evaluationId,
+      studentId,
+      questionNumber,
+      subQuestion || null,
+      reason,
+      studentNotes || null,
+      requestedMode || 'standard',
+      nowIso
+    );
+
+    // Add confirmation notification
+    const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, ?, ?, 'SYSTEM')
+    `).run(
+      notifId,
+      studentId,
+      'Recheck Request Registered',
+      `Your recheck request for ${evaluation.subject_name} (${questionNumber}) has been submitted for senior academic review.`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'REQUEST_EVALUATION_RECHECK', 'EVALUATION', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      studentId,
+      evaluationId,
+      `Student requested recheck for ${questionNumber}: ${reason}`
+    );
+
+    const createdRecord = db.prepare('SELECT * FROM recheck_requests WHERE id = ?').get(requestId);
+    return res.status(201).json({
+      success: true,
+      message: 'Recheck request logged successfully. Senior examiner review is pending.',
+      recheckRequest: createdRecord,
+    });
+  } catch (error: unknown) {
+    console.error('Submit recheck error:', error);
+    return res.status(500).json({ error: 'Failed to submit recheck request. Please try again.' });
+  }
+});
+
+router.get('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const evaluationId = req.params.id;
+
+    // Verify ownership
+    const evaluation = db.prepare('SELECT student_id FROM evaluations WHERE id = ?').get(evaluationId) as { student_id: string } | undefined;
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+    if (evaluation.student_id !== studentId && req.user!.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Unauthorized to view rechecks for this evaluation' });
+    }
+
+    const requests = db.prepare(`
+      SELECT * FROM recheck_requests 
+      WHERE evaluation_id = ? 
+      ORDER BY created_at DESC
+    `).all(evaluationId);
+
+    return res.json({ success: true, requests });
+  } catch (error: unknown) {
+    console.error('Get recheck requests error:', error);
+    return res.status(500).json({ error: 'Failed to load recheck requests' });
+  }
+});
+
 // 5. Get Credit Ledger & Balances
 router.get('/credits', (req: AuthRequest, res: Response) => {
   try {
@@ -1678,7 +1811,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         preferredSubjects: preferredSubjectsList,
         avatarUrl: profile?.avatar_url || '',
         freeEvaluationsUsed: profile?.free_evaluations_used || 0,
-        purchasedCredits: profile?.purchased_credits || 0,
+        purchasedCredits: creditStatus.totalValidCredits,
         instituteId: profile?.institute_id || null,
         instituteName: profile?.institute_name || null,
         instituteCode: profile?.institute_code || null,

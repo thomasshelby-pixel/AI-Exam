@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 
 export interface DeleteInstituteResult {
   success: boolean;
@@ -290,6 +291,22 @@ export function deleteInstituteAccount(
 
     // Commit atomic transaction
     db.exec('COMMIT');
+
+    // Permanently remove from Cloud Firestore and mark local tombstones
+    try {
+      permanentlyDeleteFromFirestore('institutes', targetInstitute.id, `Super admin permanently deleted institute ${targetInstitute.name}`);
+      for (const mId of materialIds) {
+        permanentlyDeleteFromFirestore('institute_materials', mId, `Cascaded deletion of institute material for ${targetInstitute.id}`);
+      }
+      for (const eId of evaluationIds) {
+        permanentlyDeleteFromFirestore('evaluations', eId, `Cascaded deletion of evaluation for deleted institute ${targetInstitute.id}`);
+      }
+      for (const aId of adminUserIds) {
+        permanentlyDeleteFromFirestore('users', aId, `Cascaded deletion of admin user for deleted institute ${targetInstitute.id}`);
+      }
+    } catch (fsErr) {
+      console.warn('[InstituteDeleteService] Firestore permanent deletion warning:', fsErr);
+    }
 
     return {
       success: true,

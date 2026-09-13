@@ -518,10 +518,20 @@ Negative marking (-${penaltyMarks}) applies strictly to incorrect multiple choic
 Zero negative marking applies for this paper.`;
 
   const checkingStrictness = params.checkingMode === 'strict'
-    ? 'Strict Examiner Standard: Rigorous evaluation. Require correct statutory section numbers, accounting standard steps, and complete working notes before awarding full marks.'
+    ? `MODE: Strict Head Examiner (Conservative on Working Notes)
+   - Standard: Rigorous evaluation following senior CA head examiner scrutiny.
+   - Working Notes & Provisions: Full marks strictly require explicit working notes, correct statutory section/rule citations, and standard disclosures. If working notes are omitted or abbreviated, deduct the allocated working-note component conservatively.
+   - Core Consistency: Must use the EXACT SAME official reference suggested answers, correct numerical values, and question allocations as Standard Mode. Do NOT invent arbitrary errors or penalize valid alternative solutions. Consequential marking MUST still be respected.`
     : params.checkingMode === 'lenient'
-    ? 'Moderate Guidance Standard: Emphasize step marking generously. Award credit where conceptual understanding is visible even if minor calculation or presentation flaws exist.'
-    : 'Standard Examination Evaluator: Balanced, realistic CA examination-style evaluation following official guideline answers and marking schemes.';
+    ? `MODE: Moderate Guidance (Emphasizes Partial Step Marks)
+   - Standard: Diagnostic and guidance-oriented evaluation emphasizing step-by-step learning.
+   - Partial Marking: Generously recognize every valid intermediate calculation step, formula citation, and conceptual application even if final arithmetic or presentation has flaws.
+   - Constructive Guidance: For every mark deducted, clearly articulate what component was missing and how to achieve full marks.
+   - Core Consistency: Must use the EXACT SAME official suggested answers and marking schemes as Standard Mode. Never inflate marks beyond the component's maximum allotment.`
+    : `MODE: Standard ICAI Marking (Balanced & Realistic)
+   - Standard: Balanced, realistic CA examination evaluation following official ICAI guideline answers and marking scheme distributions.
+   - Step Marking: Proportionately awards step marks across provisions, intermediate calculations, working notes, and final conclusions.
+   - Core Consistency: Anchored strictly to the verified official suggested answers and marking scheme.`;
 
   const evaluationPrompt = `
 You are an expert Senior CA Examination Evaluator conducting comprehensive step-wise evaluation of a student's answer sheet.
@@ -1216,6 +1226,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     caLevel: params.level as any,
     paper: params.paper,
     subjectKey: params.subjectKey,
+    checkingMode: params.checkingMode as any,
+    materialId: (params as any).manifest?.questionPaper?.materialId,
   });
 
   // Preserve model telemetry and specialized metadata

@@ -406,6 +406,7 @@ router.delete('/free-access/:id', (req: AuthRequest, res: Response) => {
     }
 
     db.prepare('UPDATE permanent_free_entitlements SET is_active = 0 WHERE id = ?').run(id);
+    permanentlyDeleteFromFirestore('permanent_free_entitlements', id, `Revoked permanent free access from ${entitlement.email}`);
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -2481,7 +2482,9 @@ router.put('/attempts/:id', (req: AuthRequest, res: Response) => {
 
 router.delete('/attempts/:id', (req: AuthRequest, res: Response) => {
   try {
-    db.prepare('DELETE FROM exam_attempts WHERE id = ?').run(req.params.id);
+    const id = req.params.id;
+    db.prepare('DELETE FROM exam_attempts WHERE id = ?').run(id);
+    permanentlyDeleteFromFirestore('exam_attempts', id, 'Deleted exam attempt');
     return res.json({ success: true, message: 'Attempt removed successfully' });
   } catch (error: unknown) {
     console.error('Delete attempt error:', error);
@@ -2659,7 +2662,9 @@ router.put('/institute-plans/:id', (req: AuthRequest, res: Response) => {
 
 router.delete('/institute-plans/:id', (req: AuthRequest, res: Response) => {
   try {
-    db.prepare('DELETE FROM institute_plans WHERE id = ?').run(req.params.id);
+    const id = req.params.id;
+    db.prepare('DELETE FROM institute_plans WHERE id = ?').run(id);
+    permanentlyDeleteFromFirestore('institute_plans', id, 'Deleted institute plan');
     return res.json({ success: true, message: 'Plan deleted successfully' });
   } catch (error: unknown) {
     console.error('Delete plan error:', error);
@@ -2996,6 +3001,7 @@ router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
 
     // No redemptions exist: safe destructive delete
     db.prepare('DELETE FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').run(campaignCode);
+    permanentlyDeleteFromFirestore('referral_campaigns', campaignCode, 'Deleted promo code');
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -3605,6 +3611,7 @@ router.delete('/mcq-scoring-rules/:id', (req: AuthRequest, res: Response) => {
     }
 
     db.prepare('DELETE FROM mcq_scoring_rules WHERE id = ?').run(id);
+    permanentlyDeleteFromFirestore('mcq_scoring_rules', id, 'Deleted MCQ scoring rule');
 
     return res.json({ success: true, message: 'MCQ scoring rule deleted successfully' });
   } catch (error: unknown) {
@@ -3657,6 +3664,164 @@ router.post('/cloud-storage/test-e2e', async (req: AuthRequest, res: Response) =
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     return res.status(500).json({ success: false, error: 'E2E test failed', details: msg });
+  }
+});
+
+// Recheck Requests Management
+router.get('/recheck-requests', (req: AuthRequest, res: Response) => {
+  try {
+    const { status, search } = req.query;
+    let query = `
+      SELECT r.*, 
+             u.full_name as student_name, 
+             u.email as student_email,
+             e.subject_name,
+             e.paper,
+             e.level,
+             e.total_marks as current_total_marks,
+             e.percentage as current_percentage,
+             e.created_at as evaluation_date
+      FROM recheck_requests r
+      JOIN users u ON u.id = r.student_id
+      JOIN evaluations e ON e.id = r.evaluation_id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (status && status !== 'ALL') {
+      query += ' AND r.status = ?';
+      params.push(status);
+    }
+
+    if (search) {
+      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR r.question_number LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    query += ' ORDER BY r.created_at DESC LIMIT 200';
+    const requests = db.prepare(query).all(...params);
+
+    return res.json({ success: true, requests });
+  } catch (error: unknown) {
+    console.error('Get admin recheck requests error:', error);
+    return res.status(500).json({ error: 'Failed to load recheck requests' });
+  }
+});
+
+router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Response) => {
+  try {
+    const requestId = req.params.id;
+    const { resolution, reviewerNotes, adjustedMarks } = req.body;
+
+    if (!resolution || !['APPROVED', 'REJECTED', 'ADJUSTED'].includes(resolution)) {
+      return res.status(400).json({ error: 'Resolution must be APPROVED, REJECTED, or ADJUSTED' });
+    }
+
+    const recheck = db.prepare(`
+      SELECT r.*, e.raw_result_json, e.total_marks, e.subject_name, u.email as student_email, u.full_name as student_name
+      FROM recheck_requests r
+      JOIN evaluations e ON e.id = r.evaluation_id
+      JOIN users u ON u.id = r.student_id
+      WHERE r.id = ?
+    `).get(requestId) as any;
+
+    if (!recheck) {
+      return res.status(404).json({ error: 'Recheck request not found' });
+    }
+
+    const nowIso = new Date().toISOString();
+    let newTotalMarks = recheck.total_marks;
+    let newPercentage = 0;
+
+    if (resolution === 'ADJUSTED' && adjustedMarks !== undefined && Number.isFinite(Number(adjustedMarks))) {
+      const newScore = Number(adjustedMarks);
+      // Update the evaluation result JSON if available
+      if (recheck.raw_result_json) {
+        try {
+          const evalResult = JSON.parse(recheck.raw_result_json);
+          if (Array.isArray(evalResult.questions)) {
+            const qTarget = evalResult.questions.find((q: any) =>
+              String(q.questionNumber).toLowerCase() === String(recheck.question_number).toLowerCase() ||
+              `Q${q.questionNumber}`.toLowerCase() === String(recheck.question_number).toLowerCase()
+            );
+            if (qTarget) {
+              const diff = newScore - qTarget.marksAwarded;
+              qTarget.marksAwarded = newScore;
+              qTarget.marksLost = Math.max(0, qTarget.maximumMarks - newScore);
+              qTarget.reviewerAdjustmentNotes = reviewerNotes || 'Score adjusted on senior examiner recheck review';
+
+              // Recalculate total
+              const recalcTotal = evalResult.questions.reduce((sum: number, q: any) => sum + (Number(q.marksAwarded) || 0), 0);
+              evalResult.totalMarks = recalcTotal;
+              const maxTotal = Number(evalResult.maximumMarks) || 100;
+              evalResult.percentage = Math.round((recalcTotal / maxTotal) * 1000) / 10;
+              newTotalMarks = recalcTotal;
+              newPercentage = evalResult.percentage;
+
+              db.prepare(`
+                UPDATE evaluations
+                SET total_marks = ?, percentage = ?, raw_result_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+              `).run(newTotalMarks, newPercentage, JSON.stringify(evalResult), recheck.evaluation_id);
+            }
+          }
+        } catch (jsonErr) {
+          console.warn('[AdminRoutes] Error updating evaluation raw_result_json during recheck:', jsonErr);
+        }
+      }
+    }
+
+    // Update recheck request
+    db.prepare(`
+      UPDATE recheck_requests
+      SET status = ?,
+          reviewer_notes = ?,
+          adjusted_marks = ?,
+          resolved_at = ?
+      WHERE id = ?
+    `).run(
+      resolution,
+      reviewerNotes || null,
+      adjustedMarks !== undefined ? Number(adjustedMarks) : null,
+      nowIso,
+      requestId
+    );
+
+    // Notify student
+    const notifMsg = resolution === 'ADJUSTED'
+      ? `Your recheck request for ${recheck.subject_name} (${recheck.question_number}) was approved with adjusted score of ${adjustedMarks} marks. ${reviewerNotes || ''}`
+      : resolution === 'APPROVED'
+      ? `Your recheck request for ${recheck.subject_name} (${recheck.question_number}) has been reviewed and affirmed by senior faculty. ${reviewerNotes || ''}`
+      : `Your recheck request for ${recheck.subject_name} (${recheck.question_number}) has been reviewed. The original evaluation stands. ${reviewerNotes || ''}`;
+
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, 'Recheck Review Completed', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      recheck.student_id,
+      notifMsg.trim()
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'RESOLVE_EVALUATION_RECHECK', 'RECHECK_REQUEST', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      requestId,
+      `Recheck resolved as ${resolution}: ${reviewerNotes || ''}`
+    );
+
+    return res.json({
+      success: true,
+      message: `Recheck request successfully resolved as ${resolution}`,
+      newTotalMarks,
+    });
+  } catch (error: unknown) {
+    console.error('Resolve recheck error:', error);
+    return res.status(500).json({ error: 'Failed to resolve recheck request' });
   }
 });
 

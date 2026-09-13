@@ -21,6 +21,7 @@ import { PrivacyPolicyPage } from './pages/public/PrivacyPolicyPage.js';
 import { RefundPolicyPage } from './pages/public/RefundPolicyPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
+import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
 import { UploadEvaluation } from './pages/student/UploadEvaluation.js';
@@ -470,6 +471,15 @@ const AppRoutes: React.FC = () => {
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
               <LoginRoute mode="register" />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/reset-password"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <ResetPasswordPage />
             </PublicAndStudentLayout>
           }
         />

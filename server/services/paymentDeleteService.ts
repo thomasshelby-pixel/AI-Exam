@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { getValidStudentCreditBalance } from './studentCreditService.js';
+import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 
 export interface DeletePaymentOrderOptions {
   reason?: string;
@@ -315,6 +316,15 @@ export function deletePaymentOrder(
     // Commit atomic transaction
     db.exec('COMMIT');
 
+    try {
+      permanentlyDeleteFromFirestore('payment_orders', order.id, `Deleted payment order ${order.id}`);
+      for (const t of transactions) {
+        permanentlyDeleteFromFirestore('payment_transactions', t.id, `Cascaded deletion of payment transaction ${t.id}`);
+      }
+    } catch (fsErr) {
+      console.warn('[PaymentDeleteService] Firestore permanent deletion warning:', fsErr);
+    }
+
     if (transactions.some((t) => t.razorpay_payment_id) || order.status === 'SUCCESS' || order.status === 'PAID') {
       warnings.push('Reminder: Deleting this local record does NOT reverse or refund payments through Razorpay.');
     }
@@ -460,6 +470,13 @@ export function deletePaymentTransaction(
     );
 
     db.exec('COMMIT');
+
+    try {
+      permanentlyDeleteFromFirestore('payment_transactions', transactionId, `Deleted payment transaction ${transactionId}`);
+    } catch (fsErr) {
+      console.warn('[PaymentDeleteService] Firestore permanent deletion warning:', fsErr);
+    }
+
     return {
       success: true,
       message: `Payment transaction ${transactionId} permanently deleted.`,

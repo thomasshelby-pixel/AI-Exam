@@ -5,6 +5,7 @@ import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
+import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 
 const router = Router();
 
@@ -1109,17 +1110,186 @@ router.post('/sessions/revoke-others', authenticateToken, (req: AuthRequest, res
 });
 
 // Forgot Password
-router.post('/forgot-password', (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ error: 'Email is required' });
-  }
+router.post('/forgot-password', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Valid email address is required' });
+    }
 
-  const user = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(email.trim().toLowerCase());
-  // Always return a positive message to prevent user enumeration attacks
-  return res.json({
-    message: 'If an account with this email exists, a password reset instruction has been sent to your email.',
-  });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = db.prepare('SELECT id, email, full_name FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+      id: string;
+      email: string;
+      full_name: string;
+    } | undefined;
+
+    if (user) {
+      // Invalidate existing unused tokens
+      db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0').run(user.id);
+
+      // Generate secure 32-byte token
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const tokenId = `prt_${crypto.randomBytes(8).toString('hex')}`;
+      const expiresAt = new Date(Date.now() + 3600000).toISOString(); // 1 hour
+
+      db.prepare(`
+        INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, used, created_at)
+        VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+      `).run(tokenId, user.id, tokenHash, expiresAt);
+
+      // Audit log
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'REQUEST_PASSWORD_RESET', 'USER', ?, ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        user.id,
+        user.id,
+        `Password reset requested for ${user.email}`
+      );
+
+      // Dispatch email
+      await sendPasswordResetEmail(user.email, rawToken, user.full_name);
+    }
+
+    // Return consistent message to prevent account enumeration
+    return res.json({
+      success: true,
+      message: 'If an account exists with this email address, a password reset link has been dispatched to your inbox. The link will expire in 1 hour.',
+    });
+  } catch (error: unknown) {
+    console.error('[AuthRoutes] Forgot password error:', error);
+    return res.status(500).json({ error: 'Unable to process password reset request at this time.' });
+  }
+});
+
+// Verify Password Reset Token
+router.post('/verify-reset-token', (req: Request, res: Response) => {
+  try {
+    const { token, email } = req.body;
+    if (!token || !email) {
+      return res.status(400).json({ valid: false, error: 'Token and email are required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = db.prepare('SELECT id, email FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+      id: string;
+      email: string;
+    } | undefined;
+
+    if (!user) {
+      return res.status(400).json({ valid: false, error: 'Invalid or expired password reset link' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const resetRecord = db.prepare(`
+      SELECT id, expires_at, used 
+      FROM password_reset_tokens 
+      WHERE user_id = ? AND token_hash = ?
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(user.id, tokenHash) as { id: string; expires_at: string; used: number } | undefined;
+
+    if (!resetRecord) {
+      return res.status(400).json({ valid: false, error: 'Invalid reset link. Please request a new one.' });
+    }
+
+    if (resetRecord.used === 1) {
+      return res.status(400).json({ valid: false, error: 'This reset link has already been used. Please request a new one.' });
+    }
+
+    const isExpired = new Date(resetRecord.expires_at).getTime() < Date.now();
+    if (isExpired) {
+      return res.status(400).json({ valid: false, error: 'This reset link has expired. Reset links are valid for 1 hour.' });
+    }
+
+    return res.json({ valid: true });
+  } catch (error: unknown) {
+    console.error('[AuthRoutes] Verify reset token error:', error);
+    return res.status(500).json({ valid: false, error: 'Failed to verify reset token' });
+  }
+});
+
+// Complete Password Reset
+router.post('/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { token, email, newPassword } = req.body;
+    if (!token || !email || !newPassword) {
+      return res.status(400).json({ error: 'Token, email, and new password are required' });
+    }
+
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = db.prepare('SELECT id, email, full_name FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+      id: string;
+      email: string;
+      full_name: string;
+    } | undefined;
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const resetRecord = db.prepare(`
+      SELECT id, expires_at, used 
+      FROM password_reset_tokens 
+      WHERE user_id = ? AND token_hash = ?
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(user.id, tokenHash) as { id: string; expires_at: string; used: number } | undefined;
+
+    if (!resetRecord || resetRecord.used === 1) {
+      return res.status(400).json({ error: 'Invalid or already used reset link. Please request a new one.' });
+    }
+
+    const isExpired = new Date(resetRecord.expires_at).getTime() < Date.now();
+    if (isExpired) {
+      return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
+    }
+
+    // Hash the new password
+    const hashedPassword = hashPassword(newPassword);
+
+    // Update password
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+      hashedPassword,
+      user.id
+    );
+
+    // Mark token as used
+    db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(resetRecord.id);
+
+    // Invalidate all active sessions for security
+    revokeAllSessionsForUser(user.id);
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'RESET_PASSWORD_SUCCESS', 'USER', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      user.id,
+      user.id,
+      `Password successfully reset for ${user.email}`
+    );
+
+    // Send confirmation email
+    await sendPasswordChangedConfirmation(user.email, user.full_name);
+
+    return res.json({
+      success: true,
+      message: 'Your password has been reset successfully. Please log in with your new password.',
+    });
+  } catch (error: unknown) {
+    console.error('[AuthRoutes] Reset password error:', error);
+    return res.status(500).json({ error: 'Failed to reset password. Please try again.' });
+  }
 });
 
 // Logout (Clear Server Session Cookie and revoke current device session)

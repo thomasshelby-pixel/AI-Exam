@@ -46,7 +46,7 @@ export function isMcqItem(
     return true;
   }
 
-  const topic = String(question.topic || '').toLowerCase();
+  const topic = String((question as any).topic || '').toLowerCase();
   if (topic.includes('multiple choice') || topic.includes('mcq') || topic.includes('case scenario mcq') || topic.includes('division a')) {
     return true;
   }
@@ -148,7 +148,6 @@ export function scoreMcqComponent(
     marksDeducted,
     assessment,
     deductionReason,
-    markingCriterion: 'DETERMINISTIC_MCQ',
   };
 }
 

@@ -488,6 +488,46 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_credit_purchases_user_status_expiry
     ON student_credit_purchases (user_id, status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS tombstones (
+      id TEXT PRIMARY KEY,
+      collection_name TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_tombstones_col_ent ON tombstones(collection_name, entity_id);
+
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_pwd_tokens_hash ON password_reset_tokens(token_hash);
+
+    CREATE TABLE IF NOT EXISTS recheck_requests (
+      id TEXT PRIMARY KEY,
+      evaluation_id TEXT NOT NULL,
+      student_id TEXT NOT NULL,
+      question_number TEXT NOT NULL,
+      sub_question TEXT,
+      reason TEXT NOT NULL,
+      student_notes TEXT,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      requested_mode TEXT,
+      reviewer_notes TEXT,
+      adjusted_marks REAL,
+      resolved_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE,
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_recheck_eval ON recheck_requests(evaluation_id);
+    CREATE INDEX IF NOT EXISTS idx_recheck_student ON recheck_requests(student_id);
   `);
 
   runMigrations();
@@ -1167,6 +1207,9 @@ function seedMcqScoringRules() {
 
 function seedExamAttempts() {
   for (const item of ATTEMPT_MASTER_CONFIG) {
+    if (isTombstoned('exam_attempts', item.id)) {
+      continue;
+    }
     const existing = db.prepare('SELECT id FROM exam_attempts WHERE id = ?').get(item.id);
     if (existing) {
       db.prepare(`
@@ -1438,6 +1481,9 @@ function seedInstitutePlans() {
   ];
 
   for (const p of institutePlans) {
+    if (isTombstoned('institute_plans', p.id)) {
+      continue;
+    }
     const existing = db.prepare('SELECT id FROM institute_plans WHERE id = ?').get(p.id);
     if (!existing) {
       db.prepare(`
@@ -1874,6 +1920,9 @@ export function seedPricingPlans() {
   }
 
   for (const p of plans) {
+    if (isTombstoned('pricing_plans', p.id)) {
+      continue;
+    }
     const existing = db.prepare('SELECT id FROM pricing_plans WHERE id = ?').get(p.id);
     if (!existing) {
       db.prepare(`
@@ -2284,6 +2333,9 @@ Trading Account Gross Profit: ₹1,85,400 [6 Marks]. Net Profit: ₹1,12,600 [7 
   ];
 
   for (const m of materials) {
+    if (isTombstoned('evaluation_materials', m.id)) {
+      continue;
+    }
     const existing = db.prepare('SELECT id FROM evaluation_materials WHERE id = ?').get(m.id);
     if (!existing) {
       db.prepare(`
@@ -2312,6 +2364,10 @@ Trading Account Gross Profit: ₹1,85,400 [6 Marks]. Net Profit: ₹1,12,600 [7 
 }
 
 function seedSampleInstitute() {
+  const instId = 'inst_apex_academy_01';
+  if (isTombstoned('institutes', instId)) {
+    return;
+  }
   const seedDone = db.prepare("SELECT value FROM pricing_settings WHERE key = 'SYSTEM_INITIAL_SEED_DONE'").get() as { value: string } | undefined;
   if (seedDone && seedDone.value === 'true') {
     // Startup must NEVER re-insert demo/test records that were previously deleted
@@ -2325,7 +2381,6 @@ function seedSampleInstitute() {
     return;
   }
 
-  const instId = 'inst_apex_academy_01';
   const existing = db.prepare('SELECT id FROM institutes WHERE id = ?').get(instId);
   if (!existing) {
     db.prepare(`
@@ -2524,5 +2579,54 @@ export function seedLegalDocuments() {
     }
   } catch (err) {
     console.warn('seedLegalDocuments error:', err);
+  }
+}
+
+export function isTombstoned(collectionName: string, entityId: string): boolean {
+  try {
+    const row = db.prepare(`
+      SELECT id FROM tombstones 
+      WHERE (collection_name = ? AND entity_id = ?) 
+         OR id = ? 
+         OR entity_id = ?
+      LIMIT 1
+    `).get(collectionName, entityId, `${collectionName}_${entityId}`, entityId);
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
+export function recordLocalTombstone(collectionName: string, entityId: string, reason?: string) {
+  try {
+    const id = `${collectionName}_${entityId}`;
+    db.prepare(`
+      INSERT OR REPLACE INTO tombstones (id, collection_name, entity_id, reason, created_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(id, collectionName, entityId, reason || 'DELETED');
+  } catch (err) {
+    console.warn('[db] Failed to record local tombstone:', err);
+  }
+}
+
+export function getAllLocalTombstoneSet(): Set<string> {
+  try {
+    const rows = db.prepare('SELECT id, collection_name, entity_id FROM tombstones').all() as Array<{
+      id: string;
+      collection_name: string;
+      entity_id: string;
+    }>;
+    const set = new Set<string>();
+    for (const r of rows) {
+      if (r.id) set.add(r.id);
+      if (r.entity_id) {
+        set.add(r.entity_id);
+        set.add(`${r.collection_name}_${r.entity_id}`);
+        set.add(`${r.collection_name}:${r.entity_id}`);
+      }
+    }
+    return set;
+  } catch {
+    return new Set<string>();
   }
 }

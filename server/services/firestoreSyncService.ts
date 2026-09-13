@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { db } from '../db.js';
+import { db, recordLocalTombstone, getAllLocalTombstoneSet } from '../db.js';
 import {
   getFirestoreDb,
   setFirestoreDoc,
@@ -10,6 +10,7 @@ import {
   isTombstoned,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
+import { getValidStudentCreditBalance } from './studentCreditService.js';
 
 /**
  * Asynchronously mirrors an inserted or updated record from SQLite to Cloud Firestore.
@@ -33,6 +34,7 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
  */
 export async function permanentlyDeleteFromFirestore(collectionName: string, id: string, reason?: string) {
   try {
+    recordLocalTombstone(collectionName, id, reason);
     await recordTombstone(collectionName, id, reason);
     await deleteFirestoreDoc(collectionName, id);
     console.log(`[FirestoreSync] Permanently deleted and tombstoned ${collectionName}/${id}`);
@@ -60,7 +62,18 @@ export async function hydrateFromFirestore(): Promise<void> {
 
     // 1. Load tombstones
     const tombstones = await getAllFirestoreDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
-    const tombstoneSet = new Set(tombstones.map((t) => `${t.collectionName}_${t.targetId || t.id}`));
+    const localTombstones = getAllLocalTombstoneSet();
+    const tombstoneSet = new Set<string>(localTombstones);
+    for (const t of tombstones) {
+      const col = t.collectionName || '';
+      const tid = t.targetId || t.id;
+      if (col && tid) {
+        tombstoneSet.add(`${col}_${tid}`);
+        tombstoneSet.add(`${col}:${tid}`);
+        tombstoneSet.add(tid);
+        recordLocalTombstone(col, tid, 'HYDRATED_TOMBSTONE');
+      }
+    }
 
     // 2. Hydrate Users
     const users = await getAllFirestoreDocs<any>('users');
@@ -92,6 +105,8 @@ export async function hydrateFromFirestore(): Promise<void> {
       const uId = p.user_id || p.id;
       if (tombstoneSet.has(`student_profiles_${uId}`)) continue;
       try {
+        const authoritativeCredits = getValidStudentCreditBalance(uId);
+        const finalCredits = authoritativeCredits > 0 ? authoritativeCredits : (p.purchased_credits || 0);
         db.prepare(`
           INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
@@ -99,14 +114,15 @@ export async function hydrateFromFirestore(): Promise<void> {
             icai_registration_number = excluded.icai_registration_number,
             ca_level = excluded.ca_level,
             free_evaluations_used = excluded.free_evaluations_used,
-            purchased_credits = excluded.purchased_credits,
+            purchased_credits = ?,
             institute_id = excluded.institute_id,
             batch_id = excluded.batch_id,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           uId, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
-          p.free_evaluations_used || 0, p.purchased_credits || 0,
-          p.institute_id || null, p.batch_id || null, p.created_at || null
+          p.free_evaluations_used || 0, finalCredits,
+          p.institute_id || null, p.batch_id || null, p.created_at || null,
+          finalCredits
         );
       } catch {
         // ignore

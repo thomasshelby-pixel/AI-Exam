@@ -21,6 +21,7 @@ import {
   Building2,
   Globe,
   BookOpen,
+  Clock,
 } from 'lucide-react';
 
 interface UploadEvaluationProps {
@@ -28,15 +29,67 @@ interface UploadEvaluationProps {
   onOpenCreditsModal: () => void;
 }
 
-type EvaluationStep =
+export type EvaluationStep =
   | 'IDLE'
-  | 'UPLOADING'
   | 'VALIDATING_DOCUMENT'
   | 'READING_SOLUTIONS'
   | 'IDENTIFYING_QUESTIONS'
   | 'EVALUATING_STEPS'
   | 'CALCULATING_MARKS'
-  | 'FINALIZING_REPORT';
+  | 'FINALIZING_REPORT'
+  | 'FINALIZING_CONSISTENCY';
+
+interface EvaluationStageItem {
+  key: EvaluationStep;
+  label: string;
+  minSeconds: number;
+  description: string;
+}
+
+const EVALUATION_PROGRESS_STAGES: EvaluationStageItem[] = [
+  {
+    key: 'VALIDATING_DOCUMENT',
+    label: '1. Document validated & authenticated',
+    minSeconds: 0,
+    description: 'Verifying answer sheet structure, page integrity and vision safeguard',
+  },
+  {
+    key: 'READING_SOLUTIONS',
+    label: '2. Answer sheet transcribed / vision extracted',
+    minSeconds: 15,
+    description: 'High-fidelity transcription of handwritten solutions, ledger tables and annotations',
+  },
+  {
+    key: 'IDENTIFYING_QUESTIONS',
+    label: '3. Questions and sub-questions identified',
+    minSeconds: 38,
+    description: 'Mapping answers to question numbers, compulsory questions and working notes',
+  },
+  {
+    key: 'EVALUATING_STEPS',
+    label: '4. Checking provisions, reasoning & step-wise calculations',
+    minSeconds: 72,
+    description: 'ICAI step-marking: verifying legal provisions, Standards on Auditing/AS/Ind AS & calculations',
+  },
+  {
+    key: 'CALCULATING_MARKS',
+    label: '5. Applying deterministic MCQ rules & consequential marking',
+    minSeconds: 110,
+    description: 'Authoritative scoring without hallucinations; protecting downstream arithmetic steps',
+  },
+  {
+    key: 'FINALIZING_REPORT',
+    label: '6. Generating checked copy & detailed diagnostic report',
+    minSeconds: 155,
+    description: 'Synthesizing examiner annotations, margin ticks, diagnostic insights and strengths',
+  },
+  {
+    key: 'FINALIZING_CONSISTENCY',
+    label: '7. Finalizing mathematical and marking consistency',
+    minSeconds: 195,
+    description: 'Strict cross-validation of paper totals against official paper maximum (100 marks)',
+  },
+];
 
 export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   onEvaluationComplete,
@@ -87,8 +140,98 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Progress states
   const [evalStep, setEvalStep] = useState<EvaluationStep>('IDLE');
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [rejectionDetails, setRejectionDetails] = useState<string>('');
+
+  // Resilience: Check for existing in-flight evaluation on mount (resilience to page refresh / tab navigation)
+  useEffect(() => {
+    const savedEvalId = localStorage.getItem('ca_active_eval_id');
+    const savedStartTime = localStorage.getItem('ca_active_eval_start');
+    if (savedEvalId) {
+      setActiveEvaluationId(savedEvalId);
+      if (savedStartTime) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - parseInt(savedStartTime, 10)) / 1000));
+        setElapsedSeconds(elapsed);
+      }
+      setEvalStep('VALIDATING_DOCUMENT');
+    }
+  }, []);
+
+  // Elapsed timer tick when evaluating
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (evalStep !== 'IDLE') {
+      timer = setInterval(() => {
+        setElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [evalStep]);
+
+  // Dynamically update evalStep based on elapsed time across realistic stages
+  useEffect(() => {
+    if (evalStep === 'IDLE') return;
+    for (let i = EVALUATION_PROGRESS_STAGES.length - 1; i >= 0; i--) {
+      if (elapsedSeconds >= EVALUATION_PROGRESS_STAGES[i].minSeconds) {
+        setEvalStep(EVALUATION_PROGRESS_STAGES[i].key);
+        break;
+      }
+    }
+  }, [elapsedSeconds, evalStep]);
+
+  // Polling hook when activeEvaluationId is set
+  useEffect(() => {
+    if (!activeEvaluationId) return;
+
+    let isSubscribed = true;
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiRequest<{
+          evaluation: {
+            id: string;
+            status: string;
+            rejection_reason?: string;
+            resultJson?: EvaluationResult;
+          };
+        }>(`/api/student/evaluations/${activeEvaluationId}`);
+
+        if (!isSubscribed) return;
+
+        if (data.evaluation?.status === 'COMPLETED' || data.evaluation?.status === 'NEEDS_REVIEW') {
+          clearInterval(interval);
+          localStorage.removeItem('ca_active_eval_id');
+          localStorage.removeItem('ca_active_eval_start');
+          setEvalStep('IDLE');
+          setActiveEvaluationId(null);
+          await refreshUser();
+          if (data.evaluation.resultJson) {
+            onEvaluationComplete(activeEvaluationId, data.evaluation.resultJson);
+          }
+        } else if (data.evaluation?.status === 'REJECTED') {
+          clearInterval(interval);
+          localStorage.removeItem('ca_active_eval_id');
+          localStorage.removeItem('ca_active_eval_start');
+          setEvalStep('IDLE');
+          setActiveEvaluationId(null);
+          setErrorMessage(data.evaluation.rejection_reason || 'Evaluation could not be completed.');
+          setRejectionDetails(
+            'Document validation safeguard triggered: Admit cards, certificates, hall tickets, and blank documents are strictly rejected. No evaluation credits have been deducted.'
+          );
+        }
+      } catch (pollErr) {
+        console.warn('Polling active evaluation error:', pollErr);
+      }
+    }, 4000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [activeEvaluationId, onEvaluationComplete, refreshUser]);
 
   const studentProfile = profile as {
     free_evaluations_used?: number;
@@ -298,18 +441,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       return;
     }
 
+    const newEvaluationId = `eval_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+
     try {
       setErrorMessage('');
       setRejectionDetails('');
-      setEvalStep('UPLOADING');
-
-      // Step state transitions
-      setTimeout(() => setEvalStep('VALIDATING_DOCUMENT'), 1000);
-      setTimeout(() => setEvalStep('READING_SOLUTIONS'), 2500);
-      setTimeout(() => setEvalStep('IDENTIFYING_QUESTIONS'), 4000);
-      setTimeout(() => setEvalStep('EVALUATING_STEPS'), 6500);
-      setTimeout(() => setEvalStep('CALCULATING_MARKS'), 9500);
-      setTimeout(() => setEvalStep('FINALIZING_REPORT'), 12000);
+      setElapsedSeconds(0);
+      setActiveEvaluationId(newEvaluationId);
+      localStorage.setItem('ca_active_eval_id', newEvaluationId);
+      localStorage.setItem('ca_active_eval_start', Date.now().toString());
+      setEvalStep('VALIDATING_DOCUMENT');
 
       const response = await apiRequest<{
         success: boolean;
@@ -318,6 +459,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       }>('/api/student/evaluate', {
         method: 'POST',
         body: JSON.stringify({
+          evaluationId: newEvaluationId,
           studentName: user?.fullName,
           icaiRegistrationNumber: studentProfile?.icai_registration_number || 'N/A',
           level,
@@ -337,9 +479,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         }),
       });
 
+      localStorage.removeItem('ca_active_eval_id');
+      localStorage.removeItem('ca_active_eval_start');
+      setActiveEvaluationId(null);
+      setEvalStep('IDLE');
       await refreshUser();
       onEvaluationComplete(response.evaluationId, response.result);
     } catch (err: unknown) {
+      localStorage.removeItem('ca_active_eval_id');
+      localStorage.removeItem('ca_active_eval_start');
+      setActiveEvaluationId(null);
       setEvalStep('IDLE');
       const msg = err instanceof Error ? err.message : 'Evaluation could not be completed.';
       setErrorMessage(msg);
@@ -401,56 +550,77 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
       {/* Evaluation Progress State Overlay */}
       {evalStep !== 'IDLE' && (
-        <div className="p-5 rounded-xl bg-white border border-blue-200 shadow-lg space-y-4 animate-in fade-in">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
-              <h3 className="text-base font-bold text-slate-900">ICAI Examiner Evaluation in Progress</h3>
+        <div className="p-5 sm:p-6 rounded-xl bg-white border border-blue-200 shadow-xl space-y-4 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-blue-50 border border-blue-100 mt-0.5">
+                <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">ICAI Examiner Evaluation in Progress</h3>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Deep evaluation in progress. CA papers with extensive working notes take 2–4 minutes to evaluate with step-wise precision.
+                </p>
+              </div>
             </div>
-            <span className="text-xs font-mono font-bold text-blue-700 px-2.5 py-1 rounded bg-blue-50 border border-blue-200">
-              Avg. 45 - 60s
-            </span>
+            <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+              <span className="flex items-center gap-1.5 text-xs font-mono font-bold text-slate-700 px-3 py-1 rounded bg-slate-100 border border-slate-200">
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                {Math.floor(elapsedSeconds / 60)}m {elapsedSeconds % 60 < 10 ? '0' : ''}{elapsedSeconds % 60}s
+              </span>
+              <span className="text-xs font-semibold text-blue-800 px-3 py-1 rounded bg-blue-50 border border-blue-200">
+                Typical evaluation time: 2–5 minutes
+              </span>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            {[
-              { key: 'UPLOADING', label: '1. Encrypted Document Ingestion' },
-              { key: 'VALIDATING_DOCUMENT', label: '2. Answer Sheet Vision Safeguard (Checking Authenticity)' },
-              { key: 'READING_SOLUTIONS', label: '3. Reading Handwritten Solutions & OCR Extraction' },
-              { key: 'IDENTIFYING_QUESTIONS', label: '4. Indexing Questions, Sub-questions & Ledger Workings' },
-              { key: 'EVALUATING_STEPS', label: '5. ICAI Step Marking, AS/Ind AS & Legal Provisions Check' },
-              { key: 'CALCULATING_MARKS', label: '6. Mathematical Sum Verification & Paper-Specific MCQ Scoring' },
-              { key: 'FINALIZING_REPORT', label: '7. Generating Detailed Examiner Feedback & Strengths Report' },
-            ].map((st) => {
-              const stepsList: EvaluationStep[] = [
-                'UPLOADING',
-                'VALIDATING_DOCUMENT',
-                'READING_SOLUTIONS',
-                'IDENTIFYING_QUESTIONS',
-                'EVALUATING_STEPS',
-                'CALCULATING_MARKS',
-                'FINALIZING_REPORT',
-              ];
-              const currentIndex = stepsList.indexOf(evalStep);
-              const thisIndex = stepsList.indexOf(st.key as EvaluationStep);
+          <div className="space-y-2.5 pt-1">
+            {EVALUATION_PROGRESS_STAGES.map((st, idx) => {
+              const currentIndex = EVALUATION_PROGRESS_STAGES.findIndex((s) => s.key === evalStep);
+              const thisIndex = idx;
               const isDone = currentIndex > thisIndex;
               const isCurrent = currentIndex === thisIndex;
 
               return (
-                <div key={st.key} className="flex items-center gap-3 text-xs">
-                  {isDone ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  ) : isCurrent ? (
-                    <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin shrink-0" />
-                  ) : (
-                    <div className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
-                  )}
-                  <span className={isDone ? 'text-slate-400 line-through' : isCurrent ? 'text-blue-700 font-bold' : 'text-slate-500'}>
-                    {st.label}
-                  </span>
+                <div key={st.key} className="flex items-start gap-3 text-xs">
+                  <div className="mt-0.5 shrink-0">
+                    {isDone ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    ) : isCurrent ? (
+                      <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border border-slate-300" />
+                    )}
+                  </div>
+                  <div className="space-y-0.5">
+                    <span className={isDone ? 'text-slate-400 font-medium' : isCurrent ? 'text-blue-700 font-bold' : 'text-slate-600'}>
+                      {st.label}
+                    </span>
+                    <p className={`text-[11px] ${isCurrent ? 'text-blue-600/90 font-medium' : 'text-slate-400'}`}>
+                      {st.description}
+                    </p>
+                  </div>
                 </div>
               );
             })}
+          </div>
+
+          <div className="pt-2 text-[11px] text-slate-400 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span>Evaluation persists in background if you navigate away. Results are automatically saved to your dashboard.</span>
+            {activeEvaluationId && (
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem('ca_active_eval_id');
+                  localStorage.removeItem('ca_active_eval_start');
+                  setActiveEvaluationId(null);
+                  setEvalStep('IDLE');
+                }}
+                className="text-slate-400 hover:text-slate-600 underline cursor-pointer text-left sm:text-right"
+              >
+                Reset upload session
+              </button>
+            )}
           </div>
         </div>
       )}
