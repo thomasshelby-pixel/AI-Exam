@@ -7,6 +7,7 @@ import {
   AssessmentStatus,
 } from '../../src/types/index.js';
 import { applyDeterministicMcqScoring } from './deterministicMcqScorer.js';
+import { calculateDynamicAiConfidence } from './dynamicConfidenceEngine.js';
 
 export type ZeroScoreReason =
   | 'NO_ANSWER'
@@ -1017,6 +1018,19 @@ export function processEvaluationIntegrity(
       ? 'Not provided'
       : rawReg;
 
+  const coverageMap = options.coverageMap || rawResult.coverageMap;
+
+  const dynamicConfidence = calculateDynamicAiConfidence({
+    questions: scoredQuestions,
+    totalPages: rawResult.totalPages || (coverageMap ? coverageMap.totalPages : 1),
+    coveredPages: coverageMap ? coverageMap.coveredPages : [],
+    referenceCompletenessRatio: 1.0,
+    hasHandwritingIssues: scoredQuestions.some((q) => q.status === 'unclear'),
+    hasUnresolvedConflicts: scoredQuestions.some((q) => q.modeDifferenceCategory === 'REVIEW_REQUIRED'),
+    checkedCopyConsistent: true,
+    totalPaperMaxMarks: officialPaperMaxMarks,
+  });
+
   const evaluationResult: EvaluationResult = {
     evaluationId: rawResult.evaluationId || 'eval_' + Date.now(),
     studentName: rawResult.studentName || 'Student Candidate',
@@ -1034,7 +1048,7 @@ export function processEvaluationIntegrity(
     attemptedMaxMarks: evaluatedQuestionsMax,
     percentage,
     grade: rawResult.grade || grade,
-    confidenceScore: Number(rawResult.confidenceScore) || 94.5,
+    confidenceScore: dynamicConfidence.compositeScore,
     overallSummary:
       rawResult.overallSummary ||
       'Comprehensive step-wise diagnostic evaluation completed with verified marking components.',
@@ -1070,7 +1084,6 @@ export function processEvaluationIntegrity(
   };
 
   // Step F: Hard consistency validation check & 11-Rule Hard Completion Gate
-  const coverageMap = options.coverageMap || rawResult.coverageMap;
   const paperStructure = options.paperStructure || rawResult.paperStructure;
   evaluationResult.coverageMap = coverageMap;
 

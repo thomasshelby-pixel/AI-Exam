@@ -107,7 +107,8 @@ export function extractLockedQuestionSlice(
   docText: string,
   qNum: string,
   subQ: string | undefined,
-  docType: 'QP' | 'SA' | 'MS'
+  docType: 'QP' | 'SA' | 'MS',
+  isFallback: boolean = false
 ): LockedReferenceSlice {
   if (!docText || docText.trim().length === 0) {
     return {
@@ -125,10 +126,12 @@ export function extractLockedQuestionSlice(
 
   const { sectionA, sectionB } = splitIntoSections(docText);
   let targetText = docText;
-  if (sectionB && isSectionB) {
-    targetText = sectionB;
-  } else if (sectionB && !isSectionB && num <= 4) {
-    targetText = sectionA;
+  if (!isFallback) {
+    if (sectionB && isSectionB) {
+      targetText = sectionB;
+    } else if (sectionB && !isSectionB && num <= 4) {
+      targetText = sectionA;
+    }
   }
 
   const lines = targetText.split('\n');
@@ -266,8 +269,8 @@ export function extractLockedQuestionSlice(
   }
 
   // If not found with strict regexes in section, check whole docText as fallback
-  if (startIndex === -1 && targetText !== docText) {
-    return extractLockedQuestionSlice(docText, qNum, subQ, docType);
+  if (startIndex === -1 && !isFallback && targetText !== docText) {
+    return extractLockedQuestionSlice(docText, qNum, subQ, docType, true);
   }
 
   if (startIndex === -1) {

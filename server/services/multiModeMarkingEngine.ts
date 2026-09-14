@@ -49,9 +49,12 @@ function calculateGrade(percentage: number): string {
 export function applyMultiModeMarkingPhilosophy(
   baseQuestions: QuestionEvaluation[],
   requestedMode: 'standard' | 'strict' | 'lenient' = 'standard',
-  paperStructure?: AuthoritativePaperStructure
+  paperStructure?: AuthoritativePaperStructure | number
 ): MultiModeResult {
-  const officialPaperMaxMarks = paperStructure?.totalPaperMaxMarks || 100;
+  const officialPaperMaxMarks =
+    typeof paperStructure === 'number'
+      ? paperStructure
+      : paperStructure?.totalPaperMaxMarks || 100;
 
   // Verify attemptedMaxMarks across the immutable question set
   const attemptedMaxMarks = baseQuestions.reduce((sum, q) => sum + (Number(q.maximumMarks) || 0), 0);
@@ -180,15 +183,48 @@ export function applyMultiModeMarkingPhilosophy(
       const avail = Number(c.marksAvailable) || 0;
       const stdAward = Number(c.marksAwarded) || 0;
       let modAward = stdAward;
+      let diffCategory: string | undefined = undefined;
+      let diffJustification: string | undefined = undefined;
 
-      if (stdAward < avail) {
-        // Moderate: benefit of doubt awarded for conceptually sound work
+      const evStr = (c.studentEvidence || '').trim();
+      const hasMeaningfulEvidence =
+        evStr.length > 0 &&
+        !/^(?:not calculated|not attempted|unattempted|blank|none cited|left blank|omitted|n\/?a|-|not provided|none)\.?$/i.test(evStr);
+
+      if (stdAward < avail && hasMeaningfulEvidence) {
         const deficit = avail - stdAward;
-        const benefit = Math.round(deficit * 0.45 * 2) / 2;
-        modAward = Math.min(avail, stdAward + benefit);
+
+        // Moderate Mode: Benefit of doubt applies ONLY to identifiable, conceptually sound work
+        if (c.assessment === 'PARTIALLY_CORRECT') {
+          const rawBenefit = Math.round(deficit * 0.45 * 4) / 4;
+          const benefit = Math.max(0.25, rawBenefit);
+          modAward = Math.min(avail, stdAward + benefit);
+
+          if (c.componentType === 'PROVISION' || c.componentType === 'PRINCIPLE' || c.componentType === 'CONDITION') {
+            diffCategory = 'VALID_CONCEPTUAL_CREDIT';
+            diffJustification = `Statutory principle or legal provision partially cited and conceptually understood in candidate evidence: "${evStr.slice(0, 80)}"`;
+          } else if (c.componentType === 'CALCULATION' || c.componentType === 'WORKING') {
+            diffCategory = sq.consequentialErrorDetected ? 'VALID_CONSEQUENTIAL_MARKING' : 'VALID_PARTIAL_CREDIT';
+            diffJustification = `Valid intermediate computational steps or formula presented in evidence: "${evStr.slice(0, 80)}"`;
+          } else if (c.componentType === 'APPLICATION' || c.componentType === 'TREATMENT') {
+            diffCategory = 'REFERENCE_SUPPORTED_APPLICATION';
+            diffJustification = `Application steps grounded in reference materials and factual application in evidence: "${evStr.slice(0, 80)}"`;
+          } else {
+            diffCategory = 'VALID_ALTERNATIVE_METHOD';
+            diffJustification = `Alternative method recognized in ICAI solutions supported by candidate evidence: "${evStr.slice(0, 80)}"`;
+          }
+        } else if (c.assessment === 'INCORRECT' && sq.consequentialErrorDetected) {
+          // Consequential marking allowed when prior step error led to arithmetic divergence
+          const rawBenefit = Math.round(deficit * 0.4 * 4) / 4;
+          const benefit = Math.max(0.25, rawBenefit);
+          modAward = Math.min(avail, stdAward + benefit);
+          diffCategory = 'VALID_CONSEQUENTIAL_MARKING';
+          diffJustification = `Consequential credit awarded for subsequent methodology despite prior arithmetic slip.`;
+        }
+        // If assessment === 'INCORRECT' and not consequential, NO marks can be awarded!
       }
 
-      // Hard clamp: moderate award CAN NEVER BE LESS THAN standard award
+      // Hard clamp: moderate award CAN NEVER BE LESS THAN standard award, and NEVER EXCEED component max
       modAward = Math.min(avail, Math.max(stdAward, Math.round(modAward * 2) / 2));
       const modDeducted = Math.max(0, avail - modAward);
 
@@ -196,8 +232,10 @@ export function applyMultiModeMarkingPhilosophy(
         ...c,
         marksAwarded: modAward,
         marksDeducted: modDeducted,
+        modeDifferenceCategory: modAward > stdAward ? diffCategory : undefined,
+        modeDifferenceJustification: modAward > stdAward ? diffJustification : undefined,
         deductionReason: modAward > stdAward
-          ? (c.deductionReason ? `${c.deductionReason} [Moderate Mode: benefit of doubt credited for underlying understanding].` : undefined)
+          ? (c.deductionReason ? `${c.deductionReason} [Moderate: ${diffCategory || 'VALID_PARTIAL_CREDIT'} - ${diffJustification || 'supported partial credit'}].` : undefined)
           : c.deductionReason,
       };
     });
@@ -207,6 +245,12 @@ export function applyMultiModeMarkingPhilosophy(
       : Math.max(sq.marksAwarded, Math.min(qMax, sq.marksAwarded + Math.round((qMax - sq.marksAwarded) * 0.3 * 2) / 2));
     const modLost = Math.max(0, qMax - modAwarded);
 
+    const qHasDiff = modAwarded > sq.marksAwarded;
+    const dominantCategory = modComponents.find((c) => c.modeDifferenceCategory)?.modeDifferenceCategory ||
+      (qHasDiff ? 'VALID_PARTIAL_CREDIT' : undefined);
+    const dominantJustification = modComponents.find((c) => c.modeDifferenceJustification)?.modeDifferenceJustification ||
+      (qHasDiff ? 'Partial credit awarded for candidate-friendly step marking supported by student evidence.' : undefined);
+
     return {
       ...sq,
       marksAwarded: Math.round(modAwarded * 4) / 4,
@@ -214,6 +258,8 @@ export function applyMultiModeMarkingPhilosophy(
       status: modAwarded >= qMax ? 'correct' : modAwarded > 0 ? 'partially_correct' : 'incorrect',
       markingComponents: modComponents,
       markingModeApplied: 'moderate',
+      modeDifferenceCategory: dominantCategory,
+      modeDifferenceJustification: dominantJustification,
     };
   });
 

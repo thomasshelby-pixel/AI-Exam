@@ -118,6 +118,8 @@ export interface MarkingComponent {
   pageNumber?: number;
   boundingBox?: BoundingBox;
   annotationInstructions?: string;
+  modeDifferenceCategory?: string;
+  modeDifferenceJustification?: string;
 }
 
 export interface StructuredMarkingEvidence {
@@ -195,6 +197,8 @@ export interface QuestionEvaluation {
   suggestedAnswerReference?: string;
   explanation?: string;
   reviewerAdjustmentNotes?: string;
+  modeDifferenceCategory?: string;
+  modeDifferenceJustification?: string;
 }
 
 export interface ScoreCalculationAuditItem {
