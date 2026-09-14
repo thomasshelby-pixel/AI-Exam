@@ -31,8 +31,8 @@ export function generateAuthoritativeBenchmarkEvaluation(
   const paperMaxMarks = params.officialPaperMaxMarks || 100;
   const isMcqOnly = params.level === 'FOUNDATION' && (params.subjectKey.includes('quantitative') || params.subjectKey.includes('economics'));
 
-  // Target score ratio based on checking mode
-  const modeRatio = params.checkingMode === 'strict' ? 0.54 : params.checkingMode === 'lenient' ? 0.72 : 0.63;
+  // Standard baseline ratio (mode adjustments are applied deterministically by multiModeMarkingEngine)
+  const baseStandardRatio = 0.65;
 
   const questions: RawBenchmarkQuestion[] = [];
 
@@ -136,7 +136,7 @@ export function generateAuthoritativeBenchmarkEvaluation(
     ];
 
     for (const spec of descriptiveSpecs) {
-      const qTargetAwarded = Math.round(spec.max * modeRatio * 2) / 2;
+      const qTargetAwarded = Math.round(spec.max * baseStandardRatio * 2) / 2;
       const step1Max = Math.round(spec.max * 0.3 * 2) / 2 || 1;
       const step2Max = Math.round(spec.max * 0.4 * 2) / 2 || 2;
       const step3Max = Math.max(0.5, spec.max - step1Max - step2Max);

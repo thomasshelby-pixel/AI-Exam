@@ -24,6 +24,7 @@ import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
 
 const router = Router();
 
@@ -695,6 +696,37 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       });
     }
 
+    // Step D.1: Subject Mismatch Validation (Selected Subject vs Uploaded Answer Sheet)
+    // Validates that the uploaded answer sheet belongs to the subject selected by the student.
+    const subjectValidation = validateAnswerSheetSubject({
+      selectedSubjectKey: subjectKey,
+      selectedSubjectName: subjectName,
+      filename: filename || 'ca_answer_sheet.pdf',
+      fileBase64,
+    });
+
+    if (subjectValidation.isMismatch) {
+      const rejectReason =
+        subjectValidation.rejectionMessage ||
+        `Subject Mismatch Detected\n\nYou selected [${subjectName}], but the uploaded answer sheet appears to be for [${subjectValidation.detectedSubject || 'another subject'}].\n\nPlease upload the correct answer sheet to continue.`;
+
+      console.warn(`[Evaluation Safeguard] Subject Mismatch Detected for evaluation ${evaluationId}: ${rejectReason}`);
+
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'REJECTED', document_validation_status = 'REJECTED', rejection_reason = ?, completed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(rejectReason, evaluationId);
+
+      // CRITICAL: STOP IMMEDIATELY. DO NOT CONSUME CREDITS, FREE EVALUATION, OR INSTITUTE QUOTA!
+      return res.status(400).json({
+        error: rejectReason,
+        isSubjectMismatch: true,
+        selectedSubject: subjectName,
+        detectedSubject: subjectValidation.detectedSubject,
+      });
+    }
+
     // Step E: Update State to READING_ANSWER_SHEET -> EVALUATING_ANSWERS
     db.prepare("UPDATE evaluations SET status = 'EVALUATING_ANSWERS' WHERE id = ?").run(evaluationId);
 
@@ -993,14 +1025,27 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       WHERE id = ?
     `).run(errMsg.slice(0, 500), evaluationId);
 
-    const userFacingMsg = errMsg.includes('MISSING_MCQ_RULE')
+    const isPrepayment =
+      errMsg.includes('prepayment credits') ||
+      errMsg.includes('PREPAYMENT_CREDITS_DEPLETED') ||
+      errMsg.includes('billing#prepay') ||
+      errMsg.includes('credits are depleted');
+
+    const userFacingMsg = isPrepayment
+      ? 'Google AI Studio prepayment credits are depleted. Please visit AI Studio at https://ai.studio/projects to manage project billing. No evaluation credits have been deducted.'
+      : errMsg.includes('Subject Mismatch')
+      ? errMsg
+      : errMsg.includes('MISSING_MCQ_RULE')
       ? errMsg.replace('MISSING_MCQ_RULE: ', '')
       : errMsg.includes('503') || errMsg.includes('high demand')
       ? 'The AI evaluation service is temporarily experiencing high demand. No credits were deducted. Please try submitting again in a moment.'
+      : errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')
+      ? 'AI Evaluation service quota is temporarily exceeded. No credits were deducted. Please retry in a few moments.'
       : 'Evaluation encountered an issue. No credits or free evaluations were deducted. Please retry.';
 
-    return res.status(500).json({
+    return res.status(isPrepayment ? 402 : 500).json({
       error: userFacingMsg,
+      isPrepaymentDepleted: isPrepayment,
     });
   }
 });

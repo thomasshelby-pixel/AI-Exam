@@ -1,6 +1,34 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopyService.js';
 
+function wrapText(text: string, maxChars: number = 80): string[] {
+  if (!text) return [];
+  const words = String(text).split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    if (!word) continue;
+    if ((currentLine + ' ' + word).trim().length <= maxChars) {
+      currentLine = (currentLine + ' ' + word).trim();
+    } else {
+      if (currentLine) lines.push(currentLine);
+      if (word.length > maxChars) {
+        let remaining = word;
+        while (remaining.length > maxChars) {
+          lines.push(remaining.substring(0, maxChars));
+          remaining = remaining.substring(maxChars);
+        }
+        currentLine = remaining;
+      } else {
+        currentLine = word;
+      }
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
 /**
  * Generates the Detailed Evaluation & Step-Marking Report PDF.
  */
@@ -455,7 +483,8 @@ export async function generateDetailedReportPdf(
     safeDrawText(p1, `${qMarks}`, { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
     safeDrawText(p1, `${qMax}`, { x: 175, y: y - 13, size: 7.5, font: helvetica, color: darkSlate });
     safeDrawText(p1, `${qPct}%`, { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: qPct >= 50 ? passGreen : failRed });
-    safeDrawText(p1, qRemarks.substring(0, 48), { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
+    const remarkLines = wrapText(qRemarks, 60);
+    safeDrawText(p1, remarkLines[0] || qRemarks, { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
 
     y -= 18;
   });
@@ -570,26 +599,28 @@ export async function generateDetailedReportPdf(
         stepY -= 28;
       } else {
         components.forEach((c: any) => {
-          if (stepY < 75) {
-            pageNum++;
-            const newP = createReportPage(pageNum);
-            currentStepPage = newP.page;
-            stepY = pH - 75;
-          }
-
           const cType = c.componentType || (c.stepName?.startsWith('[') ? '' : 'STEP');
           const prefix = cType ? `[${cType}] ` : '';
-          const name = c.expectedRequirement || c.step || c.stepName || 'Requirement';
+          const name = `${prefix}${c.expectedRequirement || c.step || c.stepName || 'Requirement'}`;
           const sAward = Number(c.marksAwarded ?? 0);
           const sMax = Number(c.marksAvailable || c.maximumMarks || c.maxMarks || 1);
           const sDeducted = Number(c.marksDeducted ?? Math.max(0, sMax - sAward));
           const isCorrect = c.assessment === 'CORRECT' || sAward >= sMax;
           const isPartial = c.assessment === 'PARTIALLY_CORRECT' || (sAward > 0 && sAward < sMax);
 
-          const studentEvidence = c.studentEvidence ? `Script: ${String(c.studentEvidence).substring(0, 65)}` : '';
-          const deductionReason = c.deductionReason ? `Deduction: ${String(c.deductionReason).substring(0, 70)}` : '';
+          const titleLines = wrapText(name, 68);
+          const deductionLines = c.deductionReason ? wrapText(`Deduction: ${String(c.deductionReason)}`, 82) : [];
+          const evidenceLines = c.studentEvidence ? wrapText(`Student Script: ${String(c.studentEvidence)}`, 82) : [];
 
-          const boxH = (studentEvidence || deductionReason) ? 32 : 20;
+          const lineH = 9;
+          const boxH = 14 + (titleLines.length * 10) + (deductionLines.length * lineH) + (evidenceLines.length * lineH) + 4;
+
+          if (stepY - boxH < 75) {
+            pageNum++;
+            const newP = createReportPage(pageNum);
+            currentStepPage = newP.page;
+            stepY = pH - 75;
+          }
 
           currentStepPage.drawRectangle({
             x: 44,
@@ -601,16 +632,20 @@ export async function generateDetailedReportPdf(
             borderWidth: 0.5,
           });
 
-          // Component title
-          safeDrawText(currentStepPage, `${prefix}${name}`.substring(0, 55), {
-            x: 52,
-            y: stepY - 12,
-            size: 7.5,
-            font: helveticaBold,
-            color: darkSlate,
+          // Component title lines
+          let textY = stepY - 12;
+          titleLines.forEach((tl) => {
+            safeDrawText(currentStepPage, tl, {
+              x: 52,
+              y: textY,
+              size: 7.5,
+              font: helveticaBold,
+              color: darkSlate,
+            });
+            textY -= 10;
           });
 
-          // Marks awarded and deduction
+          // Marks awarded and deduction pill (anchored to top-right of the box)
           const markLabel = sDeducted > 0 ? `+${sAward} / ${sMax} (-${sDeducted})` : `+${sAward} / ${sMax}`;
           safeDrawText(currentStepPage, markLabel, {
             x: pW - 145,
@@ -620,26 +655,29 @@ export async function generateDetailedReportPdf(
             color: isCorrect ? passGreen : isPartial ? accentGold : failRed,
           });
 
-          // Detail line (student evidence / deduction reason)
-          let subY = stepY - 22;
-          if (deductionReason) {
-            safeDrawText(currentStepPage, deductionReason, {
+          // Examiner Deduction reasons (no truncation)
+          deductionLines.forEach((dl) => {
+            safeDrawText(currentStepPage, dl, {
               x: 52,
-              y: subY,
+              y: textY,
               size: 6.8,
               font: helvetica,
               color: failRed,
             });
-            subY -= 9;
-          } else if (studentEvidence) {
-            safeDrawText(currentStepPage, studentEvidence, {
+            textY -= lineH;
+          });
+
+          // Student Evidence from script (no truncation)
+          evidenceLines.forEach((el) => {
+            safeDrawText(currentStepPage, el, {
               x: 52,
-              y: subY,
+              y: textY,
               size: 6.8,
               font: helvetica,
               color: mutedSlate,
             });
-          }
+            textY -= lineH;
+          });
 
           stepY -= (boxH + 4);
         });

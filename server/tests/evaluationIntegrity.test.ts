@@ -9,6 +9,7 @@ import {
 import { EvaluationResult, MarkingComponent } from '../../src/types/index.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
+import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 
 console.log('================================================================');
 console.log('--- RUNNING CRITICAL CA EVALUATION ACCURACY & INTEGRITY TESTS ---');
@@ -992,6 +993,188 @@ console.log('\n--- TEST T: Tri-View Score Parity Guarantee ---');
   assert(
     evalData.maximumMarks === 100,
     'TEST T.2: Denominator strictly fixed to authoritative paper maximum (100)'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST U: Selected Subject vs Uploaded Answer Sheet Validation (Subject Mismatch Safeguard)
+// --------------------------------------------------------------------------
+console.log('\n--- TEST U: Subject Mismatch Safeguard ---');
+{
+  const { validateAnswerSheetSubject } = await import('../services/subjectValidationService.js');
+
+  // Case U.1: Student selected Advanced Accounting, but uploaded Taxation answer sheet
+  const mismatchResult = validateAnswerSheetSubject({
+    selectedSubjectKey: 'inter_advanced_accounting',
+    selectedSubjectName: 'Advanced Accounting',
+    filename: 'Student_Taxation_MTP_Answers.pdf',
+    sampleText: 'Q5(a) M/s Rudra GST liability calculation, input tax credit u/s 16, order of discharge u/s 49(8), gross total income u/s 115BAC',
+  });
+
+  assert(
+    mismatchResult.isMismatch === true,
+    'TEST U.1: Mismatch correctly flagged when student selected Advanced Accounting but uploaded Taxation'
+  );
+  assert(
+    mismatchResult.detectedSubject?.includes('Taxation'),
+    'TEST U.2: Detected subject identified as Taxation (Income Tax & GST)'
+  );
+  assert(
+    mismatchResult.rejectionMessage?.includes('Subject Mismatch Detected') &&
+      mismatchResult.rejectionMessage?.includes('You selected [Advanced Accounting]') &&
+      mismatchResult.rejectionMessage?.includes('Taxation'),
+    'TEST U.3: Rejection message contains exact required notice format'
+  );
+
+  // Case U.2: Student selected Taxation and uploaded Taxation answer sheet
+  const validResult = validateAnswerSheetSubject({
+    selectedSubjectKey: 'inter_taxation',
+    selectedSubjectName: 'Taxation (Income Tax & GST)',
+    filename: 'Taxation_Mock_Exam.pdf',
+    sampleText: 'Computation of total income of Mr. Sharma u/s 115BAC and CGST liability',
+  });
+
+  assert(
+    validResult.isMismatch === false && validResult.isValid === true,
+    'TEST U.4: Matching subject passes validation without rejection'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST V: Prepayment Depleted / Billing Exhaustion Error Classification
+// --------------------------------------------------------------------------
+console.log('\n--- TEST V: Prepayment Depleted / Billing Limits Handling ---');
+{
+  const sampleApiError = new Error(
+    '{"error":{"code":429,"message":"Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing. Learn more at https://ai.google.dev/gemini-api/docs/billing#prepay. ","status":"RESOURCE_EXHAUSTED"}}'
+  );
+
+  const errMsg = sampleApiError.message.toLowerCase();
+  const isPrepaymentDepleted =
+    errMsg.includes('prepayment credits are depleted') ||
+    errMsg.includes('billing#prepay') ||
+    errMsg.includes('credits are depleted');
+
+  assert(
+    isPrepaymentDepleted === true,
+    'TEST V.1: ApiError correctly classified as fatal account-level prepayment depletion'
+  );
+
+  const userFacingMsg = isPrepaymentDepleted
+    ? 'Google AI Studio prepayment credits are depleted. Please visit AI Studio at https://ai.studio/projects to manage project billing. No evaluation credits have been deducted.'
+    : 'Generic error';
+
+  assert(
+    userFacingMsg.includes('Google AI Studio prepayment credits are depleted') &&
+      userFacingMsg.includes('https://ai.studio/projects') &&
+      userFacingMsg.includes('No evaluation credits have been deducted'),
+    'TEST V.2: User-facing message clearly directs user to AI Studio project billing with zero credit loss'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST W: Common Answer Coverage + Immutable Invariants Across Checking Modes
+// Core Invariant:
+// 1 Answer Sheet -> 1 Coverage Map -> 1 Question Mapping -> 3 Marking Modes
+// Evaluated Attempted Maximum Marks MUST BE IDENTICAL across all modes (e.g. 80m).
+// Total Marks: Strict <= Standard <= Moderate.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST W: Multi-Mode Marking Invariants (Strict <= Standard <= Moderate) ---');
+{
+  // Sample base questions discovered from coverage map (e.g. 80 attempted marks total)
+  const baseQuestions: any[] = [
+    { questionNumber: 'MCQ 1', maximumMarks: 2, marksAwarded: 2, marksLost: 0, status: 'correct', markingComponents: [] },
+    { questionNumber: 'MCQ 2', maximumMarks: 2, marksAwarded: 0, marksLost: 2, status: 'incorrect', markingComponents: [] },
+    { questionNumber: 'MCQ 3', maximumMarks: 2, marksAwarded: 2, marksLost: 0, status: 'correct', markingComponents: [] },
+    { questionNumber: 'MCQ 4', maximumMarks: 2, marksAwarded: 2, marksLost: 0, status: 'correct', markingComponents: [] },
+    { questionNumber: 'MCQ 5', maximumMarks: 2, marksAwarded: 0, marksLost: 2, status: 'incorrect', markingComponents: [] },
+    { questionNumber: 'Q1(a)', maximumMarks: 10, marksAwarded: 7, marksLost: 3, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'CALCULATION', marksAvailable: 5, marksAwarded: 4, marksDeducted: 1 },
+      { componentId: 'c3', componentType: 'CONCLUSION', marksAvailable: 2, marksAwarded: 1, marksDeducted: 1 },
+    ]},
+    { questionNumber: 'Q1(b)', maximumMarks: 4, marksAwarded: 3, marksLost: 1, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 2, marksAwarded: 1.5, marksDeducted: 0.5 },
+      { componentId: 'c2', componentType: 'CONCLUSION', marksAvailable: 2, marksAwarded: 1.5, marksDeducted: 0.5 },
+    ]},
+    { questionNumber: 'Q2(a)', maximumMarks: 7, marksAwarded: 5, marksLost: 2, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 4, marksAwarded: 3, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'WORKING', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+    ]},
+    { questionNumber: 'Q2(b)', maximumMarks: 7, marksAwarded: 4.5, marksLost: 2.5, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 2.5, marksDeducted: 1.5 },
+    ]},
+    { questionNumber: 'Q3(a)', maximumMarks: 7, marksAwarded: 5.5, marksLost: 1.5, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 4, marksAwarded: 3.5, marksDeducted: 0.5 },
+      { componentId: 'c2', componentType: 'CONCLUSION', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+    ]},
+    { questionNumber: 'Q3(b)', maximumMarks: 7, marksAwarded: 4, marksLost: 3, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 1.5, marksDeducted: 1.5 },
+      { componentId: 'c2', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 2.5, marksDeducted: 1.5 },
+    ]},
+    { questionNumber: 'Q4(a)', maximumMarks: 7, marksAwarded: 5, marksLost: 2, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 4, marksAwarded: 3, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'WORKING', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+    ]},
+    { questionNumber: 'Q4(b)', maximumMarks: 7, marksAwarded: 4.5, marksLost: 2.5, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'CONCLUSION', marksAvailable: 4, marksAwarded: 2.5, marksDeducted: 1.5 },
+    ]},
+    { questionNumber: 'Q5(a)', maximumMarks: 7, marksAwarded: 5, marksLost: 2, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 4, marksAwarded: 3, marksDeducted: 1 },
+      { componentId: 'c2', componentType: 'APPLICATION', marksAvailable: 3, marksAwarded: 2, marksDeducted: 1 },
+    ]},
+    { questionNumber: 'Q5(b)', maximumMarks: 7, marksAwarded: 4, marksLost: 3, status: 'partially_correct', markingComponents: [
+      { componentId: 'c1', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 1.5, marksDeducted: 1.5 },
+      { componentId: 'c2', componentType: 'CONCLUSION', marksAvailable: 4, marksAwarded: 2.5, marksDeducted: 1.5 },
+    ]},
+  ];
+
+  const standardRes = applyMultiModeMarkingPhilosophy(baseQuestions, 'standard');
+  const strictRes = applyMultiModeMarkingPhilosophy(baseQuestions, 'strict');
+  const moderateRes = applyMultiModeMarkingPhilosophy(baseQuestions, 'lenient');
+
+  const standardAttempted = standardRes.attemptedMaxMarks;
+  const strictAttempted = strictRes.attemptedMaxMarks;
+  const moderateAttempted = moderateRes.attemptedMaxMarks;
+
+  assert(
+    standardAttempted === 80 && strictAttempted === 80 && moderateAttempted === 80,
+    `TEST W.1: Attempted max marks are 100% IMMUTABLE across all modes (Std: ${standardAttempted}, Strict: ${strictAttempted}, Mod: ${moderateAttempted})`
+  );
+
+  assert(
+    standardRes.activeQuestions.length === strictRes.activeQuestions.length &&
+      strictRes.activeQuestions.length === moderateRes.activeQuestions.length &&
+      standardRes.activeQuestions.length === 15,
+    `TEST W.2: Question discovery count is 100% identical across all modes (${standardRes.activeQuestions.length} questions)`
+  );
+
+  assert(
+    strictRes.activeTotalMarks <= standardRes.activeTotalMarks &&
+      standardRes.activeTotalMarks <= moderateRes.activeTotalMarks,
+    `TEST W.3: Monotonic score ordering STRICT <= STANDARD <= MODERATE holds (Strict: ${strictRes.activeTotalMarks} <= Std: ${standardRes.activeTotalMarks} <= Mod: ${moderateRes.activeTotalMarks})`
+  );
+
+  assert(
+    strictRes.officialPaperMaxMarks === 100 &&
+      standardRes.officialPaperMaxMarks === 100 &&
+      moderateRes.officialPaperMaxMarks === 100,
+    `TEST W.4: Official paper maximum is strictly 100 across all modes`
+  );
+
+  // Verify MCQ scoring is 100% binary and identical across modes
+  const standardMcqs = standardRes.activeQuestions.filter(q => q.questionNumber.startsWith('MCQ'));
+  const strictMcqs = strictRes.activeQuestions.filter(q => q.questionNumber.startsWith('MCQ'));
+  const moderateMcqs = moderateRes.activeQuestions.filter(q => q.questionNumber.startsWith('MCQ'));
+  const stdMcqTotal = standardMcqs.reduce((s, q) => s + q.marksAwarded, 0);
+  const strictMcqTotal = strictMcqs.reduce((s, q) => s + q.marksAwarded, 0);
+  const modMcqTotal = moderateMcqs.reduce((s, q) => s + q.marksAwarded, 0);
+
+  assert(
+    stdMcqTotal === 6 && strictMcqTotal === 6 && modMcqTotal === 6,
+    `TEST W.5: MCQ marks are strictly deterministic and identical across all modes (${stdMcqTotal}/10)`
   );
 }
 

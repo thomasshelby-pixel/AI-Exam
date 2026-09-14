@@ -351,8 +351,8 @@ export async function generateCheckedCopyPdf(
       currY -= 44;
 
       // Render Individual Step Markings
-      for (const st of qAnn.steps.slice(0, 4)) {
-        if (currY < 90) break;
+      for (const st of qAnn.steps) {
+        if (currY < 85) break;
 
         const isCorrect = st.status === 'CORRECT';
         const isPartial = st.status === 'PARTIALLY_CORRECT';
@@ -375,7 +375,7 @@ export async function generateCheckedCopyPdf(
           }
           if (line) commentLines.push(line);
         }
-        const displayLines = commentLines.slice(0, 2);
+        const displayLines = commentLines.slice(0, 3);
         const boxHeight = 16 + displayLines.length * 9;
 
         page.drawRectangle({
@@ -412,7 +412,7 @@ export async function generateCheckedCopyPdf(
         });
 
         // Step Name / Component tag
-        safeDrawText(page, st.stepName.substring(0, 22), {
+        safeDrawText(page, st.stepName.substring(0, 28), {
           x: marginX + 54,
           y: currY,
           size: 6.2,

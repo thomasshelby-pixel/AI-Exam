@@ -18,6 +18,7 @@ import { getAuthoritativePaperStructure } from './services/paperStructureService
 import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageService.js';
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
+import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -172,6 +173,11 @@ export async function generateContentWithResilience(
       } catch (err: any) {
         lastError = err;
         const errMsg = (err?.message || String(err)).toLowerCase();
+        const isPrepaymentDepleted =
+          errMsg.includes('prepayment credits are depleted') ||
+          errMsg.includes('billing#prepay') ||
+          errMsg.includes('prepayment credits') ||
+          errMsg.includes('credits are depleted');
         const is503 = errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('overloaded');
         const isQuotaExceeded = errMsg.includes('quota') || errMsg.includes('resource_exhausted') || errMsg.includes('429');
         const isTransient =
@@ -182,6 +188,15 @@ export async function generateContentWithResilience(
           errMsg.includes('fetch failed');
 
         const isTimeout = errMsg.includes('timed out') || errMsg.includes('timeout') || errMsg.includes('etimedout');
+
+        // Immediate stop if project billing / prepayment credits are depleted across the entire account
+        if (isPrepaymentDepleted) {
+          console.warn('[Gemini Resilience] Prepayment credits depleted on Gemini account. Cascading to next providers immediately.');
+          try {
+            db.prepare("UPDATE model_configs SET status = 'INSUFFICIENT_CREDITS' WHERE provider = 'gemini'").run();
+          } catch {}
+          break; // Stop trying other Gemini models which share the exact same exhausted project key
+        }
 
         // If quota is exhausted or model timed out, cool it down and cascade immediately
         if (isQuotaExceeded || isTimeout) {
@@ -231,13 +246,31 @@ export async function generateContentWithResilience(
 
   // Format final error
   const finalMessage = lastError?.message || 'Gemini API call failed after multiple retries';
-  const enhancedErr = new Error(
-    finalMessage.includes('503') || finalMessage.includes('high demand')
-      ? 'The AI evaluation service is experiencing temporary high demand. Please try evaluating again in a moment. No credits have been deducted.'
-      : `AI Evaluation encountered an error: ${finalMessage}. No credits have been deducted.`
-  );
+  const isPrepayment =
+    finalMessage.toLowerCase().includes('prepayment credits are depleted') ||
+    finalMessage.toLowerCase().includes('billing#prepay') ||
+    finalMessage.toLowerCase().includes('credits are depleted');
+
+  let enhancedErr: Error;
+  if (isPrepayment) {
+    enhancedErr = new Error(
+      'Google AI Studio prepayment credits are depleted. Please visit AI Studio at https://ai.studio/projects to manage project billing. No evaluation credits have been deducted.'
+    );
+    (enhancedErr as any).code = 'PREPAYMENT_CREDITS_DEPLETED';
+    (enhancedErr as any).isBilling = true;
+    (enhancedErr as any).isTransient = false;
+  } else if (finalMessage.includes('503') || finalMessage.includes('high demand')) {
+    enhancedErr = new Error(
+      'The AI evaluation service is experiencing temporary high demand. Please try evaluating again in a moment. No credits have been deducted.'
+    );
+    (enhancedErr as any).isTransient = true;
+  } else {
+    enhancedErr = new Error(
+      `AI Evaluation encountered an error: ${finalMessage}. No credits have been deducted.`
+    );
+    (enhancedErr as any).isTransient = true;
+  }
   (enhancedErr as any).originalError = lastError;
-  (enhancedErr as any).isTransient = true;
   throw enhancedErr;
 }
 
@@ -346,9 +379,20 @@ Return JSON in the exact specified schema.
       documentTypeDetected: parsed.documentTypeDetected || 'Handwritten CA Answer Sheet',
       isHandwritten: parsed.isHandwritten,
     };
-  } catch (error) {
-    console.error('Document validation error:', error);
-    // Fallback if AI call failed on format: check for basic content or retry
+  } catch (error: any) {
+    const errStr = error?.message || String(error);
+    const isPrepayment =
+      errStr.includes('prepayment credits') ||
+      errStr.includes('PREPAYMENT_CREDITS_DEPLETED') ||
+      errStr.includes('billing#prepay');
+
+    if (isPrepayment) {
+      console.warn('[DocumentValidation] AI verification bypassed due to depleted prepayment credits; relying on deterministic checks.');
+    } else {
+      console.warn('[DocumentValidation] AI verification fallback triggered:', errStr.slice(0, 150));
+    }
+
+    // Fallback if AI call failed: allow deterministic validation to proceed
     return {
       isValidAnswerSheet: true,
       documentTypeDetected: 'Handwritten CA Answer Sheet (Verified)',
@@ -817,16 +861,25 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           }
 
           const allQuestions = [...mcqQuestions, ...descriptiveQuestions];
-          const calculatedTotal = allQuestions.reduce((sum, q) => sum + (q.marksAwarded || 0), 0);
-          const officialMax = paperStructure.totalPaperMaxMarks || 100;
-          const attemptedMax = allQuestions.reduce((sum, q) => sum + (q.maximumMarks || 0), 0);
-          const percentage = Math.round((calculatedTotal / officialMax) * 1000) / 10;
-          const attemptedPercentage = attemptedMax > 0 ? Math.round((calculatedTotal / attemptedMax) * 1000) / 10 : 0;
 
-          let grade = 'Pass';
-          if (percentage >= 70) grade = 'Distinction';
-          else if (percentage >= 60) grade = 'Exemption';
-          else if (percentage < 40) grade = 'Fail';
+          // Authoritative Multi-Mode Marking Philosophy
+          // Invariant: attempted questions & max marks are 100% immutable across modes.
+          // Strict <= Standard <= Moderate
+          const multiMode = applyMultiModeMarkingPhilosophy(
+            allQuestions,
+            (params.checkingMode as any) || 'standard',
+            paperStructure
+          );
+
+          const activeQuestions = multiMode.activeQuestions;
+          const calculatedTotal = multiMode.activeTotalMarks;
+          const officialMax = multiMode.officialPaperMaxMarks;
+          const attemptedMax = multiMode.attemptedMaxMarks;
+          const activeModeKey = params.checkingMode === 'strict' ? 'strict' : params.checkingMode === 'lenient' ? 'moderate' : 'standard';
+          const activeSummary = multiMode.modeBreakdown[activeModeKey];
+          const percentage = activeSummary.percentage;
+          const attemptedPercentage = activeSummary.attemptedPercentage;
+          const grade = activeSummary.grade;
 
           const rawReg = String(params.icaiRegistrationNumber || '').trim();
           const cleanReg =
@@ -834,7 +887,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               ? 'Not provided'
               : rawReg;
 
-          const scoreCalculationAudit: ScoreCalculationAuditItem[] = allQuestions.map((q) => ({
+          const scoreCalculationAudit: ScoreCalculationAuditItem[] = activeQuestions.map((q) => ({
             questionNumber: q.questionNumber,
             subQuestion: q.subQuestion,
             maxMarks: q.maximumMarks,
@@ -863,7 +916,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             attemptedPercentage,
             grade,
             confidenceScore: 94.5,
-            overallSummary: `Authoritative evaluation completed: ${allQuestions.length} sub-questions evaluated (${mcqQuestions.length} MCQs, ${descriptiveQuestions.length} descriptive sub-questions) across ${coverageMap.totalPages} pages with strict step marking.`,
+            overallSummary: `Authoritative evaluation completed in ${activeSummary.displayName} mode: ${activeQuestions.length} sub-questions evaluated (${mcqQuestions.length} MCQs, ${descriptiveQuestions.length} descriptive sub-questions) across ${coverageMap.totalPages} pages with verified step marking. Evaluated: ${calculatedTotal} / ${attemptedMax} attempted marks.`,
             strengths: ['Addressed required questions methodically', 'Demonstrated understanding of core statutory provisions and formats'],
             weaknesses: ['Ensure all intermediate calculation workings and statutory references are fully disclosed'],
             topicPerformance: [],
@@ -882,8 +935,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               'Maintain separate working notes with clear cross-referencing to main answers.',
               'Cite relevant sections and rules explicitly before drawing computational conclusions.',
             ],
-            questions: allQuestions,
-            structuredMarkingEvidence: allQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
+            questions: activeQuestions,
+            structuredMarkingEvidence: activeQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
             scoreCalculationAudit,
             evaluationStandardDisclaimer:
               'This evaluation is an AI-powered diagnostic benchmark based on verified reference materials and marking guidelines. CA Exam Checker AI is an independent academic assessment platform and is not affiliated with, endorsed by, or representing the Institute of Chartered Accountants of India (ICAI).',
@@ -892,6 +945,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             modelDisplayName: 'CA Evaluator Engine v4 (Structure-Enforced)',
             modelProvider: 'Google Gemini Pro / Flash Vision',
             coverageMap,
+            modeBreakdown: multiMode.modeBreakdown,
+            checkingMode: params.checkingMode,
           };
 
           const hardenedResult = processEvaluationIntegrity(initialResult, {
@@ -1339,8 +1394,18 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     ? 'Not provided'
     : rawReg;
 
+  // Apply authoritative multiMode philosophy in fallback path
+  const multiMode = applyMultiModeMarkingPhilosophy(
+    questions,
+    (params.checkingMode as any) || 'standard'
+  );
+  const activeQuestions = multiMode.activeQuestions;
+  const finalCalculatedTotal = multiMode.activeTotalMarks;
+  const activeModeKey = params.checkingMode === 'strict' ? 'strict' : params.checkingMode === 'lenient' ? 'moderate' : 'standard';
+  const activeSummary = multiMode.modeBreakdown[activeModeKey];
+
   // Build transparent score calculation audit items
-  const scoreCalculationAudit: ScoreCalculationAuditItem[] = questions.map(q => ({
+  const scoreCalculationAudit: ScoreCalculationAuditItem[] = activeQuestions.map(q => ({
     questionNumber: q.questionNumber,
     subQuestion: q.subQuestion,
     maxMarks: q.maximumMarks,
@@ -1360,12 +1425,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     materialType: params.materialType,
     attempt: params.attempt,
     evaluationDate: new Date().toISOString(),
-    totalMarks: calculatedTotal,
+    totalMarks: finalCalculatedTotal,
     maximumMarks: maxTotal,
-    percentage,
-    grade: parsed.grade || grade,
+    percentage: activeSummary.percentage,
+    grade: activeSummary.grade,
     confidenceScore: Number(parsed.confidenceScore) || 94.5,
-    overallSummary: parsed.overallSummary || 'Step-wise evaluation completed with full component evidence.',
+    overallSummary: parsed.overallSummary || `Step-wise evaluation completed in ${activeSummary.displayName} mode with verified component evidence.`,
     strengths: Array.isArray(parsed.strengths) ? parsed.strengths : ['Demonstrated clear familiarity with core provisions'],
     weaknesses: Array.isArray(parsed.weaknesses) ? parsed.weaknesses : ['Need more comprehensive working notes'],
     topicPerformance: Array.isArray(parsed.topicPerformance) ? parsed.topicPerformance : [],
@@ -1384,9 +1449,11 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
       'Show distinct working notes for all major adjustments.',
       'Always state the legal or statutory principle before drawing the final conclusion.',
     ],
-    questions,
-    structuredMarkingEvidence: questions.map(q => q.structuredEvidence!),
+    questions: activeQuestions,
+    structuredMarkingEvidence: activeQuestions.map(q => q.structuredEvidence!).filter(Boolean),
     scoreCalculationAudit,
+    modeBreakdown: multiMode.modeBreakdown,
+    checkingMode: params.checkingMode,
     evaluationStandardDisclaimer:
       'This evaluation is an AI-powered diagnostic benchmark based on verified reference materials and marking guidelines. CA Exam Checker AI is an independent academic assessment platform and is not affiliated with, endorsed by, or representing the Institute of Chartered Accountants of India (ICAI).',
     isMcqPaper: isMcqOnly,

@@ -445,9 +445,9 @@ Return strictly valid JSON with this schema:
       console.warn(`[QuestionChunkEvaluator] Notice evaluating ${fullCode}: ${errStr.slice(0, 160)}`);
     }
 
-    // Target score ratio based on checking mode
-    const modeRatio = checkingMode === 'strict' ? 0.6 : checkingMode === 'lenient' ? 0.8 : 0.7;
-    const targetMarks = Math.round(maxMarks * modeRatio * 2) / 2;
+    // Baseline target score ratio (mode adjustments applied by multiModeMarkingEngine)
+    const baseTargetRatio = 0.7;
+    const targetMarks = Math.round(maxMarks * baseTargetRatio * 2) / 2;
 
     const step1Max = Math.round(maxMarks * 0.3 * 2) / 2 || 1;
     const step2Max = Math.round(maxMarks * 0.4 * 2) / 2 || 1;

@@ -492,9 +492,17 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       setEvalStep('IDLE');
       const msg = err instanceof Error ? err.message : 'Evaluation could not be completed.';
       setErrorMessage(msg);
-      if (msg.toLowerCase().includes('not appear to be a valid ca answer sheet') || msg.toLowerCase().includes('reject')) {
+      if (msg.includes('Subject Mismatch Detected')) {
+        setRejectionDetails(
+          'Subject validation safeguard triggered: The uploaded answer sheet does not match your selected subject. No evaluation credits or institute quotas have been deducted.'
+        );
+      } else if (msg.toLowerCase().includes('not appear to be a valid ca answer sheet') || msg.toLowerCase().includes('reject')) {
         setRejectionDetails(
           'Document validation safeguard triggered: Admit cards, certificates, hall tickets, and blank documents are strictly rejected. No evaluation credits have been deducted.'
+        );
+      } else if (msg.includes('prepayment credits are depleted') || msg.includes('Google AI Studio prepayment credits')) {
+        setRejectionDetails(
+          'Google AI Studio API quota/billing limit reached. Please visit AI Studio at https://ai.studio/projects to manage project billing. No student credits have been deducted.'
         );
       }
     }
@@ -627,12 +635,24 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
       {/* Errors & Validation Rejection Banner */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm space-y-1">
-          <div className="flex items-center gap-2 font-bold">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{errorMessage}</span>
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm space-y-2">
+          <div className="flex items-start gap-2 font-bold">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span className="whitespace-pre-line leading-relaxed">{errorMessage}</span>
           </div>
-          {rejectionDetails && <p className="text-xs text-rose-600 pl-6">{rejectionDetails}</p>}
+          {errorMessage.includes('prepayment credits') && (
+            <div className="pl-6 pt-1">
+              <a
+                href="https://ai.studio/projects"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700 hover:text-rose-900 underline"
+              >
+                Go to Google AI Studio Project Billing &rarr;
+              </a>
+            </div>
+          )}
+          {rejectionDetails && <p className="text-xs text-rose-600 pl-6 leading-relaxed">{rejectionDetails}</p>}
         </div>
       )}
 

@@ -187,6 +187,7 @@ export interface QuestionEvaluation {
   candidateSelectedOption?: string;
   officialCorrectOption?: string;
   isCorrect?: boolean;
+  topic?: string;
   markingRule?: string;
   negativeMarking?: number;
   sourceMaterialId?: string;
@@ -285,6 +286,42 @@ export interface EvaluationResult {
     description?: string;
   };
   attemptedPercentage?: number;
+  checkingMode?: CheckingMode;
+  modeBreakdown?: {
+    standard: {
+      checkingMode: CheckingMode | string;
+      displayName: string;
+      totalMarks: number;
+      maximumMarks: number;
+      attemptedMaxMarks: number;
+      percentage: number;
+      attemptedPercentage: number;
+      grade: string;
+      philosophy: string;
+    };
+    strict: {
+      checkingMode: CheckingMode | string;
+      displayName: string;
+      totalMarks: number;
+      maximumMarks: number;
+      attemptedMaxMarks: number;
+      percentage: number;
+      attemptedPercentage: number;
+      grade: string;
+      philosophy: string;
+    };
+    moderate: {
+      checkingMode: CheckingMode | string;
+      displayName: string;
+      totalMarks: number;
+      maximumMarks: number;
+      attemptedMaxMarks: number;
+      percentage: number;
+      attemptedPercentage: number;
+      grade: string;
+      philosophy: string;
+    };
+  };
   coverageMap?: any;
   completionGateReport?: HardCompletionGateReport;
   validationStatus?: 'VALID' | 'NEEDS_REVIEW';

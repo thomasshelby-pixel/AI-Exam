@@ -43,6 +43,13 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
   const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
+  const [selectedMode, setSelectedMode] = useState<'standard' | 'strict' | 'moderate'>(
+    evaluationResult.checkingMode === 'strict'
+      ? 'strict'
+      : evaluationResult.checkingMode === 'lenient'
+      ? 'moderate'
+      : 'standard'
+  );
   const [recheckTargetQuestion, setRecheckTargetQuestion] = useState<string | null>(null);
   const [showOriginalSnapshot, setShowOriginalSnapshot] = useState<boolean>(false);
 
@@ -131,8 +138,13 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const attemptedOrEvaluatedMax =
     selectedEvaluatedMaxMarks || attemptedMaxMarks || (maximumMarks < officialMax ? maximumMarks : undefined);
 
-  const isExemption = percentage >= 60;
-  const isPass = percentage >= 40;
+  const modeData = evaluationResult.modeBreakdown?.[selectedMode];
+  const activeMarks = modeData ? modeData.totalMarks : totalMarks;
+  const activePercentage = modeData ? modeData.percentage : percentage;
+  const activeGrade = modeData ? modeData.grade : grade;
+
+  const isExemption = activePercentage >= 60;
+  const isPass = activePercentage >= 40;
 
   const filteredQuestions = questions.filter((q) => {
     if (filterStatus === 'ALL') return true;
@@ -396,17 +408,74 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           </div>
         </div>
 
+        {/* Multi-Mode Scoring Breakdown Bar */}
+        {evaluationResult.modeBreakdown && (
+          <div className="pt-4 pb-2 border-b border-slate-200 print:hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+              <div>
+                <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Evaluation Mode Comparison (Attempted Marks: {attemptedOrEvaluatedMax}m immutable)</span>
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Question coverage, attempt discovery, and paper maximum are 100% constant across all 3 marking modes.
+                </p>
+              </div>
+              <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-100 text-xs shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMode('strict')}
+                  className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
+                    selectedMode === 'strict'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Strict ({evaluationResult.modeBreakdown.strict.totalMarks}m)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMode('standard')}
+                  className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
+                    selectedMode === 'standard'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Standard ({evaluationResult.modeBreakdown.standard.totalMarks}m)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMode('moderate')}
+                  className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
+                    selectedMode === 'moderate'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Moderate ({evaluationResult.modeBreakdown.moderate.totalMarks}m)
+                </button>
+              </div>
+            </div>
+            {modeData && (
+              <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-2.5 py-1.5">
+                <strong className="text-slate-800 font-semibold">{modeData.displayName} Mode:</strong> {modeData.philosophy}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Score & Grade Display */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-5 border-b border-slate-200 print:border-gray-300">
           <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 print:bg-gray-50 print:border-gray-200">
             <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Marks Obtained</p>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-2xl font-black font-mono text-slate-900 print:text-black">{totalMarks}</span>
+              <span className="text-2xl font-black font-mono text-slate-900 print:text-black">{activeMarks}</span>
               <span className="text-xs text-slate-500">/ {officialMax}</span>
             </div>
             {attemptedOrEvaluatedMax && attemptedOrEvaluatedMax < officialMax ? (
               <p className="text-[10px] text-blue-700 mt-0.5 font-medium">
-                Marks evaluated: {totalMarks} / {attemptedOrEvaluatedMax} attempted/evaluable marks
+                Marks evaluated: {activeMarks} / {attemptedOrEvaluatedMax} attempted/evaluable marks
               </p>
             ) : (
               <p className="text-[10px] text-slate-400 mt-0.5">Step sum verified</p>
@@ -416,7 +485,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 print:bg-gray-50 print:border-gray-200">
             <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">Percentage</p>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-2xl font-black font-mono text-blue-600 print:text-black">{percentage}%</span>
+              <span className="text-2xl font-black font-mono text-blue-600 print:text-black">{activePercentage}%</span>
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5">Passing threshold: 40%</p>
           </div>
@@ -433,7 +502,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     : 'bg-rose-100 text-rose-800 border border-rose-300'
                 }`}
               >
-                {grade}
+                {activeGrade}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5">
