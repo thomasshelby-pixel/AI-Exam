@@ -3,16 +3,14 @@ import {
   RotateCcw,
   AlertCircle,
   CheckCircle2,
-  Clock,
-  HelpCircle,
   X,
-  FileCheck,
   Send,
-  Scale,
   ShieldCheck,
   History,
+  Check,
+  FileCheck2,
 } from 'lucide-react';
-import { EvaluationResult, QuestionEvaluation } from '../../types/index.js';
+import { EvaluationResult } from '../../types/index.js';
 
 interface RecheckRequestModalProps {
   isOpen: boolean;
@@ -26,9 +24,11 @@ interface ExistingRecheck {
   id: string;
   question_number: string;
   sub_question?: string;
-  reason: string;
+  request_type?: string;
+  reason?: string;
+  student_reason?: string;
   student_notes?: string;
-  status: 'PENDING' | 'APPROVED' | 'ADJUSTED' | 'REJECTED';
+  status: 'PENDING' | 'APPROVED' | 'ADJUSTED' | 'REJECTED' | 'UNCHANGED' | 'INCREASED' | 'DECREASED';
   reviewer_notes?: string;
   adjusted_marks?: number;
   created_at: string;
@@ -42,23 +42,69 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
   onRecheckSubmitted,
   preselectedQuestionNumber,
 }) => {
-  const [selectedQuestion, setSelectedQuestion] = useState<string>('ALL');
-  const [reason, setReason] = useState<string>('MCQ Option Dispute');
-  const [studentNotes, setStudentNotes] = useState<string>('');
-  const [requestedMode, setRequestedMode] = useState<string>('standard');
+  // Recheck scope: 'COMPLETE_PAPER' | 'SPECIFIC_QUESTION' | 'MULTIPLE_QUESTIONS'
+  const [requestType, setRequestType] = useState<'COMPLETE_PAPER' | 'SPECIFIC_QUESTION' | 'MULTIPLE_QUESTIONS'>('SPECIFIC_QUESTION');
+  const [selectedQuestion, setSelectedQuestion] = useState<string>('');
+  const [selectedQuestionsList, setSelectedQuestionsList] = useState<string[]>([]);
+  const [reason, setReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showConfirmation, setShowConfirmation] = useState<boolean>(false);
+  const [viewHistoryView, setViewHistoryView] = useState<boolean>(false);
   const [existingRequests, setExistingRequests] = useState<ExistingRecheck[]>([]);
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (preselectedQuestionNumber) {
-      setSelectedQuestion(preselectedQuestionNumber);
-    } else {
-      setSelectedQuestion('ALL');
+  // Available questions in the evaluation
+  const questionsList = evaluationResult?.questions || [];
+
+  // Helper to format unique key and display label for questions
+  const getQuestionItem = (q: (typeof questionsList)[0], idx: number) => {
+    const hasDuplicates = questionsList.filter((item) => item.questionNumber === q.questionNumber).length > 1;
+    let identifier = q.questionNumber;
+    let display = q.questionNumber.startsWith('MCQ') ? q.questionNumber : `Question ${q.questionNumber}`;
+
+    if (q.subQuestion) {
+      identifier = `${q.questionNumber} (${q.subQuestion})`;
+      display = `${display} (${q.subQuestion})`;
+    } else if (hasDuplicates) {
+      const sameNumIndex = questionsList.slice(0, idx + 1).filter((item) => item.questionNumber === q.questionNumber).length;
+      identifier = `${q.questionNumber} (Part ${sameNumIndex})`;
+      display = `${display} (Part ${sameNumIndex})`;
     }
-  }, [preselectedQuestionNumber, isOpen]);
+
+    return {
+      key: `q_${q.questionNumber}_${q.subQuestion || ''}_${idx}`,
+      value: identifier,
+      label: display,
+      awarded: q.marksAwarded,
+      max: q.maximumMarks,
+      rawQuestionNumber: q.questionNumber,
+      subQuestion: q.subQuestion,
+    };
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      setShowConfirmation(false);
+      setViewHistoryView(false);
+      setErrorMsg(null);
+      return;
+    }
+
+    if (preselectedQuestionNumber && preselectedQuestionNumber !== 'ALL') {
+      setRequestType('SPECIFIC_QUESTION');
+      const matched = questionsList.map((q, i) => getQuestionItem(q, i)).find(
+        (item) => item.value === preselectedQuestionNumber || item.rawQuestionNumber === preselectedQuestionNumber
+      );
+      const chosenVal = matched ? matched.value : preselectedQuestionNumber;
+      setSelectedQuestion(chosenVal);
+      setSelectedQuestionsList([chosenVal]);
+    } else if (questionsList.length > 0 && !selectedQuestion) {
+      const firstItem = getQuestionItem(questionsList[0], 0);
+      setSelectedQuestion(firstItem.value);
+      setSelectedQuestionsList([firstItem.value]);
+    }
+  }, [isOpen, preselectedQuestionNumber, questionsList]);
 
   useEffect(() => {
     if (isOpen && evaluationResult?.evaluationId) {
@@ -88,60 +134,91 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
 
   if (!isOpen) return null;
 
-  const currentTargetQ = evaluationResult.questions.find(
-    (q) =>
-      q.questionNumber === selectedQuestion ||
-      `Q${q.questionNumber}` === selectedQuestion ||
-      `MCQ ${q.questionNumber}` === selectedQuestion
-  );
+  const handleToggleMultipleQuestion = (qNum: string) => {
+    setSelectedQuestionsList((prev) =>
+      prev.includes(qNum) ? prev.filter((item) => item !== qNum) : [...prev, qNum]
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!studentNotes.trim() && reason !== 'Total / Mark Summation Discrepancy') {
-      setErrorMsg('Please describe your specific grounds or working note evidence in the explanation box.');
+    setErrorMsg(null);
+
+    // Validation
+    if (requestType === 'SPECIFIC_QUESTION' && !selectedQuestion) {
+      setErrorMsg('Please select the specific question you wish to have rechecked.');
+      return;
+    }
+
+    if (requestType === 'MULTIPLE_QUESTIONS' && selectedQuestionsList.length === 0) {
+      setErrorMsg('Please select at least one question for rechecking.');
       return;
     }
 
     try {
       setIsSubmitting(true);
-      setErrorMsg(null);
-      setSuccessMsg(null);
-
       const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+
+      const allItems = questionsList.map((q, i) => getQuestionItem(q, i));
+      const selectedItem = allItems.find((item) => item.value === selectedQuestion);
+
+      const qNum = requestType === 'COMPLETE_PAPER'
+        ? 'ALL'
+        : requestType === 'SPECIFIC_QUESTION'
+        ? (selectedItem ? selectedItem.rawQuestionNumber : selectedQuestion)
+        : selectedQuestionsList.join(', ');
+
+      const subQ = requestType === 'SPECIFIC_QUESTION'
+        ? selectedItem?.subQuestion
+        : undefined;
+
+      const payload = {
+        requestType,
+        questionNumber: qNum,
+        subQuestion: subQ,
+        disputedQuestions: requestType === 'MULTIPLE_QUESTIONS' ? selectedQuestionsList : [selectedQuestion],
+        reason: reason.trim() || undefined,
+        studentNotes: reason.trim() || undefined,
+      };
+
       const res = await fetch(`/api/student/evaluations/${evaluationResult.evaluationId}/recheck`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({
-          questionNumber: selectedQuestion,
-          subQuestion: currentTargetQ?.subQuestion || null,
-          reason,
-          studentNotes: studentNotes.trim(),
-          requestedMode,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to register recheck request.');
+        throw new Error(data.error || 'Failed to submit recheck request. Please try again.');
       }
 
-      setSuccessMsg(data.message || 'Recheck request logged successfully. Senior examiner review is pending.');
-      setStudentNotes('');
+      setShowConfirmation(true);
       await fetchRecheckHistory();
       onRecheckSubmitted();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error submitting request. Please try again.');
+      setErrorMsg(err.message || 'An error occurred while submitting your recheck request.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const totalMarks = evaluationResult.totalMarks ?? 0;
+  const maxMarks = evaluationResult.officialPaperMaxMarks ?? evaluationResult.maximumMarks ?? 100;
+  const evalDate = evaluationResult.createdAt
+    ? new Date(evaluationResult.createdAt).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      })
+    : 'Recently Evaluated';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-2.5">
@@ -151,7 +228,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
             <div>
               <h2 className="text-base font-bold text-slate-900">Request Evaluation Recheck</h2>
               <p className="text-xs text-slate-500">
-                {evaluationResult.subjectName} • {evaluationResult.totalMarks}/{evaluationResult.officialPaperMaxMarks || 100} Marks
+                {evaluationResult.subjectName} {evaluationResult.paper ? `• ${evaluationResult.paper}` : ''}
               </p>
             </div>
           </div>
@@ -163,236 +240,352 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
           </button>
         </div>
 
-        {/* Content Body */}
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          {/* Official Policy Banner */}
-          <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/80 text-amber-900 text-xs leading-relaxed flex items-start gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-amber-950">Academic Governance & Versioned Rechecking</p>
-              <p className="mt-0.5 text-amber-800/90">
-                All recheck requests are evaluated by senior ICAI-pattern faculty against verified Suggested Answers and step-marking schemes.
-                If marks are adjusted, an immutable versioned record (v2) is generated with full delta traceability.
+        {/* Confirmation Modal View (Section 9) */}
+        {showConfirmation ? (
+          <div className="p-6 space-y-6 flex-1 flex flex-col justify-center items-center text-center">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-600 flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <div className="space-y-2 max-w-md">
+              <h3 className="text-lg font-bold text-slate-900">
+                Recheck Request Submitted Successfully
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Your recheck request has been submitted for review.
+                <br />
+                Once the review is completed, your rechecked marks and updated checked copy will be sent to your registered email and will also be reflected on your dashboard.
               </p>
             </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmation(false);
+                  setViewHistoryView(true);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-sm"
+              >
+                View Request Status
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
           </div>
-
-          {successMsg && (
-            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">Request Successfully Submitted</p>
-                <p className="mt-0.5">{successMsg}</p>
-              </div>
-            </div>
-          )}
-
-          {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold">Cannot Register Request</p>
-                <p className="mt-0.5">{errorMsg}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Form */}
-          <form id="recheck-form" onSubmit={handleSubmit} className="space-y-4">
-            {/* Scope of Review */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Target Question for Review
-              </label>
-              <select
-                value={selectedQuestion}
-                onChange={(e) => setSelectedQuestion(e.target.value)}
-                className="w-full text-xs font-semibold px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              >
-                <option value="ALL">Complete Answer Sheet (Full Paper Recheck)</option>
-                <optgroup label="Multiple Choice Questions (Division A)">
-                  {evaluationResult.questions
-                    .filter((q) => q.questionNumber.startsWith('MCQ') || q.markingComponents?.some(c => c.componentType === 'MCQ'))
-                    .map((q, idx) => (
-                      <option key={idx} value={q.questionNumber}>
-                        {q.questionNumber} — Awarded {q.marksAwarded}/{q.maximumMarks} Marks
-                      </option>
-                    ))}
-                </optgroup>
-                <optgroup label="Descriptive Sub-Questions (Division B)">
-                  {evaluationResult.questions
-                    .filter((q) => !q.questionNumber.startsWith('MCQ') && !q.markingComponents?.some(c => c.componentType === 'MCQ'))
-                    .map((q, idx) => (
-                      <option key={idx} value={q.questionNumber}>
-                        Question {q.questionNumber}{q.subQuestion ? `(${q.subQuestion})` : ''} — Awarded {q.marksAwarded}/{q.maximumMarks} Marks
-                      </option>
-                    ))}
-                </optgroup>
-              </select>
-            </div>
-
-            {/* Target Question Details Snapshot */}
-            {currentTargetQ && (
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
-                <div className="flex items-center justify-between font-semibold text-slate-800">
-                  <span>Current Mark: {currentTargetQ.marksAwarded} / {currentTargetQ.maximumMarks} Marks</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                    currentTargetQ.status === 'correct' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                  }`}>
-                    {currentTargetQ.status.replace('_', ' ')}
-                  </span>
-                </div>
-                <p className="text-slate-600 line-clamp-2">
-                  <span className="font-semibold text-slate-700">Examiner Feedback:</span> {currentTargetQ.detailedFeedback}
-                </p>
-              </div>
-            )}
-
-            {/* Dispute Category */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Grounds for Recheck
-              </label>
-              <select
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                className="w-full text-xs font-medium px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              >
-                <option value="MCQ Option Dispute">MCQ Option Dispute (Candidate selected option matching suggested answer)</option>
-                <option value="Step-Marking Omission">Step-Marking Omission (Valid intermediate working note or formula ignored)</option>
-                <option value="Alternative Permissible Approach">Alternative Permissible Approach (ICAI recognized alternative solution method)</option>
-                <option value="Legible Handwriting Misread">Legible Handwriting Misread (Answer was clear and legible)</option>
-                <option value="Total / Mark Summation Discrepancy">Total / Mark Summation Discrepancy (Arithmetical slip in totaling)</option>
-                <option value="Other Factual Discrepancy">Other Factual Discrepancy</option>
-              </select>
-            </div>
-
-            {/* Student Explanation / Evidence */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Specific Grounds & Working Note Evidence
-                </label>
-                <span className="text-[11px] text-slate-400">{studentNotes.length}/600 chars</span>
-              </div>
-              <textarea
-                value={studentNotes}
-                onChange={(e) => setStudentNotes(e.target.value.slice(0, 600))}
-                rows={3}
-                placeholder="Specify page number, step, formula, or statutory provision. (e.g. In page 3 working note 1, TDS under section 194C was computed as ₹2,400 with full reasoning, but 0 marks were awarded.)"
-                className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 leading-relaxed"
-              />
-            </div>
-
-            {/* Recheck Mode Preference */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Evaluation Rigor Benchmark
-              </label>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {[
-                  { id: 'standard', title: 'Standard ICAI', desc: 'Balanced step-marking' },
-                  { id: 'strict', title: 'Strict Examiner', desc: 'Zero leniency on working' },
-                  { id: 'lenient', title: 'Substance Focus', desc: 'Intent & logic prioritized' },
-                ].map((mode) => (
-                  <button
-                    type="button"
-                    key={mode.id}
-                    onClick={() => setRequestedMode(mode.id)}
-                    className={`p-2.5 rounded-xl border text-left transition ${
-                      requestedMode === mode.id
-                        ? 'border-blue-500 bg-blue-50/50 text-blue-900 ring-1 ring-blue-500'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    <p className="font-bold text-xs">{mode.title}</p>
-                    <p className="text-[10px] text-slate-500 mt-0.5">{mode.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </form>
-
-          {/* Existing Recheck History for this Evaluation */}
-          {existingRequests.length > 0 && (
-            <div className="pt-4 border-t border-slate-100 space-y-3">
+        ) : viewHistoryView ? (
+          /* Request Status / History View */
+          <div className="p-6 space-y-4 overflow-y-auto flex-1">
+            <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <History className="w-3.5 h-3.5 text-slate-500" />
-                Previous Recheck Requests ({existingRequests.length})
+                <History className="w-4 h-4 text-blue-600" />
+                Recheck Requests Status ({existingRequests.length})
               </h3>
-              <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setViewHistoryView(false)}
+                className="text-xs font-semibold text-blue-600 hover:underline"
+              >
+                &larr; Back to Recheck Form
+              </button>
+            </div>
+
+            {loadingHistory ? (
+              <div className="py-8 text-center text-xs text-slate-400">Loading request status...</div>
+            ) : existingRequests.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
+                No recheck requests found for this evaluation yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
                 {existingRequests.map((req) => (
                   <div
                     key={req.id}
-                    className="p-3 rounded-xl border border-slate-200/80 bg-slate-50/60 text-xs space-y-1.5"
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 text-xs space-y-2"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-800">
-                        Target: {req.question_number}
-                        {req.sub_question ? `(${req.sub_question})` : ''}
+                        Disputed Scope: {req.question_number}
                       </span>
                       <span
                         className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                          req.status === 'ADJUSTED' || req.status === 'APPROVED'
+                          req.status === 'ADJUSTED' || req.status === 'APPROVED' || req.status === 'INCREASED'
                             ? 'bg-emerald-100 text-emerald-800'
-                            : req.status === 'REJECTED'
+                            : req.status === 'REJECTED' || req.status === 'DECREASED'
                             ? 'bg-rose-100 text-rose-800'
+                            : req.status === 'UNCHANGED'
+                            ? 'bg-slate-100 text-slate-800'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
-                        {req.status}
+                        {req.status.replace('_', ' ')}
                       </span>
                     </div>
-                    <p className="text-slate-600">
-                      <strong className="text-slate-700">Reason:</strong> {req.reason}
-                    </p>
-                    {req.student_notes && (
-                      <p className="text-slate-500 italic">"{req.student_notes}"</p>
+
+                    {(req.reason || req.student_notes || req.student_reason) && (
+                      <p className="text-slate-600">
+                        <strong className="text-slate-700">Reason / Notes:</strong>{' '}
+                        {req.student_notes || req.student_reason || req.reason}
+                      </p>
                     )}
+
                     {req.reviewer_notes && (
-                      <div className="mt-1 p-2 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px]">
-                        <span className="font-semibold text-slate-800">Examiner Review Resolution:</span>{' '}
-                        {req.reviewer_notes}
+                      <div className="p-2.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px]">
+                        <span className="font-bold text-slate-800">Examiner Review Resolution:</span>{' '}
+                        {(!req.reviewer_notes || /^[0-9]+$/.test(req.reviewer_notes.trim()))
+                          ? (req.status === 'ADJUSTED'
+                              ? 'Score adjusted after senior faculty review against official ICAI suggested answers and step-marking scheme.'
+                              : req.status === 'APPROVED'
+                              ? 'Senior examiner reviewed candidate submission against ICAI solution rubric and affirmed original evaluation.'
+                              : 'Recheck evaluation completed in accordance with ICAI standards.')
+                          : req.reviewer_notes}
                         {req.adjusted_marks !== undefined && req.adjusted_marks !== null && (
                           <span className="ml-2 font-bold text-emerald-700 font-mono">
-                            (Adjusted to {req.adjusted_marks}m)
+                            (Marks Adjusted: {req.adjusted_marks}m)
                           </span>
                         )}
                       </div>
                     )}
-                    <p className="text-[10px] text-slate-400">
-                      Requested on {new Date(req.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                    </p>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                      <span>Submitted on {new Date(req.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                      {req.resolved_at && (
+                        <span>Resolved on {new Date(req.resolved_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-200 transition"
-          >
-            Cancel
-          </button>
-          <button
-            form="recheck-form"
-            type="submit"
-            disabled={isSubmitting}
-            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
-          >
-            {isSubmitting ? (
-              <RotateCcw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
             )}
-            <span>Submit Recheck Request</span>
-          </button>
-        </div>
+
+            <div className="pt-4 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Main Recheck Form */
+          <div className="p-6 space-y-4 overflow-y-auto flex-1">
+            {/* Summary Bar */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+              <div>
+                <span className="text-slate-500">Current Score:</span>{' '}
+                <span className="font-bold font-mono text-slate-900">{totalMarks} / {maxMarks}</span>
+                <span className="text-slate-400 ml-1">({Math.round((totalMarks / maxMarks) * 1000) / 10}%)</span>
+              </div>
+              <div className="text-slate-500">
+                <span>Evaluated:</span>{' '}
+                <span className="font-medium text-slate-700">{evalDate}</span>
+              </div>
+            </div>
+
+            {/* Standard Review Policy (Strictly compliant with prompt Section 1) */}
+            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200/80 text-blue-900 text-xs leading-relaxed flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-950">
+                Recheck requests are reviewed against the original answer sheet, verified Suggested Answers, and applicable marking scheme. Where automated evidence is insufficient, the request may be escalated for further review.
+              </p>
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p>{errorMsg}</p>
+              </div>
+            )}
+
+            <form id="recheck-form" onSubmit={handleSubmit} className="space-y-4">
+              {/* WHAT WOULD YOU LIKE US TO RECHECK? (Section 2) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
+                  What would you like us to recheck?
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label
+                    className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                      requestType === 'COMPLETE_PAPER'
+                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="requestType"
+                      value="COMPLETE_PAPER"
+                      checked={requestType === 'COMPLETE_PAPER'}
+                      onChange={() => setRequestType('COMPLETE_PAPER')}
+                      className="text-blue-600"
+                    />
+                    <span>Complete Answer Sheet</span>
+                  </label>
+
+                  <label
+                    className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                      requestType === 'SPECIFIC_QUESTION'
+                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="requestType"
+                      value="SPECIFIC_QUESTION"
+                      checked={requestType === 'SPECIFIC_QUESTION'}
+                      onChange={() => setRequestType('SPECIFIC_QUESTION')}
+                      className="text-blue-600"
+                    />
+                    <span>Specific Question</span>
+                  </label>
+
+                  <label
+                    className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                      requestType === 'MULTIPLE_QUESTIONS'
+                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="requestType"
+                      value="MULTIPLE_QUESTIONS"
+                      checked={requestType === 'MULTIPLE_QUESTIONS'}
+                      onChange={() => setRequestType('MULTIPLE_QUESTIONS')}
+                      className="text-blue-600"
+                    />
+                    <span>Multiple Questions</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* If Specific Question chosen: clean question selector */}
+              {requestType === 'SPECIFIC_QUESTION' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Select Question:
+                  </label>
+                  <select
+                    value={selectedQuestion}
+                    onChange={(e) => setSelectedQuestion(e.target.value)}
+                    className="w-full text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  >
+                    {questionsList.map((q, idx) => {
+                      const item = getQuestionItem(q, idx);
+                      return (
+                        <option key={item.key} value={item.value}>
+                          {item.label} &bull; Awarded {item.awarded}/{item.max} Marks
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+
+              {/* If Multiple Questions chosen: simple multi-select chips/checkboxes */}
+              {requestType === 'MULTIPLE_QUESTIONS' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Select Questions to Recheck ({selectedQuestionsList.length} selected):
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-2 border border-slate-200 rounded-xl bg-slate-50/50">
+                    {questionsList.map((q, idx) => {
+                      const item = getQuestionItem(q, idx);
+                      const isChecked = selectedQuestionsList.includes(item.value);
+                      return (
+                        <button
+                          type="button"
+                          key={`btn_${item.key}`}
+                          onClick={() => handleToggleMultipleQuestion(item.value)}
+                          className={`flex items-center justify-between p-2 rounded-lg border text-left text-xs transition ${
+                            isChecked
+                              ? 'bg-blue-600 border-blue-600 text-white font-bold'
+                              : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                          }`}
+                        >
+                          <span className="truncate">{item.label}</span>
+                          <span className={`text-[10px] font-mono ${isChecked ? 'text-blue-100' : 'text-slate-400'}`}>
+                            {item.awarded}/{item.max}m
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* OPTIONAL REASON (Section 3) */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Why do you think this marking should be reviewed? (Optional)
+                  </label>
+                  <span className="text-[10px] text-slate-400">{reason.length}/500 chars</span>
+                </div>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value.slice(0, 500))}
+                  rows={3}
+                  placeholder="Briefly tell us what you think was marked incorrectly. You can leave this blank if you're not sure."
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 leading-relaxed"
+                />
+              </div>
+
+              {/* Section 6: No Extra Credit Deduction Note */}
+              <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Rechecking is included with your evaluation. No credits will be deducted.</span>
+              </div>
+            </form>
+
+            {/* Previous Requests Link */}
+            {existingRequests.length > 0 && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setViewHistoryView(true)}
+                  className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  View previous recheck requests for this paper ({existingRequests.length})
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer Buttons */}
+        {!showConfirmation && !viewHistoryView && (
+          <div className="px-6 py-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-200 transition"
+            >
+              Cancel
+            </button>
+            <button
+              form="recheck-form"
+              type="submit"
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            >
+              {isSubmitting ? (
+                <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              <span>Submit Recheck Request</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

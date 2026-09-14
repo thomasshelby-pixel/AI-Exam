@@ -1,4 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
+import crypto from 'crypto';
 import { getGemini, generateContentWithResilience } from '../gemini.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
@@ -16,66 +17,211 @@ export interface ChunkEvaluationContext {
   subjectName: string;
 }
 
+export interface ExtractedReferenceSnippets {
+  qpSnippet: string;
+  saSnippet: string;
+  msSnippet: string;
+  retrievedCharacterCount: number;
+  contentHash: string;
+  foundInMaterial: boolean;
+  markingSchemeSection: string;
+  suggestedAnswerSection: string;
+  verifiedTruthSnippet: string;
+}
+
 /**
  * Extracts relevant reference material for a specific sub-question.
+ * Handles Question Paper, Suggested Answer, and Marking Scheme variations.
  */
 export function extractRelevantReferenceSnippets(
-  fullQuestionCode: string, // e.g. 'Q5(a)', 'Q7(b)'
+  fullQuestionCode: string, // e.g. 'Q5(a)', 'Q7(b)', 'Q1'
   qpText: string,
   saText: string,
   msText: string
-): { qpSnippet: string; saSnippet: string; msSnippet: string } {
-  const matchCode = fullQuestionCode.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(); // e.g. 'q5a'
-  const qNum = fullQuestionCode.replace(/[^0-9]/g, '');
-  const subQ = (fullQuestionCode.match(/\(([a-zA-Z0-9]+)\)/) || [])[1] || '';
+): ExtractedReferenceSnippets {
+  const cleanCode = fullQuestionCode.trim();
+  const qNum = cleanCode.replace(/[^0-9]/g, '');
+  const subQMatch = cleanCode.match(/\(([a-zA-Z0-9]+)\)/);
+  const subQ = (subQMatch ? subQMatch[1] : '').toLowerCase();
 
-  const sliceTextForQuestion = (text: string): string => {
-    if (!text) return '';
+  const sliceTextForQuestion = (text: string, materialLabel: string): { snippet: string; found: boolean; sectionHeader: string } => {
+    if (!text || text.trim().length === 0) {
+      return { snippet: '', found: false, sectionHeader: 'Not Available' };
+    }
+
     const lines = text.split('\n');
     let capturing = false;
     const captured: string[] = [];
+    let sectionHeader = '';
 
-    // Look for lines containing question code
+    // Regex candidates for start of question/sub-question
+    const nextQNum = String(parseInt(qNum, 10) + 1);
+    const nextSubQ = subQ === 'a' ? 'b' : subQ === 'b' ? 'c' : subQ === 'c' ? 'd' : '';
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const lower = line.toLowerCase();
+      const trimmed = line.trim();
+      const lower = trimmed.toLowerCase();
 
-      // Start condition
-      const isStart =
-        (subQ && (lower.includes(`question ${qNum}(${subQ.toLowerCase()})`) || lower.includes(`question no. ${qNum}(${subQ.toLowerCase()})`) || lower.includes(`(${subQ.toLowerCase()})`))) ||
-        lower.includes(`question ${qNum}`) ||
-        lower.includes(`question no. ${qNum}`);
+      // Check for start condition
+      let isStart = false;
+
+      if (subQ) {
+        // Direct sub-question pattern like "Question 5(a)", "Answer 5(a)", "Ans. 5(a)", "5(a)", "Q.5(a)", "Q5(a)"
+        const patterns = [
+          `question ${qNum}(${subQ})`,
+          `question no. ${qNum}(${subQ})`,
+          `question no.${qNum}(${subQ})`,
+          `answer ${qNum}(${subQ})`,
+          `answer to question ${qNum}(${subQ})`,
+          `answer to question no. ${qNum}(${subQ})`,
+          `ans. ${qNum}(${subQ})`,
+          `ans ${qNum}(${subQ})`,
+          `solution ${qNum}(${subQ})`,
+          `solution to question ${qNum}(${subQ})`,
+          `q.${qNum}(${subQ})`,
+          `q.${qNum} (${subQ})`,
+          `q${qNum}(${subQ})`,
+          `q ${qNum}(${subQ})`,
+          `q${qNum} (${subQ})`,
+          `(${subQ})`,
+        ];
+
+        if (patterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`) || lower.includes(`\t${p}`))) {
+          // If it's just "(${subQ})", only treat as start if we are already within main question or line indicates it
+          if (lower.startsWith(`(${subQ})`) || lower.startsWith(`part (${subQ})`)) {
+            isStart = true;
+          } else {
+            isStart = true;
+          }
+        }
+      } else {
+        // Main question pattern without sub-part
+        const mainPatterns = [
+          `question ${qNum}`,
+          `question no. ${qNum}`,
+          `question no.${qNum}`,
+          `answer ${qNum}`,
+          `answer to question ${qNum}`,
+          `answer to question no. ${qNum}`,
+          `ans. ${qNum}`,
+          `ans ${qNum}`,
+          `solution ${qNum}`,
+          `q.${qNum}`,
+          `q ${qNum}`,
+          `q${qNum}`,
+        ];
+
+        // Ensure not matching question 10 when looking for question 1
+        isStart = mainPatterns.some((p) => {
+          const idx = lower.indexOf(p);
+          if (idx === -1) return false;
+          const after = lower.slice(idx + p.length, idx + p.length + 1);
+          return !after || after.match(/[^0-9]/);
+        });
+      }
 
       if (isStart && !capturing) {
         capturing = true;
+        sectionHeader = trimmed.slice(0, 100);
         captured.push(line);
         continue;
       }
 
       if (capturing) {
-        // End condition: next main question
-        const isNextQuestion =
-          (lower.includes(`question ${parseInt(qNum, 10) + 1}`) ||
-           lower.includes(`question no. ${parseInt(qNum, 10) + 1}`)) &&
-          !lower.includes(`question ${qNum}`);
+        // Stop condition: next question or next sub-question
+        let isStop = false;
 
-        if (isNextQuestion && captured.length > 5) {
+        if (nextSubQ) {
+          const nextSubPatterns = [
+            `(${nextSubQ})`,
+            `part (${nextSubQ})`,
+            `question ${qNum}(${nextSubQ})`,
+            `answer ${qNum}(${nextSubQ})`,
+            `ans. ${qNum}(${nextSubQ})`,
+            `ans ${qNum}(${nextSubQ})`,
+            `q.${qNum}(${nextSubQ})`,
+            `q${qNum}(${nextSubQ})`,
+          ];
+          if (nextSubPatterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`))) {
+            isStop = true;
+          }
+        }
+
+        const nextMainPatterns = [
+          `question ${nextQNum}`,
+          `question no. ${nextQNum}`,
+          `answer ${nextQNum}`,
+          `answer to question ${nextQNum}`,
+          `ans. ${nextQNum}`,
+          `q.${nextQNum}`,
+          `q ${nextQNum}`,
+          `q${nextQNum}`,
+        ];
+        if (nextMainPatterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`))) {
+          isStop = true;
+        }
+
+        if (isStop && captured.length >= 3) {
           break;
         }
+
         captured.push(line);
-        if (captured.length > 120) break; // Limit length
+        if (captured.length > 200) break; // Reasonable cap per question
       }
     }
 
-    return captured.length > 0 ? captured.join('\n') : text.slice(0, 1500);
+    if (captured.length > 0) {
+      return {
+        snippet: captured.join('\n').trim(),
+        found: true,
+        sectionHeader: sectionHeader || `${materialLabel} for ${cleanCode}`,
+      };
+    }
+
+    // Secondary fallback: search for keywords or return question-focused snippet
+    const qIndex = text.toLowerCase().indexOf(`question ${qNum}`);
+    const aIndex = text.toLowerCase().indexOf(`answer ${qNum}`);
+    const bestIdx = qIndex !== -1 ? qIndex : aIndex !== -1 ? aIndex : -1;
+
+    if (bestIdx !== -1) {
+      const slice = text.slice(bestIdx, bestIdx + 2500).trim();
+      return {
+        snippet: slice,
+        found: true,
+        sectionHeader: `${materialLabel} Section for Q${qNum}`,
+      };
+    }
+
+    return {
+      snippet: text.slice(0, 2000).trim(),
+      found: false,
+      sectionHeader: `${materialLabel} General Section`,
+    };
   };
 
+  const qp = sliceTextForQuestion(qpText, 'Question Paper');
+  const sa = sliceTextForQuestion(saText, 'Suggested Answer');
+  const ms = sliceTextForQuestion(msText, 'Marking Scheme');
+
+  const combinedRef = `${qp.snippet}\n${sa.snippet}\n${ms.snippet}`;
+  const contentHash = crypto.createHash('sha256').update(combinedRef).digest('hex');
+  const retrievedCharacterCount = combinedRef.length;
+  const verifiedTruthSnippet = (sa.snippet || qp.snippet || ms.snippet).slice(0, 300);
+
   return {
-    qpSnippet: sliceTextForQuestion(qpText),
-    saSnippet: sliceTextForQuestion(saText),
-    msSnippet: sliceTextForQuestion(msText),
+    qpSnippet: qp.snippet,
+    saSnippet: sa.snippet,
+    msSnippet: ms.snippet,
+    retrievedCharacterCount,
+    contentHash,
+    foundInMaterial: qp.found || sa.found || ms.found,
+    markingSchemeSection: ms.sectionHeader,
+    suggestedAnswerSection: sa.sectionHeader,
+    verifiedTruthSnippet,
   };
 }
+
 
 /**
  * Evaluates a single attempted descriptive sub-question using targeted page images and reference material.
@@ -102,7 +248,7 @@ export async function evaluateQuestionChunk(
   const chunkBase64 = Buffer.from(chunkBytes).toString('base64');
 
   // 2. Extract specific reference material
-  const { qpSnippet, saSnippet, msSnippet } = extractRelevantReferenceSnippets(
+  const snippets = extractRelevantReferenceSnippets(
     fullCode,
     ctx.questionPaperText,
     ctx.suggestedAnswersText,
@@ -117,17 +263,17 @@ Checking Mode: ${checkingMode}
 MAXIMUM MARKS FOR THIS QUESTION: EXACTLY ${maxMarks} MARKS (Do NOT alter or exceed this limit!).
 
 --- VERIFIED QUESTION PAPER EXTRACT ---
-${qpSnippet}
+${snippets.qpSnippet || 'Official Question Extract'}
 
 --- VERIFIED ICAI SUGGESTED ANSWER EXTRACT ---
-${saSnippet}
+${snippets.saSnippet || 'Official Suggested Answer Extract'}
 
 --- VERIFIED STEP-MARKING SCHEME EXTRACT ---
-${msSnippet}
+${snippets.msSnippet || 'Official Step-Marking Scheme Extract'}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
 
-TASK:
+CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme.
 3. Every step component must have:
@@ -142,7 +288,12 @@ TASK:
 4. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
 5. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 6. NO presentation deductions are allowed unless explicitly specified in the marking scheme.
-7. If handwriting is illegible on any part, state clearly in detailedFeedback.
+7. HANDWRITING POLICY: Poor handwriting itself is NOT a deduction reason. If readable, award full technical credit. Do not penalize handwriting, formatting, or styling.
+8. STRUCTURED DEDUCTION REASONS: When marks are deducted, the reasonForDeduction must clearly state:
+   (a) What candidate wrote
+   (b) What authoritative answer requires
+   (c) What is wrong or missing
+   (d) Marks deducted and justification
 
 Return strictly valid JSON with this schema:
 {
@@ -256,10 +407,15 @@ Return strictly valid JSON with this schema:
       flags: questionFlags,
       referenceTrace: {
         materialId: 'ICAI_OFFICIAL_SUGGESTED',
-        markingSchemeSection: `Section ${subQuestion.section} - Q${qNum}${subQ ? `(${subQ})` : ''}`,
+        materialTitle: 'ICAI Verified Suggested Answers & Step Marking Scheme',
+        markingSchemeSection: snippets.markingSchemeSection,
+        suggestedAnswerSection: snippets.suggestedAnswerSection,
         suggestedAnswerRef: `${fullCode} Suggested Solution`,
+        retrievedCharacterCount: snippets.retrievedCharacterCount,
+        contentHash: snippets.contentHash,
+        verifiedTruthSnippet: snippets.verifiedTruthSnippet,
+        verifiedGroundTruthSnippet: snippets.verifiedTruthSnippet,
         deductionReason: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} marks deducted.` : 'Full marks awarded.'),
-        verifiedGroundTruthSnippet: saSnippet.slice(0, 300),
       },
       structuredEvidence: {
         questionId: fullCode,

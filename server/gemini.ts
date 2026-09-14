@@ -374,7 +374,11 @@ export interface EvaluateAnswerSheetParams {
   mimeType: string;
   referenceQuestionPaperText: string;
   referenceSuggestedAnswersText: string;
+  suggestedAnswersText?: string;
   markingSchemeText: string;
+  referenceMaterialTitle?: string;
+  referenceMaterialVersion?: string;
+  referenceMaterialId?: string;
 }
 
 /**

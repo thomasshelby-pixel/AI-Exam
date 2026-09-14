@@ -33,6 +33,11 @@ import {
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
 import path from 'node:path';
+import fs from 'node:fs';
+import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
+import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
+import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
+import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 
 const router = Router();
 
@@ -3296,19 +3301,59 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
 
 router.post('/models/test-connection', async (req: AuthRequest, res: Response) => {
   try {
-    const { modelId } = req.body;
+    const { modelId, stage } = req.body;
     if (!modelId) {
       return res.status(400).json({ error: 'modelId is required' });
     }
 
-    const { testModelConnection } = await import('../models/modelRegistry.js');
-    const result = await testModelConnection(modelId);
+    const { testModelHealth } = await import('../models/modelRegistry.js');
+    const targetStage = stage === 'CONNECTIVITY' || stage === 'INFERENCE' || stage === 'EVALUATION_READINESS' ? stage : 'EVALUATION_READINESS';
+    const result = await testModelHealth(modelId, targetStage);
     return res.json(result);
   } catch (error: any) {
     console.error('Test model connection error:', error);
     return res.status(500).json({
       success: false,
       message: error?.message || 'Connection test failed',
+    });
+  }
+});
+
+router.post('/models/benchmark-test', async (req: AuthRequest, res: Response) => {
+  try {
+    const { modelId } = req.body;
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' });
+    }
+
+    const { runModelBenchmark } = await import('../models/modelRegistry.js');
+    const result = await runModelBenchmark(modelId);
+    return res.json({ success: true, benchmark: result });
+  } catch (error: any) {
+    console.error('Run model benchmark error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Model benchmark failed',
+    });
+  }
+});
+
+router.post('/models/consistency-test', async (req: AuthRequest, res: Response) => {
+  try {
+    const { modelId, runs } = req.body;
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' });
+    }
+
+    const { runModelConsistencyTest } = await import('../models/modelRegistry.js');
+    const numRuns = Math.min(10, Math.max(2, Number(runs) || 5));
+    const result = await runModelConsistencyTest(modelId, numRuns);
+    return res.json({ success: true, consistency: result });
+  } catch (error: any) {
+    console.error('Run model consistency error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || 'Model consistency test failed',
     });
   }
 });
@@ -3708,6 +3753,119 @@ router.get('/recheck-requests', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Recheck Evidence endpoint for Admin/Faculty
+router.get(['/recheck-requests/:id/evidence', '/recheck/:id/evidence'], async (req: AuthRequest, res: Response) => {
+  try {
+    const requestId = req.params.id;
+    const recheck = db.prepare(`
+      SELECT r.*, e.result_json, e.total_marks, e.maximum_marks, e.percentage, e.grade, e.subject_name, e.paper, e.level, e.attempt, e.material_id, e.subject_key,
+             u.email as student_email, u.full_name as student_name
+      FROM recheck_requests r
+      JOIN evaluations e ON e.id = r.evaluation_id
+      JOIN users u ON u.id = r.student_id
+      WHERE r.id = ? OR r.evaluation_id = ?
+    `).get(requestId, requestId) as any;
+
+    if (!recheck) {
+      return res.status(404).json({ error: 'Recheck request or evaluation evidence not found' });
+    }
+
+    let evalResult: any = {};
+    try {
+      if (recheck.result_json) {
+        evalResult = JSON.parse(recheck.result_json);
+      }
+    } catch {}
+
+    const qNum = recheck.question_number || '1';
+    const subQ = recheck.sub_question || '';
+    const fullCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
+
+    let qTarget: any = null;
+    if (Array.isArray(evalResult.questions)) {
+      qTarget = evalResult.questions.find((q: any) =>
+        String(q.questionNumber).toLowerCase() === String(qNum).toLowerCase() ||
+        `Q${q.questionNumber}`.toLowerCase() === String(qNum).toLowerCase() ||
+        (q.subQuestion && String(q.subQuestion).toLowerCase() === String(subQ).toLowerCase() && String(q.questionNumber) === String(qNum))
+      );
+      if (!qTarget && evalResult.questions.length > 0) {
+        qTarget = evalResult.questions[0];
+      }
+    }
+
+    // Retrieve authoritative evaluation material
+    let mat: any = null;
+    if (recheck.material_id) {
+      mat = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(recheck.material_id) as any;
+    }
+    if (!mat) {
+      mat = db.prepare('SELECT * FROM evaluation_materials WHERE level = ? AND subject_key = ? ORDER BY created_at DESC LIMIT 1').get(recheck.level, recheck.subject_key || '') as any;
+    }
+
+    const snippets = extractRelevantReferenceSnippets(
+      fullCode,
+      mat?.question_paper_text || '',
+      mat?.suggested_answers_text || '',
+      mat?.marking_scheme_text || ''
+    );
+
+    return res.json({
+      success: true,
+      recheckId: recheck.id,
+      evaluationId: recheck.evaluation_id,
+      student: {
+        id: recheck.student_id,
+        name: recheck.student_name,
+        email: recheck.student_email,
+      },
+      paper: {
+        level: recheck.level,
+        subjectName: recheck.subject_name,
+        paper: recheck.paper,
+        attempt: recheck.attempt,
+      },
+      dispute: {
+        questionNumber: recheck.question_number,
+        subQuestion: recheck.sub_question,
+        requestType: recheck.request_type,
+        reason: recheck.reason,
+        studentNotes: recheck.student_notes,
+        createdAt: recheck.created_at,
+        status: recheck.status,
+        reviewerNotes: recheck.reviewer_notes,
+        adjustedMarks: recheck.adjusted_marks,
+      },
+      candidateAnswer: {
+        pages: qTarget?.pageNumber ? [qTarget.pageNumber] : [1],
+        studentEvidence: qTarget?.markingComponents?.[0]?.studentEvidence || recheck.student_notes || 'Candidate handwritten answer on submitted script.',
+        originalDownloadUrl: `/api/student/evaluations/${recheck.evaluation_id}/download-original`,
+        checkedCopyDownloadUrl: `/api/student/evaluations/${recheck.evaluation_id}/download-checked-copy`,
+      },
+      referenceMaterial: {
+        materialId: mat?.id || 'ICAI_OFFICIAL_SUGGESTED',
+        materialTitle: mat?.title || `${recheck.subject_name} Official ICAI Suggested Answers & Rubric`,
+        questionPaperExcerpt: snippets.qpSnippet || 'Question paper extract available in full syllabus material.',
+        suggestedAnswerExcerpt: snippets.saSnippet || 'Official suggested solution extract available in full syllabus material.',
+        markingSchemeExcerpt: snippets.msSnippet || 'Official step-marking breakdown available in full syllabus material.',
+        contentHash: snippets.contentHash,
+        retrievedCharacterCount: snippets.retrievedCharacterCount,
+      },
+      originalEvaluation: qTarget || null,
+      allQuestions: evalResult.questions || [],
+      currentScore: {
+        totalMarks: recheck.total_marks,
+        maximumMarks: recheck.maximum_marks || 100,
+        percentage: recheck.percentage,
+        grade: recheck.grade,
+        version: evalResult.version || 'v1',
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Get recheck evidence error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve recheck evidence' });
+  }
+});
+
 router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Response) => {
   try {
     const requestId = req.params.id;
@@ -3718,7 +3876,7 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
     }
 
     const recheck = db.prepare(`
-      SELECT r.*, e.result_json, e.total_marks, e.percentage, e.grade, e.subject_name, e.audit_metadata_json, e.created_at as eval_created_at,
+      SELECT r.*, e.result_json, e.total_marks, e.maximum_marks, e.percentage, e.grade, e.subject_name, e.paper, e.level, e.attempt, e.checking_mode, e.audit_metadata_json, e.created_at as eval_created_at,
              u.email as student_email, u.full_name as student_name
       FROM recheck_requests r
       JOIN evaluations e ON e.id = r.evaluation_id
@@ -3733,8 +3891,19 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
     const nowIso = new Date().toISOString();
     let newTotalMarks = recheck.total_marks;
     let newPercentage = recheck.percentage || 0;
+    let newGrade = recheck.grade || 'Pass';
     let originalScoreForQ = 0;
     let newQScore = 0;
+
+    // Sanitize reviewerNotes to prevent "Examiner Review Resolution: 123" bug
+    let cleanReviewerNotes = String(reviewerNotes || '').trim();
+    if (!cleanReviewerNotes || /^[0-9]+$/.test(cleanReviewerNotes)) {
+      cleanReviewerNotes = resolution === 'ADJUSTED'
+        ? `Marks revised after senior faculty review against ICAI suggested solutions and step-marking scheme.`
+        : resolution === 'APPROVED'
+        ? 'Recheck completed. Senior faculty affirmed original evaluation against ICAI marking rubric.'
+        : 'Recheck evaluated and concluded in accordance with ICAI evaluation criteria.';
+    }
 
     let auditMeta: any = {};
     try {
@@ -3756,6 +3925,8 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
         savedAt: nowIso,
       };
     }
+
+    let updatedEvalResult: any = null;
 
     if (resolution === 'ADJUSTED' && adjustedMarks !== undefined && Number.isFinite(Number(adjustedMarks))) {
       newQScore = Number(adjustedMarks);
@@ -3782,18 +3953,32 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
               qTarget.marksAwarded = newQScore;
               qTarget.marksLost = Math.max(0, qTarget.maximumMarks - newQScore);
               qTarget.status = newQScore >= qTarget.maximumMarks ? 'correct' : newQScore > 0 ? 'partially_correct' : 'incorrect';
-              qTarget.reviewerAdjustmentNotes = reviewerNotes || 'Score adjusted on senior examiner recheck review';
+              qTarget.reviewerAdjustmentNotes = cleanReviewerNotes;
 
+              // Step-marking components distribution
               if (Array.isArray(qTarget.markingComponents) && qTarget.markingComponents.length > 0) {
-                qTarget.markingComponents[0].marksAwarded = newQScore;
-                qTarget.markingComponents[0].assessment = newQScore >= qTarget.maximumMarks ? 'CORRECT' : newQScore > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT';
-                qTarget.markingComponents[0].annotationInstructions = `[RECHECK ADJUSTED] Awarded ${newQScore}/${qTarget.maximumMarks} (${reviewerNotes || 'Senior review'})`;
+                let remainingToDistribute = newQScore;
+                qTarget.markingComponents.forEach((comp: any, idx: number) => {
+                  const avail = Number(comp.marksAvailable) || (qTarget.maximumMarks / qTarget.markingComponents.length);
+                  const isLast = idx === qTarget.markingComponents.length - 1;
+                  let awardedForComp = 0;
+                  if (isLast) {
+                    awardedForComp = Math.min(avail, Math.max(0, remainingToDistribute));
+                  } else {
+                    awardedForComp = Math.min(avail, Math.max(0, remainingToDistribute));
+                    remainingToDistribute -= awardedForComp;
+                  }
+                  comp.marksAwarded = awardedForComp;
+                  comp.marksDeducted = Math.max(0, avail - awardedForComp);
+                  comp.assessment = awardedForComp >= avail ? 'CORRECT' : awardedForComp > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT';
+                  comp.annotationInstructions = `[RECHECK ADJUSTED] Awarded ${awardedForComp}/${avail} (${cleanReviewerNotes})`;
+                });
               }
 
-              // Recalculate total
+              // Recalculate total against official maximum (Part G1)
               const recalcTotal = evalResult.questions.reduce((sum: number, q: any) => sum + (Number(q.marksAwarded) || 0), 0);
               evalResult.totalMarks = recalcTotal;
-              const maxTotal = Number(evalResult.maximumMarks) || 100;
+              const maxTotal = Number(evalResult.maximumMarks) || Number(recheck.maximum_marks) || 100;
               evalResult.percentage = Math.round((recalcTotal / maxTotal) * 1000) / 10;
               newTotalMarks = recalcTotal;
               newPercentage = evalResult.percentage;
@@ -3801,27 +3986,50 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
               // Direct total marks adjustment
               originalScoreForQ = recheck.total_marks;
               newTotalMarks = newQScore;
-              const maxTotal = Number(evalResult.maximumMarks) || 100;
+              const maxTotal = Number(evalResult.maximumMarks) || Number(recheck.maximum_marks) || 100;
               newPercentage = Math.round((newTotalMarks / maxTotal) * 1000) / 10;
               evalResult.totalMarks = newTotalMarks;
               evalResult.percentage = newPercentage;
             }
+
+            // Grade recalculation
+            newGrade = newPercentage >= 70 ? 'Distinction' : newPercentage >= 60 ? 'First Class' : newPercentage >= 40 ? 'Pass' : 'Fail';
+            evalResult.grade = newGrade;
 
             // Mark evaluation object with version v2
             evalResult.version = 'v2';
             evalResult.recheckStatus = 'RECHECKED_ACCEPTED';
             evalResult.recheckResolutionDate = nowIso;
             evalResult.recheckDelta = newTotalMarks - recheck.total_marks;
-            evalResult.reviewerNotes = reviewerNotes || 'Score adjusted upon senior academic recheck review.';
+            evalResult.reviewerNotes = cleanReviewerNotes;
 
             auditMeta.currentVersion = 'v2';
             auditMeta.lastRecheckedAt = nowIso;
+            updatedEvalResult = evalResult;
+
+            // Preserve V1 files on disk and generate V2
+            const uploadsDir = path.join(process.cwd(), 'uploads');
+            const checkedCopyPath = path.join(uploadsDir, `${recheck.evaluation_id}_checked_copy.pdf`);
+            const checkedCopyV1Path = path.join(uploadsDir, `${recheck.evaluation_id}_checked_copy_v1.pdf`);
+            const reportPath = path.join(uploadsDir, `${recheck.evaluation_id}_report.pdf`);
+            const reportV1Path = path.join(uploadsDir, `${recheck.evaluation_id}_report_v1.pdf`);
+
+            try {
+              if (fs.existsSync(checkedCopyPath) && !fs.existsSync(checkedCopyV1Path)) {
+                fs.copyFileSync(checkedCopyPath, checkedCopyV1Path);
+              }
+              if (fs.existsSync(reportPath) && !fs.existsSync(reportV1Path)) {
+                fs.copyFileSync(reportPath, reportV1Path);
+              }
+            } catch (fileErr) {
+              console.warn('[AdminRoutes] Error preserving V1 copy files:', fileErr);
+            }
 
             db.prepare(`
               UPDATE evaluations
-              SET total_marks = ?, percentage = ?, result_json = ?, audit_metadata_json = ?, checked_copy_status = 'PENDING_REGEN'
+              SET total_marks = ?, percentage = ?, grade = ?, result_json = ?, audit_metadata_json = ?, checked_copy_status = 'PENDING_REGEN'
               WHERE id = ?
-            `).run(newTotalMarks, newPercentage, JSON.stringify(evalResult), JSON.stringify(auditMeta), recheck.evaluation_id);
+            `).run(newTotalMarks, newPercentage, newGrade, JSON.stringify(evalResult), JSON.stringify(auditMeta), recheck.evaluation_id);
           }
         } catch (jsonErr) {
           console.warn('[AdminRoutes] Error updating evaluation result_json during recheck:', jsonErr);
@@ -3834,7 +4042,8 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
           const evalResult = JSON.parse(recheck.result_json);
           evalResult.recheckStatus = resolution === 'APPROVED' ? 'RECHECK_AFFIRMED' : 'RECHECKED_REJECTED';
           evalResult.recheckResolutionDate = nowIso;
-          evalResult.reviewerNotes = reviewerNotes || '';
+          evalResult.reviewerNotes = cleanReviewerNotes;
+          updatedEvalResult = evalResult;
           db.prepare(`
             UPDATE evaluations
             SET result_json = ?, audit_metadata_json = ?
@@ -3858,7 +4067,7 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
       studentNotes: recheck.student_notes,
       status: resolution,
       reviewerId: req.user!.id,
-      reviewerNotes: reviewerNotes || '',
+      reviewerNotes: cleanReviewerNotes,
       originalScore: originalScoreForQ,
       recheckedScore: resolution === 'ADJUSTED' ? newQScore : originalScoreForQ,
       scoreDelta: resolution === 'ADJUSTED' ? (newTotalMarks - recheck.total_marks) : 0,
@@ -3882,13 +4091,138 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
       WHERE id = ?
     `).run(
       resolution,
-      reviewerNotes || null,
+      cleanReviewerNotes,
       adjustedMarks !== undefined ? Number(adjustedMarks) : null,
       nowIso,
       requestId
     );
 
-    // Notify student
+    // Generate V2 checked copy and V2 detailed report PDF if adjusted
+    let revisedCheckedCopyBuffer: Buffer | undefined;
+    let revisedReportBuffer: Buffer | undefined;
+
+    if (resolution === 'ADJUSTED' && (updatedEvalResult || recheck.result_json)) {
+      try {
+        const uploadsDir = path.join(process.cwd(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+        const evalObj = updatedEvalResult || JSON.parse(recheck.result_json);
+        evalObj.totalMarks = newTotalMarks;
+        evalObj.percentage = newPercentage;
+        evalObj.grade = newGrade;
+        evalObj.version = 'v2';
+
+        let origBuf: Buffer | undefined;
+        const origFile = path.join(uploadsDir, `${recheck.evaluation_id}_original.pdf`);
+        if (fs.existsSync(origFile)) {
+          origBuf = fs.readFileSync(origFile);
+        } else {
+          origBuf = await generateOriginalSubmissionPdf(
+            {
+              id: recheck.evaluation_id,
+              studentName: recheck.student_name || 'CA Student',
+              level: recheck.level || 'INTERMEDIATE',
+              subjectName: recheck.subject_name,
+              paper: recheck.paper || 'Paper',
+              attempt: recheck.attempt || 'Current',
+              checkingMode: (recheck.checking_mode as any) || 'standard',
+              totalMarks: newTotalMarks,
+              maximumMarks: evalObj.maximumMarks || 100,
+              percentage: newPercentage,
+              grade: newGrade,
+              createdAt: recheck.eval_created_at,
+            },
+            evalObj
+          );
+        }
+
+        // Generate Revised Checked Copy PDF
+        revisedCheckedCopyBuffer = await generateCheckedCopyPdf(
+          {
+            id: recheck.evaluation_id,
+            studentName: recheck.student_name || 'CA Student',
+            level: recheck.level || 'INTERMEDIATE',
+            subjectName: recheck.subject_name,
+            paper: recheck.paper || 'Paper',
+            attempt: recheck.attempt || 'Current',
+            checkingMode: (recheck.checking_mode as any) || 'standard',
+            totalMarks: newTotalMarks,
+            maximumMarks: evalObj.maximumMarks || 100,
+            percentage: newPercentage,
+            grade: newGrade,
+            createdAt: recheck.eval_created_at,
+            version: 'v2',
+          },
+          evalObj,
+          origBuf
+        );
+
+        fs.writeFileSync(path.join(uploadsDir, `${recheck.evaluation_id}_checked_copy.pdf`), revisedCheckedCopyBuffer);
+        fs.writeFileSync(path.join(uploadsDir, `${recheck.evaluation_id}_checked_copy_v2.pdf`), revisedCheckedCopyBuffer);
+
+        // Generate Revised Detailed Report PDF (prevents 404 on download)
+        revisedReportBuffer = await generateDetailedReportPdf(
+          {
+            id: recheck.evaluation_id,
+            studentName: recheck.student_name || 'CA Student',
+            level: recheck.level || 'INTERMEDIATE',
+            subjectName: recheck.subject_name,
+            paper: recheck.paper || 'Paper',
+            attempt: recheck.attempt || 'Current',
+            checkingMode: (recheck.checking_mode as any) || 'standard',
+            totalMarks: newTotalMarks,
+            maximumMarks: evalObj.maximumMarks || 100,
+            percentage: newPercentage,
+            grade: newGrade,
+            createdAt: recheck.eval_created_at,
+            version: 'v2',
+          },
+          evalObj
+        );
+
+        fs.writeFileSync(path.join(uploadsDir, `${recheck.evaluation_id}_report.pdf`), revisedReportBuffer);
+        fs.writeFileSync(path.join(uploadsDir, `${recheck.evaluation_id}_report_v2.pdf`), revisedReportBuffer);
+
+        db.prepare("UPDATE evaluations SET checked_copy_status = 'GENERATED' WHERE id = ?").run(recheck.evaluation_id);
+      } catch (genErr) {
+        console.warn('[AdminRoutes] V2 PDF regeneration warning:', genErr);
+      }
+    }
+
+    // Determine outcome description for email
+    const scoreDiff = newTotalMarks - recheck.total_marks;
+    const outcomeText = resolution === 'ADJUSTED'
+      ? (scoreDiff > 0 ? 'Marks Increased' : scoreDiff < 0 ? 'Marks Decreased' : 'Marks Adjusted')
+      : resolution === 'APPROVED'
+      ? 'Marks Retained (Affirmed)'
+      : 'Marks Retained (Original Stands)';
+
+    // Automated notification & email (Section 15)
+    if (recheck.student_email) {
+      try {
+        await sendRecheckCompletedEmail({
+          recipient: recheck.student_email,
+          studentName: recheck.student_name || 'CA Student',
+          subjectName: recheck.subject_name || 'Paper',
+          paper: recheck.paper || 'CA Examination',
+          originalMarks: recheck.total_marks,
+          recheckedMarks: newTotalMarks,
+          difference: scoreDiff,
+          outcome: outcomeText,
+          changedQuestions: recheck.question_number || 'Entire Paper',
+          explanation: reviewerNotes || 'Evaluation reviewed against official ICAI suggested answers.',
+          evaluationId: recheck.evaluation_id,
+          recheckRequestId: requestId,
+          studentId: recheck.student_id,
+          adminId: req.user!.id,
+          checkedCopyPdfBuffer: revisedCheckedCopyBuffer,
+        });
+      } catch (emailErr) {
+        console.warn('[AdminRoutes] Error dispatching automated recheck completion email:', emailErr);
+      }
+    }
+
+    // In-app Notification
     const notifMsg = resolution === 'ADJUSTED'
       ? `Your recheck request for ${recheck.subject_name} (${recheck.question_number}) was approved with adjusted score of ${adjustedMarks} marks. ${reviewerNotes || ''}`
       : resolution === 'APPROVED'
@@ -3919,10 +4253,191 @@ router.post('/recheck-requests/:id/resolve', async (req: AuthRequest, res: Respo
       success: true,
       message: `Recheck request successfully resolved as ${resolution}`,
       newTotalMarks,
+      newPercentage,
+      outcome: outcomeText,
     });
   } catch (error: unknown) {
     console.error('Resolve recheck error:', error);
     return res.status(500).json({ error: 'Failed to resolve recheck request' });
+  }
+});
+
+// Section 17 & 18: Admin Manual Email of Checked Copy / Report
+router.post('/evaluations/:id/send-copy-email', async (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user!.id;
+    const evaluationId = req.params.id;
+    const { recipient, copyType = 'CHECKED_COPY', version = 'v2' } = req.body;
+
+    if (!recipient || typeof recipient !== 'string' || !recipient.includes('@')) {
+      return res.status(400).json({ error: 'A valid recipient email address is required.' });
+    }
+
+    const evaluation = db.prepare(`
+      SELECT e.*, u.full_name as student_name, u.email as default_student_email
+      FROM evaluations e
+      JOIN users u ON u.id = e.student_id
+      WHERE e.id = ?
+    `).get(evaluationId) as any;
+
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    let checkedCopyBuffer: Buffer | undefined;
+    let reportBuffer: Buffer | undefined;
+
+    let evalObj: any = null;
+    try {
+      if (evaluation.result_json) evalObj = JSON.parse(evaluation.result_json);
+    } catch {}
+
+    // Load or generate checked copy if needed
+    if (copyType === 'CHECKED_COPY' || copyType === 'BOTH') {
+      const v1Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v1.pdf`);
+      const v2Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v2.pdf`);
+      const mainPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+
+      if (version === 'v1' && fs.existsSync(v1Path)) {
+        checkedCopyBuffer = fs.readFileSync(v1Path);
+      } else if (version === 'v2' && fs.existsSync(v2Path)) {
+        checkedCopyBuffer = fs.readFileSync(v2Path);
+      } else if (fs.existsSync(mainPath)) {
+        checkedCopyBuffer = fs.readFileSync(mainPath);
+      } else if (evalObj) {
+        // dynamically generate
+        let origBuf: Buffer | undefined;
+        const origFile = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+        if (fs.existsSync(origFile)) {
+          origBuf = fs.readFileSync(origFile);
+        } else {
+          origBuf = await generateOriginalSubmissionPdf(
+            {
+              id: evaluation.id,
+              studentName: evaluation.student_name || 'CA Student',
+              level: evaluation.level || 'INTERMEDIATE',
+              subjectName: evaluation.subject_name,
+              paper: evaluation.paper || 'Paper',
+              attempt: evaluation.attempt || 'Current',
+              checkingMode: 'standard',
+              totalMarks: evaluation.total_marks,
+              maximumMarks: evaluation.maximum_marks || 100,
+              percentage: evaluation.percentage,
+              grade: evaluation.grade || 'PASS',
+              createdAt: evaluation.created_at,
+            },
+            evalObj
+          );
+        }
+
+        checkedCopyBuffer = await generateCheckedCopyPdf(
+          {
+            id: evaluation.id,
+            studentName: evaluation.student_name || 'CA Student',
+            level: evaluation.level || 'INTERMEDIATE',
+            subjectName: evaluation.subject_name,
+            paper: evaluation.paper || 'Paper',
+            attempt: evaluation.attempt || 'Current',
+            checkingMode: 'standard',
+            totalMarks: evaluation.total_marks,
+            maximumMarks: evaluation.maximum_marks || 100,
+            percentage: evaluation.percentage,
+            grade: evaluation.grade || 'PASS',
+            createdAt: evaluation.created_at,
+            version: version,
+          },
+          evalObj,
+          origBuf
+        );
+      }
+    }
+
+    // Load or generate detailed report if needed
+    if (copyType === 'DETAILED_REPORT' || copyType === 'BOTH') {
+      const v1RepPath = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+      const mainRepPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+
+      if (version === 'v1' && fs.existsSync(v1RepPath)) {
+        reportBuffer = fs.readFileSync(v1RepPath);
+      } else if (fs.existsSync(mainRepPath)) {
+        reportBuffer = fs.readFileSync(mainRepPath);
+      } else if (evalObj) {
+        reportBuffer = await generateDetailedReportPdf(
+          {
+            id: evaluation.id,
+            studentName: evaluation.student_name || 'CA Student',
+            level: evaluation.level || 'INTERMEDIATE',
+            subjectName: evaluation.subject_name,
+            paper: evaluation.paper || 'Paper',
+            attempt: evaluation.attempt || 'Current',
+            checkingMode: 'standard',
+            totalMarks: evaluation.total_marks,
+            maximumMarks: evaluation.maximum_marks || 100,
+            percentage: evaluation.percentage,
+            grade: evaluation.grade || 'PASS',
+            createdAt: evaluation.created_at,
+          },
+          evalObj
+        );
+      }
+    }
+
+    const emailResult = await sendCheckedCopyEmail({
+      recipient: recipient.trim(),
+      studentName: evaluation.student_name || 'CA Student',
+      subjectName: evaluation.subject_name,
+      paper: evaluation.paper,
+      evaluationId,
+      studentId: evaluation.student_id,
+      adminId,
+      copyType,
+      version: version.toUpperCase(),
+      checkedCopyPdfBuffer: checkedCopyBuffer,
+      detailedReportPdfBuffer: reportBuffer,
+    });
+
+    if (emailResult.success) {
+      return res.json({
+        success: true,
+        message: 'Email sent successfully.',
+        status: emailResult.status,
+        auditId: emailResult.auditId,
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: 'Email could not be sent. Please try again.',
+        details: emailResult.message,
+      });
+    }
+  } catch (error: unknown) {
+    console.error('Send checked copy email error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Email could not be sent. Please try again.',
+    });
+  }
+});
+
+// Email Audit Logs
+router.get('/evaluations/:id/email-audit-logs', (req: AuthRequest, res: Response) => {
+  try {
+    const logs = getEmailAuditLogs(req.params.id);
+    return res.json({ success: true, logs });
+  } catch (error: unknown) {
+    console.error('Get evaluation email audit logs error:', error);
+    return res.status(500).json({ error: 'Failed to load email audit logs' });
+  }
+});
+
+router.get('/email-audit-logs', (req: AuthRequest, res: Response) => {
+  try {
+    const logs = getEmailAuditLogs();
+    return res.json({ success: true, logs });
+  } catch (error: unknown) {
+    console.error('Get all email audit logs error:', error);
+    return res.status(500).json({ error: 'Failed to load email audit logs' });
   }
 });
 

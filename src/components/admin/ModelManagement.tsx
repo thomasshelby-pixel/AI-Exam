@@ -34,6 +34,8 @@ interface ModelConfig {
   max_tokens: number;
   is_enabled: number;
   status: string;
+  health_stage?: string;
+  health_details?: string;
   last_latency_ms: number | null;
   last_tested_at: string | null;
 }
@@ -85,7 +87,12 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ modelId: string; success: boolean; message: string; latency?: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ modelId: string; success: boolean; message: string; latency?: number; details?: any } | null>(null);
+
+  const [runningBenchmarkId, setRunningBenchmarkId] = useState<string | null>(null);
+  const [benchmarkData, setBenchmarkData] = useState<any | null>(null);
+  const [runningConsistencyId, setRunningConsistencyId] = useState<string | null>(null);
+  const [consistencyData, setConsistencyData] = useState<any | null>(null);
 
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
@@ -147,24 +154,25 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
     }
   };
 
-  const handleTestConnection = async (modelId: string) => {
+  const handleTestConnection = async (modelId: string, stage: 'CONNECTIVITY' | 'INFERENCE' | 'EVALUATION_READINESS' = 'EVALUATION_READINESS') => {
     try {
       setTestingModelId(modelId);
       setTestResult(null);
-      const res = await apiRequest<{ success: boolean; message: string; latencyMs?: number }>('/api/admin/models/test-connection', {
+      const res = await apiRequest<{ success: boolean; message: string; latencyMs?: number; details?: any; status?: string }>('/api/admin/models/test-connection', {
         method: 'POST',
-        body: JSON.stringify({ modelId }),
+        body: JSON.stringify({ modelId, stage }),
       });
       setTestResult({
         modelId,
         success: res.success,
         message: res.message,
         latency: res.latencyMs,
+        details: res.details,
       });
       if (res.success) {
-        onNotify?.(`Connected to ${modelId} successfully (${res.latencyMs}ms)`, 'success');
+        onNotify?.(`${modelId} passed ${stage.replace(/_/g, ' ')} check (${res.latencyMs}ms)`, 'success');
       } else {
-        onNotify?.(`Connection test failed: ${res.message}`, 'error');
+        onNotify?.(`Health check failed for ${modelId}: ${res.message}`, 'error');
       }
       await fetchData();
     } catch (err: any) {
@@ -177,6 +185,44 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
       onNotify?.(msg, 'error');
     } finally {
       setTestingModelId(null);
+    }
+  };
+
+  const handleRunBenchmark = async (modelId: string) => {
+    try {
+      setRunningBenchmarkId(modelId);
+      setBenchmarkData(null);
+      const res = await apiRequest<{ success: boolean; benchmark: any }>('/api/admin/models/benchmark-test', {
+        method: 'POST',
+        body: JSON.stringify({ modelId }),
+      });
+      if (res.success && res.benchmark) {
+        setBenchmarkData(res.benchmark);
+        onNotify?.(`Benchmark finished for ${modelId}: Grade ${res.benchmark.grade} (${res.benchmark.adherenceScore}% adherence)`, 'success');
+      }
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Benchmark test failed', 'error');
+    } finally {
+      setRunningBenchmarkId(null);
+    }
+  };
+
+  const handleRunConsistency = async (modelId: string) => {
+    try {
+      setRunningConsistencyId(modelId);
+      setConsistencyData(null);
+      const res = await apiRequest<{ success: boolean; consistency: any }>('/api/admin/models/consistency-test', {
+        method: 'POST',
+        body: JSON.stringify({ modelId, runs: 5 }),
+      });
+      if (res.success && res.consistency) {
+        setConsistencyData(res.consistency);
+        onNotify?.(`5-Run Consistency for ${modelId}: ${res.consistency.consistencyRating} (Std Dev: ${res.consistency.standardDeviation})`, 'success');
+      }
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Consistency test failed', 'error');
+    } finally {
+      setRunningConsistencyId(null);
     }
   };
 
@@ -616,26 +662,42 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
                     </td>
 
                     <td className="py-3 px-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            m.status === 'AVAILABLE'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : m.status === 'RATE_LIMITED'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : m.status === 'INSUFFICIENT_CREDITS'
-                              ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                              : m.status === 'TEMPORARILY_UNAVAILABLE'
-                              ? 'bg-amber-50 text-amber-800 border border-amber-300'
-                              : m.status === 'NOT_CONFIGURED'
-                              ? 'bg-slate-100 text-slate-600 border border-slate-200'
-                              : 'bg-rose-50 text-rose-700 border border-rose-200'
-                          }`}
-                        >
-                          {m.status.replace(/_/g, ' ')}
-                        </span>
-                        {m.last_latency_ms !== null && (
-                          <span className="text-[11px] font-mono text-slate-500">{m.last_latency_ms}ms</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              m.status === 'EVALUATION_READY'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold'
+                                : m.status === 'INFERENCE_READY' || m.status === 'AVAILABLE'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : m.status === 'CONNECTED'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : m.status === 'RATE_LIMITED'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : m.status === 'INSUFFICIENT_CREDITS'
+                                ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                                : m.status === 'TEMPORARILY_UNAVAILABLE'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                                : m.status === 'NOT_CONFIGURED'
+                                ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                                : 'bg-rose-50 text-rose-700 border border-rose-200'
+                            }`}
+                          >
+                            {m.status.replace(/_/g, ' ')}
+                          </span>
+                          {m.last_latency_ms !== null && (
+                            <span className="text-[11px] font-mono text-slate-500">{m.last_latency_ms}ms</span>
+                          )}
+                        </div>
+                        {m.health_stage && m.health_stage !== 'UNKNOWN' && (
+                          <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                            <span className="font-semibold text-slate-700">Stage:</span> {m.health_stage}
+                            {m.health_details && (
+                              <span className="truncate max-w-[180px] text-slate-400" title={m.health_details}>
+                                • {m.health_details}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </td>
@@ -651,16 +713,45 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
                       )}
 
                       <button
-                        onClick={() => handleTestConnection(m.id)}
+                        onClick={() => handleTestConnection(m.id, 'EVALUATION_READINESS')}
                         disabled={testingModelId === m.id}
+                        title="Run 3-Stage Health Check (Connectivity -> Inference -> Schema)"
                         className="px-2 py-1 rounded border border-slate-200 bg-white text-slate-700 text-[11px] font-semibold hover:bg-slate-50 transition cursor-pointer inline-flex items-center gap-1"
                       >
                         {testingModelId === m.id ? (
                           <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
                         ) : (
-                          <Play className="w-3 h-3 text-slate-500" />
+                          <ShieldCheck className="w-3 h-3 text-emerald-600" />
                         )}
-                        <span>Ping</span>
+                        <span>Health Check</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleRunBenchmark(m.id)}
+                        disabled={runningBenchmarkId === m.id}
+                        title="Run ICAI Examination Benchmark (Calculation + Statutory Law)"
+                        className="px-2 py-1 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 text-[11px] font-semibold hover:bg-indigo-100 transition cursor-pointer inline-flex items-center gap-1"
+                      >
+                        {runningBenchmarkId === m.id ? (
+                          <RefreshCw className="w-3 h-3 animate-spin text-indigo-600" />
+                        ) : (
+                          <Cpu className="w-3 h-3 text-indigo-600" />
+                        )}
+                        <span>Benchmark</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleRunConsistency(m.id)}
+                        disabled={runningConsistencyId === m.id}
+                        title="Run 5x Deterministic Scoring Consistency Check"
+                        className="px-2 py-1 rounded border border-purple-200 bg-purple-50 text-purple-700 text-[11px] font-semibold hover:bg-purple-100 transition cursor-pointer inline-flex items-center gap-1"
+                      >
+                        {runningConsistencyId === m.id ? (
+                          <RefreshCw className="w-3 h-3 animate-spin text-purple-600" />
+                        ) : (
+                          <Scale className="w-3 h-3 text-purple-600" />
+                        )}
+                        <span>5x Consist</span>
                       </button>
 
                       <button
@@ -716,6 +807,124 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
               {testResult.latency} ms
             </span>
           )}
+        </div>
+      )}
+
+      {/* Benchmark Results Modal */}
+      {benchmarkData && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">ICAI Model Benchmark Results</h3>
+                  <p className="text-xs text-slate-500 font-mono">{benchmarkData.modelId} ({benchmarkData.provider?.toUpperCase()})</p>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                benchmarkData.grade === 'EXCELLENT' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+              }`}>
+                Grade: {benchmarkData.grade} ({benchmarkData.adherenceScore}%)
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Total Benchmark Latency</span>
+                  <span className="text-base font-bold font-mono text-slate-800">{benchmarkData.totalLatencyMs} ms</span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Schema Adherence</span>
+                  <span className="text-base font-bold font-mono text-indigo-700">{benchmarkData.adherenceScore}% Passed</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">Test Cases Evaluated:</h4>
+                {benchmarkData.testCases?.map((tc: any, idx: number) => (
+                  <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50/50 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-semibold text-slate-900">{tc.name}</div>
+                      <div className="text-[11px] text-slate-500">{tc.type} • {tc.remarks}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-slate-800">{tc.marksAwarded} / {tc.maximumMarks} Marks</div>
+                      <div className="text-[10px] text-slate-400 font-mono">{tc.latencyMs} ms</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setBenchmarkData(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5-Run Consistency Results Modal */}
+      {consistencyData && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-purple-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">5-Run Deterministic Consistency</h3>
+                  <p className="text-xs text-slate-500 font-mono">{consistencyData.modelId}</p>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                consistencyData.variance === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-purple-100 text-purple-800'
+              }`}>
+                {consistencyData.consistencyRating}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-xs text-center">
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 block uppercase font-bold">Mean Score</span>
+                <span className="text-base font-bold text-slate-900">{consistencyData.meanScore} / 2</span>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 block uppercase font-bold">Std Deviation</span>
+                <span className="text-base font-bold text-purple-700">{consistencyData.standardDeviation}</span>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-500 block uppercase font-bold">Avg Latency</span>
+                <span className="text-base font-bold text-slate-800">{consistencyData.averageLatencyMs}ms</span>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-bold text-slate-700 mb-1.5">Per-Run Scores (5 Identical Runs):</h4>
+              <div className="flex gap-2">
+                {consistencyData.scores?.map((score: number, sIdx: number) => (
+                  <div key={sIdx} className="flex-1 p-2 bg-slate-100 rounded text-center">
+                    <div className="text-[10px] text-slate-500 font-bold">Run {sIdx + 1}</div>
+                    <div className="text-sm font-mono font-black text-slate-800">{score >= 0 ? `${score}M` : 'ERR'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setConsistencyData(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

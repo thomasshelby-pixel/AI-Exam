@@ -569,10 +569,14 @@ export function validateAuthoritativeConsistency(
     );
   }
 
-  // Evaluated questions cannot exceed paper maximum marks
+  // Evaluated questions cannot exceed paper maximum marks, and must match paper maximumMarks unless optional selection is recorded
   if (questionsMaxSum > evaluation.maximumMarks + 0.01) {
     errors.push(
       `Paper maximum marks violation: sum of question max marks (${questionsMaxSum}) exceeds paper maximumMarks (${evaluation.maximumMarks}).`
+    );
+  } else if (Math.abs(questionsMaxSum - evaluation.maximumMarks) > 0.01 && !evaluation.selectedEvaluatedMaxMarks) {
+    errors.push(
+      `Paper maximum marks mismatch: sum of question max marks (${questionsMaxSum}) does not equal paper maximumMarks (${evaluation.maximumMarks}).`
     );
   }
 

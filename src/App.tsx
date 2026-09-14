@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   BrowserRouter,
   Routes,
@@ -48,94 +48,82 @@ const EvaluationReportWrapper: React.FC = () => {
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const [error, setError] = useState<string>('');
 
+  const fetchReport = useCallback(async (isPolling = false) => {
+    if (!id) return;
+    try {
+      const res = await apiRequest<{
+        evaluation: {
+          status?: string;
+          error_message?: string;
+          raw_result_json?: string;
+          resultJson?: EvaluationResult;
+        };
+      }>(`/api/student/evaluations/${id}`);
+
+      const evalData = res.evaluation;
+      if (evalData?.resultJson) {
+        setReport(evalData.resultJson);
+        setLoading(false);
+        return;
+      }
+
+      if (evalData?.raw_result_json) {
+        try {
+          setReport(JSON.parse(evalData.raw_result_json));
+          setLoading(false);
+          return;
+        } catch {
+          // continue
+        }
+      }
+
+      if (evalData?.status === 'FAILED') {
+        setError(
+          evalData.error_message ||
+            'Evaluation could not be completed. No credits were deducted. Please retry your upload.'
+        );
+        setLoading(false);
+        return;
+      }
+
+      // If in progress, show progress and poll
+      if (
+        evalData?.status === 'PENDING' ||
+        evalData?.status === 'UPLOADING' ||
+        evalData?.status === 'READING_ANSWER_SHEET' ||
+        evalData?.status === 'EVALUATING_ANSWERS' ||
+        evalData?.status === 'PROCESSING'
+      ) {
+        setProcessingStatus(
+          evalData.status === 'READING_ANSWER_SHEET'
+            ? 'Analyzing handwritten pages and optical handwriting...'
+            : evalData.status === 'EVALUATING_ANSWERS'
+            ? 'Executing ICAI step-by-step mark allocation...'
+            : 'Synthesizing verified evaluation report...'
+        );
+
+        setTimeout(() => fetchReport(true), 2500);
+        return;
+      }
+
+      if (!isPolling) {
+        setError('Evaluation report not found or still generating. Please check My Evaluations in a moment.');
+        setLoading(false);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load report');
+      setLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     if (!id) return;
     if (passedResult) {
       setLoading(false);
       return;
     }
-
-    let isMounted = true;
-    let pollCount = 0;
-    const maxPolls = 20;
-
-    const fetchReport = async () => {
-      try {
-        const res = await apiRequest<{
-          evaluation: {
-            status?: string;
-            error_message?: string;
-            raw_result_json?: string;
-            resultJson?: EvaluationResult;
-          };
-        }>(`/api/student/evaluations/${id}`);
-
-        if (!isMounted) return;
-
-        const evalData = res.evaluation;
-        if (evalData?.resultJson) {
-          setReport(evalData.resultJson);
-          setLoading(false);
-          return;
-        }
-
-        if (evalData?.raw_result_json) {
-          try {
-            setReport(JSON.parse(evalData.raw_result_json));
-            setLoading(false);
-            return;
-          } catch {
-            // continue
-          }
-        }
-
-        if (evalData?.status === 'FAILED') {
-          setError(
-            evalData.error_message ||
-              'Evaluation could not be completed. No credits were deducted. Please retry your upload.'
-          );
-          setLoading(false);
-          return;
-        }
-
-        // If in progress, show progress and poll
-        if (
-          evalData?.status === 'PENDING' ||
-          evalData?.status === 'UPLOADING' ||
-          evalData?.status === 'READING_ANSWER_SHEET' ||
-          evalData?.status === 'EVALUATING_ANSWERS' ||
-          evalData?.status === 'PROCESSING'
-        ) {
-          setProcessingStatus(
-            evalData.status === 'READING_ANSWER_SHEET'
-              ? 'Analyzing handwritten pages and optical handwriting...'
-              : evalData.status === 'EVALUATING_ANSWERS'
-              ? 'Executing ICAI step-by-step mark allocation...'
-              : 'Synthesizing verified evaluation report...'
-          );
-
-          if (pollCount < maxPolls) {
-            pollCount++;
-            setTimeout(fetchReport, 2500);
-            return;
-          }
-        }
-
-        setError('Evaluation report not found or still generating. Please check My Evaluations in a moment.');
-        setLoading(false);
-      } catch (err: unknown) {
-        if (!isMounted) return;
-        setError(err instanceof Error ? err.message : 'Failed to load report');
-        setLoading(false);
-      }
-    };
-
     fetchReport();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [id, passedResult]);
+  }, [id, passedResult, fetchReport]);
 
   if (loading) {
     return (

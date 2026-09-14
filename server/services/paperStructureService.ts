@@ -153,12 +153,12 @@ function buildTaxationPaperStructure(options: {
   // Extract verified keys from the actual uploaded Suggested Answers
   const parsedKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
 
-  // Authoritative verified keys for August 2026 CA Intermediate Paper 3 Taxation:
-  // Income Tax (MCQ 1 to 8): C, C, B, A, A, D, C, D
-  // GST (MCQ 9 to 16): D, A, C, B, C, B, B, D
+  // Authoritative verified keys for July/August 2026 CA Intermediate Paper 3 Taxation (MTP Series 1):
+  // Income Tax (MCQ 1 to 8): 1: C, 2: B, 3: B, 4: C, 5: D, 6: D, 7: C, 8: C
+  // GST (MCQ 9 to 16): 9: A, 10: C, 11: A, 12: A, 13: B, 14: C, 15: A, 16: C
   const verifiedDefaultKeys: Record<string, string> = {
-    '1': 'C', '2': 'C', '3': 'B', '4': 'A', '5': 'A', '6': 'D', '7': 'C', '8': 'D',
-    '9': 'D', '10': 'A', '11': 'C', '12': 'B', '13': 'C', '14': 'B', '15': 'B', '16': 'D',
+    '1': 'C', '2': 'B', '3': 'B', '4': 'C', '5': 'D', '6': 'D', '7': 'C', '8': 'C',
+    '9': 'A', '10': 'C', '11': 'A', '12': 'A', '13': 'B', '14': 'C', '15': 'A', '16': 'C',
   };
 
   const getKey = (qNum: string) => parsedKeys.get(qNum)?.officialKey || verifiedDefaultKeys[qNum] || 'A';
@@ -169,14 +169,14 @@ function buildTaxationPaperStructure(options: {
     // ----------------------------------------------------
     // Section A - Division A: MCQs (15 Marks)
     // ----------------------------------------------------
-    { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('1'), topic: 'Section A - Case Scenario MCQ 1 (Interest on borrowed capital & taxable income)', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ2', questionNumber: '2', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('2'), topic: 'Section A - Case Scenario MCQ 2 (Net taxable income from house property)', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ3', questionNumber: '3', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('3'), topic: 'Section A - Case Scenario MCQ 3 (Deduction on self-occupied residential unit u/s 24(b))', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ4', questionNumber: '4', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('4'), topic: 'Section A - Independent MCQ 4 (Residential status u/s 6(1) & 6(6))', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ5', questionNumber: '5', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('5'), topic: 'Section A - Independent MCQ 5 (TDS requirement on rent u/s 194-IB)', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ6', questionNumber: '6', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('6'), topic: 'Section A - Independent MCQ 6 (Advance tax liability threshold u/s 208)', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ7', questionNumber: '7', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('7'), topic: 'Section A - Independent MCQ 7 (Disallowance for payments to MSEs u/s 43B(h))', section: 'A', division: 'A' },
-    { fullQuestionCode: 'MCQ8', questionNumber: '8', subQuestionNumber: 'MCQ', maximumMarks: 1, compulsory: true, isMcq: true, officialKey: getKey('8'), topic: 'Section A - Independent MCQ 8 (Tax on deemed income u/s 115BBE)', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('1'), officialExplanation: getExplanation('1'), provision: getProvision('1'), topic: 'Section A - Case Scenario MCQ 1 (Interest on borrowed capital & taxable income)', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ2', questionNumber: '2', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('2'), officialExplanation: getExplanation('2'), provision: getProvision('2'), topic: 'Section A - Case Scenario MCQ 2 (Net taxable income from house property)', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ3', questionNumber: '3', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('3'), officialExplanation: getExplanation('3'), provision: getProvision('3'), topic: 'Section A - Case Scenario MCQ 3 (Deduction on self-occupied residential unit u/s 24(b))', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ4', questionNumber: '4', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('4'), officialExplanation: getExplanation('4'), provision: getProvision('4'), topic: 'Section A - Independent MCQ 4 (Residential status u/s 6(1) & 6(6))', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ5', questionNumber: '5', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('5'), officialExplanation: getExplanation('5'), provision: getProvision('5'), topic: 'Section A - Independent MCQ 5 (TDS requirement on rent u/s 194-IB)', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ6', questionNumber: '6', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('6'), officialExplanation: getExplanation('6'), provision: getProvision('6'), topic: 'Section A - Independent MCQ 6 (Advance tax liability threshold u/s 208)', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ7', questionNumber: '7', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('7'), officialExplanation: getExplanation('7'), provision: getProvision('7'), topic: 'Section A - Independent MCQ 7 (Disallowance for payments to MSEs u/s 43B(h))', section: 'A', division: 'A' },
+    { fullQuestionCode: 'MCQ8', questionNumber: '8', subQuestionNumber: 'MCQ', maximumMarks: 1, compulsory: true, isMcq: true, officialKey: getKey('8'), officialExplanation: getExplanation('8'), provision: getProvision('8'), topic: 'Section A - Independent MCQ 8 (Tax on deemed income u/s 115BBE)', section: 'A', division: 'A' },
 
     // ----------------------------------------------------
     // Section A - Division B: Descriptive (35 Marks)
@@ -192,14 +192,14 @@ function buildTaxationPaperStructure(options: {
     // ----------------------------------------------------
     // Section B - Division A: MCQs (15 Marks)
     // ----------------------------------------------------
-    { fullQuestionCode: 'MCQ9', questionNumber: '9', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('9'), topic: 'Section B - GST Case Scenario MCQ 9 (Tax on commercial & residential renting)', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ10', questionNumber: '10', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('10'), topic: 'Section B - GST Case Scenario MCQ 10 (Del-credere agent supply value under Rule 28)', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ11', questionNumber: '11', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('11'), topic: 'Section B - GST Case Scenario MCQ 11 (ECO delivery services tax liability u/s 9(5))', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ12', questionNumber: '12', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('12'), topic: 'Section B - GST Independent MCQ 12 (Taxable value of supply for September)', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ13', questionNumber: '13', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('13'), topic: 'Section B - GST Independent MCQ 13 (ITC eligibility under section 16/17)', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ14', questionNumber: '14', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('14'), topic: 'Section B - GST Independent MCQ 14 (Time of supply for continuous supply u/s 31(5))', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ15', questionNumber: '15', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('15'), topic: 'Section B - GST Independent MCQ 15 (Classification of construction vs sale of building)', section: 'B', division: 'A' },
-    { fullQuestionCode: 'MCQ16', questionNumber: '16', subQuestionNumber: 'MCQ', maximumMarks: 1, compulsory: true, isMcq: true, officialKey: getKey('16'), topic: 'Section B - GST Independent MCQ 16 (Debit note adjustment u/s 34)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ9', questionNumber: '9', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('9'), officialExplanation: getExplanation('9'), provision: getProvision('9'), topic: 'Section B - GST Case Scenario MCQ 9 (Tax on commercial & residential renting)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ10', questionNumber: '10', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('10'), officialExplanation: getExplanation('10'), provision: getProvision('10'), topic: 'Section B - GST Case Scenario MCQ 10 (Del-credere agent supply value under Rule 28)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ11', questionNumber: '11', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('11'), officialExplanation: getExplanation('11'), provision: getProvision('11'), topic: 'Section B - GST Case Scenario MCQ 11 (ECO delivery services tax liability u/s 9(5))', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ12', questionNumber: '12', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('12'), officialExplanation: getExplanation('12'), provision: getProvision('12'), topic: 'Section B - GST Independent MCQ 12 (Taxable value of supply for September)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ13', questionNumber: '13', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('13'), officialExplanation: getExplanation('13'), provision: getProvision('13'), topic: 'Section B - GST Independent MCQ 13 (ITC eligibility under section 16/17)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ14', questionNumber: '14', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('14'), officialExplanation: getExplanation('14'), provision: getProvision('14'), topic: 'Section B - GST Independent MCQ 14 (Time of supply for continuous supply u/s 31(5))', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ15', questionNumber: '15', subQuestionNumber: 'MCQ', maximumMarks: 2, compulsory: true, isMcq: true, officialKey: getKey('15'), officialExplanation: getExplanation('15'), provision: getProvision('15'), topic: 'Section B - GST Independent MCQ 15 (Classification of construction vs sale of building)', section: 'B', division: 'A' },
+    { fullQuestionCode: 'MCQ16', questionNumber: '16', subQuestionNumber: 'MCQ', maximumMarks: 1, compulsory: true, isMcq: true, officialKey: getKey('16'), officialExplanation: getExplanation('16'), provision: getProvision('16'), topic: 'Section B - GST Independent MCQ 16 (Debit note adjustment u/s 34)', section: 'B', division: 'A' },
 
     // ----------------------------------------------------
     // Section B - Division B: Descriptive (35 Marks)

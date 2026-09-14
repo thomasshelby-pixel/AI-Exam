@@ -85,3 +85,63 @@ export async function apiRequest<T = unknown>(
   return data as T;
 }
 
+/**
+ * Securely downloads or opens an authenticated file (e.g. Checked Copy, Detailed Report)
+ * using the client's Bearer token.
+ */
+export async function downloadAuthenticatedFile(
+  endpoint: string,
+  options: {
+    filename?: string;
+    openInNewTab?: boolean;
+  } = {}
+): Promise<void> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('ca_exam_checker_token') : null;
+  const headers: Record<string, string> = {};
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(endpoint, {
+    credentials: 'include',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errMsg = 'Failed to download file';
+    try {
+      const errData = await response.json();
+      errMsg = errData.error || errData.message || errMsg;
+    } catch {
+      errMsg = `Download failed with HTTP ${response.status}: ${response.statusText}`;
+    }
+    throw new ApiError(errMsg, response.status);
+  }
+
+  const blob = await response.blob();
+  const blobUrl = window.URL.createObjectURL(blob);
+
+  if (options.openInNewTab) {
+    const newWindow = window.open(blobUrl, '_blank');
+    if (!newWindow) {
+      // If popup blocked, fallback to download
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = options.filename || 'download.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  } else {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = options.filename || 'download.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60000);
+}
+

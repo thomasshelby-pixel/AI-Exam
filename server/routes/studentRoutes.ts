@@ -23,6 +23,7 @@ import { savePersistentFile, getPersistentFile } from '../services/persistentSto
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
+import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 
 const router = Router();
 
@@ -1244,6 +1245,19 @@ router.get(
       }
 
       const uploadsDir = path.join(process.cwd(), 'uploads');
+      const requestedVersion = (req.query.version as string || '').toLowerCase();
+
+      // If specific version is requested, serve that archived version
+      if (requestedVersion === 'v1') {
+        const v1Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v1.pdf`);
+        if (fs.existsSync(v1Path)) {
+          const v1Buffer = fs.readFileSync(v1Path);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}_v1_archived.pdf"`);
+          return res.send(v1Buffer);
+        }
+      }
+
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
 
       // If pre-generated checked copy is already cached on disk, serve directly
@@ -1409,6 +1423,19 @@ router.get(
           status: record.status,
           reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
         });
+      }
+
+      const uploadsDir = path.join(process.cwd(), 'uploads');
+      const requestedVersion = (req.query.version as string || '').toLowerCase();
+
+      if (requestedVersion === 'v1') {
+        const v1Path = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+        if (fs.existsSync(v1Path)) {
+          const v1Buffer = fs.readFileSync(v1Path);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}_v1_archived.pdf"`);
+          return res.send(v1Buffer);
+        }
       }
 
       let resultJson: any = null;
@@ -1595,15 +1622,31 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const evaluationId = req.params.id;
-    const { questionNumber, subQuestion, reason, studentNotes, requestedMode } = req.body;
+    const {
+      questionNumber: rawQuestionNumber,
+      subQuestion,
+      reason: rawReason,
+      studentNotes,
+      requestType = 'SPECIFIC_QUESTION',
+      disputedQuestions = [],
+    } = req.body;
 
-    if (!questionNumber || !reason) {
-      return res.status(400).json({ error: 'Question number and specific reason for rechecking are required.' });
+    let questionNumber = rawQuestionNumber;
+    if (requestType === 'COMPLETE_PAPER' || !questionNumber) {
+      questionNumber = 'ALL';
+    } else if (requestType === 'MULTIPLE_QUESTIONS' && Array.isArray(disputedQuestions) && disputedQuestions.length > 0) {
+      questionNumber = disputedQuestions.join(', ');
     }
+
+    const finalReason = (rawReason && String(rawReason).trim())
+      ? String(rawReason).trim().slice(0, 500)
+      : (studentNotes && String(studentNotes).trim())
+      ? String(studentNotes).trim().slice(0, 500)
+      : 'Student requested evaluation recheck';
 
     // Verify evaluation exists and belongs to student
     const evaluation = db.prepare(`
-      SELECT id, student_id, status, subject_name, paper, total_marks, percentage
+      SELECT id, student_id, status, subject_name, paper, total_marks, percentage, audit_metadata_json
       FROM evaluations 
       WHERE id = ?
     `).get(evaluationId) as {
@@ -1614,6 +1657,7 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       paper: string;
       total_marks: number;
       percentage: number;
+      audit_metadata_json?: string;
     } | undefined;
 
     if (!evaluation) {
@@ -1631,11 +1675,25 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
     // Check for existing pending request
     const existing = db.prepare(`
       SELECT id FROM recheck_requests 
-      WHERE evaluation_id = ? AND question_number = ? AND status = 'PENDING'
-    `).get(evaluationId, questionNumber);
+      WHERE evaluation_id = ? AND (question_number = ? OR question_number = 'ALL' OR ? = 'ALL') AND status = 'PENDING'
+    `).get(evaluationId, questionNumber, questionNumber);
 
     if (existing) {
-      return res.status(409).json({ error: 'A pending review request already exists for this question.' });
+      return res.status(409).json({ error: 'A pending review request already exists for this evaluation / question.' });
+    }
+
+    // Fetch student email
+    const studentUser = db.prepare('SELECT email, full_name FROM users WHERE id = ?').get(studentId) as any;
+    const studentEmail = studentUser?.email || '';
+
+    let currentVersion = 'v1';
+    try {
+      if (evaluation.audit_metadata_json) {
+        const meta = JSON.parse(evaluation.audit_metadata_json);
+        if (meta.currentVersion) currentVersion = meta.currentVersion;
+      }
+    } catch {
+      currentVersion = 'v1';
     }
 
     const requestId = `rck_${crypto.randomBytes(8).toString('hex')}`;
@@ -1643,18 +1701,27 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
 
     db.prepare(`
       INSERT INTO recheck_requests (
-        id, evaluation_id, student_id, question_number, sub_question,
-        reason, student_notes, status, requested_mode, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        id, evaluation_id, student_id, student_email, subject, paper,
+        request_type, question_number, sub_question, disputed_questions_json,
+        reason, student_reason, student_notes, original_marks,
+        original_evaluation_version, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
     `).run(
       requestId,
       evaluationId,
       studentId,
+      studentEmail,
+      evaluation.subject_name,
+      evaluation.paper || 'Paper',
+      requestType,
       questionNumber,
       subQuestion || null,
-      reason,
-      studentNotes || null,
-      requestedMode || 'standard',
+      JSON.stringify(disputedQuestions || []),
+      finalReason,
+      finalReason,
+      studentNotes ? String(studentNotes).trim().slice(0, 500) : null,
+      evaluation.total_marks,
+      currentVersion,
       nowIso
     );
 
@@ -1667,7 +1734,7 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       notifId,
       studentId,
       'Recheck Request Registered',
-      `Your recheck request for ${evaluation.subject_name} (${questionNumber}) has been submitted for senior academic review.`
+      `Your recheck request for ${evaluation.subject_name} (${questionNumber}) has been submitted for review. No credits were deducted.`
     );
 
     // Audit log
@@ -1678,13 +1745,13 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       `log_${crypto.randomBytes(8).toString('hex')}`,
       studentId,
       evaluationId,
-      `Student requested recheck for ${questionNumber}: ${reason}`
+      `Student requested recheck for ${questionNumber} (${requestType}): ${finalReason}`
     );
 
     const createdRecord = db.prepare('SELECT * FROM recheck_requests WHERE id = ?').get(requestId);
     return res.status(201).json({
       success: true,
-      message: 'Recheck request logged successfully. Senior examiner review is pending.',
+      message: 'Recheck request logged successfully. Review is in progress.',
       recheckRequest: createdRecord,
     });
   } catch (error: unknown) {
@@ -1717,6 +1784,119 @@ router.get('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get recheck requests error:', error);
     return res.status(500).json({ error: 'Failed to load recheck requests' });
+  }
+});
+
+// Recheck Evidence endpoint for Students
+router.get(['/evaluations/:id/recheck-evidence', '/evaluations/:id/evidence'], async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const userRole = req.user!.role;
+    const evaluationId = req.params.id;
+
+    let evaluation: any = null;
+    if ((userRole as string) === 'SUPER_ADMIN' || userRole === 'INSTITUTE_ADMIN') {
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+    } else {
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
+    }
+
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found or unauthorized' });
+    }
+
+    const recheck = db.prepare(`
+      SELECT * FROM recheck_requests WHERE evaluation_id = ? ORDER BY created_at DESC LIMIT 1
+    `).get(evaluationId) as any;
+
+    let evalResult: any = {};
+    try {
+      if (evaluation.result_json) {
+        evalResult = JSON.parse(evaluation.result_json);
+      }
+    } catch {}
+
+    const qNum = recheck?.question_number || (req.query.q as string) || '1';
+    const subQ = recheck?.sub_question || '';
+    const fullCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
+
+    let qTarget: any = null;
+    if (Array.isArray(evalResult.questions)) {
+      qTarget = evalResult.questions.find((q: any) =>
+        String(q.questionNumber).toLowerCase() === String(qNum).toLowerCase() ||
+        `Q${q.questionNumber}`.toLowerCase() === String(qNum).toLowerCase() ||
+        (q.subQuestion && String(q.subQuestion).toLowerCase() === String(subQ).toLowerCase() && String(q.questionNumber) === String(qNum))
+      );
+      if (!qTarget && evalResult.questions.length > 0) {
+        qTarget = evalResult.questions[0];
+      }
+    }
+
+    // Material retrieval
+    let mat: any = null;
+    if (evaluation.material_id) {
+      mat = db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(evaluation.material_id) as any;
+    }
+    if (!mat) {
+      mat = db.prepare('SELECT * FROM evaluation_materials WHERE level = ? AND subject_key = ? ORDER BY created_at DESC LIMIT 1').get(evaluation.level, evaluation.subject_key || '') as any;
+    }
+
+    const snippets = extractRelevantReferenceSnippets(
+      fullCode,
+      mat?.question_paper_text || '',
+      mat?.suggested_answers_text || '',
+      mat?.marking_scheme_text || ''
+    );
+
+    return res.json({
+      success: true,
+      evaluationId,
+      recheckId: recheck?.id || null,
+      paper: {
+        level: evaluation.level,
+        subjectName: evaluation.subject_name,
+        paper: evaluation.paper,
+        attempt: evaluation.attempt,
+      },
+      dispute: recheck ? {
+        questionNumber: recheck.question_number,
+        subQuestion: recheck.sub_question,
+        requestType: recheck.request_type,
+        reason: recheck.reason,
+        studentNotes: recheck.student_notes,
+        createdAt: recheck.created_at,
+        status: recheck.status,
+        reviewerNotes: recheck.reviewer_notes,
+        adjustedMarks: recheck.adjusted_marks,
+      } : null,
+      candidateAnswer: {
+        pages: qTarget?.pageNumber ? [qTarget.pageNumber] : [1],
+        studentEvidence: qTarget?.markingComponents?.[0]?.studentEvidence || recheck?.student_notes || 'Candidate handwritten answer on submitted script.',
+        originalDownloadUrl: `/api/student/evaluations/${evaluationId}/download-original`,
+        checkedCopyDownloadUrl: `/api/student/evaluations/${evaluationId}/download-checked-copy`,
+      },
+      referenceMaterial: {
+        materialId: mat?.id || 'ICAI_OFFICIAL_SUGGESTED',
+        materialTitle: mat?.title || `${evaluation.subject_name} Official ICAI Suggested Answers & Rubric`,
+        questionPaperExcerpt: snippets.qpSnippet || 'Question paper extract available in full syllabus material.',
+        suggestedAnswerExcerpt: snippets.saSnippet || 'Official suggested solution extract available in full syllabus material.',
+        markingSchemeExcerpt: snippets.msSnippet || 'Official step-marking breakdown available in full syllabus material.',
+        contentHash: snippets.contentHash,
+        retrievedCharacterCount: snippets.retrievedCharacterCount,
+      },
+      originalEvaluation: qTarget || null,
+      allQuestions: evalResult.questions || [],
+      currentScore: {
+        totalMarks: evaluation.total_marks,
+        maximumMarks: evaluation.maximum_marks || 100,
+        percentage: evaluation.percentage,
+        grade: evaluation.grade,
+        version: evalResult.version || 'v1',
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Get student recheck evidence error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve recheck evidence' });
   }
 });
 

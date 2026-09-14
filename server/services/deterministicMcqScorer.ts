@@ -203,6 +203,29 @@ export interface AuthoritativeMcqDef {
   sourceMaterialTitle?: string;
 }
 
+export interface McqAuditRecord {
+  questionNumber: string;
+  candidateSelectedOption: string;
+  authoritativeOfficialOption: string;
+  marksAvailable: number;
+  marksAwarded: number;
+  correctness: 'CORRECT' | 'INCORRECT' | 'NOT_ATTEMPTED' | 'REVIEW_REQUIRED';
+  exactReferenceMaterial: string;
+  exactSuggestedAnswerSection: string;
+  explanation: string;
+  confidence: number;
+}
+
+export interface AuthoritativeMcqEvaluationResult {
+  questions: QuestionEvaluation[];
+  auditTable: McqAuditRecord[];
+  totalMcqMarksAwarded: number;
+  totalMcqMarksAvailable: number;
+  authoritativeMcqMaximum: number;
+  isConsistent: boolean;
+  validationErrors: string[];
+}
+
 /**
  * Creates fully evaluated QuestionEvaluation records for all authoritative MCQs
  * using the candidate's detected choices from the coverage map.
@@ -210,13 +233,26 @@ export interface AuthoritativeMcqDef {
  */
 export function evaluateAllAuthoritativeMcqs(
   mcqs: AuthoritativeMcqDef[],
-  mcqSelections: Record<string, string>,
+  mcqSelections: Record<string, string> | Map<string, string>,
   config: McqScoringConfig & {
     sourceMaterialId?: string;
     sourceMaterialVersion?: string;
     sourceMaterialTitle?: string;
   }
 ): QuestionEvaluation[] {
+  const result = evaluateAllAuthoritativeMcqsWithAudit(mcqs, mcqSelections, config);
+  return result.questions;
+}
+
+export function evaluateAllAuthoritativeMcqsWithAudit(
+  mcqs: AuthoritativeMcqDef[],
+  mcqSelections: Record<string, string> | Map<string, string>,
+  config: McqScoringConfig & {
+    sourceMaterialId?: string;
+    sourceMaterialVersion?: string;
+    sourceMaterialTitle?: string;
+  }
+): AuthoritativeMcqEvaluationResult {
   const level = (config.caLevel || 'INTERMEDIATE').toUpperCase();
   const isFoundationObjective =
     level === 'FOUNDATION' &&
@@ -231,9 +267,18 @@ export function evaluateAllAuthoritativeMcqs(
   const matVersion = config.sourceMaterialVersion || 'v1.0';
   const matId = config.sourceMaterialId || 'ICAI_OFFICIAL_SUGGESTED';
 
-  return mcqs.map((mcq) => {
+  const auditTable: McqAuditRecord[] = [];
+  const validationErrors: string[] = [];
+
+  // Determine authoritative maximum marks for MCQs
+  const totalMcqMaxPossible = mcqs.reduce((acc, m) => acc + (m.maximumMarks || 0), 0);
+
+  const evaluatedQuestions: QuestionEvaluation[] = mcqs.map((mcq) => {
     const qNum = mcq.questionNumber;
-    const studentChoice = (mcqSelections[qNum] || '').trim().toUpperCase();
+    const rawChoice = mcqSelections instanceof Map
+      ? (mcqSelections.get(qNum) ?? mcqSelections.get(`MCQ${qNum}`) ?? mcqSelections.get(`MCQ ${qNum}`) ?? '')
+      : (mcqSelections[qNum] ?? mcqSelections[`MCQ${qNum}`] ?? mcqSelections[`MCQ ${qNum}`] ?? '');
+    const studentChoice = String(rawChoice || '').trim().toUpperCase();
     const officialKey = (mcq.officialKey || '').trim().toUpperCase();
     const maxMarks = mcq.maximumMarks;
 
@@ -255,34 +300,31 @@ export function evaluateAllAuthoritativeMcqs(
       marksAwarded = maxMarks;
       marksDeducted = 0;
       assessment = 'CORRECT';
+      deductionReason = undefined;
     } else if (!isAttempted) {
       marksAwarded = 0;
       marksDeducted = maxMarks;
       assessment = 'INCORRECT';
-      deductionReason = 'MCQ not attempted. 0 marks awarded.';
+      deductionReason = `MCQ ${qNum} not attempted (0/${maxMarks} marks).`;
     } else {
+      // STRICT BINARY SCORING: Incorrect option selected
       marksAwarded = isFoundationObjective ? -0.25 : 0;
       marksDeducted = isFoundationObjective ? maxMarks + 0.25 : maxMarks;
       assessment = 'INCORRECT';
-      deductionReason = `Selected option (${studentChoice}) does not match verified official key (${officialKey}). 0/${maxMarks} awarded.`;
+      deductionReason = isFoundationObjective
+        ? `Candidate selected Option (${studentChoice}), Official Answer is Option (${officialKey}). -0.25 negative marking applied.`
+        : `Candidate selected Option (${studentChoice}), Official Answer is Option (${officialKey}). 0/${maxMarks} marks awarded (no partial credit).`;
     }
 
-    const defaultExp = mcq.officialExplanation || `Official verified answer is Option (${officialKey}).`;
-    const provision = mcq.provision || (
-      mcq.topic?.includes('24(b)') ? 'Section 24(b) of the Income-tax Act, 1961' :
-      mcq.topic?.includes('194-IB') ? 'Section 194-IB of the Income-tax Act, 1961' :
-      mcq.topic?.includes('208') ? 'Section 208 of the Income-tax Act, 1961' :
-      mcq.topic?.includes('43B(h)') ? 'Section 43B(h) of the Income-tax Act, 1961' :
-      mcq.topic?.includes('115BBE') ? 'Section 115BBE of the Income-tax Act, 1961' :
-      mcq.topic?.includes('9(5)') ? 'Section 9(5) of the CGST Act, 2017' :
-      mcq.topic?.includes('31(5)') ? 'Section 31(5) of the CGST Act, 2017' :
-      mcq.topic?.includes('34') ? 'Section 34 of the CGST Act, 2017' :
-      mcq.topic?.includes('Rule 28') ? 'Rule 28 / Schedule I of the CGST Rules, 2017' :
-      'No specific verified provision citation is provided in the supplied reference material.'
-    );
+    // Explanations strictly grounded in official suggested answers
+    const defaultExp = mcq.officialExplanation || `Authoritative correct option is (${officialKey}).`;
+    const provision = mcq.provision || (parseInt(qNum, 10) <= 8 ? 'Income-tax Act, 1961' : 'Central Goods and Services Tax Act, 2017');
 
     let detailedFeedback = '';
+    let explanationForAudit = '';
+
     if (isCorrect) {
+      explanationForAudit = `Candidate selected Option (${studentChoice}) which exactly matches official key (${officialKey}). ${defaultExp}`;
       detailedFeedback = [
         `✓ CORRECT`,
         ``,
@@ -300,6 +342,7 @@ export function evaluateAllAuthoritativeMcqs(
         `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
       ].join('\n');
     } else if (!isAttempted) {
+      explanationForAudit = `Question left unattempted by candidate. Official key is Option (${officialKey}). ${defaultExp}`;
       detailedFeedback = [
         `⭕ UNATTEMPTED`,
         ``,
@@ -307,7 +350,7 @@ export function evaluateAllAuthoritativeMcqs(
         `Correct Answer: Option (${officialKey})`,
         `Marks: 0/${maxMarks}`,
         ``,
-        `CORRECT ANSWER / CONCEPT:`,
+        `EXPLANATION / BENCHMARK:`,
         `${defaultExp}`,
         ``,
         `APPLICABLE PROVISION / RULE / CONCEPT:`,
@@ -317,6 +360,7 @@ export function evaluateAllAuthoritativeMcqs(
         `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
       ].join('\n');
     } else {
+      explanationForAudit = `Candidate selected Option (${studentChoice}), which is incorrect. Official key is Option (${officialKey}). ${defaultExp}`;
       detailedFeedback = [
         `❌ WRONG`,
         ``,
@@ -330,7 +374,7 @@ export function evaluateAllAuthoritativeMcqs(
         `${marksAwarded}/${maxMarks}`,
         ``,
         `WHY YOUR ANSWER IS WRONG:`,
-        `Candidate selected Option (${studentChoice}), which is factually incorrect under the verified ICAI solution benchmark. The question requires the precise application of statutory criteria where only Option (${officialKey}) satisfies all conditions.`,
+        `Candidate selected Option (${studentChoice}). Under the verified ICAI suggested solution, the correct option is Option (${officialKey}) because ${defaultExp}.`,
         ``,
         `CORRECT ANSWER / CONCEPT:`,
         `${defaultExp}`,
@@ -342,6 +386,22 @@ export function evaluateAllAuthoritativeMcqs(
         `${matTitle} (${matVersion}) - Section ${mcq.section} Division A MCQ ${qNum}`
       ].join('\n');
     }
+
+    const correctness: 'CORRECT' | 'INCORRECT' | 'NOT_ATTEMPTED' | 'REVIEW_REQUIRED' =
+      isCorrect ? 'CORRECT' : !isAttempted ? 'NOT_ATTEMPTED' : 'INCORRECT';
+
+    auditTable.push({
+      questionNumber: `MCQ ${qNum}`,
+      candidateSelectedOption: studentChoice || 'NOT_ATTEMPTED',
+      authoritativeOfficialOption: officialKey,
+      marksAvailable: maxMarks,
+      marksAwarded,
+      correctness,
+      exactReferenceMaterial: `${matTitle} (${matVersion})`,
+      exactSuggestedAnswerSection: `Section ${mcq.section} Division A MCQ ${qNum}`,
+      explanation: explanationForAudit,
+      confidence: 100,
+    });
 
     const component: MarkingComponent = {
       componentId: `${mcq.fullQuestionCode}_c1`,
@@ -356,7 +416,7 @@ export function evaluateAllAuthoritativeMcqs(
       supportingProvision: provision,
       confidence: 100,
       pageNumber: parseInt(qNum, 10) >= 9 ? 6 : 10,
-      annotationInstructions: isCorrect ? `[OK] Option (${officialKey}) (+${maxMarks}/${maxMarks})` : `[X] Selected (${studentChoice || 'None'}), Official (${officialKey}) (0/${maxMarks})`,
+      annotationInstructions: isCorrect ? `[OK] Option (${officialKey}) (+${maxMarks}/${maxMarks})` : `[X] Selected (${studentChoice || 'None'}), Official (${officialKey}) (${marksAwarded}/${maxMarks})`,
     };
 
     const status = isCorrect ? 'correct' : !isAttempted ? 'not_attempted' : 'incorrect';
@@ -395,7 +455,6 @@ export function evaluateAllAuthoritativeMcqs(
         flags: [],
         isDerivedAllocation: false,
       },
-      // Store authoritative MCQ metadata for transparent audit & student report display
       candidateSelectedOption: studentChoice || 'NOT_ATTEMPTED',
       officialCorrectOption: officialKey,
       isCorrect,
@@ -409,4 +468,30 @@ export function evaluateAllAuthoritativeMcqs(
 
     return qEval;
   });
+
+  // HARD-CAP VERIFICATION
+  const totalAwarded = evaluatedQuestions.reduce((sum, q) => sum + (Number(q.marksAwarded) || 0), 0);
+  const totalAvailable = evaluatedQuestions.reduce((sum, q) => sum + (Number(q.maximumMarks) || 0), 0);
+
+  if (totalAwarded > totalMcqMaxPossible) {
+    validationErrors.push(
+      `MCQ total awarded marks (${totalAwarded}) exceeds authoritative MCQ maximum (${totalMcqMaxPossible})!`
+    );
+  }
+
+  if (totalAwarded < 0 && !isFoundationObjective) {
+    validationErrors.push(
+      `MCQ total awarded marks (${totalAwarded}) is negative, which is forbidden in CA ${level}!`
+    );
+  }
+
+  return {
+    questions: evaluatedQuestions,
+    auditTable,
+    totalMcqMarksAwarded: totalAwarded,
+    totalMcqMarksAvailable: totalAvailable,
+    authoritativeMcqMaximum: totalMcqMaxPossible,
+    isConsistent: validationErrors.length === 0,
+    validationErrors,
+  };
 }

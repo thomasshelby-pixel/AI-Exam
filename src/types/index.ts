@@ -139,10 +139,16 @@ export interface StructuredMarkingEvidence {
 
 export interface ReferenceTrace {
   materialId?: string;
+  materialTitle?: string;
+  materialVersion?: string;
+  contentHash?: string;
+  retrievedCharacterCount?: number;
   markingSchemeSection?: string;
+  suggestedAnswerSection?: string;
   suggestedAnswerRef?: string;
-  deductionReason?: string;
+  verifiedTruthSnippet?: string;
   verifiedGroundTruthSnippet?: string;
+  deductionReason?: string;
 }
 
 export interface QuestionEvaluation {

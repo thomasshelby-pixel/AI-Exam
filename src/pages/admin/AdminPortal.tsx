@@ -9,6 +9,7 @@ import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
 import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
 import { AdminLegalSection } from '../../components/admin/AdminLegalSection.js';
 import { AdminPricingSection } from './AdminPricingSection.js';
+import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -21,6 +22,7 @@ import {
   HelpCircle,
   CheckSquare,
   FileCheck2,
+  RotateCcw,
   DollarSign,
   CreditCard,
   Calendar,
@@ -1042,6 +1044,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'questions', label: 'Questions', icon: HelpCircle },
     { id: 'model-answers', label: 'Model Answers', icon: CheckSquare },
     { id: 'evaluations', label: 'Evaluations', icon: FileCheck2 },
+    { id: 'recheck-requests', label: 'Recheck Requests', icon: RotateCcw },
     { id: 'pricing', label: 'Pricing', icon: DollarSign },
     { id: 'payments', label: 'Payments', icon: CreditCard },
     { id: 'subscriptions', label: 'Subscriptions', icon: Calendar },
@@ -2381,6 +2384,11 @@ export const AdminPortal: React.FC = () => {
                     }
                   }}
                 />
+              )}
+
+              {/* RECHECK REQUESTS */}
+              {activeSection === 'recheck-requests' && (
+                <AdminRecheckRequestsSection />
               )}
 
               {/* 12. PAYMENTS */}

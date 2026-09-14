@@ -521,6 +521,22 @@ export function initDatabase() {
       requested_mode TEXT,
       reviewer_notes TEXT,
       adjusted_marks REAL,
+      student_email TEXT,
+      subject TEXT,
+      paper TEXT,
+      request_type TEXT DEFAULT 'SPECIFIC_QUESTION',
+      student_reason TEXT,
+      original_marks REAL,
+      assigned_reviewer TEXT,
+      resolution TEXT,
+      original_evaluation_version TEXT DEFAULT 'v1',
+      revised_evaluation_version TEXT,
+      original_checked_copy_id TEXT,
+      revised_checked_copy_id TEXT,
+      original_report_id TEXT,
+      revised_report_id TEXT,
+      audit_info_json TEXT,
+      disputed_questions_json TEXT,
       resolved_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE,
@@ -528,6 +544,25 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_recheck_eval ON recheck_requests(evaluation_id);
     CREATE INDEX IF NOT EXISTS idx_recheck_student ON recheck_requests(student_id);
+
+    CREATE TABLE IF NOT EXISTS email_audit_logs (
+      id TEXT PRIMARY KEY,
+      admin_id TEXT,
+      student_id TEXT,
+      recipient TEXT NOT NULL,
+      email_type TEXT NOT NULL,
+      evaluation_id TEXT NOT NULL,
+      recheck_request_id TEXT,
+      file_version_ids TEXT,
+      delivery_status TEXT NOT NULL DEFAULT 'SENT',
+      provider_response TEXT,
+      sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_email_logs_eval ON email_audit_logs(evaluation_id);
+    CREATE INDEX IF NOT EXISTS idx_email_logs_recip ON email_audit_logs(recipient);
+    CREATE INDEX IF NOT EXISTS idx_email_logs_recheck ON email_audit_logs(recheck_request_id);
   `);
 
   runMigrations();
@@ -624,6 +659,24 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'consumed_from_institute_allocation', 'INTEGER DEFAULT 0');
   addColumnIfNotExists('evaluations', 'consumed_from_personal_credits', 'INTEGER DEFAULT 0');
 
+  // Ensure recheck_requests has all enhanced workflow columns
+  addColumnIfNotExists('recheck_requests', 'student_email', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'subject', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'paper', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'request_type', "TEXT DEFAULT 'SPECIFIC_QUESTION'");
+  addColumnIfNotExists('recheck_requests', 'student_reason', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'original_marks', 'REAL');
+  addColumnIfNotExists('recheck_requests', 'assigned_reviewer', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'resolution', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'original_evaluation_version', "TEXT DEFAULT 'v1'");
+  addColumnIfNotExists('recheck_requests', 'revised_evaluation_version', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'original_checked_copy_id', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'revised_checked_copy_id', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'original_report_id', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'revised_report_id', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'audit_info_json', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'disputed_questions_json', 'TEXT');
+
   // Ensure users and entities support account classification (NORMAL / TEST)
   addColumnIfNotExists('users', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('institutes', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
@@ -691,6 +744,9 @@ function runMigrations() {
   `);
   addColumnIfNotExists('model_configs', 'role', "TEXT NOT NULL DEFAULT 'Primary'");
   addColumnIfNotExists('model_configs', 'thinking_level', "TEXT NOT NULL DEFAULT 'HIGH'");
+  addColumnIfNotExists('model_configs', 'health_stage', "TEXT DEFAULT 'UNKNOWN'");
+  addColumnIfNotExists('model_configs', 'health_details', "TEXT DEFAULT ''");
+  addColumnIfNotExists('model_configs', 'last_error', "TEXT DEFAULT ''");
 
   // Ensure institute_memberships supports email-based invitation and pending state
   addColumnIfNotExists('institute_memberships', 'invited_email', 'TEXT');
@@ -2150,8 +2206,8 @@ function seedModelConfigs() {
         UPDATE model_configs SET
           provider = ?, display_name = ?, role = ?, fallback_order = ?, thinking_level = ?, max_tokens = ?,
           status = CASE
-            WHEN status = 'RETIRED' THEN 'RETIRED'
-            WHEN ? = 1 AND provider = 'gemini' THEN 'AVAILABLE'
+            WHEN status IN ('RETIRED', 'RATE_LIMITED', 'INSUFFICIENT_CREDITS', 'AUTH_ERROR', 'TEMPORARILY_UNAVAILABLE', 'EVALUATION_READY', 'INFERENCE_READY') THEN status
+            WHEN ? = 0 THEN 'NOT_CONFIGURED'
             ELSE status
           END
         WHERE id = ?

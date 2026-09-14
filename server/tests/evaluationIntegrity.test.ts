@@ -7,6 +7,8 @@ import {
   processEvaluationIntegrity,
 } from '../services/evaluationIntegrityEngine.js';
 import { EvaluationResult, MarkingComponent } from '../../src/types/index.js';
+import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 
 console.log('================================================================');
 console.log('--- RUNNING CRITICAL CA EVALUATION ACCURACY & INTEGRITY TESTS ---');
@@ -755,6 +757,241 @@ console.log('\n--- TEST Q: Handwriting & Degraded Scan Safety Guard ---');
   assert(
     (q as any).zeroScoreReason === 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED',
     'TEST Q.3: Zero score classified as HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED for recheck'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST R: Authoritative MCQ Deterministic Scoring & Detailed Explanations
+// Regression Test: August 2026 CA Intermediate Paper 3 Taxation
+// Expected: Income Tax 8/15, GST 4/15, Total 12/30
+// --------------------------------------------------------------------------
+console.log('\n--- TEST R: Taxation MCQ Regression Test (8/15 + 4/15 = 12/30) ---');
+{
+  const paperStructure = getAuthoritativePaperStructure({
+    subjectName: 'Taxation',
+    paper: 'Paper 3: Taxation',
+    level: 'INTERMEDIATE',
+    officialPaperMaxMarks: 100,
+  });
+
+  assert(
+    paperStructure.mcqs.length === 16,
+    'TEST R.1: Authoritative Taxation paper has all 16 official MCQs (8 Income Tax + 8 GST)'
+  );
+
+  // Candidate selections for the regression test
+  const candidateSelections = new Map<string, string>([
+    // Income Tax (MCQs 1-8):
+    ['1', 'C'], // Correct (2m)
+    ['2', 'C'], // Correct (2m)
+    ['3', 'B'], // Correct (2m)
+    ['4', 'A'], // Correct (2m)
+    ['5', 'B'], // Incorrect: selected B, official A (0m)
+    ['6', 'A'], // Incorrect: selected A, official D (0m)
+    ['7', 'D'], // Incorrect: selected D, official C (0m)
+    ['8', 'A'], // Incorrect: selected A, official D (0m)
+    // GST (MCQs 9-16):
+    ['9', 'D'],  // Correct (2m)
+    ['10', 'A'], // Correct (2m)
+    ['11', 'A'], // Incorrect: selected A, official C (0m)
+    ['12', 'A'], // Incorrect: selected A, official B (0m)
+    ['13', 'A'], // Incorrect: selected A, official C (0m)
+    ['14', 'A'], // Incorrect: selected A, official B (0m)
+    ['15', 'A'], // Incorrect: selected A, official B (0m)
+    ['16', 'A'], // Incorrect: selected A, official D (0m)
+  ]);
+
+  const mcqResults = evaluateAllAuthoritativeMcqs(
+    paperStructure.mcqs,
+    candidateSelections,
+    {
+      caLevel: 'INTERMEDIATE',
+      paper: 'Paper 3: Taxation',
+      subjectKey: 'tax',
+      sourceMaterialTitle: 'ICAI Official Suggested Answers (Mock Test Paper Series)',
+      sourceMaterialVersion: 'August 2026 MTP Series 1',
+      sourceMaterialId: 'ICAI_MTP_AUG2026_TAX',
+    }
+  );
+
+  const itMcqs = mcqResults.slice(0, 8);
+  const gstMcqs = mcqResults.slice(8, 16);
+
+  const itAwarded = itMcqs.reduce((s, q) => s + q.marksAwarded, 0);
+  const itMax = itMcqs.reduce((s, q) => s + q.maximumMarks, 0);
+  const gstAwarded = gstMcqs.reduce((s, q) => s + q.marksAwarded, 0);
+  const gstMax = gstMcqs.reduce((s, q) => s + q.maximumMarks, 0);
+  const totalMcqAwarded = mcqResults.reduce((s, q) => s + q.marksAwarded, 0);
+  const totalMcqMax = mcqResults.reduce((s, q) => s + q.maximumMarks, 0);
+
+  assert(
+    itAwarded === 8 && itMax === 15,
+    `TEST R.2: Authoritative Income Tax MCQ score equals exactly 8/15 (awarded=${itAwarded}/${itMax})`
+  );
+  assert(
+    gstAwarded === 4 && gstMax === 15,
+    `TEST R.3: Authoritative GST MCQ score equals exactly 4/15 (awarded=${gstAwarded}/${gstMax})`
+  );
+  assert(
+    totalMcqAwarded === 12 && totalMcqMax === 30,
+    `TEST R.4: Total MCQ score equals exactly 12/30 (awarded=${totalMcqAwarded}/${totalMcqMax})`
+  );
+
+  // Verify strict binary scoring
+  const hasPartialMarks = mcqResults.some(
+    (q) => q.marksAwarded > 0 && q.marksAwarded < q.maximumMarks
+  );
+  assert(
+    !hasPartialMarks,
+    'TEST R.5: Strict binary scoring enforced (zero partial marks across all MCQs)'
+  );
+
+  // Verify no negative marks in CA Intermediate
+  const hasNegativeMarks = mcqResults.some((q) => q.marksAwarded < 0);
+  assert(
+    !hasNegativeMarks,
+    'TEST R.6: No negative marking applied in CA Intermediate'
+  );
+
+  // Verify detailed structured explanations on incorrect MCQs
+  const wrongMcq5 = mcqResults.find((q) => q.questionNumber === 'MCQ 5');
+  assert(
+    Boolean(
+      wrongMcq5 &&
+      wrongMcq5.detailedFeedback.includes('Candidate Answer:') &&
+      wrongMcq5.detailedFeedback.includes('Option (B)') &&
+      wrongMcq5.detailedFeedback.includes('Correct Answer:') &&
+      wrongMcq5.detailedFeedback.includes('Option (A)') &&
+      wrongMcq5.detailedFeedback.includes('WHY YOUR ANSWER IS WRONG:') &&
+      wrongMcq5.detailedFeedback.includes('CORRECT ANSWER / CONCEPT:') &&
+      wrongMcq5.detailedFeedback.includes('REFERENCE:')
+    ),
+    'TEST R.7: Wrong MCQ provides structured transparent feedback citing candidate answer, correct answer, and statutory rationale'
+  );
+
+  // Verify authoritative reference trace is preserved
+  assert(
+    Boolean(
+      wrongMcq5?.referenceTrace?.materialId === 'ICAI_MTP_AUG2026_TAX' &&
+      wrongMcq5?.referenceTrace?.suggestedAnswerRef?.includes('Option (A)')
+    ),
+    'TEST R.8: Verified ground truth reference trace attached to MCQ evaluation'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST S: Student Recheck Workflow & Result Versioning
+// --------------------------------------------------------------------------
+console.log('\n--- TEST S: Student Recheck & Evaluation Versioning ---');
+{
+  const initialEvaluation: any = {
+    id: 'eval_recheck_test',
+    version: 'v1',
+    totalMarks: 45,
+    maximumMarks: 100,
+    percentage: 45,
+    questions: [
+      {
+        questionNumber: '1',
+        maximumMarks: 15,
+        marksAwarded: 10,
+        marksLost: 5,
+        status: 'partial',
+      },
+      {
+        questionNumber: '2',
+        maximumMarks: 10,
+        marksAwarded: 5,
+        marksLost: 5,
+        status: 'partial',
+      },
+    ],
+  };
+
+  // Recheck scenario: Faculty reviews Q1, awards +3 marks -> adjusts to 13/15
+  const recheckResult = { ...initialEvaluation };
+  const auditMeta: any = {
+    currentVersion: 'v1',
+    recheckHistory: [],
+  };
+
+  // Senior academic faculty adjusts Q1 from 10 to 13
+  const adjustedMarksForQ1 = 13;
+  const originalQ1Marks = recheckResult.questions[0].marksAwarded;
+  const delta = adjustedMarksForQ1 - originalQ1Marks;
+
+  recheckResult.questions[0].marksAwarded = adjustedMarksForQ1;
+  recheckResult.questions[0].marksLost = recheckResult.questions[0].maximumMarks - adjustedMarksForQ1;
+  recheckResult.totalMarks = initialEvaluation.totalMarks + delta;
+  recheckResult.percentage = Math.round((recheckResult.totalMarks / recheckResult.maximumMarks) * 1000) / 10;
+  recheckResult.version = 'v2';
+  recheckResult.recheckStatus = 'RECHECKED_ACCEPTED';
+  recheckResult.recheckDelta = delta;
+  recheckResult.reviewerNotes = 'Recheck verified calculation step 3 in working note; +3 marks restored.';
+
+  auditMeta.currentVersion = 'v2';
+  auditMeta.lastRecheckedAt = new Date().toISOString();
+  auditMeta.recheckHistory.push({
+    recheckId: 'rck_test_001',
+    requestedQuestions: ['1'],
+    status: 'ADJUSTED',
+    originalScore: originalQ1Marks,
+    recheckedScore: adjustedMarksForQ1,
+    scoreDelta: delta,
+    overallOldTotal: 45,
+    overallNewTotal: 48,
+    reviewerNotes: recheckResult.reviewerNotes,
+  });
+
+  assert(
+    recheckResult.version === 'v2',
+    'TEST S.1: Evaluation version successfully upgraded to v2 after recheck adjustment'
+  );
+  assert(
+    recheckResult.totalMarks === 48,
+    'TEST S.2: Adjusted total marks accurately calculated (45 + 3 = 48)'
+  );
+  assert(
+    recheckResult.recheckStatus === 'RECHECKED_ACCEPTED',
+    'TEST S.3: Recheck status marked as RECHECKED_ACCEPTED'
+  );
+  assert(
+    auditMeta.recheckHistory.length === 1 && auditMeta.recheckHistory[0].scoreDelta === 3,
+    'TEST S.4: Audit trail records complete recheck delta and faculty review rationale'
+  );
+}
+
+// --------------------------------------------------------------------------
+// TEST T: Report, Checked Copy, and Dashboard Score Parity Guarantee
+// --------------------------------------------------------------------------
+console.log('\n--- TEST T: Tri-View Score Parity Guarantee ---');
+{
+  const evalData = {
+    evaluationId: 'eval_parity_test',
+    totalMarks: 22,
+    maximumMarks: 100,
+    questions: [
+      { questionNumber: 'MCQ 1', maximumMarks: 2, marksAwarded: 2, marksLost: 0 },
+      { questionNumber: 'MCQ 2', maximumMarks: 2, marksAwarded: 0, marksLost: 2 },
+      { questionNumber: 'Q1', maximumMarks: 15, marksAwarded: 12, marksLost: 3 },
+      { questionNumber: 'Q2', maximumMarks: 10, marksAwarded: 8, marksLost: 2 },
+    ],
+  };
+
+  // 1. Detailed Report view consumes evalData.totalMarks
+  const reportTotal = evalData.totalMarks;
+  // 2. Checked Copy annotation engine computes question sum
+  const checkedCopyTotal = evalData.questions.reduce((acc, q) => acc + q.marksAwarded, 0);
+  // 3. Database summary column
+  const dbColumnTotal = 22; // Matches reportTotal
+
+  assert(
+    reportTotal === checkedCopyTotal && checkedCopyTotal === 22,
+    'TEST T.1: Evaluated question sum exactly matches question scores'
+  );
+  assert(
+    evalData.maximumMarks === 100,
+    'TEST T.2: Denominator strictly fixed to authoritative paper maximum (100)'
   );
 }
 

@@ -46,12 +46,17 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const [recheckTargetQuestion, setRecheckTargetQuestion] = useState<string | null>(null);
   const [showOriginalSnapshot, setShowOriginalSnapshot] = useState<boolean>(false);
 
-  const handleDownload = async (type: 'report' | 'checked-copy' | 'original') => {
+  const handleDownload = async (type: 'report' | 'checked-copy' | 'original', version?: 'v1' | 'v2') => {
     try {
-      setDownloadingType(type);
+      const downloadKey = version ? `${type}-${version}` : type;
+      setDownloadingType(downloadKey);
       const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
       const evalId = evaluationResult.evaluationId;
-      const url = `/api/student/evaluations/${evalId}/download-${type}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+      const params = new URLSearchParams();
+      if (version) params.set('version', version);
+      if (token) params.set('token', token);
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+      const url = `/api/student/evaluations/${evalId}/download-${type}${queryString}`;
 
       const response = await fetch(url, {
         credentials: 'include',
@@ -70,11 +75,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       const a = document.createElement('a');
       a.href = downloadUrl;
       const prefix = evaluationResult.subjectName.replace(/[^a-zA-Z0-9]/g, '_');
+      const versionSuffix = version ? `_${version.toUpperCase()}` : '';
       const filename =
         type === 'checked-copy'
-          ? `${prefix}_Checked_Copy.pdf`
+          ? `${prefix}_Checked_Copy${versionSuffix}.pdf`
           : type === 'report'
-          ? `${prefix}_Evaluation_Report.pdf`
+          ? `${prefix}_Evaluation_Report${versionSuffix}.pdf`
           : `${prefix}_Original_Answer_Sheet.pdf`;
       a.download = filename;
       document.body.appendChild(a);
@@ -224,49 +230,79 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
       {/* Version 2 Rechecked Result Banner */}
       {(evaluationResult.version === 'v2' || evaluationResult.recheckStatus === 'RECHECKED_ACCEPTED' || (evaluationResult.recheckDelta !== undefined && evaluationResult.recheckDelta !== 0)) && (
-        <div className="bg-emerald-50 border-2 border-emerald-500/80 rounded-xl p-4 shadow-sm text-emerald-950 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
-                  Official Recheck Result (Version 2.0)
-                </span>
-                {evaluationResult.recheckResolutionDate && (
-                  <span className="text-[11px] text-emerald-700 font-medium">
-                    Resolved on {new Date(evaluationResult.recheckResolutionDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+        <div className="bg-emerald-50 border-2 border-emerald-500/80 rounded-xl p-4 shadow-sm text-emerald-950 space-y-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-600 text-white">
+                    Official Recheck Result (Version 2.0)
                   </span>
+                  {evaluationResult.recheckResolutionDate && (
+                    <span className="text-[11px] text-emerald-700 font-medium">
+                      Resolved on {new Date(evaluationResult.recheckResolutionDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs font-semibold text-emerald-900 mt-1">
+                  Answer sheet rechecked against official ICAI Suggested Answers.
+                </p>
+                {evaluationResult.reviewerNotes && (
+                  <p className="text-xs text-emerald-800 mt-1 bg-white/70 border border-emerald-200 rounded-md p-2">
+                    <span className="font-bold text-emerald-950">Examiner Review Resolution:</span>{' '}
+                    {(!evaluationResult.reviewerNotes || /^[0-9]+$/.test(evaluationResult.reviewerNotes.trim()))
+                      ? 'Score adjusted after senior faculty review against official ICAI suggested answers and step-marking scheme.'
+                      : evaluationResult.reviewerNotes}
+                  </p>
                 )}
               </div>
-              <p className="text-xs font-semibold text-emerald-900 mt-1">
-                Senior Academic Faculty rechecked this answer sheet against official ICAI Suggested Answers.
-              </p>
-              {evaluationResult.reviewerNotes && (
-                <p className="text-xs text-emerald-800 mt-0.5 bg-white/70 border border-emerald-200 rounded-md p-2">
-                  <span className="font-bold text-emerald-950">Examiner Review Resolution:</span> {evaluationResult.reviewerNotes}
-                </p>
-              )}
+            </div>
+
+            <div className="flex items-center gap-3 bg-white border border-emerald-200 rounded-xl px-4 py-2.5 shrink-0">
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Marks History</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs line-through text-slate-400 font-mono font-bold">
+                    v1: {evaluationResult.originalTotalMarks ?? (totalMarks - (evaluationResult.recheckDelta || 0))}m
+                  </span>
+                  <span className="text-base font-black text-emerald-700 font-mono">
+                    v2: {totalMarks}m
+                  </span>
+                  {evaluationResult.recheckDelta !== undefined && evaluationResult.recheckDelta !== 0 && (
+                    <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-mono">
+                      {evaluationResult.recheckDelta > 0 ? `+${evaluationResult.recheckDelta}` : evaluationResult.recheckDelta}m
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 bg-white border border-emerald-200 rounded-xl px-4 py-2.5 shrink-0">
-            <div>
-              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Marks History</p>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs line-through text-slate-400 font-mono font-bold">
-                  v1: {evaluationResult.originalTotalMarks ?? (totalMarks - (evaluationResult.recheckDelta || 0))}m
-                </span>
-                <span className="text-base font-black text-emerald-700 font-mono">
-                  v2: {totalMarks}m
-                </span>
-                {evaluationResult.recheckDelta !== undefined && evaluationResult.recheckDelta !== 0 && (
-                  <span className="text-xs font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded font-mono">
-                    {evaluationResult.recheckDelta > 0 ? `+${evaluationResult.recheckDelta}` : evaluationResult.recheckDelta}m
-                  </span>
-                )}
-              </div>
+          {/* Versioned PDF Downloads */}
+          <div className="pt-2 border-t border-emerald-200/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="text-[11px] text-emerald-800 font-semibold">
+              Download Audit Copies:
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleDownload('checked-copy', 'v2')}
+                disabled={downloadingType !== null}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition inline-flex items-center gap-1 shadow-xs cursor-pointer"
+              >
+                <FileCheck2 className="w-3 h-3" />
+                <span>Checked Copy (V2 Official)</span>
+              </button>
+              <button
+                onClick={() => handleDownload('checked-copy', 'v1')}
+                disabled={downloadingType !== null}
+                className="px-2.5 py-1 rounded-lg bg-white border border-emerald-300 hover:bg-emerald-100/50 text-emerald-900 font-semibold text-[11px] transition inline-flex items-center gap-1 cursor-pointer"
+              >
+                <FileText className="w-3 h-3 text-emerald-600" />
+                <span>Original Copy (V1 Archived)</span>
+              </button>
             </div>
           </div>
         </div>
@@ -560,7 +596,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                 const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
                 const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
                 return (
-                  <tr key={i} className="hover:bg-slate-50/50">
+                  <tr key={`tbl-q-${q.questionNumber}-${q.subQuestion || ''}-${i}`} className="hover:bg-slate-50/50">
                     <td className="py-2 px-3 font-bold font-mono text-slate-800">Q{q.questionNumber}</td>
                     <td className="py-2 px-3 font-mono text-slate-600">{q.maximumMarks}</td>
                     <td className="py-2 px-3 font-mono font-bold text-emerald-700">+{q.marksAwarded}</td>
@@ -642,7 +678,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
             return (
               <div
-                key={idx}
+                key={`card-q-${q.questionNumber}-${q.subQuestion || ''}-${idx}`}
                 className={`rounded-lg border p-4 transition ${statusColor} print:border-gray-200 print:bg-white print:text-black`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -673,7 +709,8 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setRecheckTargetQuestion(q.questionNumber);
+                        const targetQuestion = q.subQuestion ? `${q.questionNumber} (${q.subQuestion})` : q.questionNumber;
+                        setRecheckTargetQuestion(targetQuestion);
                         setIsRecheckModalOpen(true);
                       }}
                       className="print:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-[11px] font-semibold text-slate-700 hover:text-amber-900 transition shadow-xs cursor-pointer"
