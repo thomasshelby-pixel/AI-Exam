@@ -203,20 +203,22 @@ export async function inspectCloudStorageStatus(): Promise<{
 
 /**
  * Uploads an actual binary file to Firebase Cloud Storage via privileged backend SDK,
- * and saves structured metadata (without binary data) in Cloud Firestore.
+ * verifies the stored object exists and is valid, and saves structured metadata in Cloud Firestore.
+ * Throws an error immediately if the upload or verification fails.
  */
 export async function uploadFileToCloudStorage(options: UploadOptions): Promise<CloudFileMetadata> {
+  if (!options.buffer || options.buffer.length === 0) {
+    throw new Error(`Cannot upload empty file buffer for ${options.filename || options.fileId}`);
+  }
+
   const hash = crypto.createHash('sha256').update(options.buffer).digest('hex');
   const storagePath = buildStoragePath(options);
   const nowIso = new Date().toISOString();
 
-  let status: CloudFileMetadata['status'] = 'ACTIVE';
-  let errorMessage: string | undefined = undefined;
+  const bucket = getStorageBucket(configuredBucket);
+  const file = bucket.file(storagePath);
 
   try {
-    const bucket = getStorageBucket(configuredBucket);
-    const file = bucket.file(storagePath);
-
     await file.save(options.buffer, {
       contentType: options.mimeType,
       metadata: {
@@ -233,15 +235,26 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
       validation: false,
     });
 
-    console.log(`[PrivilegedStorage] Successfully saved ${options.filename} (${options.buffer.length} bytes) to Cloud Storage path: ${storagePath}`);
+    // Mandatory post-upload verification in Cloud Storage
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new Error(`Upload verification failed: object '${storagePath}' not found in bucket '${configuredBucket}' after save.`);
+    }
+
+    const [remoteMeta] = await file.getMetadata();
+    const remoteSize = typeof remoteMeta.size === 'string' ? parseInt(remoteMeta.size, 10) : Number(remoteMeta.size || 0);
+    if (remoteSize <= 0) {
+      throw new Error(`Upload verification failed: object '${storagePath}' is 0 bytes in bucket '${configuredBucket}'.`);
+    }
+
+    console.log(`[PrivilegedStorage] Verified object in Cloud Storage: ${storagePath} (${remoteSize} bytes, bucket: ${configuredBucket})`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    errorMessage = msg;
-    status = 'STORAGE_UNAVAILABLE';
-    console.warn(`[PrivilegedStorage] Could not write to Cloud Storage bucket (${configuredBucket}): ${msg}`);
+    console.error(`[PrivilegedStorage] Cloud Storage upload failed for ${storagePath}: ${msg}`);
+    throw new Error(`Cloud Storage upload failed: ${msg}`);
   }
 
-  // Persist structured metadata and reference in Cloud Firestore (no chunked binaries in Firestore!)
+  // Persist structured metadata and reference in Cloud Firestore
   const metadata: CloudFileMetadata = {
     fileId: options.fileId,
     storagePath,
@@ -252,19 +265,22 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
     ownerUserId: options.ownerUserId || 'system',
     uploadTimestamp: nowIso,
     version: '1.0',
-    status,
+    status: 'ACTIVE',
     checksum: hash,
     storageBucket: configuredBucket,
     ...(options.instituteId ? { instituteId: options.instituteId } : {}),
     ...(options.materialId ? { materialId: options.materialId } : {}),
     ...(options.evaluationId ? { evaluationId: options.evaluationId } : {}),
-    ...(errorMessage ? { errorMessage } : {}),
   };
 
   const db = getFirestoreDb();
   if (db) {
     try {
-      await setDoc(doc(db, 'file_storage_metadata', options.fileId), metadata);
+      await setDoc(doc(db, 'file_storage_metadata', options.fileId), {
+        ...metadata,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
       console.log(`[CloudFirestore] Stored structured metadata for file ${options.fileId} at path ${storagePath}`);
     } catch (err) {
       console.warn(`[CloudFirestore] Warning writing file metadata to Firestore:`, err);
@@ -483,5 +499,173 @@ export async function deleteMaterialCloudFiles(materialId: string): Promise<numb
     }
   }
 
+  // 3. Direct prefix deletion on Google Cloud Storage bucket
+  try {
+    const bucket = getStorageBucket(configuredBucket);
+    const [files] = await bucket.getFiles({ prefix: `curriculum_materials/${materialId}/` });
+    for (const f of files) {
+      await f.delete({ ignoreNotFound: true });
+      deletedCount++;
+      console.log(`[PrivilegedStorage] Direct prefix delete purged GCS object: ${f.name}`);
+    }
+  } catch (prefixErr) {
+    console.warn(`[PrivilegedStorage] Warning during direct prefix deletion for material ${materialId}:`, prefixErr);
+  }
+
   return deletedCount;
 }
+
+export interface StorageConsistencyReport {
+  bucket: string;
+  totalGcsFiles: number;
+  totalMetadataDocs: number;
+  totalMaterials: number;
+  matchedCount: number;
+  stateA_materialWithoutStorage: Array<{
+    materialId: string;
+    title: string;
+    storagePath: string | null;
+    fileId: string | null;
+  }>;
+  stateB_metadataWithoutStorage: Array<{
+    fileId: string;
+    storagePath: string;
+    materialId?: string;
+  }>;
+  stateC_storageWithoutMetadata: Array<{
+    storagePath: string;
+    size: number;
+    updated?: string;
+  }>;
+  stateD_orphanedMaterialStorageFiles: Array<{
+    storagePath: string;
+    inferredMaterialId: string;
+    size: number;
+  }>;
+  summaryStatus: 'HEALTHY' | 'INCONSISTENCIES_DETECTED';
+}
+
+/**
+ * Performs a rigorous 4-way consistency check between:
+ * 1. Physical objects in Google Cloud Storage
+ * 2. File metadata documents in Cloud Firestore (file_storage_metadata)
+ * 3. Material records in Cloud Firestore / SQLite (evaluation_materials)
+ */
+export async function auditStorageConsistency(allMaterials: any[]): Promise<StorageConsistencyReport> {
+  const bucket = getStorageBucket(configuredBucket);
+
+  // 1. Fetch all actual objects from Cloud Storage
+  const [remoteFiles] = await bucket.getFiles();
+  const storageMap = new Map<string, { name: string; size: number; updated?: string; contentType?: string }>();
+
+  for (const file of remoteFiles) {
+    if (file.name === '_privileged_probe_check.txt') continue;
+    const size = typeof file.metadata.size === 'string' ? parseInt(file.metadata.size, 10) : Number(file.metadata.size || 0);
+    storageMap.set(file.name, {
+      name: file.name,
+      size,
+      updated: file.metadata.updated,
+      contentType: file.metadata.contentType,
+    });
+  }
+
+  // 2. Fetch all file_storage_metadata records
+  const db = getFirestoreDb();
+  const metadataList: CloudFileMetadata[] = [];
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'file_storage_metadata'));
+      for (const d of snap.docs) {
+        metadataList.push({ id: d.id, ...(d.data() as CloudFileMetadata) } as any);
+      }
+    } catch (fsErr) {
+      console.warn('[PrivilegedStorage] Warning reading file_storage_metadata in audit:', fsErr);
+    }
+  }
+
+  const metadataPathMap = new Map<string, CloudFileMetadata>();
+  const metadataIdMap = new Map<string, CloudFileMetadata>();
+  for (const m of metadataList) {
+    if (m.storagePath) metadataPathMap.set(m.storagePath, m);
+    if (m.fileId) metadataIdMap.set(m.fileId, m);
+  }
+
+  const materialIdMap = new Map<string, any>();
+  for (const mat of allMaterials) {
+    materialIdMap.set(mat.id, mat);
+  }
+
+  const stateA: StorageConsistencyReport['stateA_materialWithoutStorage'] = [];
+  const stateB: StorageConsistencyReport['stateB_metadataWithoutStorage'] = [];
+  const stateC: StorageConsistencyReport['stateC_storageWithoutMetadata'] = [];
+  const stateD: StorageConsistencyReport['stateD_orphanedMaterialStorageFiles'] = [];
+  let matchedCount = 0;
+
+  // Check State A: Material claims a file exists, but storage object is missing
+  for (const mat of allMaterials) {
+    if (mat.storage_path || mat.file_id) {
+      const targetPath = mat.storage_path;
+      if (targetPath && !storageMap.has(targetPath)) {
+        stateA.push({
+          materialId: mat.id,
+          title: mat.question_paper_title || mat.subject_name || mat.id,
+          storagePath: targetPath,
+          fileId: mat.file_id || null,
+        });
+      } else if (targetPath && storageMap.has(targetPath)) {
+        matchedCount++;
+      }
+    }
+  }
+
+  // Check State B: Metadata doc exists in Firestore, but object missing in GCS
+  for (const meta of metadataList) {
+    if (meta.storagePath && !storageMap.has(meta.storagePath)) {
+      stateB.push({
+        fileId: meta.fileId,
+        storagePath: meta.storagePath,
+        materialId: meta.materialId,
+      });
+    }
+  }
+
+  // Check State C & D: Storage object exists in GCS, but metadata or material missing
+  for (const [path, obj] of storageMap.entries()) {
+    const hasMetadata = metadataPathMap.has(path);
+    if (!hasMetadata) {
+      stateC.push({
+        storagePath: path,
+        size: obj.size,
+        updated: obj.updated,
+      });
+    }
+
+    if (path.startsWith('curriculum_materials/')) {
+      const parts = path.split('/');
+      const inferredMatId = parts[1];
+      if (inferredMatId && !materialIdMap.has(inferredMatId)) {
+        stateD.push({
+          storagePath: path,
+          inferredMaterialId: inferredMatId,
+          size: obj.size,
+        });
+      }
+    }
+  }
+
+  const hasInconsistencies = stateA.length > 0 || stateB.length > 0 || stateC.length > 0 || stateD.length > 0;
+
+  return {
+    bucket: configuredBucket,
+    totalGcsFiles: storageMap.size,
+    totalMetadataDocs: metadataList.length,
+    totalMaterials: allMaterials.length,
+    matchedCount,
+    stateA_materialWithoutStorage: stateA,
+    stateB_metadataWithoutStorage: stateB,
+    stateC_storageWithoutMetadata: stateC,
+    stateD_orphanedMaterialStorageFiles: stateD,
+    summaryStatus: hasInconsistencies ? 'INCONSISTENCIES_DETECTED' : 'HEALTHY',
+  };
+}
+

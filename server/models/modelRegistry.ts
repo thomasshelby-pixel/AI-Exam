@@ -69,54 +69,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     ],
   },
   {
-    id: 'gemini-3.7-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.7 Flash',
-    description: 'High-speed multimodal PDF/image understanding, handwriting/OCR, routine evaluation and high-volume processing. Direct primary fallback for Gemini 3.8.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Fast Multimodal Evaluation / Direct Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 1,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Fast multimodal PDF parsing',
-      'Immediate seamless fallback on high-demand spikes',
-      'High-volume routine processing',
-    ],
-  },
-  {
-    id: 'gemini-3.6-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.6 Flash',
-    description: 'Standard reliable fallback when higher tier models are temporarily unavailable, rate-limited or overloaded.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Standard Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 2,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Standard reliable fallback tier',
-      'Rate limit recovery',
-    ],
-  },
-  {
-    id: 'gemini-3.5-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.5 Flash',
-    description: 'High-volume emergency backup fallback.',
-    contextWindow: 1048576,
-    recommended: false,
-    role: 'High-Volume Emergency Backup',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 3,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Emergency high-volume backup fallback',
-    ],
-  },
-  {
     id: 'gemini-3.1-flash-lite',
     provider: 'gemini',
     displayName: 'Google Gemini 3.1 Flash Lite',
@@ -125,12 +77,46 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Fast Multimodal & High-Volume Fallback',
     defaultThinkingLevel: 'LOW',
-    fallbackOrder: 4,
+    fallbackOrder: 1,
     recommendedReasoning: 'LOW',
     useCases: [
       'Rapid multimodal PDF evaluation',
       'Ultra-low-latency response generation',
       'High-throughput fallback when other models are saturated',
+    ],
+  },
+  {
+    id: 'gemini-flash-latest',
+    provider: 'gemini',
+    displayName: 'Google Gemini Flash Latest',
+    description: 'Standard reliable production Flash fallback when primary models encounter transient rate limits or high-demand spikes.',
+    contextWindow: 1048576,
+    recommended: true,
+    role: 'Production Flash Fallback',
+    defaultThinkingLevel: 'MEDIUM',
+    fallbackOrder: 2,
+    recommendedReasoning: 'MEDIUM',
+    useCases: [
+      'Standard reliable fallback tier',
+      'Rate limit recovery',
+      'High-volume routine processing',
+    ],
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.1 Pro (Preview)',
+    description: 'Difficult and highly ambiguous CA evaluations, complex legal/accounting/tax/audit reasoning, difficult calculations, consequential-error analysis and cases requiring deeper reasoning. (PREVIEW: Not for default production).',
+    contextWindow: 2097152,
+    recommended: false,
+    role: 'Deep Reasoning & Pro Analysis',
+    defaultThinkingLevel: 'HIGH',
+    fallbackOrder: 3,
+    isPreview: true,
+    recommendedReasoning: 'HIGH',
+    useCases: [
+      'Difficult calculations & consequential-error analysis',
+      'Extreme context preview cases',
     ],
   },
   {
@@ -142,7 +128,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Deep Legal / Accounting / Audit Evaluation',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 5,
+    fallbackOrder: 4,
     recommendedReasoning: 'HIGH',
     useCases: [
       'Deep legal reasoning & statutory interpretation',
@@ -161,7 +147,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Deep Reasoning & Calculation Cross-Check',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 6,
+    fallbackOrder: 5,
     recommendedReasoning: 'HIGH or XHIGH',
     useCases: [
       'Difficult CA answer evaluation',
@@ -182,7 +168,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Balanced CA Evaluation / Fallback',
     defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 7,
+    fallbackOrder: 6,
     recommendedReasoning: 'MEDIUM',
     useCases: [
       'Balanced CA answer evaluation',
@@ -200,7 +186,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: false,
     role: 'Fast High-Volume / Multimodal / Low Latency',
     defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 8,
+    fallbackOrder: 7,
     recommendedReasoning: 'LOW or MEDIUM',
     useCases: [
       'Fast evaluation & speed-critical fallbacks',
@@ -208,23 +194,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Routine question evaluation',
       'Standard practical/theory evaluation',
       'High-concurrency batch evaluation',
-    ],
-  },
-  {
-    id: 'gemini-3.1-pro-preview',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.1 Pro (Preview)',
-    description: 'Difficult and highly ambiguous CA evaluations, complex legal/accounting/tax/audit reasoning, difficult calculations, consequential-error analysis and cases requiring deeper reasoning. (PREVIEW: Not for default production).',
-    contextWindow: 2097152,
-    recommended: false,
-    role: 'Deep Reasoning (Preview)',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 9,
-    isPreview: true,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Difficult calculations & consequential-error analysis',
-      'Extreme context preview cases',
     ],
   },
 ];
@@ -304,10 +273,6 @@ export function getAnthropic(): Anthropic {
 const providerCreditExhaustedUntil = new Map<ModelProviderType, number>();
 
 export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string) {
-  // Gemini free-tier quotas and rate limits are strictly per-model, NEVER provider-wide
-  if (provider === 'gemini') {
-    return;
-  }
   providerCreditExhaustedUntil.set(provider, Date.now() + 5 * 60 * 1000);
   console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS for 5 minutes: ${reason || 'credit balance too low'}`);
 }
@@ -317,7 +282,6 @@ export function clearProviderCreditExhausted(provider: ModelProviderType) {
 }
 
 export function isProviderCreditExhausted(provider: ModelProviderType): boolean {
-  if (provider === 'gemini') return false;
   const until = providerCreditExhaustedUntil.get(provider);
   if (!until) return false;
   if (Date.now() > until) {
@@ -447,6 +411,14 @@ async function callGemini(
     } catch (err: any) {
       lastErr = err;
       const errMsg = (err?.message || String(err)).toLowerCase();
+      const isPrepaymentDepleted =
+        errMsg.includes('prepayment credits are depleted') ||
+        errMsg.includes('credits are depleted') ||
+        errMsg.includes('billing#prepay');
+      if (isPrepaymentDepleted) {
+        markProviderCreditExhausted('gemini', err?.message || 'Gemini prepayment credits are depleted');
+        throw err;
+      }
       const is429 = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('resource_exhausted');
       if (is429) {
         // Daily quota limit on this specific model; throw immediately to trigger fallback cascade
@@ -833,35 +805,16 @@ export function determineModelRouting(context?: {
   //   Fallback to other models of that provider, then to Gemini 3.8 Flash and Gemini Flash sister models
   const isSelectedGemini = selectedModel.startsWith('gemini');
 
-  let canonicalFallbackOrder: string[];
-  if (isSelectedGemini) {
-    canonicalFallbackOrder = [
-      'gemini-3.1-flash-lite',
-      'gemini-3.6-flash',
-      'gemini-3.7-flash',
-      'gemini-3.5-flash',
-      'gemini-3.8-flash',
-      'claude-opus-5',
-      'gpt-5.6-sol',
-      'claude-sonnet-5',
-      'gpt-5.6-terra',
-      'gemini-3.1-pro-preview',
-    ];
-  } else {
-    // External model selected as primary -> fall back to partner models then Gemini hierarchy
-    canonicalFallbackOrder = [
-      'gemini-3.1-flash-lite',
-      'gemini-3.6-flash',
-      'gemini-3.7-flash',
-      'gemini-3.5-flash',
-      'gemini-3.8-flash',
-      'claude-opus-5',
-      'gpt-5.6-sol',
-      'claude-sonnet-5',
-      'gpt-5.6-terra',
-      'gemini-3.1-pro-preview',
-    ];
-  }
+  const canonicalFallbackOrder = [
+    'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
+    'gemini-3.1-pro-preview',
+    'claude-opus-5',
+    'gpt-5.6-sol',
+    'claude-sonnet-5',
+    'gpt-5.6-terra',
+  ];
 
   const remaining = canonicalFallbackOrder.filter((m) => m !== selectedModel);
   // Sort remaining so that healthy (non-cooling) models are evaluated first
@@ -984,8 +937,8 @@ export async function executeModelWithFallback(
     const candidateModel = candidateSequence[i];
     const provider = getProviderForModel(candidateModel);
 
-    // Skip if provider became credit-exhausted during an earlier candidate in this exact evaluation
-    if (isProviderCreditExhausted(provider) && i > 0) {
+    // Skip if provider has exhausted credits
+    if (isProviderCreditExhausted(provider) && candidateSequence.some((m) => !isProviderCreditExhausted(getProviderForModel(m)))) {
       console.info(`[Model Registry] Skipping ${candidateModel} because provider ${provider.toUpperCase()} has exhausted credits.`);
       continue;
     }
@@ -1003,13 +956,11 @@ export async function executeModelWithFallback(
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
       candidateModel === 'claude-sonnet-5' ||
-      candidateModel === 'gemini-3.7-flash' ||
-      candidateModel === 'gemini-3.6-flash' ||
-      candidateModel === 'gemini-3.5-flash' ||
+      candidateModel === 'gemini-flash-latest' ||
       candidateModel === 'gemini-3.1-flash-lite'
     ) {
       effectiveThinking = 'LOW';
-    } else if (candidateModel === 'gemini-3.8-flash') {
+    } else if (candidateModel === 'gemini-3.8-flash' || candidateModel === 'gemini-3.1-pro-preview' || candidateModel === 'claude-opus-5') {
       effectiveThinking = routing.thinkingLevel === 'HIGH' && params.context?.isAmbiguousOrComplex ? 'HIGH' : 'MEDIUM';
     } else {
       effectiveThinking = 'MEDIUM';
@@ -1076,9 +1027,11 @@ export async function executeModelWithFallback(
         errMsgLower.includes('credit balance is too low') ||
         errMsgLower.includes('no credits remaining') ||
         errMsgLower.includes('insufficient_quota') ||
+        errMsgLower.includes('prepayment credits are depleted') ||
+        errMsgLower.includes('credits are depleted') ||
         errMsgLower.includes('billing');
 
-      if (isCreditIssue && provider !== 'gemini') {
+      if (isCreditIssue) {
         markProviderCreditExhausted(provider, errMsg);
       }
 
@@ -1093,7 +1046,7 @@ export async function executeModelWithFallback(
       }
 
       try {
-        const status = isCreditIssue && provider !== 'gemini' ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
+        const status = isCreditIssue ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
         db.prepare(
           "UPDATE model_configs SET status = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).run(status, latencyMs, candidateModel);

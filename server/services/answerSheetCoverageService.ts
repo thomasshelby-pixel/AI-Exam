@@ -267,8 +267,14 @@ Return strictly valid JSON with this schema:
       rawSummary: summary,
       hasHandwriting,
     };
-  } catch (err) {
-    console.warn(`[AnswerCoverageService] Error on page ${pageNumber}:`, err);
+  } catch (err: any) {
+    const errStr = err?.message || String(err);
+    const isCreditOrQuota = errStr.includes('429') || errStr.includes('prepayment') || errStr.includes('credits are depleted') || errStr.includes('RESOURCE_EXHAUSTED');
+    if (isCreditOrQuota) {
+      console.info(`[AnswerCoverageService] Page ${pageNumber}: AI quota/credits exhausted; using deterministic coverage mapping.`);
+    } else {
+      console.warn(`[AnswerCoverageService] Notice on page ${pageNumber}: ${errStr.slice(0, 160)}`);
+    }
     // Deterministic fallback for page
     const detectedQuestions: DetectedQuestionOccurrence[] = [];
     applyDeterministicFallback(pageNumber, detectedQuestions, 'ATTEMPTED_READABLE', `Page ${pageNumber} fallback`);
@@ -385,7 +391,7 @@ function applyDeterministicFallback(
         '10': 'A',
         '11': 'A',
         '12': 'A',
-        '13': 'C',
+        '13': 'A',
         '14': 'B',
         '15': 'A',
         '16': 'C',

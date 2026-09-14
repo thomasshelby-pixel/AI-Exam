@@ -2371,6 +2371,11 @@ export const AdminPortal: React.FC = () => {
                 );
               })()}
 
+              {/* RECHECK REQUESTS (Academic Grievance Redressal) */}
+              {activeSection === 'recheck-requests' && (
+                <AdminRecheckRequestsSection />
+              )}
+
               {/* 11. PRICING */}
               {activeSection === 'pricing' && (
                 <AdminPricingSection

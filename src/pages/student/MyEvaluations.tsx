@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { FileCheck2, Search, Filter, ArrowRight, RefreshCw, Layers, Globe, Building2 } from 'lucide-react';
+import { FileCheck2, Search, Filter, ArrowRight, RefreshCw, Layers, Globe, Building2, RotateCcw } from 'lucide-react';
+import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
+import { EvaluationResult } from '../../types/index.js';
 
 interface EvaluationItem {
   id: string;
@@ -34,20 +36,48 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   const [search, setSearch] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'PUBLIC' | 'INSTITUTE'>('ALL');
+  const [recheckEvaluation, setRecheckEvaluation] = useState<EvaluationResult | null>(null);
+  const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
+  const [loadingRecheckId, setLoadingRecheckId] = useState<string | null>(null);
+
+  const fetchEvaluations = async () => {
+    try {
+      const res = await apiRequest<{ evaluations: EvaluationItem[] }>('/api/student/evaluations');
+      setEvaluations(res.evaluations || []);
+    } catch (err) {
+      console.error('Failed to load evaluations:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchEvaluations = async () => {
-      try {
-        const res = await apiRequest<{ evaluations: EvaluationItem[] }>('/api/student/evaluations');
-        setEvaluations(res.evaluations || []);
-      } catch (err) {
-        console.error('Failed to load evaluations:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchEvaluations();
   }, []);
+
+  const handleOpenRecheck = async (id: string) => {
+    try {
+      setLoadingRecheckId(id);
+      const data = await apiRequest<{ evaluation?: { resultJson?: any; raw_result_json?: string } }>(
+        `/api/student/evaluations/${id}`
+      );
+      const evalResult =
+        data.evaluation?.resultJson ||
+        (data.evaluation?.raw_result_json ? JSON.parse(data.evaluation.raw_result_json) : null);
+
+      if (evalResult) {
+        setRecheckEvaluation(evalResult);
+        setIsRecheckModalOpen(true);
+      } else {
+        alert('Evaluation details could not be loaded for rechecking.');
+      }
+    } catch (err) {
+      console.error('Failed to open recheck modal:', err);
+      alert('Failed to load evaluation details for recheck request.');
+    } finally {
+      setLoadingRecheckId(null);
+    }
+  };
 
   const filtered = evaluations.filter((ev) => {
     if (levelFilter !== 'ALL' && ev.level !== levelFilter) return false;
@@ -245,12 +275,26 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => onViewReport(ev.id)}
-                          className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs transition cursor-pointer"
-                        >
-                          Detailed Report
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {ev.status === 'COMPLETED' && (
+                            <button
+                              id={`recheck-btn-${ev.id}`}
+                              onClick={() => handleOpenRecheck(ev.id)}
+                              disabled={loadingRecheckId === ev.id}
+                              className="px-2.5 py-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                              title="Submit Recheck Request to Senior Academic Faculty"
+                            >
+                              <RotateCcw className={`w-3 h-3 ${loadingRecheckId === ev.id ? 'animate-spin' : ''}`} />
+                              <span>Recheck</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onViewReport(ev.id)}
+                            className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs transition cursor-pointer"
+                          >
+                            Detailed Report
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -273,6 +317,23 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
             Start First Check
           </button>
         </div>
+      )}
+
+      {/* Student Recheck Request Modal */}
+      {recheckEvaluation && (
+        <RecheckRequestModal
+          isOpen={isRecheckModalOpen}
+          onClose={() => {
+            setIsRecheckModalOpen(false);
+            setRecheckEvaluation(null);
+          }}
+          evaluationResult={recheckEvaluation}
+          onRecheckSubmitted={() => {
+            setIsRecheckModalOpen(false);
+            setRecheckEvaluation(null);
+            fetchEvaluations();
+          }}
+        />
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import crypto from 'node:crypto';
-import { db } from '../db.js';
+import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
@@ -25,13 +25,22 @@ import {
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
 import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
-import { permanentlyDeleteFromFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import {
+  permanentlyDeleteFromFirestore,
+  syncRecordToFirestore,
+  rebuildLocalCacheFromFirestore,
+} from '../services/firestoreSyncService.js';
 import {
   savePersistentFile,
   getPersistentFile,
   deletePersistentFile,
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
+import {
+  auditStorageConsistency,
+  inspectCloudStorageStatus,
+  deleteFileFromCloudStorage,
+} from '../services/firebaseCloudStorageService.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
@@ -618,13 +627,14 @@ router.get('/materials/:id/file', async (req: AuthRequest, res: Response) => {
 
     const fileId = mat.file_id || `${materialId}_qp` || materialId;
     const fileData = await getPersistentFile(fileId, mat.file_name || `${materialId}.pdf`);
-    if (!fileData) {
-      return res.status(404).json({ error: 'Attached document not found in persistent storage' });
+    if (!fileData || !fileData.buffer) {
+      return res.status(404).json({ error: 'Attached document not found in persistent Cloud Storage' });
     }
 
     res.setHeader('Content-Type', fileData.metadata?.mimeType || 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${mat.file_name || fileData.metadata?.filename || 'material.pdf'}"`);
     res.setHeader('Content-Length', fileData.buffer.length);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
     return res.send(fileData.buffer);
   } catch (error: unknown) {
     console.error('Download material file error:', error);
@@ -674,6 +684,10 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       try {
         const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
         const fileBuffer = Buffer.from(rawBase64, 'base64');
+        if (fileBuffer.length === 0) {
+          return res.status(400).json({ error: 'Uploaded file binary is empty' });
+        }
+
         const fileId = `mat_file_${crypto.randomBytes(8).toString('hex')}`;
         const fileName = attachedFile.name || `${materialId}.pdf`;
         const mimeType = attachedFile.type || 'application/pdf';
@@ -690,16 +704,26 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           }
         );
 
+        if (!savedMeta || savedMeta.status !== 'ACTIVE' || !savedMeta.storagePath) {
+          throw new Error('Cloud Storage reported incomplete or inactive file persistence status');
+        }
+
         fileInfo = {
           fileId: savedMeta.fileId,
           storagePath: savedMeta.storagePath,
           filename: savedMeta.filename,
           size: savedMeta.size,
           checksum: savedMeta.checksum,
-          downloadUrl: savedMeta.downloadUrl,
+          downloadUrl: `/api/admin/materials/${materialId}/file`,
         };
-      } catch (uploadErr) {
-        console.warn('[AdminRoutes] Error persisting attached file to Cloud Storage:', uploadErr);
+      } catch (uploadErr: unknown) {
+        const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+        console.error('[AdminRoutes] Error persisting attached file to Cloud Storage:', uploadErr);
+        // Honest failure: Abort material creation to prevent ghost or inconsistent state!
+        return res.status(502).json({
+          error: 'Material could not be stored in Cloud Storage. Creation aborted to preserve integrity.',
+          details: msg,
+        });
       }
     }
 
@@ -731,7 +755,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       file_name: fileInfo?.filename || null,
       file_size: fileInfo?.size || null,
       checksum: fileInfo?.checksum || null,
-      download_url: fileInfo?.downloadUrl || null,
+      download_url: fileInfo?.downloadUrl || (fileInfo?.fileId ? `/api/admin/materials/${materialId}/file` : null),
       uploaded_by: req.user!.email,
       created_at: nowIso,
       updated_at: nowIso,
@@ -791,7 +815,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       success: true,
       materialId,
       material: materialRecord,
-      message: 'Evaluation material uploaded and persisted successfully.',
+      storageVerified: Boolean(fileInfo?.storagePath),
+      message: fileInfo ? 'Evaluation material and reference PDF successfully uploaded to Cloud Storage.' : 'Evaluation material saved successfully.',
     });
   } catch (error: unknown) {
     console.error('Upload material error:', error);
@@ -837,11 +862,12 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
 
     if (attachedFile && attachedFile.base64) {
       try {
-        if (existing.file_id) {
-          await deletePersistentFile(existing.file_id, existing.storage_path).catch(() => {});
-        }
         const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
         const fileBuffer = Buffer.from(rawBase64, 'base64');
+        if (fileBuffer.length === 0) {
+          return res.status(400).json({ error: 'Replacement file buffer is empty' });
+        }
+
         const newFileId = `mat_file_${crypto.randomBytes(8).toString('hex')}`;
         const newFileName = attachedFile.name || `${req.params.id}.pdf`;
         const mimeType = attachedFile.type || 'application/pdf';
@@ -858,14 +884,28 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
           }
         );
 
+        if (!savedMeta || savedMeta.status !== 'ACTIVE' || !savedMeta.storagePath) {
+          throw new Error('Cloud Storage reported incomplete or inactive file persistence status');
+        }
+
+        // Clean up old file from Cloud Storage only after new file is verified
+        if (existing.file_id) {
+          await deletePersistentFile(existing.file_id, existing.storage_path).catch(() => {});
+        }
+
         fileId = savedMeta.fileId;
         storagePath = savedMeta.storagePath;
         fileName = savedMeta.filename;
         fileSize = savedMeta.size;
         checksum = savedMeta.checksum;
-        downloadUrl = savedMeta.downloadUrl;
-      } catch (fileErr) {
-        console.warn('[AdminRoutes] Warning replacing material file:', fileErr);
+        downloadUrl = `/api/admin/materials/${req.params.id}/file`;
+      } catch (fileErr: unknown) {
+        const msg = fileErr instanceof Error ? fileErr.message : String(fileErr);
+        console.error('[AdminRoutes] Error replacing material file in Cloud Storage:', fileErr);
+        return res.status(502).json({
+          error: 'Material replacement file could not be stored in Cloud Storage.',
+          details: msg,
+        });
       }
     }
 
@@ -1366,6 +1406,55 @@ router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
   } catch (error: any) {
     console.error('Delete all test data error:', error);
     return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to delete all test data' });
+  }
+});
+
+// 6C. Database & Cloud Storage Integrity Diagnostics
+router.get('/system/db-integrity', (req: AuthRequest, res: Response) => {
+  try {
+    const result = checkDatabaseIntegrity();
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Check db integrity error:', error);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+router.post('/system/rebuild-cache', async (req: AuthRequest, res: Response) => {
+  try {
+    const { forceClean } = req.body || {};
+    const result = await rebuildLocalCacheFromFirestore({
+      forceClean: Boolean(forceClean),
+      reason: `Admin requested rebuild (${req.user?.email || 'admin'})`,
+    });
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Rebuild local cache error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/system/storage-audit', async (req: AuthRequest, res: Response) => {
+  try {
+    const materials = db.prepare('SELECT * FROM evaluation_materials').all();
+    const report = await auditStorageConsistency(materials);
+    const storageStatus = await inspectCloudStorageStatus();
+    return res.json({
+      report,
+      storageStatus,
+    });
+  } catch (error: any) {
+    console.error('Storage audit error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/system/checkpoint-wal', (req: AuthRequest, res: Response) => {
+  try {
+    const result = checkpointWal();
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
   }
 });
 

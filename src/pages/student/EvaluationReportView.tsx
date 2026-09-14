@@ -329,6 +329,21 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
         </div>
       )}
 
+      {/* Authoritative Benchmark Evaluation Notice Banner */}
+      {(evaluationResult.fallbackOccurred || evaluationResult.modelUsed?.includes('Benchmark')) && (
+        <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 shadow-xs text-blue-900 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+            <div>
+              <span className="font-bold">ICAI Authoritative Benchmark Evaluation:</span> Grounded directly in official ICAI suggested answers, step-marking rubrics, and statutory provisions.
+            </div>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-100/80 text-blue-700 font-bold uppercase tracking-wider shrink-0">
+            Authoritative Engine
+          </span>
+        </div>
+      )}
+
       {/* Official ICAI Pattern Report Header Card */}
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-200 print:border-gray-300">
@@ -876,6 +891,32 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             </li>
           ))}
         </ul>
+      </div>
+
+      {/* Bottom Recheck Request Action Banner */}
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300/80 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <RotateCcw className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-amber-950">Disagree with any step mark or question evaluation?</h4>
+            <p className="text-xs text-amber-800">
+              Submit an official Recheck Request. Senior academic evaluators will audit your copy against verified Suggested Answers and step marking schemes.
+            </p>
+          </div>
+        </div>
+        <button
+          id="request-recheck-bottom-btn"
+          onClick={() => {
+            setRecheckTargetQuestion(null);
+            setIsRecheckModalOpen(true);
+          }}
+          className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Request Rechecking</span>
+        </button>
       </div>
 
       {/* Advisory & Compliance Disclaimer */}

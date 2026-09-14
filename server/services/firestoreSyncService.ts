@@ -562,3 +562,32 @@ export async function migrateAllDataToFirestore(): Promise<{
   return { materials: mCount, users: uCount, profiles: pCount, institutes: iCount, batches: bCount, evaluations: eCount, logs: lCount, files: fCount };
 }
 
+/**
+ * Re-hydrates local SQLite database tables from Cloud Firestore on administrative request.
+ */
+export async function rebuildLocalCacheFromFirestore(options?: {
+  forceClean?: boolean;
+  reason?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  timestamp: string;
+}> {
+  try {
+    console.log(`[FirestoreSync] Rebuilding local cache. Reason: ${options?.reason || 'Manual trigger'}`);
+    await hydrateFromFirestore();
+    return {
+      success: true,
+      message: 'Local cache successfully re-hydrated from Cloud Firestore.',
+      timestamp: new Date().toISOString(),
+    };
+  } catch (err: any) {
+    console.error('[FirestoreSync] Rebuild local cache failed:', err);
+    return {
+      success: false,
+      message: err?.message || 'Failed to rebuild local cache',
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+

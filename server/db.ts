@@ -2012,19 +2012,17 @@ export function seedPricingPlans() {
 function seedModelConfigs() {
   const approvedIds = [
     'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
+    'gemini-3.1-pro-preview',
     'claude-opus-5',
     'gpt-5.6-sol',
     'claude-sonnet-5',
     'gpt-5.6-terra',
-    'gemini-3.1-pro-preview',
-    'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
   ];
   const placeholders = approvedIds.map(() => '?').join(',');
 
-  // 1. Purge all invalid, non-approved, or legacy models (GPT-4o, Claude 3.5, Gemini 1.5/2.5)
+  // 1. Purge all invalid, non-approved, or legacy models
   db.prepare(`
     DELETE FROM model_configs
     WHERE id NOT IN (${placeholders})
@@ -2060,7 +2058,7 @@ function seedModelConfigs() {
   const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 5);
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 5);
 
-  // 3. Approved Production Multi-Provider Models with Deterministic Priorities (Primary + 8 Fallbacks)
+  // 3. Approved Production Multi-Provider Models with Deterministic Priorities (Primary + 7 Fallbacks)
   const models = [
     {
       id: 'gemini-3.8-flash',
@@ -2076,23 +2074,23 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.7-flash',
+      id: 'gemini-3.1-flash-lite',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.7 Flash',
-      role: 'Fast Multimodal Evaluation / Direct Fallback',
+      display_name: 'Google Gemini 3.1 Flash Lite',
+      role: 'Fast Multimodal & High-Volume Fallback',
       is_primary: 0,
       fallback_order: 1,
-      thinking_level: 'MEDIUM',
+      thinking_level: 'LOW',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.6-flash',
+      id: 'gemini-flash-latest',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.6 Flash',
-      role: 'Standard Fallback',
+      display_name: 'Google Gemini Flash Latest',
+      role: 'Production Flash Fallback',
       is_primary: 0,
       fallback_order: 2,
       thinking_level: 'MEDIUM',
@@ -2102,26 +2100,13 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.5-flash',
+      id: 'gemini-3.1-pro-preview',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.5 Flash',
-      role: 'High-Volume Emergency Backup',
+      display_name: 'Google Gemini 3.1 Pro (Preview)',
+      role: 'Deep Reasoning & Pro Analysis',
       is_primary: 0,
       fallback_order: 3,
-      thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.1-flash-lite',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Flash Lite',
-      role: 'Fast Multimodal & High-Volume Fallback',
-      is_primary: 0,
-      fallback_order: 4,
-      thinking_level: 'LOW',
+      thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
@@ -2133,7 +2118,7 @@ function seedModelConfigs() {
       display_name: 'Claude Opus 5 (Anthropic)',
       role: 'Deep Legal / Accounting / Audit Evaluation',
       is_primary: 0,
-      fallback_order: 5,
+      fallback_order: 4,
       thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
@@ -2146,7 +2131,7 @@ function seedModelConfigs() {
       display_name: 'OpenAI GPT-5.6 Sol',
       role: 'Deep Reasoning & Calculation Cross-Check',
       is_primary: 0,
-      fallback_order: 6,
+      fallback_order: 5,
       thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
@@ -2159,7 +2144,7 @@ function seedModelConfigs() {
       display_name: 'Claude Sonnet 5 (Anthropic)',
       role: 'Balanced CA Evaluation / Fallback',
       is_primary: 0,
-      fallback_order: 7,
+      fallback_order: 6,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
@@ -2172,25 +2157,12 @@ function seedModelConfigs() {
       display_name: 'OpenAI GPT-5.6 Terra',
       role: 'Fast High-Volume / Multimodal / Low Latency',
       is_primary: 0,
-      fallback_order: 8,
+      fallback_order: 7,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
       status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.1-pro-preview',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Pro (Preview)',
-      role: 'Deep Reasoning (Preview)',
-      is_primary: 0,
-      fallback_order: 9,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
   ];
 
@@ -2684,5 +2656,88 @@ export function getAllLocalTombstoneSet(): Set<string> {
     return set;
   } catch {
     return new Set<string>();
+  }
+}
+
+export function checkpointWal(): { ok: boolean; message?: string } {
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    return { ok: true, message: 'WAL checkpoint completed successfully' };
+  } catch (err: any) {
+    console.error('[db] checkpointWal error:', err);
+    return { ok: false, message: err?.message || 'WAL checkpoint failed' };
+  }
+}
+
+export function checkDatabaseIntegrity(): {
+  ok: boolean;
+  quickCheck: string;
+  integrityCheck: string;
+  fileSizeBytes: number;
+  walSizeBytes: number;
+} {
+  try {
+    const quickResult = db.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
+    const integrityResult = db.prepare('PRAGMA integrity_check;').all() as Array<{ integrity_check: string }>;
+    const quickOk = quickResult.length === 1 && quickResult[0].quick_check === 'ok';
+    const integrityOk = integrityResult.length === 1 && integrityResult[0].integrity_check === 'ok';
+
+    let fileSizeBytes = 0;
+    let walSizeBytes = 0;
+    try {
+      if (fs.existsSync(DB_FILE)) {
+        fileSizeBytes = fs.statSync(DB_FILE).size;
+      }
+      const walFile = `${DB_FILE}-wal`;
+      if (fs.existsSync(walFile)) {
+        walSizeBytes = fs.statSync(walFile).size;
+      }
+    } catch {}
+
+    return {
+      ok: quickOk && integrityOk,
+      quickCheck: quickResult.map((r) => r.quick_check).join('; '),
+      integrityCheck: integrityResult.map((r) => r.integrity_check).join('; '),
+      fileSizeBytes,
+      walSizeBytes,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      quickCheck: err?.message || 'error',
+      integrityCheck: err?.message || 'error',
+      fileSizeBytes: 0,
+      walSizeBytes: 0,
+    };
+  }
+}
+
+export function repairDatabaseFile(): { success: boolean; message: string } {
+  try {
+    checkpointWal();
+    const check = checkDatabaseIntegrity();
+    if (check.ok) {
+      return { success: true, message: 'Database integrity is intact.' };
+    }
+    const backupPath = path.join(DATA_DIR, `ca_exam_checker.repaired.${Date.now()}.db`);
+    if (fs.existsSync(DB_FILE)) {
+      fs.copyFileSync(DB_FILE, backupPath);
+    }
+    db.exec('VACUUM;');
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    return { success: true, message: `Database vacuumed and checkpointed. Backup saved to ${path.basename(backupPath)}` };
+  } catch (err: any) {
+    console.error('[db] repairDatabaseFile error:', err);
+    return { success: false, message: err?.message || 'Failed to repair database' };
+  }
+}
+
+export function closeDatabaseCleanly(): void {
+  try {
+    checkpointWal();
+    db.close();
+    console.log('[DB] Database connection closed cleanly.');
+  } catch (err) {
+    console.warn('[DB] Warning while closing database:', err);
   }
 }

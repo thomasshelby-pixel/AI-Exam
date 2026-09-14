@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 
 // Increase default max listeners to accommodate Cloud Storage and Vite pipeline PassThrough streams
 EventEmitter.defaultMaxListeners = 100;
-import { initDatabase } from './server/db.js';
+import { initDatabase, closeDatabaseCleanly } from './server/db.js';
 import authRoutes from './server/routes/authRoutes.js';
 import studentRoutes from './server/routes/studentRoutes.js';
 import instituteRoutes from './server/routes/instituteRoutes.js';
@@ -79,6 +79,15 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`CA Exam Checker AI server running on http://0.0.0.0:${PORT}`);
   });
+
+  const handleShutdown = () => {
+    console.log('[Server] Graceful shutdown initiated.');
+    closeDatabaseCleanly();
+    process.exit(0);
+  };
+
+  process.once('SIGTERM', handleShutdown);
+  process.once('SIGINT', handleShutdown);
 }
 
 startServer().catch((err) => {
