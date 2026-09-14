@@ -4,6 +4,7 @@ import { getGemini, generateContentWithResilience } from '../gemini.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { AttemptedQuestionMapping } from './answerSheetCoverageService.js';
+import { lockQuestionReference } from './questionReferenceLock.js';
 
 export interface ChunkEvaluationContext {
   subQuestion: PaperStructureSubQuestion;
@@ -31,183 +32,23 @@ export interface ExtractedReferenceSnippets {
 
 /**
  * Extracts relevant reference material for a specific sub-question.
- * Handles Question Paper, Suggested Answer, and Marking Scheme variations.
+ * Uses the authoritative lockQuestionReference to ensure exact question-level synchronization.
  */
 export function extractRelevantReferenceSnippets(
-  fullQuestionCode: string, // e.g. 'Q5(a)', 'Q7(b)', 'Q1'
+  fullQuestionCode: string, // e.g. 'Q5(a)', 'Q5(b)', 'Q1'
   qpText: string,
   saText: string,
   msText: string
 ): ExtractedReferenceSnippets {
-  const cleanCode = fullQuestionCode.trim();
-  const qNum = cleanCode.replace(/[^0-9]/g, '');
-  const subQMatch = cleanCode.match(/\(([a-zA-Z0-9]+)\)/);
-  const subQ = (subQMatch ? subQMatch[1] : '').toLowerCase();
+  const lockedRef = lockQuestionReference(fullQuestionCode, qpText, saText, msText);
+  const qp = lockedRef.questionPaperSlice;
+  const sa = lockedRef.suggestedAnswerSlice;
+  const ms = lockedRef.markingSchemeSlice;
 
-  const sliceTextForQuestion = (text: string, materialLabel: string): { snippet: string; found: boolean; sectionHeader: string } => {
-    if (!text || text.trim().length === 0) {
-      return { snippet: '', found: false, sectionHeader: 'Not Available' };
-    }
-
-    const lines = text.split('\n');
-    let capturing = false;
-    const captured: string[] = [];
-    let sectionHeader = '';
-
-    // Regex candidates for start of question/sub-question
-    const nextQNum = String(parseInt(qNum, 10) + 1);
-    const nextSubQ = subQ === 'a' ? 'b' : subQ === 'b' ? 'c' : subQ === 'c' ? 'd' : '';
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmed = line.trim();
-      const lower = trimmed.toLowerCase();
-
-      // Check for start condition
-      let isStart = false;
-
-      if (subQ) {
-        // Direct sub-question pattern like "Question 5(a)", "Answer 5(a)", "Ans. 5(a)", "5(a)", "Q.5(a)", "Q5(a)"
-        const patterns = [
-          `question ${qNum}(${subQ})`,
-          `question no. ${qNum}(${subQ})`,
-          `question no.${qNum}(${subQ})`,
-          `answer ${qNum}(${subQ})`,
-          `answer to question ${qNum}(${subQ})`,
-          `answer to question no. ${qNum}(${subQ})`,
-          `ans. ${qNum}(${subQ})`,
-          `ans ${qNum}(${subQ})`,
-          `solution ${qNum}(${subQ})`,
-          `solution to question ${qNum}(${subQ})`,
-          `q.${qNum}(${subQ})`,
-          `q.${qNum} (${subQ})`,
-          `q${qNum}(${subQ})`,
-          `q ${qNum}(${subQ})`,
-          `q${qNum} (${subQ})`,
-          `(${subQ})`,
-        ];
-
-        if (patterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`) || lower.includes(`\t${p}`))) {
-          // If it's just "(${subQ})", only treat as start if we are already within main question or line indicates it
-          if (lower.startsWith(`(${subQ})`) || lower.startsWith(`part (${subQ})`)) {
-            isStart = true;
-          } else {
-            isStart = true;
-          }
-        }
-      } else {
-        // Main question pattern without sub-part
-        const mainPatterns = [
-          `question ${qNum}`,
-          `question no. ${qNum}`,
-          `question no.${qNum}`,
-          `answer ${qNum}`,
-          `answer to question ${qNum}`,
-          `answer to question no. ${qNum}`,
-          `ans. ${qNum}`,
-          `ans ${qNum}`,
-          `solution ${qNum}`,
-          `q.${qNum}`,
-          `q ${qNum}`,
-          `q${qNum}`,
-        ];
-
-        // Ensure not matching question 10 when looking for question 1
-        isStart = mainPatterns.some((p) => {
-          const idx = lower.indexOf(p);
-          if (idx === -1) return false;
-          const after = lower.slice(idx + p.length, idx + p.length + 1);
-          return !after || after.match(/[^0-9]/);
-        });
-      }
-
-      if (isStart && !capturing) {
-        capturing = true;
-        sectionHeader = trimmed.slice(0, 100);
-        captured.push(line);
-        continue;
-      }
-
-      if (capturing) {
-        // Stop condition: next question or next sub-question
-        let isStop = false;
-
-        if (nextSubQ) {
-          const nextSubPatterns = [
-            `(${nextSubQ})`,
-            `part (${nextSubQ})`,
-            `question ${qNum}(${nextSubQ})`,
-            `answer ${qNum}(${nextSubQ})`,
-            `ans. ${qNum}(${nextSubQ})`,
-            `ans ${qNum}(${nextSubQ})`,
-            `q.${qNum}(${nextSubQ})`,
-            `q${qNum}(${nextSubQ})`,
-          ];
-          if (nextSubPatterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`))) {
-            isStop = true;
-          }
-        }
-
-        const nextMainPatterns = [
-          `question ${nextQNum}`,
-          `question no. ${nextQNum}`,
-          `answer ${nextQNum}`,
-          `answer to question ${nextQNum}`,
-          `ans. ${nextQNum}`,
-          `q.${nextQNum}`,
-          `q ${nextQNum}`,
-          `q${nextQNum}`,
-        ];
-        if (nextMainPatterns.some((p) => lower.startsWith(p) || lower.includes(` ${p}`))) {
-          isStop = true;
-        }
-
-        if (isStop && captured.length >= 3) {
-          break;
-        }
-
-        captured.push(line);
-        if (captured.length > 200) break; // Reasonable cap per question
-      }
-    }
-
-    if (captured.length > 0) {
-      return {
-        snippet: captured.join('\n').trim(),
-        found: true,
-        sectionHeader: sectionHeader || `${materialLabel} for ${cleanCode}`,
-      };
-    }
-
-    // Secondary fallback: search for keywords or return question-focused snippet
-    const qIndex = text.toLowerCase().indexOf(`question ${qNum}`);
-    const aIndex = text.toLowerCase().indexOf(`answer ${qNum}`);
-    const bestIdx = qIndex !== -1 ? qIndex : aIndex !== -1 ? aIndex : -1;
-
-    if (bestIdx !== -1) {
-      const slice = text.slice(bestIdx, bestIdx + 2500).trim();
-      return {
-        snippet: slice,
-        found: true,
-        sectionHeader: `${materialLabel} Section for Q${qNum}`,
-      };
-    }
-
-    return {
-      snippet: text.slice(0, 2000).trim(),
-      found: false,
-      sectionHeader: `${materialLabel} General Section`,
-    };
-  };
-
-  const qp = sliceTextForQuestion(qpText, 'Question Paper');
-  const sa = sliceTextForQuestion(saText, 'Suggested Answer');
-  const ms = sliceTextForQuestion(msText, 'Marking Scheme');
-
-  const combinedRef = `${qp.snippet}\n${sa.snippet}\n${ms.snippet}`;
+  const combinedRef = `${qp.snippet}\n${sa.snippet}\n${ms.snippet}`.trim();
   const contentHash = crypto.createHash('sha256').update(combinedRef).digest('hex');
   const retrievedCharacterCount = combinedRef.length;
-  const verifiedTruthSnippet = (sa.snippet || qp.snippet || ms.snippet).slice(0, 300);
+  const verifiedTruthSnippet = (sa.snippet || qp.snippet || ms.snippet).slice(0, 500);
 
   return {
     qpSnippet: qp.snippet,
@@ -215,7 +56,7 @@ export function extractRelevantReferenceSnippets(
     msSnippet: ms.snippet,
     retrievedCharacterCount,
     contentHash,
-    foundInMaterial: qp.found || sa.found || ms.found,
+    foundInMaterial: lockedRef.isFullyLocked || qp.found || sa.found || ms.found,
     markingSchemeSection: ms.sectionHeader,
     suggestedAnswerSection: sa.sectionHeader,
     verifiedTruthSnippet,
@@ -247,7 +88,7 @@ export async function evaluateQuestionChunk(
   const chunkBytes = await chunkDoc.save();
   const chunkBase64 = Buffer.from(chunkBytes).toString('base64');
 
-  // 2. Extract specific reference material
+  // 2. Extract specific reference material using verified lock
   const snippets = extractRelevantReferenceSnippets(
     fullCode,
     ctx.questionPaperText,
@@ -275,25 +116,26 @@ The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', '
 
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
-2. Award step marks strictly according to the verified step-marking scheme.
+2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
 3. Every step component must have:
    - componentType: 'PROVISION' | 'PRINCIPLE' | 'CONDITION' | 'APPLICATION' | 'CALCULATION' | 'CONCLUSION'
-   - expectedRequirement: requirement from official answer
-   - studentEvidence: what candidate wrote
+   - expectedRequirement: exact requirement from verified official answer
+   - studentEvidence: exact quotes, working, or numbers from what candidate wrote in their script
    - assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT'
    - marksAvailable: step max
    - marksAwarded: awarded marks (0 to marksAvailable)
    - marksDeducted: deducted marks
    - deductionReason: specific reason if deducted
-4. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
-5. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
-6. NO presentation deductions are allowed unless explicitly specified in the marking scheme.
-7. HANDWRITING POLICY: Poor handwriting itself is NOT a deduction reason. If readable, award full technical credit. Do not penalize handwriting, formatting, or styling.
-8. STRUCTURED DEDUCTION REASONS: When marks are deducted, the reasonForDeduction must clearly state:
-   (a) What candidate wrote
-   (b) What authoritative answer requires
-   (c) What is wrong or missing
-   (d) Marks deducted and justification
+4. ZERO-MARK SAFETY GATE: A student's answer must NOT receive 0 marks merely because wording differs, order differs, presentation differs, or the final total differs while intermediate steps are attempted. If student work contains relevant legal provisions, calculations, or analysis, award appropriate partial credit.
+5. TAXABILITY & EXEMPTION CITATION ACCURACY:
+   - For classification questions (such as Indian Railways services, cloak room, platform tickets, etc.), determine taxability or exemption STRICTLY according to the verified ICAI Suggested Answer provided above.
+   - For example: if the verified suggested solution states that "services provided by Ministry of Railways (Indian Railways) to individuals by way of cloak room services are exempt", and the student concludes that cloak room services are exempt, you MUST evaluate this as CORRECT and award full credit. Do NOT penalize based on general training memory.
+6. NO PRESENTATION DEDUCTIONS: Formatting, tabular vs paragraph, handwriting neatness, or presentation style must NOT be penalized unless explicitly mandated in the marking scheme.
+7. DETAILED EXAMINER REASONING (NO TRUNCATION):
+   - "detailedFeedback" must be thorough, constructive, and detailed (at least 2-3 substantive sentences explaining candidate's performance against the model answer).
+   - If marks are deducted, "reasonForDeduction" must clearly state what candidate wrote, what the authoritative solution requires, and the exact step-wise basis for deduction.
+8. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
+9. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 
 Return strictly valid JSON with this schema:
 {

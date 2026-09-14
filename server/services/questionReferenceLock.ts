@@ -70,10 +70,12 @@ export function parseQuestionCode(code: string): {
     };
   }
 
-  const matchSub = trimmed.match(/^Q?(\d+)\s*(?:\(?([a-dA-D1-4])\)?)?/i);
+  // Handle standard variants: "Question 5(a)", "Q5(a)", "5(a)", "5a", "Q.5(a)", "Ans 5(a)"
+  const matchSub = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(?:\(?([a-zA-Z0-9])\)?)?/i);
   if (matchSub) {
     const qNum = matchSub[1];
-    const subQ = matchSub[2] ? matchSub[2].toLowerCase() : undefined;
+    const rawSub = matchSub[2] ? matchSub[2].toLowerCase() : undefined;
+    const subQ = rawSub && rawSub.length === 1 && /[a-z]/i.test(rawSub) ? rawSub : undefined;
     const cleanCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
     return { qNum, subQ, isMcq: false, cleanCode };
   }
@@ -132,14 +134,19 @@ export function extractLockedQuestionSlice(
   const lines = targetText.split('\n');
 
   // Define candidate search patterns for this question
-  // In Section B: Q5 may be written as "Question 5", "Q5", "QUESTION 5(a)", or in Section B Suggested Answer as:
-  // "1. Computation of output tax payable by M/s Rudra & Co." (Section B Question 1)
   const startRegexes: RegExp[] = [];
 
   if (docType === 'MS') {
     // Marking scheme has explicit headings: "QUESTION 5(a) – 10 MARKS" or "QUESTION 1 – 15 MARKS"
     if (subQ) {
       startRegexes.push(new RegExp(`(?:QUESTION|Q\\.?)\\s*${qNum}\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
+      if (qNum === '5' && subQ === 'b') {
+        startRegexes.push(/Taxability\s+of\s+Indian\s+Railways/i);
+        startRegexes.push(/Cloak\s*room\s*services\s*=/i);
+      } else if (qNum === '5' && subQ === 'a') {
+        startRegexes.push(/Net\s+GST\s+Payable\s+in\s+Cash/i);
+        startRegexes.push(/Identify\s+taxable\s+supplies/i);
+      }
     } else {
       startRegexes.push(new RegExp(`(?:QUESTION|Q\\.?)\\s*${qNum}\\b(?!\\s*\\([a-z]\\))`, 'i'));
     }
@@ -149,32 +156,35 @@ export function extractLockedQuestionSlice(
       // In Section B, Q5 is Question 1 of Section B
       if (subQ === 'a' || !subQ) {
         startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5|\b5\b)\s*\(\s*a\s*\)/i);
-        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5)\b/i);
-        startRegexes.push(/(?:^|\n|\b)(?:1\.\s+)?Computation\s+of\s+output\s+tax\s+payable\s+by\s+M\/s\s+Rudra/i);
-        startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+output\s+tax/i);
+        startRegexes.push(/(?:^|\n|\b)5\.\s*\(a\)/i);
+        startRegexes.push(/Computation\s+of\s+net\s+GST\s+payable\s+in\s+cash/i);
+        startRegexes.push(/Computation\s+of\s+output\s+tax\s+payable\s+by\s+M\/s\s+Rudra/i);
+        startRegexes.push(/(?:^|\n|\b)(?:1\.\s+)?Computation\s+of\s+output\s+tax/i);
       } else if (subQ === 'b') {
         startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5|\b5\b)\s*\(\s*b\s*\)/i);
-        startRegexes.push(/(?:^|\n|\b)\(?b\)?\s*S\.\s*No\.?\s*Particulars/i);
-        startRegexes.push(/(?:^|\n|\b)\(?b\)?\s*Cloak\s*room\s*services/i);
+        startRegexes.push(/(?:^|\n|\b|\s)\(?b\)?\s*(?:S\.\s*No\.?|Particulars|Cloak\s*room)/i);
+        startRegexes.push(/Cloak\s*room\s*services\s+provided\s+to\s+passengers/i);
+        startRegexes.push(/services\s+provided\s+by\s+Ministry\s+of\s+Railways/i);
+        startRegexes.push(/-\s*\(b\)/i);
       }
     } else if (isSectionB && qNum === '6') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*6|6\\.|6)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`\\(${subQ}\\)\\s*`, 'i'));
+        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*6|6\.)\b/i);
       }
     } else if (isSectionB && qNum === '7') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*7|7\\.|7)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`\\(${subQ}\\)\\s*`, 'i'));
+        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*7|7\.)\b/i);
       }
     } else if (isSectionB && qNum === '8') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*8|8\\.|8)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`\\(${subQ}\\)\\s*`, 'i'));
+        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*8|8\.)\b/i);
       }
@@ -186,7 +196,7 @@ export function extractLockedQuestionSlice(
         startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
       } else if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`\\(${subQ}\\)\\s*`, 'i'));
+        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Questions?\\s*${qNum}\\.|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
       }
@@ -195,18 +205,22 @@ export function extractLockedQuestionSlice(
     // Question Paper
     if (isSectionB && qNum === '5') {
       if (subQ === 'a' || !subQ) {
-        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5)\s*\(\s*a\s*\)/i);
-        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5)\b/i);
+        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5|\b5\b)\s*\(\s*a\s*\)/i);
+        startRegexes.push(/(?:^|\n|\b)5\.\s*\(a\)/i);
         startRegexes.push(/Question\s*No\.?\s*1\s+is\s+compulsory/i);
         startRegexes.push(/M\/s\s+Rudra\s+&\s+Co\b/i);
       } else if (subQ === 'b') {
-        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5)\s*\(\s*b\s*\)/i);
+        startRegexes.push(/(?:QUESTION\s*5|Q\.?\s*5|\b5\b)\s*\(\s*b\s*\)/i);
+        startRegexes.push(/\(?b\)?\s*Determine\s+the\s+taxability/i);
+        startRegexes.push(/Determine\s+the\s+taxability\s+or\s+otherwise.*Indian\s+Railways/i);
+        startRegexes.push(/Cloak\s*room\s*services\s+provided\s+to\s+passengers/i);
         startRegexes.push(/\(b\)\s+Ministry\s+of\s+Railways/i);
+        startRegexes.push(/(?:^|\s)\(b\)\s+(?:Determine|Ministry|Indian)/i);
       }
     } else {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`\\(${subQ}\\)\\s*`, 'i'));
+        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
       }
@@ -216,26 +230,46 @@ export function extractLockedQuestionSlice(
   // Find start line
   let startIndex = -1;
   let matchedHeader = '';
+  let lineOffset = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+    const line = lines[i];
+    if (!line.trim()) continue;
 
     for (const rx of startRegexes) {
       if (rx.test(line)) {
         // Avoid matching "section 24(a)" or similar citations when looking for subQ "a"
-        if (subQ && !line.toLowerCase().includes(`question`) && !line.toLowerCase().includes(`q`) && !line.startsWith(`(${subQ})`) && !line.startsWith(`${qNum}.`) && !line.startsWith(`1.`)) {
+        if (
+          subQ &&
+          /(?:section|clause|rule|sub-section|sub-clause|schedule)\s+\d*\s*\([a-z]\)/i.test(line) &&
+          !line.toLowerCase().includes('question') &&
+          !line.toLowerCase().includes('ans') &&
+          !line.toLowerCase().includes('determine')
+        ) {
           continue;
         }
+
+        // If this line contains embedded sub-question start (e.g. "(b) Determine the taxability..."), slice at the match
+        if (subQ === 'b') {
+          const bMatch = line.search(/\(b\)\s+(?:Determine|Ministry|Indian|S\.No|Particulars)/i);
+          if (bMatch > 0) {
+            lineOffset = bMatch;
+          }
+        }
+
         startIndex = i;
-        matchedHeader = line;
+        matchedHeader = line.slice(lineOffset).trim();
         break;
       }
     }
     if (startIndex !== -1) break;
   }
 
-  // If not found with strict regexes
+  // If not found with strict regexes in section, check whole docText as fallback
+  if (startIndex === -1 && targetText !== docText) {
+    return extractLockedQuestionSlice(docText, qNum, subQ, docType);
+  }
+
   if (startIndex === -1) {
     return {
       found: false,
@@ -248,14 +282,15 @@ export function extractLockedQuestionSlice(
   }
 
   // Determine stop boundary: next question or next sub-question
-  const capturedLines: string[] = [lines[startIndex]];
+  const firstLine = lineOffset > 0 ? lines[startIndex].slice(lineOffset).trim() : lines[startIndex];
+  const capturedLines: string[] = [firstLine];
 
   // Next sub-question or next question stop patterns
   const nextSubLetter = subQ ? String.fromCharCode(subQ.charCodeAt(0) + 1) : undefined;
   const nextQ = String(num + 1);
 
   for (let i = startIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
+    let line = lines[i];
     const trimmed = line.trim();
     const lower = trimmed.toLowerCase();
 
@@ -263,15 +298,25 @@ export function extractLockedQuestionSlice(
 
     // Check if next sub-question started
     if (nextSubLetter) {
+      // If line contains embedded next subQ (e.g. line has "(b) Determine..."), cut off line before it
+      if (subQ === 'a' && nextSubLetter === 'b') {
+        const bIdx = line.search(/\(b\)\s+(?:Determine|Ministry|Indian|S\.No|Particulars)/i);
+        if (bIdx > 0) {
+          capturedLines.push(line.slice(0, bIdx).trim());
+          break;
+        }
+      }
+
       if (
         lower.startsWith(`(${nextSubLetter})`) ||
+        lower.includes(` (${nextSubLetter}) `) ||
         lower.startsWith(`question ${qNum}(${nextSubLetter})`) ||
         lower.startsWith(`question ${qNum} (${nextSubLetter})`) ||
         lower.startsWith(`q.${qNum}(${nextSubLetter})`) ||
         lower.startsWith(`q${qNum}(${nextSubLetter})`) ||
         lower.startsWith(`question no. ${qNum}(${nextSubLetter})`) ||
         (docType === 'MS' && lower.startsWith(`question ${qNum}(${nextSubLetter})`)) ||
-        (docType === 'SA' && isSectionB && qNum === '5' && nextSubLetter === 'b' && lower.startsWith(`(b)`))
+        (docType === 'SA' && isSectionB && qNum === '5' && nextSubLetter === 'b' && (lower.startsWith(`(b)`) || lower.includes(`- (b)`)))
       ) {
         isStop = true;
       }

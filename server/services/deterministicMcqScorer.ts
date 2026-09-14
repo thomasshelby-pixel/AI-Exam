@@ -406,7 +406,7 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
     const component: MarkingComponent = {
       componentId: `${mcq.fullQuestionCode}_c1`,
       componentType: 'MCQ',
-      expectedRequirement: `Correct option: (${officialKey}) - ${defaultExp.slice(0, 120)}`,
+      expectedRequirement: `Correct option: (${officialKey}) - ${defaultExp}`,
       studentEvidence: isAttempted ? `Candidate selected option: (${studentChoice})` : 'Candidate left question unattempted',
       assessment,
       marksAvailable: maxMarks,

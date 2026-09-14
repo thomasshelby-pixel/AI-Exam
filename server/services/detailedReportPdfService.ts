@@ -390,14 +390,18 @@ export async function generateDetailedReportPdf(
 
   let sY = y - 36;
   strengths.slice(0, 3).forEach((s) => {
-    safeDrawText(p1, `- ${s.substring(0, 50)}`, {
-      x: 46,
-      y: sY,
-      size: 7.5,
-      font: helvetica,
-      color: darkSlate,
+    const sLines = wrapText(`• ${s}`, 40);
+    sLines.slice(0, 2).forEach((sl) => {
+      safeDrawText(p1, sl, {
+        x: 46,
+        y: sY,
+        size: 7.2,
+        font: helvetica,
+        color: darkSlate,
+      });
+      sY -= 10;
     });
-    sY -= 16;
+    sY -= 4;
   });
 
   // Improvements column
@@ -421,14 +425,18 @@ export async function generateDetailedReportPdf(
 
   let iY = y - 36;
   improvements.slice(0, 3).forEach((imp) => {
-    safeDrawText(p1, `- ${imp.substring(0, 50)}`, {
-      x: 46 + halfWidth + 16,
-      y: iY,
-      size: 7.5,
-      font: helvetica,
-      color: darkSlate,
+    const impLines = wrapText(`• ${imp}`, 40);
+    impLines.slice(0, 2).forEach((il) => {
+      safeDrawText(p1, il, {
+        x: 46 + halfWidth + 16,
+        y: iY,
+        size: 7.2,
+        font: helvetica,
+        color: darkSlate,
+      });
+      iY -= 10;
     });
-    iY -= 16;
+    iY -= 4;
   });
 
   y -= 125;
@@ -461,15 +469,38 @@ export async function generateDetailedReportPdf(
 
   y -= 18;
 
-  // Render question summary rows
-  questions.slice(0, 8).forEach((q: any, idx: number) => {
+  // Render question summary rows (paginate if needed so NO question is truncated)
+  let currentScorecardPage = p1;
+  questions.forEach((q: any, idx: number) => {
     const qNum = String(q.questionNumber || `Q${idx + 1}`);
     const qMarks = Number(q.marksAwarded ?? 0);
     const qMax = Number(q.maxMarks || q.maximumMarks || 5);
     const qPct = qMax > 0 ? Math.round((qMarks / qMax) * 100) : 0;
-    const qRemarks = q.examinerRemarks || q.remarks || 'Step evaluation completed';
+    const qRemarks = q.detailedFeedback || q.examinerRemarks || q.reasonForDeduction || q.remarks || 'Step evaluation completed';
 
-    p1.drawRectangle({
+    if (y - 18 < 60) {
+      pageNum++;
+      const newPage = createReportPage(pageNum);
+      currentScorecardPage = newPage.page;
+      y = newPage.height - 75;
+
+      // Repeat Table header on new page
+      currentScorecardPage.drawRectangle({
+        x: 36,
+        y: y - 18,
+        width: width - 72,
+        height: 18,
+        color: brandBlue,
+      });
+      safeDrawText(currentScorecardPage, 'Q. No.', { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Marks Awarded', { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Max Marks', { x: 175, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Score %', { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'ICAI Step Status & Key Remarks', { x: 310, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      y -= 18;
+    }
+
+    currentScorecardPage.drawRectangle({
       x: 36,
       y: y - 18,
       width: width - 72,
@@ -479,12 +510,12 @@ export async function generateDetailedReportPdf(
       borderWidth: 0.5,
     });
 
-    safeDrawText(p1, qNum, { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(p1, `${qMarks}`, { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(p1, `${qMax}`, { x: 175, y: y - 13, size: 7.5, font: helvetica, color: darkSlate });
-    safeDrawText(p1, `${qPct}%`, { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: qPct >= 50 ? passGreen : failRed });
-    const remarkLines = wrapText(qRemarks, 60);
-    safeDrawText(p1, remarkLines[0] || qRemarks, { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
+    safeDrawText(currentScorecardPage, qNum, { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMarks}`, { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMax}`, { x: 175, y: y - 13, size: 7.5, font: helvetica, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qPct}%`, { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: qPct >= 50 ? passGreen : failRed });
+    const remarkLines = wrapText(qRemarks, 62);
+    safeDrawText(currentScorecardPage, remarkLines[0] || qRemarks, { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
 
     y -= 18;
   });
@@ -575,6 +606,43 @@ export async function generateDetailedReportPdf(
         });
 
         stepY -= 20;
+      }
+
+      // Overall Question Examiner Feedback Callout
+      const overallFeedback = q.detailedFeedback || q.reasonForDeduction;
+      if (overallFeedback) {
+        const fbLines = wrapText(`Examiner Feedback: ${overallFeedback}`, 86);
+        const fbH = 12 + fbLines.length * 9;
+        if (stepY - fbH < 75) {
+          pageNum++;
+          const newP = createReportPage(pageNum);
+          currentStepPage = newP.page;
+          stepY = pH - 75;
+        }
+
+        currentStepPage.drawRectangle({
+          x: 44,
+          y: stepY - fbH,
+          width: pW - 88,
+          height: fbH,
+          color: rgb(0.98, 0.98, 0.99),
+          borderColor: rgb(0.85, 0.88, 0.92),
+          borderWidth: 0.5,
+        });
+
+        let fbY = stepY - 10;
+        fbLines.forEach((fl) => {
+          safeDrawText(currentStepPage, fl, {
+            x: 52,
+            y: fbY,
+            size: 6.8,
+            font: helvetica,
+            color: darkSlate,
+          });
+          fbY -= 9;
+        });
+
+        stepY -= (fbH + 6);
       }
 
       // Render Components / Steps

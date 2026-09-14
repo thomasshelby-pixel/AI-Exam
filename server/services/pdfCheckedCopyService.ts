@@ -375,8 +375,8 @@ export async function generateCheckedCopyPdf(
           }
           if (line) commentLines.push(line);
         }
-        const displayLines = commentLines.slice(0, 3);
-        const boxHeight = 16 + displayLines.length * 9;
+        const displayLines = commentLines.slice(0, 6);
+        const boxHeight = 18 + displayLines.length * 9;
 
         page.drawRectangle({
           x: marginX,
@@ -411,8 +411,9 @@ export async function generateCheckedCopyPdf(
           color: markColor,
         });
 
-        // Step Name / Component tag
-        safeDrawText(page, st.stepName.substring(0, 28), {
+        // Step Name / Component tag (expanded to avoid truncation)
+        const stepNameClean = st.stepName.length > 45 ? `${st.stepName.slice(0, 42)}...` : st.stepName;
+        safeDrawText(page, stepNameClean, {
           x: marginX + 54,
           y: currY,
           size: 6.2,
