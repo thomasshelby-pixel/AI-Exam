@@ -97,14 +97,14 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 space-y-5">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <FileCheck2 className="w-5 h-5 text-blue-600" />
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+            <FileCheck2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             <span>My Evaluated Answer Sheets</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Access past ICAI step marking evaluations, academy mock checks, deduction remarks, and verified certified copies.
           </p>
         </div>
@@ -119,7 +119,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row gap-3 items-center justify-between shadow-sm">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row gap-3 items-center justify-between shadow-sm">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -127,19 +127,19 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
             placeholder="Search by subject or institute..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:bg-white"
+            className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900"
           />
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {/* Source Tabs */}
-          <div className="flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+          <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700">
             <button
               onClick={() => setSourceFilter('ALL')}
               className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition ${
                 sourceFilter === 'ALL'
-                  ? 'bg-white text-slate-800 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >
               All Sources
@@ -148,8 +148,8 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
               onClick={() => setSourceFilter('PUBLIC')}
               className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition flex items-center gap-1 ${
                 sourceFilter === 'PUBLIC'
-                  ? 'bg-white text-blue-700 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >
               <Globe className="w-3 h-3" />
@@ -159,8 +159,8 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
               onClick={() => setSourceFilter('INSTITUTE')}
               className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition flex items-center gap-1 ${
                 sourceFilter === 'INSTITUTE'
-                  ? 'bg-white text-indigo-700 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-400 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >
               <Building2 className="w-3 h-3" />
@@ -173,7 +173,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
             <select
               value={levelFilter}
               onChange={(e) => setLevelFilter(e.target.value)}
-              className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+              className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
             >
               <option value="ALL">All Levels</option>
               <option value="FOUNDATION">Foundation</option>
@@ -187,14 +187,14 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
       {/* Evaluations Table / Cards */}
       {isLoading ? (
         <div className="py-20 text-center text-slate-400">
-          <RefreshCw className="w-6 h-6 animate-spin text-blue-600 mx-auto mb-2" />
+          <RefreshCw className="w-6 h-6 animate-spin text-blue-600 dark:text-blue-400 mx-auto mb-2" />
           <p className="text-xs">Loading evaluation archives...</p>
         </div>
       ) : filtered.length > 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+              <thead className="bg-slate-50 dark:bg-slate-800/70 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="py-3 px-4">Subject & Paper</th>
                   <th className="py-3 px-4">Evaluation Source</th>
@@ -206,39 +206,39 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                   <th className="py-3 px-4 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filtered.map((ev) => {
                   const isInstitute = ev.evaluation_source === 'INSTITUTE';
                   return (
-                    <tr key={ev.id} className="hover:bg-slate-50/70 transition">
+                    <tr key={ev.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4">
-                        <span className="font-bold text-slate-800 block">{ev.subject_name}</span>
-                        <span className="text-[10px] text-slate-400">CA {ev.level}</span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{ev.subject_name}</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">CA {ev.level}</span>
                       </td>
                       <td className="py-3 px-4">
                         {isInstitute ? (
                           <div className="flex flex-col">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded w-fit">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.5 rounded w-fit">
                               <Building2 className="w-3 h-3" />
                               Institute
                             </span>
-                            <span className="text-[11px] text-slate-600 font-medium mt-0.5 truncate max-w-[150px]" title={ev.institute_name}>
+                            <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5 truncate max-w-[150px]" title={ev.institute_name}>
                               {ev.institute_name || 'Academy'}
                             </span>
                             {ev.batch_name && (
-                              <span className="text-[10px] text-slate-400 truncate max-w-[150px]">
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[150px]">
                                 {ev.batch_name}
                               </span>
                             )}
                           </div>
                         ) : (
                           <div className="flex flex-col">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded w-fit">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-1.5 py-0.5 rounded w-fit">
                               <Globe className="w-3 h-3" />
                               Public AI
                             </span>
                             {ev.institute_name && (
-                              <span className="text-[10px] text-slate-500 font-medium mt-0.5 truncate max-w-[150px]" title={`Sponsored by ${ev.institute_name}`}>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-0.5 truncate max-w-[150px]" title={`Sponsored by ${ev.institute_name}`}>
                                 Via {ev.institute_name}
                               </span>
                             )}
@@ -246,29 +246,29 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                         )}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-600">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
                           {ev.material_type}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-slate-500">
+                      <td className="py-3 px-4 text-slate-500 dark:text-slate-400">
                         {new Date(ev.created_at).toLocaleDateString('en-IN', {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric',
                         })}
                       </td>
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-white">
                         {ev.total_marks} / {ev.maximum_marks}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-slate-700">{ev.percentage}%</td>
+                      <td className="py-3 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">{ev.percentage}%</td>
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                             ev.percentage >= 60
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                               : ev.percentage >= 40
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                              : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
                           }`}
                         >
                           {ev.grade || 'Evaluated'}
@@ -281,7 +281,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                               id={`recheck-btn-${ev.id}`}
                               onClick={() => handleOpenRecheck(ev.id)}
                               disabled={loadingRecheckId === ev.id}
-                              className="px-2.5 py-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                              className="px-2.5 py-1 rounded bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-950/70 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 font-bold text-xs transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
                               title="Submit Recheck Request to Senior Academic Faculty"
                             >
                               <RotateCcw className={`w-3 h-3 ${loadingRecheckId === ev.id ? 'animate-spin' : ''}`} />
@@ -290,7 +290,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                           )}
                           <button
                             onClick={() => onViewReport(ev.id)}
-                            className="px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs transition cursor-pointer"
+                            className="px-2.5 py-1 rounded bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold text-xs transition cursor-pointer"
                           >
                             Detailed Report
                           </button>
@@ -304,10 +304,10 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
           </div>
         </div>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center space-y-3 shadow-sm">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-12 text-center space-y-3 shadow-sm">
           <Layers className="w-10 h-10 text-slate-400 mx-auto" />
-          <h3 className="text-base font-bold text-slate-800">No evaluation records found</h3>
-          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">No evaluation records found</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
             {search ? 'No evaluations matched your search criteria.' : 'Upload your first answer sheet to get started.'}
           </p>
           <button

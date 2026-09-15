@@ -240,20 +240,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">
       {/* Student Welcome Header Banner */}
-      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
               CA {studentProfile?.ca_level || 'INTERMEDIATE'}
             </span>
-            <span className="text-[11px] font-mono text-slate-500">
+            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
               ICAI: {studentProfile?.icai_registration_number || 'REG-PENDING'}
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Welcome back, {user?.fullName}</h1>
-          <p className="text-slate-500 text-xs sm:text-sm">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome back, {user?.fullName}</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm">
             Track your mock test scores, line-by-line step marks, and examiner recommendations.
           </p>
         </div>
@@ -274,10 +274,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <button
               id="dashboard-edit-profile-btn"
               onClick={onNavigateProfile}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs sm:text-sm transition border border-slate-200 flex items-center gap-1.5"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5"
               title="Edit Profile and Settings"
             >
-              <User className="w-4 h-4 text-slate-600" />
+              <User className="w-4 h-4 text-slate-600 dark:text-slate-400" />
               <span>Edit Profile</span>
             </button>
           )}
@@ -285,9 +285,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && (
             <button
               onClick={onOpenCreditsModal}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs sm:text-sm transition border border-slate-200 flex items-center gap-1.5"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5"
             >
-              <CreditCard className="w-4 h-4 text-blue-600" />
+              <CreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <span>Buy Credits</span>
             </button>
           )}
@@ -388,16 +388,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Entitlement Card */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+          <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Evaluation Access</span>
-            <Zap className="w-3.5 h-3.5 text-blue-600" />
+            <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-900">
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
             {user?.hasPermanentFreeAccess ? (
-              <span className="text-blue-600">Active</span>
+              <span className="text-blue-600 dark:text-blue-400">Active</span>
             ) : metrics.instituteSponsored ? (
-              <span className="text-blue-600">Sponsored</span>
+              <span className="text-blue-600 dark:text-blue-400">Sponsored</span>
             ) : metrics.freeEvaluationsRemaining > 0 ? (
               <span>{metrics.freeEvaluationsRemaining} Free</span>
             ) : (
@@ -406,88 +406,88 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
           <div className="text-xs font-medium mt-1">
             {user?.hasPermanentFreeAccess ? (
-              <span className="text-blue-600">Full evaluation access active</span>
+              <span className="text-blue-600 dark:text-blue-400">Full evaluation access active</span>
             ) : metrics.instituteSponsored ? (
-              <span className="text-blue-600">Via {metrics.instituteName || 'Institute'}</span>
+              <span className="text-blue-600 dark:text-blue-400">Via {metrics.instituteName || 'Institute'}</span>
             ) : metrics.freeEvaluationsRemaining > 0 ? (
-              <span className="text-blue-600">{metrics.freeEvaluationsRemaining} trial evaluations active</span>
+              <span className="text-blue-600 dark:text-blue-400">{metrics.freeEvaluationsRemaining} trial evaluations active</span>
             ) : metrics.expiringSoonCredits && metrics.expiringSoonCredits > 0 ? (
-              <span className="text-amber-600 font-semibold flex items-center gap-1">
+              <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
                 <Clock className="w-3 h-3 inline" /> {metrics.expiringSoonCredits} credits expiring soon
               </span>
             ) : metrics.earliestExpiryDate ? (
-              <span className="text-slate-500">
+              <span className="text-slate-500 dark:text-slate-400">
                 Expires {new Date(metrics.earliestExpiryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
               </span>
             ) : (
-              <span className="text-slate-500">3-Month validity</span>
+              <span className="text-slate-500 dark:text-slate-400">3-Month validity</span>
             )}
           </div>
         </div>
 
         {/* Total Evaluated */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+          <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Total Evaluated</span>
             <Layers className="w-3.5 h-3.5 text-slate-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-900">{metrics.totalEvaluations}</div>
-          <div className="text-xs text-green-600 font-medium mt-1">Full papers verified</div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">{metrics.totalEvaluations}</div>
+          <div className="text-xs text-green-600 dark:text-emerald-400 font-medium mt-1">Full papers verified</div>
         </div>
 
         {/* Average Score */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+          <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Average Score</span>
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 font-mono">
+          <div className="text-2xl font-bold text-slate-900 dark:text-white font-mono">
             {metrics.averageScore > 0 ? `${metrics.averageScore}%` : 'N/A'}
           </div>
-          <div className="text-xs text-slate-500 font-medium mt-1">Passing benchmark: 40%</div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-1">Passing benchmark: 40%</div>
         </div>
 
         {/* Pass Probability */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <div className="text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+          <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>ICAI Standing</span>
-            <Award className="w-3.5 h-3.5 text-amber-500" />
+            <Award className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
           </div>
-          <div className="text-lg sm:text-xl font-bold text-slate-900 truncate mt-0.5">
+          <div className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white truncate mt-0.5">
             {metrics.passProbability}
           </div>
-          <div className="text-xs text-amber-600 font-medium mt-1">Step-marking compliance</div>
+          <div className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-1">Step-marking compliance</div>
         </div>
       </div>
 
       {/* Credit Validity & Purchased Lots (3-Month Validity Breakdown) */}
       {data?.creditStatus?.lots && data.creditStatus.lots.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/40">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-1.5">
-                  <CreditCard className="w-4 h-4 text-blue-600" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm sm:text-base flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   Purchased Evaluation Credits
                 </h3>
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
                   {data.creditStatus.totalValidCredits} Available
                 </span>
                 {data.creditStatus.expiringSoonCredits > 0 && (
-                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-amber-600" />
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                     {data.creditStatus.expiringSoonCredits} Expiring Soon
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Evaluation credits are valid for exactly 3 months from purchase date. Automatically consumed via First-Expiring, First-Out (FEFO).
               </p>
             </div>
 
             <button
               onClick={onOpenCreditsModal}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 bg-white hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 self-start sm:self-auto transition shadow-xs flex items-center gap-1.5"
+              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 bg-white dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-blue-200 dark:border-slate-700 self-start sm:self-auto transition shadow-xs flex items-center gap-1.5"
             >
               <CreditCard className="w-3.5 h-3.5" />
               <span>Buy More Credits</span>
@@ -496,7 +496,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-semibold border-b border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="px-5 py-2.5">Purchase Date / Lot</th>
                   <th className="px-4 py-2.5">Purchased</th>
@@ -506,53 +506,53 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <th className="px-5 py-2.5 text-right">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {data.creditStatus.lots.map((lot) => (
-                  <tr key={lot.id} className={lot.isExpired ? 'bg-slate-50/60 text-slate-400' : 'hover:bg-slate-50/40'}>
+                  <tr key={lot.id} className={lot.isExpired ? 'bg-slate-50/60 dark:bg-slate-800/30 text-slate-400 dark:text-slate-500' : 'hover:bg-slate-50/40 dark:hover:bg-slate-800/40'}>
                     <td className="px-5 py-3 font-medium">
-                      <div className="text-slate-800 font-semibold">
+                      <div className="text-slate-800 dark:text-slate-200 font-semibold">
                         {new Date(lot.purchaseDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono truncate max-w-[140px]">
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono truncate max-w-[140px]">
                         {lot.paymentId || lot.orderId || lot.id}
                       </div>
                     </td>
-                    <td className="px-4 py-3 font-semibold text-slate-700">
+                    <td className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">
                       {lot.creditsPurchased}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`font-bold ${lot.creditsRemaining > 0 ? 'text-blue-600' : 'text-slate-400'}`}>
+                      <span className={`font-bold ${lot.creditsRemaining > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`}>
                         {lot.creditsRemaining}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                       {new Date(lot.validFrom).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                     </td>
                     <td className="px-4 py-3">
-                      <div className={`font-semibold ${lot.isExpiringSoon ? 'text-amber-600 font-bold' : lot.isExpired ? 'text-slate-400' : 'text-slate-700'}`}>
+                      <div className={`font-semibold ${lot.isExpiringSoon ? 'text-amber-600 dark:text-amber-400 font-bold' : lot.isExpired ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
                         {new Date(lot.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </div>
                       {!lot.isExpired && lot.creditsRemaining > 0 && (
-                        <div className={`text-[10px] font-medium ${lot.isExpiringSoon ? 'text-amber-600' : 'text-slate-400'}`}>
+                        <div className={`text-[10px] font-medium ${lot.isExpiringSoon ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'}`}>
                           {lot.daysRemaining} {lot.daysRemaining === 1 ? 'day' : 'days'} remaining
                         </div>
                       )}
                     </td>
                     <td className="px-5 py-3 text-right">
                       {lot.isExpired ? (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                           Expired
                         </span>
                       ) : lot.creditsRemaining === 0 ? (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                           Consumed
                         </span>
                       ) : lot.isExpiringSoon ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
                           <Clock className="w-2.5 h-2.5" /> Expiring Soon
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                           Active
                         </span>
                       )}
@@ -567,21 +567,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Enrolled Coaching Institutes & Sponsored Tests */}
       {((data?.enrolledInstitutes && data.enrolledInstitutes.length > 0) || instituteTests.length > 0 || instituteMaterials.length > 0) && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-indigo-50 text-indigo-700">
+              <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400">
                 <Building2 className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="font-bold text-slate-800 text-base">Enrolled Coaching Institutes & Mock Tests</h2>
-                <p className="text-xs text-slate-500">Practice custom question papers with 100% sponsored ICAI step-marking evaluations</p>
+                <h2 className="font-bold text-slate-800 dark:text-slate-100 text-base">Enrolled Coaching Institutes & Mock Tests</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Practice custom question papers with 100% sponsored ICAI step-marking evaluations</p>
               </div>
             </div>
             {(onNavigateEnrollments || onNavigateProfile) && (
               <button
                 onClick={onNavigateEnrollments || onNavigateProfile}
-                className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1"
+                className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:underline flex items-center gap-1"
               >
                 Manage Enrollments
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -595,11 +595,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {data.enrolledInstitutes.map((inst) => (
                 <div
                   key={inst.membership_id}
-                  className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center gap-2 text-xs"
+                  className="px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center gap-2 text-xs"
                 >
-                  <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="font-bold text-slate-800">{inst.institute_name}</span>
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-semibold">
+                  <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{inst.institute_name}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[10px] font-semibold">
                     {inst.batch_name || 'Unassigned Cohort'}
                   </span>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
@@ -610,35 +610,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
           {/* Available Mock Tests & Question Papers */}
           <div className="pt-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-3 flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-3 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
               Available Institute Papers & Tests
             </h3>
 
             {(instituteTests.length === 0 && instituteMaterials.length === 0) ? (
-              <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-400 bg-slate-50/50">
+              <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50/50 dark:bg-slate-800/30">
                 No active mock tests or materials published by your enrolled institutes yet. Check back soon!
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {instituteTests.map((t) => (
-                  <div key={t.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition flex flex-col justify-between">
+                  <div key={t.id} className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
                           {t.level || 'INTERMEDIATE'}
                         </span>
-                        <span className="text-[10px] text-slate-500 font-mono">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
                           {t.total_marks ? `${t.total_marks} Marks` : 'Mock Test'}
                         </span>
                       </div>
-                      <h4 className="font-bold text-xs text-slate-900 line-clamp-1">{t.title}</h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">{t.subject_name}</p>
-                      <p className="text-[10px] text-indigo-600 font-medium mt-1">Provided by {t.institute_name}</p>
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{t.subject_name}</p>
+                      <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium mt-1">Provided by {t.institute_name}</p>
                     </div>
 
-                    <div className="pt-3 mt-3 border-t border-slate-200/80 flex items-center justify-between">
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <div className="pt-3 mt-3 border-t border-slate-200/80 dark:border-slate-700 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
                         Sponsored (0 credits)
                       </span>
                       <button
@@ -652,23 +652,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 ))}
 
                 {instituteMaterials.map((m) => (
-                  <div key={m.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition flex flex-col justify-between">
+                  <div key={m.id} className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
                           {m.course_level || m.level || 'INTERMEDIATE'}
                         </span>
-                        <span className="text-[10px] text-slate-500">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400">
                           {m.material_type || 'Study Material'}
                         </span>
                       </div>
-                      <h4 className="font-bold text-xs text-slate-900 line-clamp-1">{m.title}</h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">{m.subject}</p>
-                      <p className="text-[10px] text-indigo-600 font-medium mt-1">Provided by {m.institute_name}</p>
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white line-clamp-1">{m.title}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{m.subject}</p>
+                      <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium mt-1">Provided by {m.institute_name}</p>
                     </div>
 
-                    <div className="pt-3 mt-3 border-t border-slate-200/80 flex items-center justify-between">
-                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <div className="pt-3 mt-3 border-t border-slate-200/80 dark:border-slate-700 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
                         Sponsored (0 credits)
                       </span>
                       <button
@@ -689,16 +689,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Main Content Layout: Evaluations Table (2 cols) & Side Intelligence (1 col) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Evaluations Table Container */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
             <div>
-              <h2 className="font-bold text-slate-800 text-base">Recent Evaluations</h2>
-              <p className="text-xs text-slate-500">ICAI-aligned step-marked answer papers</p>
+              <h2 className="font-bold text-slate-800 dark:text-slate-100 text-base">Recent Evaluations</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">ICAI-aligned step-marked answer papers</p>
             </div>
             {data?.recentEvaluations && data.recentEvaluations.length > 0 && (
               <button
                 onClick={onNavigateEvaluations}
-                className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 flex items-center gap-1"
               >
                 View All
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -709,7 +709,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="flex-1 overflow-auto">
             {data?.recentEvaluations && data.recentEvaluations.length > 0 ? (
               <table className="w-full text-left">
-                <thead className="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase sticky top-0 border-b border-slate-200">
+                <thead className="bg-slate-50 dark:bg-slate-800/70 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase sticky top-0 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="px-6 py-3">Subject & Paper</th>
                     <th className="px-4 py-3">Date</th>
@@ -719,28 +719,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <th className="px-6 py-3 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                   {data.recentEvaluations.map((ev) => (
-                    <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-6 py-3 font-semibold text-slate-800">
+                    <tr key={ev.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                      <td className="px-6 py-3 font-semibold text-slate-800 dark:text-slate-200">
                         {ev.subject_name}
-                        <span className="block text-[10px] text-slate-500 font-normal">CA {ev.level}</span>
+                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-normal">CA {ev.level}</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                         {new Date(ev.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
                       </td>
-                      <td className="px-4 py-3 font-mono font-bold text-blue-700">
+                      <td className="px-4 py-3 font-mono font-bold text-blue-700 dark:text-blue-400">
                         {ev.total_marks} / {ev.maximum_marks}
                       </td>
-                      <td className="px-4 py-3 font-mono font-medium text-slate-700">{ev.percentage}%</td>
+                      <td className="px-4 py-3 font-mono font-medium text-slate-700 dark:text-slate-300">{ev.percentage}%</td>
                       <td className="px-4 py-3">
                         <span
                           className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${
                             ev.percentage >= 60
-                              ? 'bg-amber-100 text-amber-800'
+                              ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
                               : ev.percentage >= 40
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-red-100 text-red-700'
+                              ? 'bg-green-100 dark:bg-emerald-950/50 text-green-700 dark:text-emerald-300'
+                              : 'bg-red-100 dark:bg-rose-950/50 text-red-700 dark:text-rose-300'
                           }`}
                         >
                           {ev.grade || 'Completed'}
@@ -749,7 +749,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <td className="px-6 py-3 text-right">
                         <button
                           onClick={() => onViewReport(ev.id)}
-                          className="px-3 py-1 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-700 text-xs font-bold border border-slate-200 hover:border-blue-200 transition"
+                          className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-bold border border-slate-200 dark:border-slate-700 hover:border-blue-200 transition"
                         >
                           View Report
                         </button>
@@ -760,11 +760,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </table>
             ) : (
               <div className="text-center py-12 px-4 space-y-3">
-                <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
                   <FileCheck2 className="w-6 h-6" />
                 </div>
-                <p className="text-sm font-bold text-slate-800">No evaluations submitted yet</p>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">No evaluations submitted yet</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
                   Upload your handwritten CA answer sheet to get your first 2 full papers evaluated completely free!
                 </p>
                 <button
@@ -781,7 +781,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* Side Panels: AI Performance Summary & Revision Focus */}
         <div className="flex flex-col gap-6">
           {/* AI Performance Summary Card (Directly matching High Density design snippet) */}
-          <div className="bg-[#1e293b] rounded-xl p-6 text-white shadow-sm">
+          <div className="bg-[#1e293b] rounded-xl p-6 text-white shadow-sm border border-slate-700/50">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">
               AI PERFORMANCE SUMMARY
             </h3>
@@ -837,9 +837,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
 
           {/* Topics Breakdown */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 space-y-4">
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-1.5 mb-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 mb-2">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Demonstrated Strengths
               </h4>
@@ -848,21 +848,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {data.strongTopics.map((topic, i) => (
                     <span
                       key={i}
-                      className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-medium"
+                      className="px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[11px] font-medium"
                     >
                       {topic}
                     </span>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic">
+                <p className="text-xs text-slate-500 dark:text-slate-400 italic">
                   Strong topics will populate here following your first evaluated answer sheet.
                 </p>
               )}
             </div>
 
-            <div className="border-t border-slate-100 pt-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-rose-700 flex items-center gap-1.5 mb-2">
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400 flex items-center gap-1.5 mb-2">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 Revision Priority (Marks Lost)
               </h4>
@@ -871,14 +871,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {data.weakTopics.map((topic, i) => (
                     <span
                       key={i}
-                      className="px-2.5 py-1 rounded-md bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-medium"
+                      className="px-2.5 py-1 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[11px] font-medium"
                     >
                       {topic}
                     </span>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic">
+                <p className="text-xs text-slate-500 dark:text-slate-400 italic">
                   Deduction areas and missing statutory sections will appear here.
                 </p>
               )}
@@ -890,21 +890,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Institute Paper Submission Modal */}
       {selectedPaperForSubmit && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300">
                     {selectedPaperForSubmit.level || selectedPaperForSubmit.course_level || 'INTERMEDIATE'}
                   </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
                     100% Institute Sponsored (0 Credits)
                   </span>
                 </div>
-                <h3 className="font-bold text-base text-slate-900 mt-1">
+                <h3 className="font-bold text-base text-slate-900 dark:text-white mt-1">
                   Submit Answers: {selectedPaperForSubmit.title}
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   {selectedPaperForSubmit.subject_name || selectedPaperForSubmit.subject} • {selectedPaperForSubmit.institute_name}
                 </p>
               </div>
@@ -914,7 +914,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   setPaperSubmitError('');
                   setPaperSubmissionText('');
                 }}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -922,16 +922,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
             <form onSubmit={handleSubmitInstituteTest} className="mt-4 space-y-4">
               {paperSubmitError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg text-xs text-rose-700 dark:text-rose-300">
                   {paperSubmitError}
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Handwritten Answer Content / Extracted Text
                 </label>
-                <p className="text-[11px] text-slate-400 mb-2">
+                <p className="text-[11px] text-slate-400 dark:text-slate-400 mb-2">
                   Paste your handwritten answer sheet transcript or draft solution for this test. Our AI will evaluate step-by-step using ICAI evaluation standards and your institute's marking scheme.
                 </p>
                 <textarea
@@ -939,12 +939,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   value={paperSubmissionText}
                   onChange={(e) => setPaperSubmissionText(e.target.value)}
                   placeholder="Enter or paste your answers for this paper here... (e.g. Solution to Question 1: Working Note 1, Ledger Accounts, Statutory references)"
-                  className="w-full p-3 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none font-mono"
+                  className="w-full p-3 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none font-mono text-slate-900 dark:text-white"
                   required
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => {
@@ -952,7 +952,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     setPaperSubmitError('');
                     setPaperSubmissionText('');
                   }}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
                 >
                   Cancel
                 </button>

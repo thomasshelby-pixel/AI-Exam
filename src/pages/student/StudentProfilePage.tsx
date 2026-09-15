@@ -403,37 +403,37 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const stats = profileData?.stats;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 text-slate-800 dark:text-slate-100">
       {/* Top Breadcrumb & Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <button
             onClick={onNavigateDashboard}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-blue-600 transition mb-2"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition mb-2"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Back to Student Dashboard
           </button>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-3">
             <span>Student Profile & Account</span>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
               CA {caLevel}
             </span>
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Manage your personal details, exam preparation preferences, password security, and active promo benefits.
           </p>
         </div>
 
         {/* Quick Stats Banner */}
         <div className="flex items-center gap-2.5">
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm text-right">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 shadow-sm text-right">
             <p className="text-[11px] font-semibold uppercase text-slate-400">Evaluations Taken</p>
-            <p className="text-lg font-bold text-slate-900">{stats?.totalEvaluations || 0} Sheets</p>
+            <p className="text-lg font-bold text-slate-900 dark:text-white">{stats?.totalEvaluations || 0} Sheets</p>
           </div>
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm text-right">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 shadow-sm text-right">
             <p className="text-[11px] font-semibold uppercase text-slate-400">Average Score</p>
-            <p className="text-lg font-bold text-blue-600">
+            <p className="text-lg font-bold text-blue-600 dark:text-blue-400">
               {stats?.averageScore ? `${stats.averageScore}%` : 'N/A'}
             </p>
           </div>
@@ -448,19 +448,19 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         <div className="lg:col-span-7 space-y-6">
           <form
             onSubmit={handleSaveProfile}
-            className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-7 shadow-sm space-y-6"
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-7 shadow-sm space-y-6"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
                   <User className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Personal & Academic Details</h2>
-                  <p className="text-xs text-slate-500">Update your student information and target CA stage</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Personal & Academic Details</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Update your student information and target CA stage</p>
                 </div>
               </div>
-              <span className="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+              <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Verified Student
               </span>
@@ -470,14 +470,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <div
                 className={`p-4 rounded-xl text-sm flex items-start gap-3 ${
                   profileMessage.type === 'success'
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border border-rose-200 text-rose-800'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
                 }`}
               >
                 {profileMessage.type === 'success' ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 ) : (
-                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
                 )}
                 <span>{profileMessage.text}</span>
               </div>
@@ -485,11 +485,11 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
             {/* Avatar Selection & Preview */}
             <div className="space-y-3">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                 Profile Photo / Avatar
               </label>
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 border-2 border-slate-200 flex items-center justify-center shrink-0 shadow-inner">
+                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 shadow-inner">
                   {avatarUrl ? (
                     <img
                       src={avatarUrl}
@@ -498,7 +498,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                       onError={() => setAvatarUrl('')}
                     />
                   ) : (
-                    <div className="text-xl font-bold text-slate-500">
+                    <div className="text-xl font-bold text-slate-500 dark:text-slate-400">
                       {fullName
                         ? fullName
                             .split(' ')
@@ -512,7 +512,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 </div>
 
                 <div className="flex-1 space-y-1.5">
-                  <p className="text-xs text-slate-500">Choose a default avatar or paste a custom image URL:</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Choose a default avatar or paste a custom image URL:</p>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {PRESET_AVATARS.map((preset, idx) => (
                       <button
@@ -530,7 +530,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                       <button
                         type="button"
                         onClick={() => setAvatarUrl('')}
-                        className="text-[11px] text-slate-400 hover:text-slate-600 ml-1 font-medium"
+                        className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-1 font-medium"
                       >
                         Clear
                       </button>
@@ -544,7 +544,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Full Name (Editable) */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Full Name <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
@@ -555,14 +555,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="e.g. Rahul Sharma"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-900 dark:text-white"
                   />
                 </div>
               </div>
 
               {/* Phone Number (Editable) */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Phone Number
                 </label>
                 <div className="relative">
@@ -572,14 +572,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+91 98765 43210"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-900 dark:text-white"
                   />
                 </div>
               </div>
 
               {/* Email Address (Immutable / Read-only) */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
                   <span>Registered Email</span>
                   <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
                     <Lock className="w-2.5 h-2.5" /> Immutable
@@ -591,14 +591,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     type="email"
                     disabled
                     value={user?.email || ''}
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-100/80 border border-slate-200 text-slate-500 rounded-xl cursor-not-allowed font-mono text-xs"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 rounded-xl cursor-not-allowed font-mono text-xs"
                   />
                 </div>
               </div>
 
               {/* City / Location (Editable) */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   City / Location
                 </label>
                 <div className="relative">
@@ -608,14 +608,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     placeholder="e.g. Mumbai, Maharashtra"
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-900 dark:text-white"
                   />
                 </div>
               </div>
 
               {/* ICAI Registration (System / Read-only note) */}
               <div className="space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
                   <span>ICAI Registration No.</span>
                   <span className="text-[10px] text-slate-400">Exam Audit Record</span>
                 </label>
@@ -625,14 +625,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     type="text"
                     disabled
                     value={profile?.icaiRegistrationNumber || 'REG-PENDING'}
-                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-100/80 border border-slate-200 text-slate-600 rounded-xl cursor-not-allowed font-mono text-xs"
+                    className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 rounded-xl cursor-not-allowed font-mono text-xs"
                   />
                 </div>
               </div>
 
               {/* Institute Affiliation & Multi-Institute Enrollment */}
               <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Enrolled Institutes & Batches
                 </label>
                 {profile?.enrolledInstitutes && profile.enrolledInstitutes.length > 0 ? (
@@ -640,19 +640,19 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     {profile.enrolledInstitutes.map((inst) => (
                       <div
                         key={inst.membership_id}
-                        className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs"
+                        className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between text-xs"
                       >
                         <div className="flex items-center gap-2.5">
-                          <Building2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                           <div>
-                            <p className="font-bold text-slate-900">{inst.institute_name}</p>
-                            <p className="text-[11px] text-slate-500">
-                              Batch: <span className="font-semibold text-slate-700">{inst.batch_name || 'General / Unassigned'}</span>
+                            <p className="font-bold text-slate-900 dark:text-slate-100">{inst.institute_name}</p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              Batch: <span className="font-semibold text-slate-700 dark:text-slate-300">{inst.batch_name || 'General / Unassigned'}</span>
                               {inst.batch_level ? ` • CA ${inst.batch_level}` : ''}
                             </p>
                           </div>
                         </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/50">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/50 dark:border-emerald-800">
                           Active Membership
                         </span>
                       </div>
@@ -665,7 +665,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                       type="text"
                       disabled
                       value="Independent CA Aspirant (Not enrolled in any coaching institute)"
-                      className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-100/80 border border-slate-200 text-slate-600 rounded-xl cursor-not-allowed font-medium"
+                      className="w-full pl-9 pr-3.5 py-2.5 text-xs bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 rounded-xl cursor-not-allowed font-medium"
                     />
                   </div>
                 )}
@@ -673,8 +673,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
 
             {/* CA Exam Level Selector */}
-            <div className="space-y-2 pt-2 border-t border-slate-100">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                 Target CA Level <span className="text-rose-500">*</span>
               </label>
               <div className="grid grid-cols-3 gap-3">
@@ -690,8 +690,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     }}
                     className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex flex-col items-center gap-1 ${
                       caLevel === level
-                        ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-sm'
-                        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-600 dark:border-blue-500 text-blue-700 dark:text-blue-300 shadow-sm'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
                     }`}
                   >
                     <span>CA {level}</span>
@@ -701,16 +701,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
 
             {/* Preferred Subjects / Papers Selector */}
-            <div className="space-y-2 pt-2 border-t border-slate-100">
+            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Focus Subjects & Papers (CA {caLevel})
                 </label>
                 <span className="text-xs text-slate-400">
                   {preferredSubjects.length} selected
                 </span>
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Select the papers you are currently preparing for step-marking evaluations:
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -723,14 +723,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                       onClick={() => handleToggleSubject(subject)}
                       className={`text-left text-xs p-3 rounded-xl border transition flex items-start justify-between gap-2 ${
                         isSelected
-                          ? 'bg-blue-50/70 border-blue-300 text-blue-900 font-semibold'
-                          : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100'
+                          ? 'bg-blue-50/70 dark:bg-blue-950/50 border-blue-300 dark:border-blue-700 text-blue-900 dark:text-blue-200 font-semibold'
+                          : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                       }`}
                     >
                       <span>{subject}</span>
                       <div
                         className={`w-4 h-4 rounded flex items-center justify-center shrink-0 mt-0.5 ${
-                          isSelected ? 'bg-blue-600 text-white' : 'border border-slate-300 bg-white'
+                          isSelected ? 'bg-blue-600 text-white' : 'border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'
                         }`}
                       >
                         {isSelected && <Check className="w-3 h-3" />}
@@ -742,7 +742,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
 
             {/* Save Profile Button */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => {
@@ -756,7 +756,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     setProfileMessage(null);
                   }
                 }}
-                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition flex items-center gap-1.5"
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition flex items-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Discard
@@ -909,15 +909,15 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
           {/* 2. CHANGE PASSWORD CARD */}
           <form
             onSubmit={handleChangePassword}
-            className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4"
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4"
           >
-            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-bold">
                 <KeyRound className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Security & Password</h3>
-                <p className="text-xs text-slate-500">Update your student account login credentials</p>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Security & Password</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Update your student account login credentials</p>
               </div>
             </div>
 
@@ -925,14 +925,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <div
                 className={`p-3.5 rounded-xl text-xs flex items-start gap-2.5 ${
                   passwordMessage.type === 'success'
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-rose-50 border border-rose-200 text-rose-800'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
                 }`}
               >
                 {passwordMessage.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
                 )}
                 <span>{passwordMessage.text}</span>
               </div>
@@ -940,7 +940,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
             {/* Current Password */}
             <div className="space-y-1">
-              <label className="block text-xs font-bold text-slate-700">Current Password</label>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Current Password</label>
               <div className="relative">
                 <input
                   type={showCurrentPassword ? 'text' : 'password'}
@@ -948,12 +948,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="Enter current password"
-                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
                 <button
                   type="button"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                 >
                   {showCurrentPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -962,7 +962,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
             {/* New Password */}
             <div className="space-y-1">
-              <label className="block text-xs font-bold text-slate-700">New Password</label>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">New Password</label>
               <div className="relative">
                 <input
                   type={showNewPassword ? 'text' : 'password'}
@@ -970,12 +970,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="At least 8 characters"
-                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
                 <button
                   type="button"
                   onClick={() => setShowNewPassword(!showNewPassword)}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                 >
                   {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -984,7 +984,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
             {/* Confirm New Password */}
             <div className="space-y-1">
-              <label className="block text-xs font-bold text-slate-700">Confirm New Password</label>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">Confirm New Password</label>
               <div className="relative">
                 <input
                   type={showConfirmPassword ? 'text' : 'password'}
@@ -992,12 +992,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Re-type new password"
-                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-3 pr-9 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                 >
                   {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -1007,7 +1007,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             <button
               type="submit"
               disabled={isSavingPassword || !currentPassword || !newPassword || !confirmPassword}
-              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs transition shadow-sm disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+              className="w-full bg-slate-800 dark:bg-blue-600 hover:bg-slate-900 dark:hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs transition shadow-sm disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
             >
               {isSavingPassword ? (
                 <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1019,27 +1019,27 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
           </form>
 
           {/* 3. EVALUATION CREDITS OVERVIEW CARD */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
                   <CreditCard className="w-4 h-4" />
                 </div>
-                <h3 className="text-sm font-bold text-slate-900">Credits & Plan Tier</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Credits & Plan Tier</h3>
               </div>
               <button
                 type="button"
                 onClick={onOpenCreditsModal}
-                className="text-xs font-bold text-blue-600 hover:text-blue-800 transition"
+                className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition"
               >
                 + Add Credits
               </button>
             </div>
 
-            <div className="bg-slate-50 rounded-xl p-3.5 space-y-2 border border-slate-200">
+            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3.5 space-y-2 border border-slate-200 dark:border-slate-700">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Current Entitlement Tier:</span>
-                <span className="font-bold text-slate-900">
+                <span className="text-slate-500 dark:text-slate-400">Current Entitlement Tier:</span>
+                <span className="font-bold text-slate-900 dark:text-white">
                   {entitlement?.tier === 'PROMOTIONAL_AI30'
                     ? 'AI30 Special Promotion'
                     : entitlement?.tier === 'PERMANENT_FREE'
@@ -1053,21 +1053,21 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               </div>
 
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Purchased Credits Balance:</span>
-                <span className="font-mono font-bold text-blue-600">
+                <span className="text-slate-500 dark:text-slate-400">Purchased Credits Balance:</span>
+                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
                   {profile?.purchasedCredits || 0} credits
                 </span>
               </div>
 
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Free Tier Remaining:</span>
-                <span className="font-mono font-bold text-emerald-600">
+                <span className="text-slate-500 dark:text-slate-400">Free Tier Remaining:</span>
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                   {entitlement?.freeEvaluationsRemaining || 0} checks
                 </span>
               </div>
             </div>
 
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
               All evaluations are processed with full ICAI Step-by-Step Marking and verified audit logging. Purchased credits have 3 months validity under FEFO queueing.
             </p>
           </div>

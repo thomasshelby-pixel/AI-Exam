@@ -150,25 +150,25 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8 text-slate-800 dark:text-slate-100">
       {/* Header & Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
-          <div className="flex items-center gap-2 text-xs text-slate-500 mb-1">
+          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
             <button
               onClick={onNavigateDashboard}
-              className="hover:text-indigo-600 transition-colors"
+              className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
             >
               Dashboard
             </button>
             <span>/</span>
-            <span className="font-semibold text-slate-700">Institute Enrollments</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">Institute Enrollments</span>
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2.5">
-            <Building2 className="w-6 h-6 text-indigo-600" />
+          <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
+            <Building2 className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
             My Coaching Institute Enrollments
           </h1>
-          <p className="text-sm text-slate-600 mt-1">
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
             Manage your affiliated coaching academies, assigned batches, institute test papers, and sponsored evaluations.
           </p>
         </div>
@@ -181,7 +181,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               setInstituteCodeInput('');
               setIsJoinModalOpen(true);
             }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all shadow-sm shadow-indigo-200"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all shadow-sm shadow-indigo-200 dark:shadow-none"
           >
             <Plus className="w-4 h-4" />
             Join with Institute Code
@@ -191,7 +191,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
 
       {/* Error alert */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>{errorMessage}</span>
@@ -209,22 +209,22 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
       {isLoading ? (
         <div className="py-20 text-center">
           <div className="inline-block animate-spin w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full mb-3"></div>
-          <p className="text-sm font-medium text-slate-500">Loading your enrolled institutes & batches...</p>
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Loading your enrolled institutes & batches...</p>
         </div>
       ) : enrollments.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center max-w-2xl mx-auto shadow-sm">
-          <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-4">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center max-w-2xl mx-auto shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto mb-4">
             <GraduationCap className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">No Coaching Institutes Linked Yet</h2>
-          <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">No Coaching Institutes Linked Yet</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
             Are you studying at a CA Coaching Institute, Academy, or Faculty Test Series?
             Link your institute enrollment using their unique code to unlock 100% sponsored AI evaluations,
             batch-specific test papers, and faculty model answers.
           </p>
           <button
             onClick={() => setIsJoinModalOpen(true)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 dark:shadow-none"
           >
             <Plus className="w-4 h-4" />
             Enter Institute Enrollment Code
@@ -236,33 +236,33 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
             {enrollments.map((enr) => (
               <div
                 key={enr.membership_id}
-                className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:border-indigo-200 transition-all"
+                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden hover:border-indigo-300 dark:hover:border-indigo-700 transition-all"
               >
                 {/* Institute Card Header */}
-                <div className="p-6 sm:p-7 border-b border-slate-100 bg-slate-50/50">
+                <div className="p-6 sm:p-7 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="flex items-start gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center flex-shrink-0 font-black text-lg">
+                      <div className="w-12 h-12 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 flex items-center justify-center flex-shrink-0 font-black text-lg">
                         {enr.institute_name.charAt(0)}
                       </div>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-lg font-bold text-slate-900">{enr.institute_name}</h2>
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-xs font-mono font-bold border border-slate-200">
+                          <h2 className="text-lg font-bold text-slate-900 dark:text-white">{enr.institute_name}</h2>
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-mono font-bold border border-slate-200 dark:border-slate-700">
                             {enr.institute_code}
                           </span>
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800">
                             <CheckCircle2 className="w-3 h-3" />
                             Active Enrollment
                           </span>
                           {enr.sponsored_access && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold border border-indigo-200">
-                              <Sparkles className="w-3 h-3 text-indigo-500" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-semibold border border-indigo-200 dark:border-indigo-800">
+                              <Sparkles className="w-3 h-3 text-indigo-500 dark:text-indigo-400" />
                               Sponsored Evaluations Active
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                           Enrolled on {formatDate(enr.joined_at)} • Official Institute Partner
                         </p>
                       </div>
@@ -283,22 +283,22 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                 {/* Card Body - Cohort & Batch Details */}
                 <div className="p-6 sm:p-7 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         Assigned Batch / Cohort
                       </span>
-                      <div className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                        <Layers className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                         <span className="truncate">{enr.batch_name || 'Unassigned Cohort'}</span>
                       </div>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         Curriculum Level & Target
                       </span>
-                      <div className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                        <GraduationCap className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <GraduationCap className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                         <span>
                           {enr.batch_level ? `CA ${enr.batch_level}` : 'General Level'}
                           {enr.batch_target_attempt ? ` • ${enr.batch_target_attempt}` : ''}
@@ -306,12 +306,12 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                       </div>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         Evaluation Privilege
                       </span>
-                      <div className="text-sm font-bold text-emerald-700 flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                      <div className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                         <span>100% Institute Sponsored</span>
                       </div>
                     </div>
@@ -320,18 +320,18 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                   {/* Materials & Tests Accordion / Previews */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
                     {/* Institute Question Papers & Materials */}
-                    <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3">
+                    <div className="border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <BookOpen className="w-4 h-4 text-indigo-600" />
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                          <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                             Published Question Papers ({enr.materials_count})
                           </h3>
                         </div>
                         {enr.materials_count > 0 && (
                           <button
                             onClick={() => setSelectedInstituteForMaterials(enr)}
-                            className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                            className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 flex items-center gap-1"
                           >
                             View All <ChevronRight className="w-3.5 h-3.5" />
                           </button>
@@ -343,15 +343,15 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                           {enr.recentMaterials.slice(0, 3).map((mat) => (
                             <div
                               key={mat.id}
-                              className="p-3 bg-white rounded-lg border border-slate-200 flex items-center justify-between text-xs hover:border-indigo-300 transition-colors"
+                              className="p-3 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors"
                             >
                               <div className="truncate pr-2">
-                                <p className="font-semibold text-slate-800 truncate">{mat.title}</p>
-                                <p className="text-[11px] text-slate-500">{mat.subject_name}</p>
+                                <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{mat.title}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">{mat.subject_name}</p>
                               </div>
                               <button
                                 onClick={() => onNavigateUpload(enr.institute_id, mat.id)}
-                                className="px-2.5 py-1 rounded bg-indigo-50 text-indigo-700 font-semibold hover:bg-indigo-100 text-[11px] flex-shrink-0"
+                                className="px-2.5 py-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-[11px] flex-shrink-0"
                               >
                                 Evaluate
                               </button>
@@ -366,11 +366,11 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                     </div>
 
                     {/* Assigned Tests & Mock Series */}
-                    <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 space-y-3">
+                    <div className="border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-indigo-600" />
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                          <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                             Assignments & Tests ({enr.tests_count})
                           </h3>
                         </div>
@@ -381,11 +381,11 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                           {enr.recentTests.slice(0, 3).map((t) => (
                             <div
                               key={t.id}
-                              className="p-3 bg-white rounded-lg border border-slate-200 flex items-center justify-between text-xs"
+                              className="p-3 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs"
                             >
                               <div className="truncate pr-2">
-                                <p className="font-semibold text-slate-800 truncate">{t.title}</p>
-                                <p className="text-[11px] text-slate-500">
+                                <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{t.title}</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                                   {t.subject_name} • Max Marks: {t.maximum_marks}
                                 </p>
                               </div>
@@ -414,29 +414,29 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
 
       {/* Modal: Join Institute with Code */}
       {isJoinModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-indigo-600" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                 Join Coaching Institute
               </h3>
               <button
                 onClick={() => setIsJoinModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleJoinInstitute} className="mt-4 space-y-4">
-              <p className="text-xs text-slate-600 leading-relaxed">
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                 Enter the unique enrollment code issued by your coaching institute or instructor.
                 This instantly links your account and activates institute-sponsored AI evaluations.
               </p>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                   Institute Enrollment Code
                 </label>
                 <input
@@ -444,20 +444,20 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                   value={instituteCodeInput}
                   onChange={(e) => setInstituteCodeInput(e.target.value.toUpperCase())}
                   placeholder="e.g. APEX-CA-2026"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono text-sm tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-sm tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   required
                 />
               </div>
 
               {joinModalError && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
+                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   <span>{joinModalError}</span>
                 </div>
               )}
 
               {joinModalSuccess && (
-                <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs flex items-center gap-2">
+                <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
                   <span>{joinModalSuccess}</span>
                 </div>
@@ -467,7 +467,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsJoinModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   Cancel
                 </button>
@@ -486,18 +486,18 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
 
       {/* Modal: View All Materials for Institute */}
       {selectedInstituteForMaterials && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 dark:bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
-                <h3 className="text-base font-bold text-slate-900">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
                   {selectedInstituteForMaterials.institute_name} Question Papers
                 </h3>
-                <p className="text-xs text-slate-500">Official model answers and verified ICAI marking schemes</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Official model answers and verified ICAI marking schemes</p>
               </div>
               <button
                 onClick={() => setSelectedInstituteForMaterials(null)}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -508,11 +508,11 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                 selectedInstituteForMaterials.recentMaterials.map((mat) => (
                   <div
                     key={mat.id}
-                    className="p-4 rounded-xl border border-slate-200 flex items-center justify-between gap-4 hover:border-indigo-300 transition-colors bg-white"
+                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors bg-white dark:bg-slate-850"
                   >
                     <div>
-                      <h4 className="text-sm font-bold text-slate-800">{mat.title}</h4>
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">{mat.title}</h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         {mat.subject_name} • {mat.level} {mat.paper ? `• Paper ${mat.paper}` : ''}
                       </p>
                     </div>
@@ -535,10 +535,10 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               )}
             </div>
 
-            <div className="pt-3 border-t border-slate-100 flex justify-end">
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 onClick={() => setSelectedInstituteForMaterials(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 Close
               </button>

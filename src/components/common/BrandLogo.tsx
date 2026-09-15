@@ -36,7 +36,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         <img
           src="/logo.svg"
           alt="CA EXAM CHECKER AI - Checked Like An Examiner"
-          className={`${fullDimensions} h-auto object-contain mx-auto drop-shadow-xs`}
+          className={`${fullDimensions} h-auto object-contain mx-auto drop-shadow-xs dark:hidden`}
+          loading="eager"
+        />
+        <img
+          src="/logo-dark.svg"
+          alt="CA EXAM CHECKER AI - Checked Like An Examiner"
+          className={`${fullDimensions} h-auto object-contain mx-auto drop-shadow-xs hidden dark:block`}
           loading="eager"
         />
       </div>

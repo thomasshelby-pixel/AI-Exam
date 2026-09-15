@@ -544,46 +544,46 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 text-slate-800 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 py-6 text-slate-800 dark:text-slate-100 space-y-6">
       {/* Title & ICAI Disclaimer Banner */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
             <span>Evaluate Handwritten Answer Sheet</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-bold uppercase tracking-wider">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-bold uppercase tracking-wider">
               ICAI Pattern
             </span>
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
             Upload your mock test, model test, or test series solutions for line-by-line step marking.
           </p>
         </div>
 
         {/* Entitlement Counter Box */}
-        <div className="bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2 flex items-center gap-3">
-          <div className="w-7 h-7 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-200/50">
+        <div className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg px-3.5 py-2 flex items-center gap-3">
+          <div className="w-7 h-7 rounded-md bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-200/50 dark:border-blue-700/50">
             <Zap className="w-3.5 h-3.5" />
           </div>
           <div>
-            <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Available Balance</p>
-            <p className="text-xs sm:text-sm font-bold text-slate-800">
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Available Balance</p>
+            <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
               {isInstituteEnrolled ? (
-                <span className="text-blue-600">Sponsored ({activeInstitute?.institute_name || 'Institute'})</span>
+                <span className="text-blue-600 dark:text-blue-400">Sponsored ({activeInstitute?.institute_name || 'Institute'})</span>
               ) : user?.hasPermanentFreeAccess ? (
-                <span className="text-blue-600">Active</span>
+                <span className="text-blue-600 dark:text-blue-400">Active</span>
               ) : studentProfile?.institute_name ? (
-                <span className="text-blue-600">Institute Sponsored</span>
+                <span className="text-blue-600 dark:text-blue-400">Institute Sponsored</span>
               ) : freeRemaining > 0 ? (
-                <span className="text-emerald-600">{freeRemaining} Free Left</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{freeRemaining} Free Left</span>
               ) : (
-                <span className="text-slate-900">{purchasedCredits} Credits</span>
+                <span className="text-slate-900 dark:text-white">{purchasedCredits} Credits</span>
               )}
             </p>
           </div>
           {!isInstituteEnrolled && !user?.hasPermanentFreeAccess && !studentProfile?.institute_name && freeRemaining === 0 && purchasedCredits === 0 && (
             <button
               onClick={onOpenCreditsModal}
-              className="ml-1 px-2.5 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
+              className="ml-1 px-2.5 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
             >
               Buy (₹10)
             </button>
@@ -593,25 +593,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
       {/* Evaluation Progress State Overlay */}
       {evalStep !== 'IDLE' && (
-        <div className="p-5 sm:p-6 rounded-xl bg-white border border-blue-200 shadow-xl space-y-4 animate-in fade-in">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+        <div className="p-5 sm:p-6 rounded-xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-900/60 shadow-xl space-y-4 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-blue-50 border border-blue-100 mt-0.5">
-                <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+              <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/40 border border-blue-100 dark:border-blue-800 mt-0.5">
+                <RefreshCw className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">ICAI Examiner Evaluation in Progress</h3>
-                <p className="text-xs text-slate-600 mt-0.5">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">ICAI Examiner Evaluation in Progress</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
                   Deep evaluation in progress. CA papers with extensive working notes take 2–4 minutes to evaluate with step-wise precision.
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-              <span className="flex items-center gap-1.5 text-xs font-mono font-bold text-slate-700 px-3 py-1 rounded bg-slate-100 border border-slate-200">
-                <Clock className="w-3.5 h-3.5 text-slate-500" />
+              <span className="flex items-center gap-1.5 text-xs font-mono font-bold text-slate-700 dark:text-slate-300 px-3 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <Clock className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                 {Math.floor(elapsedSeconds / 60)}m {elapsedSeconds % 60 < 10 ? '0' : ''}{elapsedSeconds % 60}s
               </span>
-              <span className="text-xs font-semibold text-blue-800 px-3 py-1 rounded bg-blue-50 border border-blue-200">
+              <span className="text-xs font-semibold text-blue-800 dark:text-blue-300 px-3 py-1 rounded bg-blue-50 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-800">
                 Typical evaluation time: 2–5 minutes
               </span>
             </div>
@@ -628,18 +628,18 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 <div key={st.key} className="flex items-start gap-3 text-xs">
                   <div className="mt-0.5 shrink-0">
                     {isDone ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     ) : isCurrent ? (
-                      <div className="w-4 h-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+                      <div className="w-4 h-4 rounded-full border-2 border-blue-600 dark:border-blue-400 border-t-transparent animate-spin" />
                     ) : (
-                      <div className="w-4 h-4 rounded-full border border-slate-300" />
+                      <div className="w-4 h-4 rounded-full border border-slate-300 dark:border-slate-600" />
                     )}
                   </div>
                   <div className="space-y-0.5">
-                    <span className={isDone ? 'text-slate-400 font-medium' : isCurrent ? 'text-blue-700 font-bold' : 'text-slate-600'}>
+                    <span className={isDone ? 'text-slate-400 dark:text-slate-500 font-medium' : isCurrent ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-600 dark:text-slate-400'}>
                       {st.label}
                     </span>
-                    <p className={`text-[11px] ${isCurrent ? 'text-blue-600/90 font-medium' : 'text-slate-400'}`}>
+                    <p className={`text-[11px] ${isCurrent ? 'text-blue-600/90 dark:text-blue-300/90 font-medium' : 'text-slate-400 dark:text-slate-500'}`}>
                       {st.description}
                     </p>
                   </div>
@@ -648,7 +648,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             })}
           </div>
 
-          <div className="pt-2 text-[11px] text-slate-400 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="pt-2 text-[11px] text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <span>Evaluation persists in background if you navigate away. Results are automatically saved to your dashboard.</span>
             {activeEvaluationId && (
               <button
@@ -659,7 +659,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   setActiveEvaluationId(null);
                   setEvalStep('IDLE');
                 }}
-                className="text-slate-400 hover:text-slate-600 underline cursor-pointer text-left sm:text-right"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline cursor-pointer text-left sm:text-right"
               >
                 Reset upload session
               </button>
@@ -670,9 +670,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
       {/* Errors & Validation Rejection Banner */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm space-y-2">
+        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-sm space-y-2">
           <div className="flex items-start gap-2 font-bold">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
             <span className="whitespace-pre-line leading-relaxed">{errorMessage}</span>
           </div>
           {errorMessage.includes('prepayment credits') && (
@@ -681,24 +681,24 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 href="https://ai.studio/projects"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700 hover:text-rose-900 underline"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:underline"
               >
                 Go to Google AI Studio Project Billing &rarr;
               </a>
             </div>
           )}
-          {rejectionDetails && <p className="text-xs text-rose-600 pl-6 leading-relaxed">{rejectionDetails}</p>}
+          {rejectionDetails && <p className="text-xs text-rose-600 dark:text-rose-400 pl-6 leading-relaxed">{rejectionDetails}</p>}
         </div>
       )}
 
       {/* Dual Evaluation Mode Selector Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-sm">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3 shadow-sm">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-            <Scale className="w-4 h-4 text-indigo-600" />
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+            <Scale className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
             Evaluation Benchmark Mode
           </h3>
-          <span className="text-[11px] font-semibold text-slate-500">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
             {evaluationSource === 'INSTITUTE' ? 'Sponsored by Coaching Academy' : 'Standard ICAI Public Model'}
           </span>
         </div>
@@ -710,23 +710,23 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             onClick={() => setEvaluationSource('PUBLIC')}
             className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
               evaluationSource === 'PUBLIC'
-                ? 'bg-blue-50/70 border-blue-500 shadow-xs ring-1 ring-blue-500/20'
-                : 'bg-white border-slate-200 hover:border-slate-300'
+                ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 shadow-xs ring-1 ring-blue-500/20'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
             }`}
           >
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-blue-600" />
+              <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                 Public AI Evaluation
               </span>
               {evaluationSource === 'PUBLIC' && (
-                <span className="w-2 h-2 rounded-full bg-blue-600" />
+                <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
               )}
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
               Checked against official ICAI MTP, RTP & Suggested Answers. {isInstituteEnrolled ? 'Fully covered by institute evaluation allocation.' : 'Uses personal evaluation credits.'}
             </p>
-            <div className="mt-2 text-[10px] font-bold text-blue-700 bg-blue-100/60 rounded px-2 py-0.5 inline-block">
+            <div className="mt-2 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 rounded px-2 py-0.5 inline-block">
               {isInstituteEnrolled
                 ? `Sponsored by ${activeInstitute?.institute_name || 'Institute'} (0 Personal Credits)`
                 : user?.hasPermanentFreeAccess
@@ -751,25 +751,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             disabled={enrolledInstitutes.length === 0}
             className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
               evaluationSource === 'INSTITUTE'
-                ? 'bg-indigo-50/70 border-indigo-500 shadow-xs ring-1 ring-indigo-500/20'
+                ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 shadow-xs ring-1 ring-indigo-500/20'
                 : enrolledInstitutes.length === 0
-                ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
-                : 'bg-white border-slate-200 hover:border-slate-300'
+                ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
             }`}
           >
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+              <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                 Institute Evaluation
               </span>
               {evaluationSource === 'INSTITUTE' && (
-                <span className="w-2 h-2 rounded-full bg-indigo-600" />
+                <span className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400" />
               )}
             </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
               Checked against your enrolled coaching academy's custom test papers & approved marking schemes.
             </p>
-            <div className="mt-2 text-[10px] font-bold text-indigo-700 bg-indigo-100/60 rounded px-2 py-0.5 inline-block">
+            <div className="mt-2 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100/60 dark:bg-indigo-900/40 rounded px-2 py-0.5 inline-block">
               {enrolledInstitutes.length > 0
                 ? `100% Institute Sponsored (${enrolledInstitutes.length} ${
                     enrolledInstitutes.length === 1 ? 'Academy' : 'Academies'
@@ -783,9 +783,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Paper & Subject Configuration */}
         <div className="lg:col-span-1 space-y-5">
-          <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-blue-600" />
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               {evaluationSource === 'INSTITUTE' ? '1. Institute Paper Selection' : '1. Paper Specification'}
             </h3>
 
@@ -793,15 +793,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               <div className="space-y-3.5">
                 {/* Institute Selector */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                     Enrolled Coaching Academy
                   </label>
                   {enrolledInstitutes.length > 0 ? (
                     <select
                       value={selectedInstituteId}
                       onChange={(e) => setSelectedInstituteId(e.target.value)}
-                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white font-medium"
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-600 focus:bg-white dark:focus:bg-slate-900 font-medium"
                     >
                       {enrolledInstitutes.map((inst) => (
                         <option key={inst.institute_id} value={inst.institute_id}>
@@ -810,7 +810,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       ))}
                     </select>
                   ) : (
-                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-800 dark:text-amber-300">
                       You are not currently enrolled in any coaching academy. Please join an institute using an invite code.
                     </div>
                   )}
@@ -818,8 +818,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
                 {/* Test Paper / Material Selector */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                     Institute Test Paper / Mock Series
                   </label>
                   {instituteMaterials.length > 0 ? (
@@ -833,7 +833,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                           if (sel.subject_key) setSelectedSubjectKey(sel.subject_key);
                         }
                       }}
-                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white font-medium"
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-600 focus:bg-white dark:focus:bg-slate-900 font-medium"
                     >
                       {instituteMaterials.map((mat) => (
                         <option key={mat.id} value={mat.id}>
@@ -842,7 +842,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       ))}
                     </select>
                   ) : (
-                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500">
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-500 dark:text-slate-400">
                       No test papers uploaded by this institute yet. Please contact your coordinator.
                     </div>
                   )}
@@ -850,15 +850,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
                 {/* Selected Paper Details Preview */}
                 {selectedInstituteMaterialId && (
-                  <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg text-[11px] space-y-1 text-slate-600">
-                    <div className="font-bold text-indigo-900 flex items-center justify-between">
+                  <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900 rounded-lg text-[11px] space-y-1 text-slate-600 dark:text-slate-300">
+                    <div className="font-bold text-indigo-900 dark:text-indigo-300 flex items-center justify-between">
                       <span>Curriculum: CA {level}</span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded font-bold">
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded font-bold">
                         Sponsored
                       </span>
                     </div>
-                    <p className="text-slate-500 font-medium">Subject: {currentSubject?.name || 'Selected Paper'}</p>
-                    <p className="text-[10px] text-indigo-700">Evaluated using verified faculty marking scheme</p>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium">Subject: {currentSubject?.name || 'Selected Paper'}</p>
+                    <p className="text-[10px] text-indigo-700 dark:text-indigo-400">Evaluated using verified faculty marking scheme</p>
                   </div>
                 )}
               </div>
@@ -866,23 +866,23 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               <>
                 {/* Institute Sponsorship info banner for Public Evaluation */}
                 {isInstituteEnrolled && (
-                  <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-1.5">
+                  <div className="p-3 bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-lg text-xs text-blue-900 dark:text-blue-300 space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold flex items-center gap-1.5 text-blue-900">
-                        <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span className="font-semibold flex items-center gap-1.5 text-blue-900 dark:text-blue-200">
+                        <Building2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         Coaching Institute Sponsorship
                       </span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded">
+                      <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">
                         0 Personal Credits
                       </span>
                     </div>
                     {enrolledInstitutes.length > 1 ? (
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-1 font-medium">Charge Evaluation to Academy:</label>
+                        <label className="block text-[11px] text-slate-600 dark:text-slate-400 mb-1 font-medium">Charge Evaluation to Academy:</label>
                         <select
                           value={selectedInstituteId}
                           onChange={(e) => setSelectedInstituteId(e.target.value)}
-                          className="w-full px-2.5 py-1.5 text-xs rounded bg-white border border-blue-300 text-slate-800 focus:outline-none focus:border-blue-600 font-medium"
+                          className="w-full px-2.5 py-1.5 text-xs rounded bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 font-medium"
                         >
                           {enrolledInstitutes.map((inst) => (
                             <option key={inst.institute_id} value={inst.institute_id}>
@@ -892,11 +892,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                         </select>
                       </div>
                     ) : (
-                      <p className="text-[11px] text-blue-800 font-medium">
+                      <p className="text-[11px] text-blue-800 dark:text-blue-300 font-medium">
                         Sponsored by {activeInstitute?.institute_name || enrolledInstitutes[0]?.institute_name}
                       </p>
                     )}
-                    <p className="text-[10px] text-blue-600">
+                    <p className="text-[10px] text-blue-600 dark:text-blue-400">
                       Evaluated using official global ICAI papers. Cost is billed to your academy's allocation.
                     </p>
                   </div>
@@ -904,17 +904,17 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
                 {/* Level selection */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">CA Examination Level</label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">CA Examination Level</label>
                   <div className="grid grid-cols-3 gap-1.5">
                     {(['FOUNDATION', 'INTERMEDIATE', 'FINAL'] as CALevel[]).map((lvl) => (
                       <button
                         key={lvl}
                         type="button"
                         onClick={() => setLevel(lvl)}
-                        className={`py-1.5 px-1 text-xs font-bold rounded-lg border transition text-center ${
+                        className={`py-1.5 px-1 text-xs font-bold rounded-lg border transition text-center cursor-pointer ${
                           level === lvl
                             ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                         }`}
                       >
                         {lvl === 'FOUNDATION' ? 'Foundation' : lvl === 'INTERMEDIATE' ? 'Inter' : 'Final'}
@@ -926,7 +926,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 {/* Group selection (if Inter or Final) */}
                 {level !== 'FOUNDATION' && (
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Group</label>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Group</label>
                     <div className="grid grid-cols-3 gap-1.5">
                       {[
                         { id: 'GROUP_1', label: 'Group 1' },
@@ -937,10 +937,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                           key={grp.id}
                           type="button"
                           onClick={() => setSelectedGroup(grp.id as 'GROUP_1' | 'GROUP_2' | 'ALL')}
-                          className={`py-1.5 text-xs font-bold rounded-lg border transition ${
+                          className={`py-1.5 text-xs font-bold rounded-lg border transition cursor-pointer ${
                             selectedGroup === grp.id
-                              ? 'bg-blue-50 border-blue-600 text-blue-700'
-                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                              ? 'bg-blue-50 dark:bg-blue-900/40 border-blue-600 text-blue-700 dark:text-blue-300'
+                              : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                           }`}
                         >
                           {grp.label}
@@ -952,11 +952,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
                 {/* Subject Dropdown */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject & Paper</label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Subject & Paper</label>
                   <select
                     value={selectedSubjectKey}
                     onChange={(e) => setSelectedSubjectKey(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                    className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
                   >
                     {filteredSubjects.map((subj) => (
                       <option key={subj.id} value={subj.id}>
@@ -969,11 +969,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 {/* Paper Type & Attempt */}
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Paper Type</label>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Paper Type</label>
                     <select
                       value={materialType}
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
                     >
                       <option value="MTP">MTP (Mock Test Paper)</option>
                       <option value="PYQ">PYQ (Past Year Question Paper)</option>
@@ -982,11 +982,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Target Attempt</label>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Target Attempt</label>
                     <select
                       value={attempt}
                       onChange={(e) => setAttempt(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
                     >
                       {availableAttempts.map((att) => (
                         <option key={att.id} value={att.attemptLabel}>
@@ -1001,14 +1001,14 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
             {/* Checking Mode */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
                 <span>Evaluator Strictness</span>
-                <span className="text-[10px] text-blue-600 font-bold">ICAI Standard</span>
+                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">ICAI Standard</span>
               </label>
               <select
                 value={checkingMode}
                 onChange={(e) => setCheckingMode(e.target.value as CheckingMode)}
-                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
+                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
               >
                 <option value="standard">Standard ICAI Marking (Balanced & Realistic)</option>
                 <option value="strict">Strict Head Examiner (Conservative on Working Notes)</option>
@@ -1017,15 +1017,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             </div>
 
             {/* Reference Material Status Badge */}
-            <div className="pt-2 border-t border-slate-100">
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
               {checkingMaterial ? (
-                <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   Verifying Reference Material...
                 </p>
               ) : materialAvailable ? (
-                <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg font-medium">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-lg font-medium">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <span className="truncate">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Institute Question Paper & Model Answers Loaded'
@@ -1033,8 +1033,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 p-2.5 rounded-lg">
-                  <Info className="w-4 h-4 shrink-0 text-amber-600" />
+                <div className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5 rounded-lg">
+                  <Info className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
                   <span>
                     {evaluationSource === 'INSTITUTE'
                       ? 'Test material pending upload by academy.'
@@ -1046,15 +1046,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           </div>
 
           {/* ICAI Exam Rules Highlights */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 text-xs space-y-2 text-slate-600 shadow-sm">
-            <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
-              <Scale className="w-3.5 h-3.5 text-blue-600" />
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs space-y-2 text-slate-600 dark:text-slate-300 shadow-sm">
+            <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+              <Scale className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               ICAI Rule Adherence
             </h4>
-            <ul className="space-y-1.5 list-disc list-inside text-slate-500 text-[11px]">
+            <ul className="space-y-1.5 list-disc list-inside text-slate-500 dark:text-slate-400 text-[11px]">
               <li>Step-by-step marking awarded for correct intermediate calculations.</li>
               <li>
-                <strong className="text-slate-800 font-bold">Paper-Specific MCQ Rules:</strong> 0 negative marking for Inter/Final; -0.25 on Foundation QA &amp; Eco.
+                <strong className="text-slate-800 dark:text-slate-200 font-bold">Paper-Specific MCQ Rules:</strong> 0 negative marking for Inter/Final; -0.25 on Foundation QA &amp; Eco.
               </li>
               <li>Working Notes evaluated alongside Main Financial Statements.</li>
               <li>Alternative correct methods and interpretations accepted.</li>
@@ -1064,13 +1064,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
         {/* Right Column: File Upload Area & Submit */}
         <div className="lg:col-span-2 space-y-5">
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-sm">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6 shadow-sm">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                <UploadCloud className="w-4 h-4 text-blue-600" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 2. Upload Handwritten Answer Sheet
               </h3>
-              <span className="text-xs text-slate-400 font-medium">PDF, JPG, PNG (Max 50MB)</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">PDF, JPG, PNG (Max 50MB)</span>
             </div>
 
             {/* Drag & Drop Box */}
@@ -1083,10 +1083,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               onDrop={handleDrop}
               className={`border-2 border-dashed rounded-xl p-8 text-center transition flex flex-col items-center justify-center min-h-[260px] cursor-pointer ${
                 dragOver
-                  ? 'border-blue-500 bg-blue-50/50'
+                  ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
                   : file
-                  ? 'border-emerald-500 bg-emerald-50/40'
-                  : 'border-slate-300 hover:border-blue-400 bg-slate-50 hover:bg-blue-50/20'
+                  ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/30'
+                  : 'border-slate-300 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/20 dark:hover:bg-blue-950/20'
               }`}
               onClick={() => document.getElementById('answer-sheet-file-input')?.click()}
             >
@@ -1104,12 +1104,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
               {file ? (
                 <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-sm">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center mx-auto shadow-sm">
                     <FileText className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900 max-w-sm truncate">{file.name}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white max-w-sm truncate">{file.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready for ICAI step-evaluation
                     </p>
                   </div>
@@ -1120,24 +1120,24 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       setFile(null);
                       setFileBase64('');
                     }}
-                    className="text-xs text-rose-600 hover:underline inline-block mt-2 font-semibold"
+                    className="text-xs text-rose-600 dark:text-rose-400 hover:underline inline-block mt-2 font-semibold cursor-pointer"
                   >
                     Remove & choose another file
                   </button>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center mx-auto">
+                  <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 flex items-center justify-center mx-auto">
                     <UploadCloud className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-800">
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
                       Drag & drop your handwritten CA answer sheet here
                     </p>
-                    <p className="text-xs text-slate-500 mt-1">or click to browse from your computer or phone</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">or click to browse from your computer or phone</p>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 text-[11px] text-slate-600 font-medium">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                     <span>Admit cards, certificates & blank documents are rejected automatically</span>
                   </div>
                 </div>
@@ -1146,10 +1146,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
             {/* Material Unavailable Alert */}
             {!materialAvailable && !checkingMaterial && (
-              <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+              <div className="p-3.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
                 <div>
-                  <p className="font-bold text-rose-900">Evaluation Material Not Uploaded Yet</p>
+                  <p className="font-bold text-rose-900 dark:text-rose-200">Evaluation Material Not Uploaded Yet</p>
                   <p className="mt-0.5 leading-relaxed">
                     Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.
                   </p>
