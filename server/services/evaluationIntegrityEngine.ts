@@ -715,18 +715,21 @@ export function evaluateHardCompletionGate(
   }
   checks.push({ ruleId: 'RULE_3_ATTEMPTED_EVALUATED', name: 'Attempted Answers Evaluated', passed: check3Passed, details: check3Details });
 
-  // Check 4: No Collapsed Q5 Sub-Questions
+  // Check 4: Universal Sub-Question Granularity (No Collapsed Multi-Part Questions)
   let check4Passed = true;
-  let check4Details = 'Sub-questions Q5(a) and Q5(b) are separately evaluated with exact marks.';
-  const q5Evaluations = questions.filter((q) => String(q.questionNumber) === '5' || String(q.questionNumber).includes('5'));
-  for (const q of q5Evaluations) {
-    if (q.maximumMarks === 15 && (!q.subQuestion || q.subQuestion === '')) {
-      check4Passed = false;
-      check4Details = 'CRITICAL VIOLATION: Q5 is collapsed into a single 15-mark question instead of separate Q5(a)=10 and Q5(b)=5.';
-      break;
+  let check4Details = 'All multi-part sub-questions are evaluated individually with verified component step marks.';
+  if (paperStructure && Array.isArray(paperStructure.subQuestions)) {
+    for (const q of questions) {
+      const qNum = String(q.questionNumber || '');
+      const expectedSubs = paperStructure.subQuestions.filter((s: any) => s.questionNumber === qNum && s.subQuestionNumber);
+      if (expectedSubs.length > 1 && (!q.subQuestion || q.subQuestion === '')) {
+        check4Passed = false;
+        check4Details = `CRITICAL VIOLATION: Question Q${qNum} is collapsed into a single ${q.maximumMarks}-mark question instead of separate sub-questions (${expectedSubs.map((s: any) => s.fullQuestionCode).join(', ')}).`;
+        break;
+      }
     }
   }
-  checks.push({ ruleId: 'RULE_4_NO_COLLAPSED_Q5', name: 'Sub-Question Granularity (Q5)', passed: check4Passed, details: check4Details });
+  checks.push({ ruleId: 'RULE_4_NO_COLLAPSED_Q5', name: 'Sub-Question Granularity', passed: check4Passed, details: check4Details });
 
   // Check 5: Deterministic MCQ Scoring
   let check5Passed = true;

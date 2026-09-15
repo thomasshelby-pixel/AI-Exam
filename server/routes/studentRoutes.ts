@@ -785,7 +785,14 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       errMsg.includes('prepayment credits') ||
       errMsg.includes('PREPAYMENT_CREDITS_DEPLETED') ||
       errMsg.includes('billing#prepay') ||
-      errMsg.includes('credits are depleted');
+      (errMsg.includes('prepayment') && errMsg.includes('depleted'));
+
+    const isRateLimit =
+      errMsg.includes('RESOURCE_EXHAUSTED') ||
+      errMsg.includes('quota') ||
+      errMsg.includes('rate_limit') ||
+      errMsg.includes('RATE_LIMITED') ||
+      errMsg.includes('429');
 
     const userFacingMsg = isPrepayment
       ? 'Google AI Studio prepayment credits are depleted. Please visit AI Studio at https://ai.studio/projects to manage project billing. No evaluation credits have been deducted.'
@@ -795,11 +802,11 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       ? errMsg.replace('MISSING_MCQ_RULE: ', '')
       : errMsg.includes('503') || errMsg.includes('high demand')
       ? 'The AI evaluation service is temporarily experiencing high demand. No credits were deducted. Please try submitting again in a moment.'
-      : errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')
+      : isRateLimit
       ? 'AI Evaluation service quota is temporarily exceeded. No credits were deducted. Please retry in a few moments.'
       : 'Evaluation encountered an issue. No credits or free evaluations were deducted. Please retry.';
 
-    return res.status(isPrepayment ? 402 : 500).json({
+    return res.status(isPrepayment ? 402 : isRateLimit ? 429 : 500).json({
       error: userFacingMsg,
       isPrepaymentDepleted: isPrepayment,
     });

@@ -272,9 +272,35 @@ export function getAnthropic(): Anthropic {
  */
 const providerCreditExhaustedUntil = new Map<ModelProviderType, number>();
 
+/**
+ * Extract retry delay in milliseconds from provider error message (e.g. "Please retry in 14.819496429s" or retryDelay: "14s")
+ */
+export function extractRetryDelayMs(errMsg: string, defaultMs = 30000): number {
+  if (!errMsg) return defaultMs;
+  const retryInMatch = errMsg.match(/retry in\s+([0-9.]+)\s*s/i);
+  if (retryInMatch && retryInMatch[1]) {
+    const sec = parseFloat(retryInMatch[1]);
+    if (!isNaN(sec) && sec > 0) {
+      return Math.min(120000, Math.max(5000, Math.ceil(sec * 1000) + 1000));
+    }
+  }
+  const retryDelayMatch = errMsg.match(/retryDelay["']?\s*:\s*["']?([0-9.]+)\s*s/i);
+  if (retryDelayMatch && retryDelayMatch[1]) {
+    const sec = parseFloat(retryDelayMatch[1]);
+    if (!isNaN(sec) && sec > 0) {
+      return Math.min(120000, Math.max(5000, Math.ceil(sec * 1000) + 1000));
+    }
+  }
+  return defaultMs;
+}
+
 export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string) {
-  providerCreditExhaustedUntil.set(provider, Date.now() + 5 * 60 * 1000);
-  console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS for 5 minutes: ${reason || 'credit balance too low'}`);
+  const existing = providerCreditExhaustedUntil.get(provider);
+  const now = Date.now();
+  providerCreditExhaustedUntil.set(provider, now + 5 * 60 * 1000);
+  if (!existing || now > existing) {
+    console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS for 5 minutes: ${reason || 'credit balance too low'}`);
+  }
 }
 
 export function clearProviderCreditExhausted(provider: ModelProviderType) {
@@ -294,13 +320,17 @@ export function isProviderCreditExhausted(provider: ModelProviderType): boolean 
 /**
  * In-memory per-model cooldown tracking:
  * If an individual model hits a rate-limit (429) or high-demand 503 spike,
- * cool down that individual model for 30-45s so fallback models can take over immediately.
+ * cool down that individual model for 15-45s so fallback models can take over immediately.
  */
 const modelCooldownUntil = new Map<string, { until: number; reason: string }>();
 
 export function markModelTemporarilyUnavailable(modelId: string, durationMs = 45000, reason = 'Rate limited or high demand') {
-  modelCooldownUntil.set(modelId, { until: Date.now() + durationMs, reason });
-  console.info(`[Model Registry] Model ${modelId} cooling down for ${Math.round(durationMs / 1000)}s (${reason}).`);
+  const existing = modelCooldownUntil.get(modelId);
+  const now = Date.now();
+  modelCooldownUntil.set(modelId, { until: now + durationMs, reason });
+  if (!existing || now > existing.until) {
+    console.info(`[Model Registry] Model ${modelId} cooling down for ${Math.round(durationMs / 1000)}s (${reason}).`);
+  }
 }
 
 export function isModelCoolingDown(modelId: string): boolean {
@@ -410,22 +440,25 @@ async function callGemini(
       break;
     } catch (err: any) {
       lastErr = err;
-      const errMsg = (err?.message || String(err)).toLowerCase();
+      const rawErrMsg = err?.message || String(err);
+      const errMsg = rawErrMsg.toLowerCase();
       const isPrepaymentDepleted =
         errMsg.includes('prepayment credits are depleted') ||
-        errMsg.includes('credits are depleted') ||
-        errMsg.includes('billing#prepay');
+        errMsg.includes('billing#prepay') ||
+        (errMsg.includes('prepayment') && errMsg.includes('depleted'));
       if (isPrepaymentDepleted) {
-        markProviderCreditExhausted('gemini', err?.message || 'Gemini prepayment credits are depleted');
+        markProviderCreditExhausted('gemini', rawErrMsg || 'Gemini account prepayment credits are depleted');
         throw err;
       }
       const is429 = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('resource_exhausted');
       if (is429) {
-        // Daily quota limit on this specific model; throw immediately to trigger fallback cascade
+        const retryDelayMs = extractRetryDelayMs(rawErrMsg, 25000);
+        markModelTemporarilyUnavailable(modelId, retryDelayMs, `Rate limited (retry in ${Math.ceil(retryDelayMs / 1000)}s)`);
         throw err;
       }
       const isTimeout = errMsg.includes('timed out') || errMsg.includes('timeout') || errMsg.includes('etimedout');
       if (isTimeout) {
+        markModelTemporarilyUnavailable(modelId, 60000, 'Request Timed Out');
         throw err;
       }
       const is503 = errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('unavailable') || errMsg.includes('overloaded');
@@ -1017,19 +1050,29 @@ export async function executeModelWithFallback(
       const latencyMs = Date.now() - startTime;
       const errMsg = err?.message || String(err);
       retriesCount++;
-      console.warn(`[Model Registry] ${candidateModel} (${provider}) failed after ${latencyMs}ms: ${errMsg}`);
+      console.warn(`[Model Registry] ${candidateModel} (${provider}) failed after ${latencyMs}ms: ${errMsg.slice(0, 160)}`);
 
       fallbackOccurred = true;
       fallbackReason = `${candidateModel} failed: ${errMsg.slice(0, 160)}`;
 
       const errMsgLower = errMsg.toLowerCase();
-      const isCreditIssue =
-        errMsgLower.includes('credit balance is too low') ||
-        errMsgLower.includes('no credits remaining') ||
-        errMsgLower.includes('insufficient_quota') ||
+
+      // Differentiate fatal credit exhaustion from temporary per-model rate limits
+      const isGeminiPrepayment =
         errMsgLower.includes('prepayment credits are depleted') ||
-        errMsgLower.includes('credits are depleted') ||
-        errMsgLower.includes('billing');
+        errMsgLower.includes('billing#prepay') ||
+        (errMsgLower.includes('prepayment') && errMsgLower.includes('depleted'));
+      const isAnthropicCredit =
+        provider === 'anthropic' &&
+        (errMsgLower.includes('credit balance is too low') ||
+          errMsgLower.includes('plans & billing to upgrade') ||
+          errMsgLower.includes('no credits remaining'));
+      const isOpenAiCredit =
+        provider === 'openai' &&
+        (errMsgLower.includes('insufficient_quota') ||
+          (errMsgLower.includes('exceeded your current quota') && errMsgLower.includes('billing')));
+
+      const isCreditIssue = isGeminiPrepayment || isAnthropicCredit || isOpenAiCredit;
 
       if (isCreditIssue) {
         markProviderCreditExhausted(provider, errMsg);
@@ -1040,8 +1083,8 @@ export async function executeModelWithFallback(
       const isTimeout = errMsgLower.includes('timed out') || errMsgLower.includes('timeout') || errMsgLower.includes('etimedout');
 
       if (isRateLimit || isTemp || isTimeout) {
-        const cooldownMs = isRateLimit ? 15 * 60 * 1000 : isTimeout ? 3 * 60 * 1000 : 45000;
-        const cooldownReason = isRateLimit ? 'Rate Limited / Quota Exceeded' : isTimeout ? 'Request Timed Out' : 'High Demand';
+        const cooldownMs = isRateLimit ? extractRetryDelayMs(errMsg, 30000) : isTimeout ? 2 * 60 * 1000 : 45000;
+        const cooldownReason = isRateLimit ? `Rate Limited / Quota (Retry in ${Math.ceil(cooldownMs / 1000)}s)` : isTimeout ? 'Request Timed Out' : 'High Demand';
         markModelTemporarilyUnavailable(candidateModel, cooldownMs, cooldownReason);
       }
 
@@ -1099,6 +1142,22 @@ export async function testModelHealth(
   const overallStart = Date.now();
 
   const resultDetails: NonNullable<ModelHealthResult['details']> = {};
+
+  // STAGE 0: FAST-CHECK PROVIDER CIRCUIT BREAKER
+  if (isProviderCreditExhausted(provider)) {
+    return {
+      success: false,
+      latencyMs: 0,
+      message: `Provider ${provider.toUpperCase()} has depleted credits. Please update billing/credits in your provider dashboard.`,
+      model: modelId,
+      provider,
+      status: 'INSUFFICIENT_CREDITS',
+      healthStage: 'CONNECTIVITY',
+      details: {
+        connectivity: { passed: false, latencyMs: 0, message: `Provider ${provider.toUpperCase()} credit balance depleted` },
+      },
+    };
+  }
 
   // STAGE 1: CONNECTIVITY CHECK
   if (!isProviderConfigured(provider)) {
@@ -1386,7 +1445,15 @@ TASK: Return strictly a valid JSON object matching this schema:
   } catch (evalErr: any) {
     const totalLatency = Date.now() - overallStart;
     const errMsg = evalErr?.message || String(evalErr);
-    console.warn(`[Model Registry] ${modelId} failed Stage 3 (Evaluation Readiness): ${errMsg}`);
+    const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('resource_exhausted');
+
+    if (isRateLimit) {
+      const delayMs = extractRetryDelayMs(errMsg, 25000);
+      markModelTemporarilyUnavailable(modelId, delayMs, `Stage 3 rate limit (retry in ${Math.ceil(delayMs / 1000)}s)`);
+      console.info(`[Model Registry] ${modelId} inference succeeded; Stage 3 rate limited (cooldown: ${Math.ceil(delayMs / 1000)}s).`);
+    } else {
+      console.warn(`[Model Registry] ${modelId} failed Stage 3 (Evaluation Readiness): ${errMsg.slice(0, 160)}`);
+    }
 
     resultDetails.evaluationReadiness = {
       passed: false,
@@ -1395,20 +1462,30 @@ TASK: Return strictly a valid JSON object matching this schema:
       componentsCount: 0,
       marksAwarded: 0,
       maximumMarks: 3,
-      message: errMsg.slice(0, 200),
+      message: isRateLimit
+        ? `Inference passed. Stage 3 rate limited (quota limit; retry in ${Math.ceil(extractRetryDelayMs(errMsg, 25000) / 1000)}s).`
+        : errMsg.slice(0, 200),
     };
 
     // If inference passed, keep status as INFERENCE_READY so it's not marked dead
     try {
       db.prepare(
         "UPDATE model_configs SET status = 'INFERENCE_READY', health_stage = 'INFERENCE', health_details = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(`Inference passed, but Evaluation schema check failed: ${errMsg.slice(0, 160)}`, totalLatency, modelId);
+      ).run(
+        isRateLimit
+          ? `Inference verified. Stage 3 rate limited (${Math.ceil(extractRetryDelayMs(errMsg, 25000) / 1000)}s cooldown)`
+          : `Inference passed, but Evaluation schema check failed: ${errMsg.slice(0, 160)}`,
+        totalLatency,
+        modelId
+      );
     } catch {}
 
     return {
       success: true,
       latencyMs: totalLatency,
-      message: `Model ${modelId} is INFERENCE_READY but failed deep schema check: ${errMsg.slice(0, 160)}`,
+      message: isRateLimit
+        ? `Model ${modelId} passed connectivity and inference. Stage 3 is temporarily rate-limited (resets in ${Math.ceil(extractRetryDelayMs(errMsg, 25000) / 1000)}s).`
+        : `Model ${modelId} is INFERENCE_READY but failed deep schema check: ${errMsg.slice(0, 160)}`,
       model: modelId,
       provider,
       status: 'INFERENCE_READY',

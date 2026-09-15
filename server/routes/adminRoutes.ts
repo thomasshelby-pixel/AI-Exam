@@ -3454,13 +3454,28 @@ router.post('/models/test-provider', async (req: AuthRequest, res: Response) => 
       return res.status(400).json({ error: 'Valid provider (gemini, openai, anthropic) is required' });
     }
 
-    const { testModelConnection, APPROVED_MODELS } = await import('../models/modelRegistry.js');
+    const { testModelConnection, APPROVED_MODELS, isProviderCreditExhausted } = await import('../models/modelRegistry.js');
     const providerModels = APPROVED_MODELS.filter((m) => m.provider === provider);
     const results = [];
 
-    for (const m of providerModels) {
+    for (let i = 0; i < providerModels.length; i++) {
+      const m = providerModels[i];
+      if (isProviderCreditExhausted(provider)) {
+        results.push({
+          success: false,
+          latencyMs: 0,
+          message: `Provider ${provider.toUpperCase()} has depleted credits.`,
+          model: m.id,
+          provider,
+          status: 'INSUFFICIENT_CREDITS',
+        });
+        continue;
+      }
       const resTest = await testModelConnection(m.id);
       results.push(resTest);
+      if (i < providerModels.length - 1 && resTest.success) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
     }
 
     return res.json({

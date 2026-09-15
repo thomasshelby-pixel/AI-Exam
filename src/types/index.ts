@@ -654,3 +654,39 @@ export interface LegalAcknowledgement {
   ip_address?: string;
 }
 
+/**
+ * Universal question display formatter ensuring sub-question granularity (e.g. Q4(a), Q4(b), Q6(a)(2), MCQ1).
+ * Never truncates sub-questions to Q4 or 4.
+ */
+export function formatQuestionDisplayCode(q: any): string {
+  if (!q) return 'Q';
+  if (typeof q === 'string') {
+    const trimmed = q.trim();
+    if (trimmed.startsWith('MCQ') || trimmed.startsWith('Q')) return trimmed;
+    if (/^\d/.test(trimmed)) return `Q${trimmed}`;
+    return trimmed;
+  }
+  if (q.fullQuestionCode && typeof q.fullQuestionCode === 'string') {
+    const code = q.fullQuestionCode.trim();
+    if (code.startsWith('MCQ') || code.startsWith('Q')) return code;
+    if (/^\d/.test(code)) return `Q${code}`;
+    return code;
+  }
+  const rawQNum = String(q.questionNumber || '').trim();
+  const qNum = rawQNum.replace(/^Q/i, '');
+  const subQ = q.subQuestion || q.subQuestionNumber;
+
+  if (q.isMcq || subQ === 'MCQ' || rawQNum.toUpperCase().startsWith('MCQ')) {
+    const num = rawQNum.replace(/[^0-9]/g, '') || '1';
+    return `MCQ${num}`;
+  }
+
+  if (!qNum) return 'Q';
+
+  if (subQ) {
+    const cleanSub = String(subQ).trim().replace(/^\((.*)\)$/, '$1');
+    return `Q${qNum}(${cleanSub})`;
+  }
+  return `Q${qNum}`;
+}
+

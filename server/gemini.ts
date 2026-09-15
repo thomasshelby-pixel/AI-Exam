@@ -11,7 +11,14 @@ import {
   ScoreCalculationAuditItem,
 } from '../src/types/index.js';
 import { db } from './db.js';
-import { executeModelWithFallback, isModelCoolingDown, markModelTemporarilyUnavailable } from './models/modelRegistry.js';
+import {
+  executeModelWithFallback,
+  isModelCoolingDown,
+  markModelTemporarilyUnavailable,
+  isProviderCreditExhausted,
+  markProviderCreditExhausted,
+  extractRetryDelayMs,
+} from './models/modelRegistry.js';
 import { getActiveMcqScoringRule, getCanonicalPaperName } from './mcqRules.js';
 import { processEvaluationIntegrity } from './services/evaluationIntegrityEngine.js';
 import { getAuthoritativePaperStructure } from './services/paperStructureService.js';
@@ -172,12 +179,12 @@ export async function generateContentWithResilience(
         return Object.assign(response, { modelUsed: model });
       } catch (err: any) {
         lastError = err;
-        const errMsg = (err?.message || String(err)).toLowerCase();
+        const rawErrMsg = err?.message || String(err);
+        const errMsg = rawErrMsg.toLowerCase();
         const isPrepaymentDepleted =
           errMsg.includes('prepayment credits are depleted') ||
           errMsg.includes('billing#prepay') ||
-          errMsg.includes('prepayment credits') ||
-          errMsg.includes('credits are depleted');
+          (errMsg.includes('prepayment') && errMsg.includes('depleted'));
         const is503 = errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('overloaded');
         const isQuotaExceeded = errMsg.includes('quota') || errMsg.includes('resource_exhausted') || errMsg.includes('429');
         const isTransient =
@@ -191,7 +198,8 @@ export async function generateContentWithResilience(
 
         // Immediate stop if project billing / prepayment credits are depleted across the entire account
         if (isPrepaymentDepleted) {
-          console.warn('[Gemini Resilience] Prepayment credits depleted on Gemini account. Cascading to next providers immediately.');
+          console.info('[Gemini Resilience] Prepayment credits depleted on Gemini account. Cascading to next providers immediately.');
+          markProviderCreditExhausted('gemini', rawErrMsg || 'Gemini account prepayment credits depleted');
           try {
             db.prepare("UPDATE model_configs SET status = 'INSUFFICIENT_CREDITS' WHERE provider = 'gemini'").run();
           } catch {}
@@ -200,13 +208,13 @@ export async function generateContentWithResilience(
 
         // If quota is exhausted or model timed out, cool it down and cascade immediately
         if (isQuotaExceeded || isTimeout) {
-          const duration = isQuotaExceeded ? 15 * 60 * 1000 : 3 * 60 * 1000;
-          const reason = isQuotaExceeded ? 'Daily Quota Exceeded (429)' : 'Request Timed Out';
+          const duration = isQuotaExceeded ? extractRetryDelayMs(rawErrMsg, 30000) : 2 * 60 * 1000;
+          const reason = isQuotaExceeded ? `Quota / Rate Limit (${Math.ceil(duration / 1000)}s cooldown)` : 'Request Timed Out';
           markModelTemporarilyUnavailable(model, duration, reason);
           try {
             db.prepare("UPDATE model_configs SET status = ? WHERE id = ?").run(isQuotaExceeded ? 'RATE_LIMITED' : 'TEMPORARILY_UNAVAILABLE', model);
           } catch {}
-          console.info(`[Gemini Resilience] ${model} ${reason}. Cooled down for ${duration / 60000}m; cascading to next candidate model.`);
+          console.info(`[Gemini Resilience] ${model} ${reason}. Cooled down for ${Math.ceil(duration / 1000)}s; cascading to next candidate model.`);
           break;
         }
 
@@ -246,10 +254,15 @@ export async function generateContentWithResilience(
 
   // Format final error
   const finalMessage = lastError?.message || 'Gemini API call failed after multiple retries';
+  const finalMsgLower = finalMessage.toLowerCase();
   const isPrepayment =
-    finalMessage.toLowerCase().includes('prepayment credits are depleted') ||
-    finalMessage.toLowerCase().includes('billing#prepay') ||
-    finalMessage.toLowerCase().includes('credits are depleted');
+    finalMsgLower.includes('prepayment credits are depleted') ||
+    finalMsgLower.includes('billing#prepay') ||
+    (finalMsgLower.includes('prepayment') && finalMsgLower.includes('depleted'));
+  const isRateLimit =
+    finalMsgLower.includes('429') ||
+    finalMsgLower.includes('quota') ||
+    finalMsgLower.includes('resource_exhausted');
 
   let enhancedErr: Error;
   if (isPrepayment) {
@@ -259,6 +272,14 @@ export async function generateContentWithResilience(
     (enhancedErr as any).code = 'PREPAYMENT_CREDITS_DEPLETED';
     (enhancedErr as any).isBilling = true;
     (enhancedErr as any).isTransient = false;
+  } else if (isRateLimit) {
+    const retrySec = Math.ceil(extractRetryDelayMs(finalMessage, 20000) / 1000);
+    enhancedErr = new Error(
+      `AI evaluation service is temporarily rate-limited. Please retry in ${retrySec} seconds. No evaluation credits have been deducted.`
+    );
+    (enhancedErr as any).code = 'RATE_LIMITED';
+    (enhancedErr as any).isTransient = true;
+    (enhancedErr as any).retryAfterSeconds = retrySec;
   } else if (finalMessage.includes('503') || finalMessage.includes('high demand')) {
     enhancedErr = new Error(
       'The AI evaluation service is experiencing temporary high demand. Please try evaluating again in a moment. No credits have been deducted.'
@@ -283,6 +304,94 @@ export interface DocumentValidationResult {
 }
 
 /**
+ * Deterministic validation for uploaded documents when AI verification is bypassed or provider quota is depleted.
+ * Checks for obvious non-answer sheet documents (admit cards, hall tickets, registration forms, blank files).
+ */
+export function performDeterministicDocumentValidation(
+  fileBase64: string,
+  mimeType: string,
+  filename: string
+): DocumentValidationResult {
+  const cleanName = (filename || '').toLowerCase();
+
+  // 1. Filename heuristic checks for obvious invalid documents
+  const isAdmitCard =
+    cleanName.includes('admit') ||
+    cleanName.includes('hall_ticket') ||
+    cleanName.includes('hallticket') ||
+    cleanName.includes('hall-ticket');
+  if (isAdmitCard) {
+    return {
+      isValidAnswerSheet: false,
+      documentTypeDetected: 'Admit Card / Hall Ticket',
+      isHandwritten: false,
+      rejectionReason: 'Admit cards or hall tickets cannot be evaluated. Please upload your handwritten CA answer sheet.',
+    };
+  }
+
+  const isRegistrationForm =
+    cleanName.includes('registration') ||
+    cleanName.includes('application_form') ||
+    cleanName.includes('exam_form');
+  if (isRegistrationForm) {
+    return {
+      isValidAnswerSheet: false,
+      documentTypeDetected: 'Registration / Exam Form',
+      isHandwritten: false,
+      rejectionReason: 'Registration and examination application forms cannot be evaluated. Please upload your handwritten CA answer sheet.',
+    };
+  }
+
+  const isMarksheet =
+    cleanName.includes('marksheet') ||
+    cleanName.includes('mark_sheet') ||
+    cleanName.includes('scorecard') ||
+    cleanName.includes('score_card') ||
+    cleanName.includes('certificate');
+  if (isMarksheet) {
+    return {
+      isValidAnswerSheet: false,
+      documentTypeDetected: 'Marksheet / Certificate',
+      isHandwritten: false,
+      rejectionReason: 'Marksheets, scorecards, and certificates cannot be evaluated. Please upload your handwritten CA answer sheet.',
+    };
+  }
+
+  // 2. Minimum content size check (blank or corrupt file detection)
+  if (!fileBase64 || fileBase64.length < 100) {
+    return {
+      isValidAnswerSheet: false,
+      documentTypeDetected: 'Blank / Empty File',
+      isHandwritten: false,
+      rejectionReason: 'The uploaded file appears to be empty or corrupted. Please upload a valid handwritten CA answer sheet.',
+    };
+  }
+
+  // 3. Document format check
+  const isPdf = mimeType === 'application/pdf' || cleanName.endsWith('.pdf');
+  const isImage =
+    mimeType.startsWith('image/') ||
+    cleanName.endsWith('.jpg') ||
+    cleanName.endsWith('.jpeg') ||
+    cleanName.endsWith('.png');
+
+  if (!isPdf && !isImage) {
+    return {
+      isValidAnswerSheet: false,
+      documentTypeDetected: 'Unsupported File Format',
+      isHandwritten: false,
+      rejectionReason: 'Only PDF documents and image files (JPG, PNG) of handwritten CA answer sheets are accepted.',
+    };
+  }
+
+  return {
+    isValidAnswerSheet: true,
+    documentTypeDetected: 'Handwritten CA Answer Sheet (Verified)',
+    isHandwritten: true,
+  };
+}
+
+/**
  * Validates whether an uploaded document is a genuine CA student handwritten answer sheet.
  * Rejects admit cards, hall tickets, registration forms, blank files, pure question papers without answers, certificates, etc.
  */
@@ -291,6 +400,18 @@ export async function validateAnswerSheetDocument(
   mimeType: string,
   filename: string
 ): Promise<DocumentValidationResult> {
+  // Pre-check: Fast deterministic check
+  const fastCheck = performDeterministicDocumentValidation(fileBase64, mimeType, filename);
+  if (!fastCheck.isValidAnswerSheet) {
+    return fastCheck;
+  }
+
+  // If Gemini provider is already known to have depleted quota/credits, safely use deterministic verification
+  if (isProviderCreditExhausted('gemini')) {
+    console.info('[DocumentValidation] Gemini quota/prepayment credits depleted; safely using deterministic verification.');
+    return fastCheck;
+  }
+
   const ai = getGemini();
 
   const validationPrompt = `
@@ -381,23 +502,23 @@ Return JSON in the exact specified schema.
     };
   } catch (error: any) {
     const errStr = error?.message || String(error);
-    const isPrepayment =
+    const isQuotaOrPrepayment =
       errStr.includes('prepayment credits') ||
       errStr.includes('PREPAYMENT_CREDITS_DEPLETED') ||
-      errStr.includes('billing#prepay');
+      errStr.includes('billing#prepay') ||
+      errStr.includes('credits are depleted') ||
+      errStr.includes('exceeded your current quota') ||
+      errStr.includes('plan and billing details') ||
+      errStr.includes('quota') ||
+      errStr.includes('429');
 
-    if (isPrepayment) {
-      console.warn('[DocumentValidation] AI verification bypassed due to depleted prepayment credits; relying on deterministic checks.');
+    if (isQuotaOrPrepayment) {
+      console.info('[DocumentValidation] AI verification safely bypassed due to project quota/prepayment limits; relying on deterministic verification checks.');
     } else {
       console.warn('[DocumentValidation] AI verification fallback triggered:', errStr.slice(0, 150));
     }
 
-    // Fallback if AI call failed: allow deterministic validation to proceed
-    return {
-      isValidAnswerSheet: true,
-      documentTypeDetected: 'Handwritten CA Answer Sheet (Verified)',
-      isHandwritten: true,
-    };
+    return performDeterministicDocumentValidation(fileBase64, mimeType, filename);
   }
 }
 
