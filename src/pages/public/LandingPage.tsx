@@ -23,23 +23,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateHowItWorks,
 }) => {
   return (
-    <div className="text-slate-800 space-y-16 py-8">
+    <div className="text-slate-800 dark:text-slate-100 space-y-16 py-8">
       {/* Hero Section */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
         <div className="flex justify-center mb-1">
           <BrandLogo variant="full" size="md" />
         </div>
 
-        <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold shadow-2xs">
+        <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold shadow-2xs">
           <Sparkles className="w-3.5 h-3.5" />
           <span>India&apos;s Dedicated CA Examination-Style AI Evaluation Platform</span>
         </div>
 
-        <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-slate-900 max-w-4xl mx-auto leading-[1.2]">
-          Evaluate Handwritten <span className="text-blue-600">CA Answer Sheets</span> with Examination-Style AI Step Marking
+        <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-slate-900 dark:text-white max-w-4xl mx-auto leading-[1.2]">
+          Evaluate Handwritten <span className="text-blue-600 dark:text-blue-400">CA Answer Sheets</span> with Examination-Style AI Step Marking
         </h1>
 
-        <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto leading-relaxed">
+        <p className="text-sm sm:text-base text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
           Stop waiting 2 weeks for test series checking. Upload your handwritten mock answers and get rigorous, line-by-line
           examination-style step marking, working notes evaluation, and examiner deduction remarks in under 60 seconds.
         </p>
@@ -56,23 +56,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           <button
             onClick={onNavigateHowItWorks}
-            className="w-full sm:w-auto px-5 py-3 rounded-lg bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm transition border border-slate-300 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full sm:w-auto px-5 py-3 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm transition border border-slate-300 dark:border-slate-700 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
           >
-            <BookOpen className="w-4 h-4 text-blue-600" />
+            <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <span>How Step Marking Works</span>
           </button>
         </div>
 
         {/* Value trust bullets */}
-        <div className="flex flex-wrap items-center justify-center gap-5 text-xs text-slate-500 pt-2">
+        <div className="flex flex-wrap items-center justify-center gap-5 text-xs text-slate-500 dark:text-slate-400 pt-2">
           <span className="flex items-center gap-1.5 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> 2 Free Evaluations Upon Registration
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> 2 Free Evaluations Upon Registration
           </span>
           <span className="flex items-center gap-1.5 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Paper-Specific ICAI MCQ Scoring Rules
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Paper-Specific ICAI MCQ Scoring Rules
           </span>
           <span className="flex items-center gap-1.5 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Flat ₹10 / Paper Thereafter
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Flat ₹10 / Paper Thereafter
           </span>
         </div>
       </section>
@@ -80,43 +80,43 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       {/* Interactive Feature Grid */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         <div className="text-center space-y-1.5">
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900">Engineered Exclusively for CA Aspirants</h2>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-xl mx-auto">
+          <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">Engineered Exclusively for CA Aspirants</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
             Unlike generic AI tools, CA Exam Checker AI is tuned to CA examination standards, suggested answers, and structured marking rubrics.
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {/* Card 1 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 transition">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center">
               <Scale className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-slate-900">Genuine Step-Marking Rubric</h3>
-            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Genuine Step-Marking Rubric</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               If your final numerical answer is incorrect due to a ledger slip, you still receive marks for correct journal entries,
               formula application, and working note computations.
             </p>
           </div>
 
           {/* Card 2 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 transition">
-            <div className="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-slate-900">Document Vision Safeguard</h3>
-            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Document Vision Safeguard</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               Our vision model verifies that the uploaded file is an actual handwritten CA answer sheet. Non-exam files (admit cards, random photos, certificates) are rejected automatically with zero credit loss.
             </p>
           </div>
 
           {/* Card 3 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 transition">
-            <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center">
               <Zap className="w-5 h-5" />
             </div>
-            <h3 className="text-base font-bold text-slate-900">Paper-Specific MCQ Scoring Rules</h3>
-            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Paper-Specific MCQ Scoring Rules</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               Full compliance with ICAI examination guidelines: 0 negative marking for Intermediate and Final MCQs, with precise -0.25 negative marking applied specifically for Foundation Quantitative Aptitude and Business Economics.
             </p>
           </div>
@@ -125,38 +125,38 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* Levels Covered Section */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-6 shadow-sm">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-8 space-y-6 shadow-sm">
           <div className="text-center space-y-1.5">
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900">Complete Curriculum Coverage</h2>
-            <p className="text-xs sm:text-sm text-slate-500">Supported across all 3 tiers of the Chartered Accountancy examination</p>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">Complete Curriculum Coverage</h2>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Supported across all 3 tiers of the Chartered Accountancy examination</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="p-5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-              <span className="text-[11px] font-bold font-mono text-blue-600 uppercase">Tier 1</span>
-              <h4 className="text-base font-bold text-slate-900">CA Foundation</h4>
-              <p className="text-xs text-slate-600">
+            <div className="p-5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
+              <span className="text-[11px] font-bold font-mono text-blue-600 dark:text-blue-400 uppercase">Tier 1</span>
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">CA Foundation</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
                 Accounting, Business Laws, Quantitative Aptitude, Business Economics.
               </p>
-              <div className="pt-1 text-[11px] text-blue-700 font-semibold">ICAI paper-specific rules (-0.25 on QA &amp; Eco).</div>
+              <div className="pt-1 text-[11px] text-blue-700 dark:text-blue-400 font-semibold">ICAI paper-specific rules (-0.25 on QA &amp; Eco).</div>
             </div>
 
-            <div className="p-5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-              <span className="text-[11px] font-bold font-mono text-blue-600 uppercase">Tier 2</span>
-              <h4 className="text-base font-bold text-slate-900">CA Intermediate</h4>
-              <p className="text-xs text-slate-600">
+            <div className="p-5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
+              <span className="text-[11px] font-bold font-mono text-blue-600 dark:text-blue-400 uppercase">Tier 2</span>
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">CA Intermediate</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
                 Advanced Accounting, Corporate & Other Laws, Taxation, Cost & Management Accounting, Auditing & Ethics, FM-SM.
               </p>
-              <div className="pt-1 text-[11px] text-emerald-700 font-semibold">Strictly 0 negative marking on 30% MCQs.</div>
+              <div className="pt-1 text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">Strictly 0 negative marking on 30% MCQs.</div>
             </div>
 
-            <div className="p-5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-              <span className="text-[11px] font-bold font-mono text-blue-600 uppercase">Tier 3</span>
-              <h4 className="text-base font-bold text-slate-900">CA Final</h4>
-              <p className="text-xs text-slate-600">
+            <div className="p-5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
+              <span className="text-[11px] font-bold font-mono text-blue-600 dark:text-blue-400 uppercase">Tier 3</span>
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">CA Final</h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
                 Financial Reporting (Ind AS), Advanced Financial Management, Advanced Auditing, Direct Tax & International Tax, Indirect Tax Laws.
               </p>
-              <div className="pt-1 text-[11px] text-emerald-700 font-semibold">Ind AS & Standards on Auditing benchmarking.</div>
+              <div className="pt-1 text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">Ind AS & Standards on Auditing benchmarking.</div>
             </div>
           </div>
         </div>
@@ -164,9 +164,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* CTA Box */}
       <section className="max-w-4xl mx-auto px-4 text-center">
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 space-y-4 shadow-sm">
-          <h2 className="text-2xl font-black text-slate-900">Ready to Check Your Next Answer Sheet?</h2>
-          <p className="text-xs sm:text-sm text-slate-600 max-w-xl mx-auto">
+        <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 rounded-xl p-8 space-y-4 shadow-sm">
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white">Ready to Check Your Next Answer Sheet?</h2>
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-xl mx-auto">
             Sign up with your ICAI registration number and get your first 2 complete answer sheets evaluated with full step marks today.
           </p>
           <button

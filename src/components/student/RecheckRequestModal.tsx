@@ -217,24 +217,24 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400">
               <RotateCcw className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">Request Evaluation Recheck</h2>
-              <p className="text-xs text-slate-500">
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">Request Evaluation Recheck</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {evaluationResult.subjectName} {evaluationResult.paper ? `• ${evaluationResult.paper}` : ''}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
           </button>
@@ -243,14 +243,14 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
         {/* Confirmation Modal View (Section 9) */}
         {showConfirmation ? (
           <div className="p-6 space-y-6 flex-1 flex flex-col justify-center items-center text-center">
-            <div className="w-14 h-14 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-600 flex items-center justify-center">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <div className="space-y-2 max-w-md">
-              <h3 className="text-lg font-bold text-slate-900">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
                 Recheck Request Submitted Successfully
               </h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                 Your recheck request has been submitted for review.
                 <br />
                 Once the review is completed, your rechecked marks and updated checked copy will be sent to your registered email and will also be reflected on your dashboard.
@@ -271,7 +271,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition"
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition"
               >
                 Close
               </button>
@@ -281,14 +281,14 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
           /* Request Status / History View */
           <div className="p-6 space-y-4 overflow-y-auto flex-1">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <History className="w-4 h-4 text-blue-600" />
+              <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                <History className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 Recheck Requests Status ({existingRequests.length})
               </h3>
               <button
                 type="button"
                 onClick={() => setViewHistoryView(false)}
-                className="text-xs font-semibold text-blue-600 hover:underline"
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
               >
                 &larr; Back to Recheck Form
               </button>
@@ -297,7 +297,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
             {loadingHistory ? (
               <div className="py-8 text-center text-xs text-slate-400">Loading request status...</div>
             ) : existingRequests.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-800">
                 No recheck requests found for this evaluation yet.
               </div>
             ) : (
@@ -305,21 +305,21 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                 {existingRequests.map((req) => (
                   <div
                     key={req.id}
-                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 text-xs space-y-2"
+                    className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-xs space-y-2"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-800">
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
                         Disputed Scope: {req.question_number}
                       </span>
                       <span
                         className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                           req.status === 'ADJUSTED' || req.status === 'APPROVED' || req.status === 'INCREASED'
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
                             : req.status === 'REJECTED' || req.status === 'DECREASED'
-                            ? 'bg-rose-100 text-rose-800'
+                            ? 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300'
                             : req.status === 'UNCHANGED'
-                            ? 'bg-slate-100 text-slate-800'
-                            : 'bg-amber-100 text-amber-800'
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-300'
+                            : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
                         }`}
                       >
                         {req.status.replace('_', ' ')}
@@ -327,15 +327,15 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                     </div>
 
                     {(req.reason || req.student_notes || req.student_reason) && (
-                      <p className="text-slate-600">
-                        <strong className="text-slate-700">Reason / Notes:</strong>{' '}
+                      <p className="text-slate-600 dark:text-slate-300">
+                        <strong className="text-slate-700 dark:text-slate-200">Reason / Notes:</strong>{' '}
                         {req.student_notes || req.student_reason || req.reason}
                       </p>
                     )}
 
                     {req.reviewer_notes && (
-                      <div className="p-2.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px]">
-                        <span className="font-bold text-slate-800">Examiner Review Resolution:</span>{' '}
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px]">
+                        <span className="font-bold text-slate-800 dark:text-slate-100">Examiner Review Resolution:</span>{' '}
                         {(!req.reviewer_notes || /^[0-9]+$/.test(req.reviewer_notes.trim()))
                           ? (req.status === 'ADJUSTED'
                               ? 'Score adjusted after senior faculty review against official ICAI suggested answers and step-marking scheme.'
@@ -344,7 +344,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                               : 'Recheck evaluation completed in accordance with ICAI standards.')
                           : req.reviewer_notes}
                         {req.adjusted_marks !== undefined && req.adjusted_marks !== null && (
-                          <span className="ml-2 font-bold text-emerald-700 font-mono">
+                          <span className="ml-2 font-bold text-emerald-700 dark:text-emerald-400 font-mono">
                             (Marks Adjusted: {req.adjusted_marks}m)
                           </span>
                         )}
@@ -362,11 +362,11 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
               </div>
             )}
 
-            <div className="pt-4 border-t border-slate-100 flex justify-end">
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
               >
                 Close
               </button>
@@ -376,45 +376,45 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
           /* Main Recheck Form */
           <div className="p-6 space-y-4 overflow-y-auto flex-1">
             {/* Summary Bar */}
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between text-xs">
               <div>
-                <span className="text-slate-500">Current Score:</span>{' '}
-                <span className="font-bold font-mono text-slate-900">{totalMarks} / {maxMarks}</span>
+                <span className="text-slate-500 dark:text-slate-400">Current Score:</span>{' '}
+                <span className="font-bold font-mono text-slate-900 dark:text-white">{totalMarks} / {maxMarks}</span>
                 <span className="text-slate-400 ml-1">({Math.round((totalMarks / maxMarks) * 1000) / 10}%)</span>
               </div>
-              <div className="text-slate-500">
+              <div className="text-slate-500 dark:text-slate-400">
                 <span>Evaluated:</span>{' '}
-                <span className="font-medium text-slate-700">{evalDate}</span>
+                <span className="font-medium text-slate-700 dark:text-slate-300">{evalDate}</span>
               </div>
             </div>
 
-            {/* Standard Review Policy (Strictly compliant with prompt Section 1) */}
-            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200/80 text-blue-900 text-xs leading-relaxed flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-blue-950">
+            {/* Standard Review Policy */}
+            <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 text-xs leading-relaxed flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-950 dark:text-blue-200">
                 Recheck requests are reviewed against the original answer sheet, verified Suggested Answers, and applicable marking scheme. Where automated evidence is insufficient, the request may be escalated for further review.
               </p>
             </div>
 
             {errorMsg && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <p>{errorMsg}</p>
               </div>
             )}
 
             <form id="recheck-form" onSubmit={handleSubmit} className="space-y-4">
-              {/* WHAT WOULD YOU LIKE US TO RECHECK? (Section 2) */}
+              {/* WHAT WOULD YOU LIKE US TO RECHECK? */}
               <div>
-                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-2">
                   What would you like us to recheck?
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <label
                     className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
                       requestType === 'COMPLETE_PAPER'
-                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
-                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     <input
@@ -431,8 +431,8 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                   <label
                     className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
                       requestType === 'SPECIFIC_QUESTION'
-                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
-                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     <input
@@ -449,8 +449,8 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                   <label
                     className={`flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition ${
                       requestType === 'MULTIPLE_QUESTIONS'
-                        ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold ring-1 ring-blue-500'
-                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 text-blue-900 dark:text-blue-200 font-semibold ring-1 ring-blue-500'
+                        : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     <input
@@ -466,16 +466,16 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                 </div>
               </div>
 
-              {/* If Specific Question chosen: clean question selector */}
+              {/* If Specific Question chosen */}
               {requestType === 'SPECIFIC_QUESTION' && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Select Question:
                   </label>
                   <select
                     value={selectedQuestion}
                     onChange={(e) => setSelectedQuestion(e.target.value)}
-                    className="w-full text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    className="w-full text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   >
                     {questionsList.map((q, idx) => {
                       const item = getQuestionItem(q, idx);
@@ -489,13 +489,13 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                 </div>
               )}
 
-              {/* If Multiple Questions chosen: simple multi-select chips/checkboxes */}
+              {/* If Multiple Questions chosen */}
               {requestType === 'MULTIPLE_QUESTIONS' && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Select Questions to Recheck ({selectedQuestionsList.length} selected):
                   </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-2 border border-slate-200 rounded-xl bg-slate-50/50">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-36 overflow-y-auto p-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50/50 dark:bg-slate-800/40">
                     {questionsList.map((q, idx) => {
                       const item = getQuestionItem(q, idx);
                       const isChecked = selectedQuestionsList.includes(item.value);
@@ -507,7 +507,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                           className={`flex items-center justify-between p-2 rounded-lg border text-left text-xs transition ${
                             isChecked
                               ? 'bg-blue-600 border-blue-600 text-white font-bold'
-                              : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
                           }`}
                         >
                           <span className="truncate">{item.label}</span>
@@ -521,10 +521,10 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                 </div>
               )}
 
-              {/* OPTIONAL REASON (Section 3) */}
+              {/* OPTIONAL REASON */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-slate-700">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Why do you think this marking should be reviewed? (Optional)
                   </label>
                   <span className="text-[10px] text-slate-400">{reason.length}/500 chars</span>
@@ -534,12 +534,12 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                   onChange={(e) => setReason(e.target.value.slice(0, 500))}
                   rows={3}
                   placeholder="Briefly tell us what you think was marked incorrectly. You can leave this blank if you're not sure."
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 leading-relaxed"
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 leading-relaxed"
                 />
               </div>
 
               {/* Section 6: No Extra Credit Deduction Note */}
-              <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+              <div className="p-2.5 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 text-xs flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Rechecking is included with your evaluation. No credits will be deducted.</span>
               </div>
@@ -551,7 +551,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setViewHistoryView(true)}
-                  className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1"
+                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                 >
                   <History className="w-3.5 h-3.5" />
                   View previous recheck requests for this paper ({existingRequests.length})
@@ -563,11 +563,11 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
 
         {/* Footer Buttons */}
         {!showConfirmation && !viewHistoryView && (
-          <div className="px-6 py-3.5 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          <div className="px-6 py-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-200 transition"
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
             >
               Cancel
             </button>

@@ -151,17 +151,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   }
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-8 bg-[#f1f5f9] text-slate-800">
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl p-6 sm:p-7 shadow-sm relative">
+    <div className="min-h-[80vh] flex items-center justify-center px-4 py-8 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-7 shadow-sm relative">
         {/* Header with Brand Logo */}
         <div className="text-center mb-6">
           <div className="flex justify-center mb-3">
             <BrandLogo variant="full" size="sm" onClick={onNavigateHome} />
           </div>
-          <h2 className="text-lg font-black tracking-tight text-slate-900 mt-2">
+          <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white mt-2">
             {mode === 'login' ? 'Sign in to Your Account' : 'Create Your Account'}
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             {mode === 'login'
               ? 'Access your CA answer sheet evaluations and step-marking reports'
               : 'Sign up today and get your first 2 answer sheets evaluated free'}
@@ -171,7 +171,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         {/* Account Type Selection during registration */}
         {mode === 'register' && (
           <div className="mb-5">
-            <label className="block text-xs font-bold text-slate-700 mb-2">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
               Are you registering as:
             </label>
             <div className="grid grid-cols-2 gap-2.5">
@@ -180,15 +180,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 onClick={() => setAccountType('STUDENT')}
                 className={`p-3 rounded-lg border text-left transition flex flex-col items-start gap-1 cursor-pointer ${
                   accountType === 'STUDENT'
-                    ? 'border-blue-600 bg-blue-50/70 ring-1 ring-blue-600 text-blue-900'
-                    : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                    ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 ring-1 ring-blue-600 text-blue-900 dark:text-blue-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
                 }`}
               >
                 <div className="flex items-center gap-1.5 font-bold text-xs">
-                  <GraduationCap className="w-4 h-4 text-blue-600" />
+                  <GraduationCap className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   <span>CA Student</span>
                 </div>
-                <span className="text-[10px] text-slate-500">Individual exam aspirant</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">Individual exam aspirant</span>
               </button>
 
               <button
@@ -199,15 +199,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 }}
                 className={`p-3 rounded-lg border text-left transition flex flex-col items-start gap-1 cursor-pointer ${
                   accountType === 'INSTITUTE'
-                    ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600 text-indigo-900'
-                    : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                    ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/60 ring-1 ring-indigo-600 text-indigo-900 dark:text-indigo-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
                 }`}
               >
                 <div className="flex items-center gap-1.5 font-bold text-xs">
-                  <Building2 className="w-4 h-4 text-indigo-600" />
+                  <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>Coaching Institute</span>
                 </div>
-                <span className="text-[10px] text-slate-500">Academy / Educator batch</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">Academy / Educator batch</span>
               </button>
             </div>
           </div>
@@ -215,37 +215,37 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
 
         {/* Free Tier Callout on Register (Student) */}
         {mode === 'register' && accountType === 'STUDENT' && (
-          <div className="mb-5 p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-center gap-3">
+          <div className="mb-5 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 flex items-center gap-3">
             <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">
               FREE
             </div>
             <div className="text-xs">
-              <p className="font-bold text-blue-900">2 Free Answer Sheet Checks</p>
-              <p className="text-slate-600">Full paper evaluation with ICAI step marking & working notes check.</p>
+              <p className="font-bold text-blue-900 dark:text-blue-300">2 Free Answer Sheet Checks</p>
+              <p className="text-slate-600 dark:text-slate-300">Full paper evaluation with ICAI step marking & working notes check.</p>
             </div>
           </div>
         )}
 
         {/* Feedback alerts */}
         {errorMessage && (
-          <div className="mb-4 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+          <div className="mb-4 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
             <span>{errorMessage}</span>
           </div>
         )}
 
         {forgotPasswordMsg && (
-          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex flex-col gap-1.5">
+          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
               <span>{forgotPasswordMsg}</span>
             </div>
             {devResetUrl && (
-              <div className="mt-1 pt-1.5 border-t border-emerald-200/60 flex items-center justify-between text-[11px]">
-                <span className="text-emerald-700 font-medium">Testing Link:</span>
+              <div className="mt-1 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-800 flex items-center justify-between text-[11px]">
+                <span className="text-emerald-700 dark:text-emerald-300 font-medium">Testing Link:</span>
                 <a
                   href={devResetUrl}
-                  className="font-bold underline text-emerald-900 hover:text-emerald-950"
+                  className="font-bold underline text-emerald-900 dark:text-emerald-200 hover:text-emerald-950 dark:hover:text-emerald-100"
                 >
                   Open Password Reset Page →
                 </a>
@@ -255,7 +255,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Mode Switch Tabs */}
-        <div className="flex p-1 rounded-lg bg-slate-100 mb-5 border border-slate-200">
+        <div className="flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-5 border border-slate-200 dark:border-slate-700">
           <button
             type="button"
             onClick={() => {
@@ -263,7 +263,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
               setErrorMessage('');
             }}
             className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-              mode === 'login' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
+              mode === 'login'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             Sign In
@@ -275,7 +277,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
               setErrorMessage('');
             }}
             className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-              mode === 'register' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
+              mode === 'register'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             Create Account
@@ -286,7 +290,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         {mode === 'login' && (
           <form onSubmit={handleLoginSubmit} className="space-y-3.5">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -296,18 +300,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="student@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700">Password</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Password</label>
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="text-[11px] text-blue-600 hover:underline font-medium"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium"
                 >
                   Forgot password?
                 </button>
@@ -321,7 +325,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
@@ -351,7 +355,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         {mode === 'register' && accountType === 'STUDENT' && (
           <form onSubmit={handleRegisterSubmit} className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Full Name</label>
               <div className="relative">
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -361,13 +365,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="e.g. Rahul Sharma"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -377,14 +381,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="student@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">ICAI Reg. Number</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">ICAI Reg. Number</label>
                 <input
                   id="register-icai-no"
                   type="text"
@@ -392,18 +396,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="CRO1234567"
                   value={icaiRegNo}
                   onChange={(e) => setIcaiRegNo(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 uppercase focus:outline-none focus:bg-white focus:border-blue-600 font-mono"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600 font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">CA Level</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">CA Level</label>
                 <div className="relative">
                   <select
                     id="register-ca-level"
                     value={caLevel}
                     onChange={(e) => setCaLevel(e.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL')}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                   >
                     <option value="FOUNDATION">CA Foundation</option>
                     <option value="INTERMEDIATE">CA Intermediate</option>
@@ -414,7 +418,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Phone Number (Optional)</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number (Optional)</label>
               <div className="relative">
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -423,13 +427,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="+91 98765 43210"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Password</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -440,14 +444,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Referral / Promo Code (Optional)
                 </label>
                 <span className="text-[10px] text-slate-400 font-medium">Optional</span>
@@ -460,7 +464,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="Enter referral / promo code"
                   value={referralCode}
                   onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-900 uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
                 />
               </div>
             </div>
@@ -484,13 +488,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
               )}
             </button>
 
-            <p className="text-[11px] text-center text-slate-500 pt-1">
+            <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 pt-1">
               By creating an account, you agree to our{' '}
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
                 Terms of Service
               </a>{' '}
               and{' '}
-              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
                 Privacy Policy
               </a>
               .
@@ -499,15 +503,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Coaching Institute Portal Gateway Link */}
-        <div className="mt-6 pt-4 border-t border-slate-100">
-          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between">
+        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <div className="w-7 h-7 rounded-md bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
                 <Building2 className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-xs font-bold text-slate-800">Coaching Institute Portal</p>
-                <p className="text-[11px] text-slate-500">Dedicated portal for CA academies</p>
+                <p className="text-xs font-bold text-slate-800 dark:text-white">Coaching Institute Portal</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Dedicated portal for CA academies</p>
               </div>
             </div>
             <button
@@ -522,9 +526,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         </div>
 
         {/* Terms notice */}
-        <p className="text-[10px] text-slate-400 text-center mt-4 leading-relaxed">
+        <p className="text-[10px] text-slate-400 dark:text-slate-400 text-center mt-4 leading-relaxed">
           By signing in or registering, you agree to our{' '}
-          <a href="/legal" className="text-blue-600 hover:underline">
+          <a href="/legal" className="text-blue-600 dark:text-blue-400 hover:underline">
             Terms of Service
           </a>{' '}
           and acknowledge our strict adherence to ICAI examination guidelines.

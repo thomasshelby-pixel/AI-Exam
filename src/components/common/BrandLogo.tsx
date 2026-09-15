@@ -104,8 +104,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
       {/* Typography Hierarchy */}
       <div className="flex flex-col">
-        <div className={`font-black tracking-tight text-slate-900 leading-none flex items-center gap-1.5 ${titleSizes}`}>
-          <span className="text-slate-950 font-black tracking-tight">CA EXAM CHECKER</span>
+        <div className={`font-black tracking-tight text-slate-900 dark:text-white leading-none flex items-center gap-1.5 ${titleSizes}`}>
+          <span className="text-slate-950 dark:text-white font-black tracking-tight">CA EXAM CHECKER</span>
           {showBadge && (
             <span
               className={`font-black tracking-wider uppercase bg-blue-600 text-white rounded font-mono shadow-2xs ${aiBadgeSizes}`}
@@ -115,11 +115,11 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           )}
         </div>
         {showSubtitle ? (
-          <span className="text-[10px] tracking-wider uppercase font-extrabold text-blue-700 mt-1">
+          <span className="text-[10px] tracking-wider uppercase font-extrabold text-blue-700 dark:text-blue-400 mt-1">
             Checked Like An Examiner
           </span>
         ) : (
-          <span className="text-[9px] tracking-widest uppercase font-semibold text-slate-400 mt-0.5 hidden sm:inline-block">
+          <span className="text-[9px] tracking-widest uppercase font-semibold text-slate-400 dark:text-slate-400 mt-0.5 hidden sm:inline-block">
             Examiner-Style AI Evaluation
           </span>
         )}

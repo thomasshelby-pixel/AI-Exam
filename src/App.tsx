@@ -10,6 +10,7 @@ import {
 } from 'react-router-dom';
 import { ShieldAlert, Clock } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
+import { ThemeProvider } from './context/ThemeContext.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
 import { CreditPurchaseModal } from './components/common/CreditPurchaseModal.js';
@@ -246,7 +247,7 @@ const PublicAndStudentLayout: React.FC<{
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f1f5f9] text-[#1e293b] font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen flex flex-col bg-[#f1f5f9] dark:bg-slate-950 text-[#1e293b] dark:text-slate-100 font-sans selection:bg-blue-600 selection:text-white transition-colors duration-150">
       <Navbar
         currentView={currentView}
         onNavigate={handleNavigate}
@@ -641,18 +642,18 @@ const AppRoutes: React.FC = () => {
       {/* Global Inactivity Session Timeout Compliance Modal */}
       {sessionTimedOut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-600 border border-amber-200">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
               <ShieldAlert className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-slate-900">Session Timed Out</h3>
-              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Session Timed Out</h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
                 For your security and regulatory examination compliance, your session was automatically logged out after 30 minutes of inactivity.
               </p>
             </div>
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center gap-2.5 text-left text-xs text-slate-600">
-              <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200/80 dark:border-slate-700 flex items-center gap-2.5 text-left text-xs text-slate-600 dark:text-slate-300">
+              <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
               <span>Unsaved progress is protected. Please log in again to resume your examination workspace.</span>
             </div>
             <button
@@ -675,9 +676,11 @@ export default function App() {
   const baseUrl = (import.meta as any).env?.BASE_URL || '/';
   return (
     <BrowserRouter basename={baseUrl}>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }

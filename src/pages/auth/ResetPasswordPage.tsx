@@ -91,33 +91,33 @@ export const ResetPasswordPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-12 bg-[#f1f5f9] text-slate-800">
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-xl p-6 sm:p-8 shadow-sm">
+    <div className="min-h-[80vh] flex items-center justify-center px-4 py-12 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-8 shadow-sm">
         {/* Brand Header */}
         <div className="text-center mb-6">
           <div className="flex justify-center mb-3">
             <BrandLogo variant="full" size="sm" onClick={() => navigate('/')} />
           </div>
-          <h2 className="text-xl font-black tracking-tight text-slate-900 mt-2">
+          <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white mt-2">
             Reset Your Password
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Choose a strong, secure password for your account
           </p>
         </div>
 
         {verifying ? (
           <div className="py-12 text-center">
-            <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-xs font-semibold text-slate-600">Verifying secure reset authorization...</p>
+            <div className="w-8 h-8 border-3 border-blue-600 dark:border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">Verifying secure reset authorization...</p>
           </div>
         ) : !tokenValid ? (
           <div className="space-y-4">
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div>
-                <h4 className="text-xs font-bold text-amber-900">Reset Link Expired or Invalid</h4>
-                <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">Reset Link Expired or Invalid</h4>
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-1 leading-relaxed">
                   {verificationError}
                 </p>
               </div>
@@ -131,11 +131,11 @@ export const ResetPasswordPage: React.FC = () => {
           </div>
         ) : isSuccess ? (
           <div className="space-y-4 text-center py-4">
-            <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto text-emerald-600">
+            <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950/60 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400">
               <CheckCircle2 className="w-7 h-7" />
             </div>
-            <h3 className="text-base font-bold text-slate-900">Password Successfully Changed</h3>
-            <p className="text-xs text-slate-600 leading-relaxed max-w-xs mx-auto">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Password Successfully Changed</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-xs mx-auto">
               Your password has been updated. You can now log into your CA Exam Checker AI account with your new credentials.
             </p>
             <button
@@ -149,21 +149,21 @@ export const ResetPasswordPage: React.FC = () => {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {submitError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-700">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+              <div className="p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-lg flex items-start gap-2 text-xs text-red-700 dark:text-red-200">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
                 <span>{submitError}</span>
               </div>
             )}
 
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
-              <div className="text-xs text-slate-600">
-                Resetting password for <strong className="text-slate-900">{email}</strong>
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <div className="text-xs text-slate-600 dark:text-slate-300">
+                Resetting password for <strong className="text-slate-900 dark:text-white">{email}</strong>
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                 New Password
               </label>
               <div className="relative">
@@ -173,12 +173,12 @@ export const ResetPasswordPage: React.FC = () => {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="At least 6 characters"
                   required
-                  className="w-full pl-3 pr-10 py-2.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full pl-3 pr-10 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -186,7 +186,7 @@ export const ResetPasswordPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
                 Confirm New Password
               </label>
               <input
@@ -195,7 +195,7 @@ export const ResetPasswordPage: React.FC = () => {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Re-type new password"
                 required
-                className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
 

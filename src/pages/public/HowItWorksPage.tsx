@@ -7,13 +7,13 @@ interface HowItWorksPageProps {
 
 export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ onNavigateRegister }) => {
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-slate-800 space-y-12">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-slate-800 dark:text-slate-100 space-y-12">
       <div className="text-center space-y-2.5 max-w-2xl mx-auto">
-        <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+        <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
           Academic Rigor
         </span>
-        <h1 className="text-2xl sm:text-4xl font-black text-slate-900">How AI Step Marking Works</h1>
-        <p className="text-xs sm:text-sm text-slate-600">
+        <h1 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white">How AI Step Marking Works</h1>
+        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
           Understanding the mathematical precision and ICAI rubric calibration behind every evaluated answer sheet.
         </p>
       </div>
@@ -42,25 +42,25 @@ export const HowItWorksPage: React.FC<HowItWorksPageProps> = ({ onNavigateRegist
             desc: 'The evaluator confirms that the sum of all individual step marks precisely equals the total marks awarded. For CA Intermediate and Final, 30% MCQs receive strictly 0 negative marking in full accordance with ICAI guidelines.',
           },
         ].map((item) => (
-          <div key={item.step} className="p-5 sm:p-6 rounded-xl bg-white border border-slate-200 flex flex-col sm:flex-row gap-5 items-start shadow-sm">
-            <div className="text-2xl font-black font-mono text-blue-600 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 shrink-0">
+          <div key={item.step} className="p-5 sm:p-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-5 items-start shadow-sm">
+            <div className="text-2xl font-black font-mono text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 shrink-0">
               {item.step}
             </div>
             <div className="space-y-1.5">
-              <h3 className="text-base font-bold text-slate-900">{item.title}</h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">{item.desc}</p>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">{item.title}</h3>
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{item.desc}</p>
             </div>
           </div>
         ))}
       </div>
 
       {/* ICAI Paper-Specific MCQ Scoring Policy */}
-      <div className="p-6 rounded-xl bg-blue-50 border border-blue-200 space-y-2.5 shadow-sm">
-        <h3 className="text-sm font-bold text-blue-900 flex items-center gap-2">
-          <Scale className="w-4 h-4 text-blue-600" />
+      <div className="p-6 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 space-y-2.5 shadow-sm">
+        <h3 className="text-sm font-bold text-blue-900 dark:text-blue-200 flex items-center gap-2">
+          <Scale className="w-4 h-4 text-blue-600 dark:text-blue-400" />
           <span>Official ICAI Paper-Specific MCQ Scoring Compliance</span>
         </h3>
-        <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
+        <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
           At CA Exam Checker AI, our evaluation engine enforces exact paper-specific scoring rules per official ICAI regulations:
           <strong> Zero negative marking</strong> is strictly guaranteed across all CA Intermediate and CA Final 30% MCQs, as well as CA Foundation Accounting and Business Laws. For CA Foundation <strong>Quantitative Aptitude</strong> and <strong>Business Economics</strong>, incorrect answers receive the official <strong>-0.25 mark penalty</strong>. Unattempted questions always receive 0 marks without penalty.
         </p>

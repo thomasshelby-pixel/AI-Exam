@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
+import { useTheme } from '../../context/ThemeContext.js';
 import { BrandLogo } from '../common/BrandLogo';
 import {
   FileCheck2,
@@ -13,6 +14,8 @@ import {
   X,
   Bell,
   CheckCircle2,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -23,6 +26,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenCreditsModal }) => {
   const { user, profile, logout } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isStudent = user?.role === 'STUDENT';
@@ -39,7 +43,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
   const purchasedCredits = studentProfile?.purchased_credits || 0;
 
   return (
-    <header className="sticky top-0 z-40 h-14 bg-white border-b border-slate-200 text-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+    <header className="sticky top-0 z-40 h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors duration-150">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
         <div className="flex items-center justify-between h-full">
           {/* Logo */}
@@ -60,10 +64,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
           </div>
 
           {/* Desktop Nav Items */}
-          <nav className="hidden md:flex items-center gap-4 lg:gap-6">
-            <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-slate-100 rounded-full border border-slate-200">
+          <nav className="hidden md:flex items-center gap-3 lg:gap-5">
+            <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700">
               <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-              <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-tight">System Online</span>
+              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-tight">System Online</span>
             </div>
 
             {!user ? (
@@ -73,8 +77,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onClick={() => onNavigate('how-it-works')}
                   className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                     currentView === 'how-it-works'
-                      ? 'text-blue-700 bg-blue-50'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   How It Works
@@ -84,8 +88,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onClick={() => onNavigate('pricing')}
                   className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                     currentView === 'pricing'
-                      ? 'text-blue-700 bg-blue-50'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   Pricing
@@ -95,17 +99,34 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onClick={() => onNavigate('contact')}
                   className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                     currentView === 'contact'
-                      ? 'text-blue-700 bg-blue-50'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                      ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}
                 >
                   Support
                 </button>
-                <div className="h-4 w-px bg-slate-200" />
+
+                {/* Dark Mode Toggle for Unauthenticated Users */}
+                <button
+                  id="nav-theme-toggle-btn"
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                  title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
+                  className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
+                >
+                  {isDark ? (
+                    <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
+                  ) : (
+                    <Moon className="w-4 h-4 text-slate-600 dark:text-slate-400 transition-transform duration-200 hover:-rotate-12" />
+                  )}
+                </button>
+
+                <div className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
                 <button
                   id="nav-login-btn"
                   onClick={() => onNavigate('login')}
-                  className="text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 px-3 py-1.5 transition-colors"
+                  className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white px-3 py-1.5 transition-colors"
                 >
                   Sign In
                 </button>
@@ -127,8 +148,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('student-dashboard')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'student-dashboard'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       Dashboard
@@ -138,8 +159,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('student-upload')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'student-upload'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       Check Answer Sheet
@@ -149,8 +170,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('student-evaluations')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'student-evaluations'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       My Reports
@@ -160,8 +181,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('student-profile')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'student-profile'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       Profile & Settings
@@ -176,8 +197,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('institute-dashboard')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'institute-dashboard'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       Institute Portal
@@ -192,8 +213,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onClick={() => onNavigate('admin-dashboard')}
                       className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                         currentView === 'admin-dashboard'
-                          ? 'text-blue-700 bg-blue-50 font-bold'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
                       Super Admin Portal
@@ -205,21 +226,21 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 {isStudent && (
                   <div className="flex items-center gap-2 pl-2">
                     {user.hasPermanentFreeAccess ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         Evaluation Active
                       </span>
                     ) : studentProfile?.institute_name ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                        <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                        <Building2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         {studentProfile.institute_name}
                       </span>
                     ) : freeRemaining > 0 ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                         {freeRemaining} Free Left
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                         {purchasedCredits} Credits
                       </span>
                     )}
@@ -237,17 +258,33 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   </div>
                 )}
 
+                {/* Dark Mode Toggle for Authenticated Users */}
+                <button
+                  id="nav-theme-toggle-btn"
+                  type="button"
+                  onClick={toggleTheme}
+                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                  title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
+                  className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
+                >
+                  {isDark ? (
+                    <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
+                  ) : (
+                    <Moon className="w-4 h-4 text-slate-600 dark:text-slate-400 transition-transform duration-200 hover:-rotate-12" />
+                  )}
+                </button>
+
                 {/* User Profile Badge & Logout */}
-                <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
+                <div className="flex items-center gap-3 pl-3 border-l border-slate-200 dark:border-slate-700">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
+                    <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xs font-bold text-slate-700 dark:text-slate-200">
                       {user.fullName ? user.fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'CA'}
                     </div>
                     <div className="text-left hidden lg:block">
-                      <p className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[140px]">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight truncate max-w-[140px]">
                         {user.fullName}
                       </p>
-                      <p className="text-[10px] text-slate-500 font-mono font-medium">{user.role}</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">{user.role}</p>
                     </div>
                   </div>
 
@@ -258,7 +295,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('landing');
                     }}
                     title="Sign Out"
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
                   >
                     <LogOut className="w-4 h-4" />
                   </button>
@@ -267,7 +304,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
             )}
           </nav>
 
-          {/* Mobile Hamburger */}
+          {/* Mobile Right Controls: Dark Mode Toggle + Hamburger */}
           <div className="flex md:hidden items-center gap-2">
             {user && isStudent && (
               <button
@@ -277,10 +314,27 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 Buy
               </button>
             )}
+
+            {/* Mobile Dark Mode Quick Toggle */}
+            <button
+              id="mobile-theme-toggle-btn"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition focus:outline-none"
+            >
+              {isDark ? (
+                <Sun className="w-5 h-5 text-amber-400" />
+              ) : (
+                <Moon className="w-5 h-5 text-slate-600 dark:text-slate-300" />
+              )}
+            </button>
+
             <button
               id="mobile-menu-toggle"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 focus:outline-none"
+              className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none"
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
@@ -290,7 +344,29 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-6 space-y-3 shadow-lg">
+        <div className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 pt-2 pb-6 space-y-3 shadow-lg transition-colors">
+          {/* Mobile Theme Preference Selector Banner */}
+          <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+            <div className="flex items-center gap-2">
+              {isDark ? (
+                <Moon className="w-4 h-4 text-blue-400" />
+              ) : (
+                <Sun className="w-4 h-4 text-amber-500" />
+              )}
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Theme: {isDark ? 'Dark Mode' : 'Light Mode'}
+              </span>
+            </div>
+            <button
+              id="mobile-drawer-theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+              className="px-2.5 py-1 text-xs font-bold rounded-md bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-600 shadow-2xs hover:bg-slate-50 dark:hover:bg-slate-600"
+            >
+              Switch to {isDark ? 'Light' : 'Dark'}
+            </button>
+          </div>
+
           {!user ? (
             <div className="flex flex-col gap-2">
               <button
@@ -298,7 +374,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onNavigate('how-it-works');
                   setMobileMenuOpen(false);
                 }}
-                className="text-left py-2 text-sm text-slate-700 font-medium"
+                className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
               >
                 How It Works
               </button>
@@ -307,7 +383,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onNavigate('pricing');
                   setMobileMenuOpen(false);
                 }}
-                className="text-left py-2 text-sm text-slate-700 font-medium"
+                className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
               >
                 Pricing
               </button>
@@ -316,25 +392,25 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onNavigate('contact');
                   setMobileMenuOpen(false);
                 }}
-                className="text-left py-2 text-sm text-slate-700 font-medium"
+                className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
               >
                 Support
               </button>
               <div className="pt-2 flex flex-col gap-2">
                 <button
                   onClick={() => {
-                  onNavigate('login');
-                  setMobileMenuOpen(false);
-                }}
-                  className="w-full py-2 text-sm font-semibold text-center rounded-lg bg-slate-100 text-slate-800 border border-slate-200"
+                    onNavigate('login');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full py-2 text-sm font-semibold text-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
                 >
                   Sign In
                 </button>
                 <button
                   onClick={() => {
-                  onNavigate('login', { mode: 'register' });
-                  setMobileMenuOpen(false);
-                }}
+                    onNavigate('login', { mode: 'register' });
+                    setMobileMenuOpen(false);
+                  }}
                   className="w-full py-2 text-sm font-bold text-center rounded-lg bg-blue-600 text-white shadow-sm"
                 >
                   Register (2 Free Checks)
@@ -343,12 +419,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <div className="pb-2 border-b border-slate-200 flex items-center justify-between">
+              <div className="pb-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-bold text-slate-900">{user.fullName}</p>
-                  <p className="text-xs text-slate-500">{user.email}</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{user.fullName}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-mono font-semibold">
+                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-semibold">
                   {user.role}
                 </span>
               </div>
@@ -360,7 +436,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('student-dashboard');
                       setMobileMenuOpen(false);
                     }}
-                    className="text-left py-2 text-sm text-slate-700 font-medium"
+                    className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                   >
                     Dashboard
                   </button>
@@ -369,7 +445,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('student-upload');
                       setMobileMenuOpen(false);
                     }}
-                    className="text-left py-2 text-sm font-bold text-blue-600"
+                    className="text-left py-2 text-sm font-bold text-blue-600 dark:text-blue-400"
                   >
                     Check Answer Sheet
                   </button>
@@ -378,7 +454,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('student-evaluations');
                       setMobileMenuOpen(false);
                     }}
-                    className="text-left py-2 text-sm text-slate-700 font-medium"
+                    className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                   >
                     My Past Reports
                   </button>
@@ -387,7 +463,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('student-profile');
                       setMobileMenuOpen(false);
                     }}
-                    className="text-left py-2 text-sm text-slate-700 font-medium"
+                    className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                   >
                     Profile & Settings
                   </button>
@@ -400,7 +476,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     onNavigate('institute-dashboard');
                     setMobileMenuOpen(false);
                   }}
-                  className="text-left py-2 text-sm text-slate-700 font-medium"
+                  className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                 >
                   Institute Portal
                 </button>
@@ -412,7 +488,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     onNavigate('admin-dashboard');
                     setMobileMenuOpen(false);
                   }}
-                  className="text-left py-2 text-sm text-slate-700 font-medium"
+                  className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                 >
                   Super Admin Portal
                 </button>
@@ -424,7 +500,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onNavigate('landing');
                   setMobileMenuOpen(false);
                 }}
-                className="w-full mt-3 py-2 text-sm font-semibold text-center rounded-lg bg-rose-50 text-rose-700 border border-rose-200"
+                className="w-full mt-3 py-2 text-sm font-semibold text-center rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60"
               >
                 Sign Out
               </button>

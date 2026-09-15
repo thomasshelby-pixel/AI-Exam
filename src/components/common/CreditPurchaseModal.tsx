@@ -144,42 +144,42 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-      <div className="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 sm:p-6 shadow-xl relative text-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-md w-full p-5 sm:p-6 shadow-xl relative text-slate-800 dark:text-slate-100">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition"
+          className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition"
         >
           <X className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-200">
+          <div className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-200 dark:border-blue-800">
             <CreditCard className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-slate-900">Add Evaluation Credits</h3>
-            <p className="text-xs text-slate-500">ICAI-Aligned Step-Marking & Answer Sheet Checks</p>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Add Evaluation Credits</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">ICAI-Aligned Step-Marking & Answer Sheet Checks</p>
           </div>
         </div>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+          <div className="mb-4 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {successMsg && (
-          <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+          <div className="mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>{successMsg}</span>
           </div>
         )}
 
         {/* Credit Options */}
         <div className="space-y-3 mb-5">
-          <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Select Credit Pack</label>
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">Select Credit Pack</label>
           <div className="grid grid-cols-3 gap-2.5">
             {[
               { qty: 5, label: '5 Papers', price: 50, tag: '' },
@@ -197,8 +197,8 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
                   }}
                   className={`p-2.5 rounded-lg border text-left transition relative ${
                     isSelected
-                      ? 'bg-blue-50/80 border-blue-600 text-blue-950'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
+                      ? 'bg-blue-50/80 dark:bg-blue-950/60 border-blue-600 dark:border-blue-500 text-blue-950 dark:text-blue-200'
+                      : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
                   }`}
                 >
                   {pack.tag && (
@@ -207,8 +207,8 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
                     </span>
                   )}
                   <p className="text-xs font-bold">{pack.label}</p>
-                  <p className="text-xs font-mono text-blue-700 font-bold mt-0.5">₹{pack.price}</p>
-                  <p className="text-[10px] text-slate-500">₹10/check</p>
+                  <p className="text-xs font-mono text-blue-700 dark:text-blue-300 font-bold mt-0.5">₹{pack.price}</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">₹10/check</p>
                 </button>
               );
             })}
@@ -216,7 +216,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
 
           {/* Custom Quantity */}
           <div className="pt-1">
-            <label className="text-xs text-slate-600 block mb-1">Or enter custom quantity:</label>
+            <label className="text-xs text-slate-600 dark:text-slate-300 block mb-1">Or enter custom quantity:</label>
             <div className="flex items-center gap-2">
               <input
                 type="number"
@@ -225,41 +225,41 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
                 placeholder="e.g. 15"
                 value={customQuantity}
                 onChange={(e) => setCustomQuantity(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white"
+                className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-750"
               />
-              <span className="text-xs text-slate-500 shrink-0 font-medium">Credits</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 font-medium">Credits</span>
             </div>
           </div>
         </div>
 
         {/* Pricing Summary */}
-        <div className="bg-slate-50 rounded-lg p-3.5 border border-slate-200 mb-5 space-y-1.5">
-          <div className="flex justify-between text-xs text-slate-500">
+        <div className="bg-slate-50 dark:bg-slate-800/60 rounded-lg p-3.5 border border-slate-200 dark:border-slate-700 mb-5 space-y-1.5">
+          <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
             <span>Quantity</span>
-            <span className="font-semibold text-slate-800">{currentQuantity} Full Answer Sheets</span>
+            <span className="font-semibold text-slate-800 dark:text-white">{currentQuantity} Full Answer Sheets</span>
           </div>
-          <div className="flex justify-between text-xs text-slate-500">
+          <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
             <span>Rate</span>
-            <span className="font-semibold text-slate-800">₹10 / Paper</span>
+            <span className="font-semibold text-slate-800 dark:text-white">₹10 / Paper</span>
           </div>
-          <div className="pt-1.5 border-t border-slate-200 flex justify-between items-baseline">
-            <span className="text-xs font-bold text-slate-800">Total Amount</span>
-            <span className="text-lg font-mono font-bold text-slate-900">₹{priceInINR}</span>
+          <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 flex justify-between items-baseline">
+            <span className="text-xs font-bold text-slate-800 dark:text-white">Total Amount</span>
+            <span className="text-lg font-mono font-bold text-slate-900 dark:text-white">₹{priceInINR}</span>
           </div>
-          <div className="pt-1 text-[11px] text-blue-700 bg-blue-50/70 -mx-3.5 -mb-3.5 p-2 rounded-b-lg border-t border-blue-100 flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <div className="pt-1 text-[11px] text-blue-700 dark:text-blue-300 bg-blue-50/70 dark:bg-blue-950/50 -mx-3.5 -mb-3.5 p-2 rounded-b-lg border-t border-blue-100 dark:border-blue-900 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
             <span>Valid for <strong>exactly 3 months</strong> from purchase date. Consumed via First-Expiring, First-Out (FEFO).</span>
           </div>
         </div>
 
         {/* Security badges */}
-        <div className="flex items-center justify-between text-[11px] text-slate-500 mb-5 px-1">
+        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-5 px-1">
           <span className="flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             Razorpay 256-bit Encrypted
           </span>
           <span className="flex items-center gap-1">
-            <Zap className="w-3.5 h-3.5 text-blue-600" />
+            <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
             Instant Activation
           </span>
         </div>
@@ -282,13 +282,13 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
         </button>
 
         {/* Legal Consent & Disclosures */}
-        <p className="mt-3 text-[11px] text-center text-slate-500 leading-normal">
+        <p className="mt-3 text-[11px] text-center text-slate-500 dark:text-slate-400 leading-normal">
           By proceeding, you agree to our{' '}
-          <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
             Terms of Service
           </a>{' '}
           and{' '}
-          <a href="/refund-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+          <a href="/refund-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
             Refund & Cancellation Policy
           </a>
           . Credits are valid for 3 months from issuance and are non-refundable after delivery.
