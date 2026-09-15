@@ -225,7 +225,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
                 placeholder="e.g. 15"
                 value={customQuantity}
                 onChange={(e) => setCustomQuantity(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-750"
+                className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800"
               />
               <span className="text-xs text-slate-500 dark:text-slate-400 shrink-0 font-medium">Credits</span>
             </div>

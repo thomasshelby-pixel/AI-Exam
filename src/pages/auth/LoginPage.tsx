@@ -16,6 +16,8 @@ import {
   Building2,
   GraduationCap,
   Tag,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -33,6 +35,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   // Form states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [icaiRegNo, setIcaiRegNo] = useState('');
@@ -42,7 +46,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
-  const [devResetUrl, setDevResetUrl] = useState<string | null>(null);
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -124,12 +127,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
-      setForgotPasswordMsg(data.message || 'Password reset link sent to your registered email.');
-      if (data.devResetUrl) {
-        setDevResetUrl(data.devResetUrl);
-      } else {
-        setDevResetUrl(null);
-      }
+      setForgotPasswordMsg(data.message || 'If an account exists with this email address, a password reset link has been dispatched to your inbox. The link will expire in 1 hour.');
     } catch {
       setErrorMessage('Failed to request password reset. Please contact support.');
     }
@@ -235,22 +233,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {forgotPasswordMsg && (
-          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <span>{forgotPasswordMsg}</span>
-            </div>
-            {devResetUrl && (
-              <div className="mt-1 pt-1.5 border-t border-emerald-200/60 dark:border-emerald-800 flex items-center justify-between text-[11px]">
-                <span className="text-emerald-700 dark:text-emerald-300 font-medium">Testing Link:</span>
-                <a
-                  href={devResetUrl}
-                  className="font-bold underline text-emerald-900 dark:text-emerald-200 hover:text-emerald-950 dark:hover:text-emerald-100"
-                >
-                  Open Password Reset Page →
-                </a>
-              </div>
-            )}
+          <div className="mb-4 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span>{forgotPasswordMsg}</span>
           </div>
         )}
 
@@ -300,7 +285,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="student@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
               </div>
             </div>
@@ -311,7 +296,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer"
                 >
                   Forgot password?
                 </button>
@@ -320,13 +305,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
                   id="login-password"
-                  type="password"
+                  type={showLoginPassword ? 'text' : 'password'}
                   required
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                  aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -365,7 +358,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="e.g. Rahul Sharma"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
               </div>
             </div>
@@ -381,7 +374,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="student@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
               </div>
             </div>
@@ -396,7 +389,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="CRO1234567"
                   value={icaiRegNo}
                   onChange={(e) => setIcaiRegNo(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600 font-mono"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500 font-mono"
                 />
               </div>
 
@@ -407,7 +400,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                     id="register-ca-level"
                     value={caLevel}
                     onChange={(e) => setCaLevel(e.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL')}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                   >
                     <option value="FOUNDATION">CA Foundation</option>
                     <option value="INTERMEDIATE">CA Intermediate</option>
@@ -427,7 +420,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="+91 98765 43210"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
               </div>
             </div>
@@ -438,14 +431,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
                   id="register-password"
-                  type="password"
+                  type={showRegisterPassword ? 'text' : 'password'}
                   required
                   minLength={8}
                   placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                  aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -464,7 +465,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
                   placeholder="Enter referral / promo code"
                   value={referralCode}
                   onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white dark:focus:bg-slate-750 focus:border-blue-600"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                 />
               </div>
             </div>

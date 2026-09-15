@@ -29,3 +29,64 @@ body {
   background-color: var(--app-bg);
   color: var(--app-text-primary);
 }
+
+/* ==========================================================================
+   Shared Theme & Input Dark Mode Protections
+   ========================================================================== */
+
+/* Set browser color-scheme to dark on all form controls in dark mode */
+.dark input,
+.dark textarea,
+.dark select {
+  color-scheme: dark;
+}
+
+/* Chrome / Safari / Edge / Firefox WebKit Autofill Overrides in Dark Mode */
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover,
+.dark input:-webkit-autofill:focus,
+.dark input:-webkit-autofill:active,
+.dark textarea:-webkit-autofill,
+.dark textarea:-webkit-autofill:hover,
+.dark textarea:-webkit-autofill:focus,
+.dark textarea:-webkit-autofill:active,
+.dark select:-webkit-autofill,
+.dark select:-webkit-autofill:hover,
+.dark select:-webkit-autofill:focus,
+.dark select:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #1e293b inset !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  caret-color: #f8fafc !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Chrome / Safari / Edge Light Mode Autofill */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #0f172a !important;
+  caret-color: #0f172a !important;
+}
+
+/* Prevent inputs from turning light/white when focused in dark mode across entire app */
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="file"]):focus,
+.dark textarea:focus,
+.dark select:focus {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #3b82f6 !important;
+  outline: none;
+}
+
+/* High contrast caret for all text fields */
+.dark input,
+.dark textarea {
+  caret-color: #60a5fa;
+}
+
+input,
+textarea {
+  caret-color: #2563eb;
+}

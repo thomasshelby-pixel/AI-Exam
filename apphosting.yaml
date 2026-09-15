@@ -6,3 +6,15 @@ runConfig:
   concurrency: 80
   cpu: 1
   memoryMiB: 1024
+
+env:
+  - variable: SMTP_HOST
+    value: smtp.resend.com
+  - variable: SMTP_PORT
+    value: "465"
+  - variable: SMTP_USER
+    value: resend
+  - variable: SMTP_FROM
+    value: "CA Exam Checker AI <support@caexamcheckerai.com>"
+  - variable: APP_URL
+    value: https://caexamcheckerai.com

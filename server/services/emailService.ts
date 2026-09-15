@@ -73,21 +73,47 @@ export function getEmailAuditLogs(evaluationId?: string): any[] {
 
 let transporter: Transporter | null = null;
 
-function getTransporter(): Transporter | null {
+export function getSenderAddress(): string {
+  const customFrom = process.env.SMTP_FROM;
+  if (customFrom && customFrom.trim() && !customFrom.includes('onboarding@resend.dev')) {
+    if (customFrom.includes('<') && customFrom.includes('>')) {
+      return customFrom.trim();
+    }
+    return `"CA Exam Checker AI" <${customFrom.trim()}>`;
+  }
+  return `"CA Exam Checker AI" <support@caexamcheckerai.com>`;
+}
+
+export function getAppBaseUrl(): string {
+  if (process.env.APP_URL && process.env.APP_URL.trim()) {
+    return process.env.APP_URL.trim().replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://caexamcheckerai.com';
+  }
+  const port = process.env.PORT || '3000';
+  return `http://localhost:${port}`;
+}
+
+export function getTransporter(): Transporter | null {
   if (transporter) return transporter;
 
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const host = process.env.SMTP_HOST || 'smtp.resend.com';
+  const port = parseInt(process.env.SMTP_PORT || '465', 10);
+  const user = process.env.SMTP_USER || 'resend';
+  const pass = process.env.SMTP_PASS || process.env.RESEND_API_KEY;
 
   if (host && user && pass) {
     try {
+      const isSecure = port === 465;
       transporter = nodemailer.createTransport({
         host,
         port,
-        secure: port === 465,
+        secure: isSecure,
         auth: { user, pass },
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
       });
       return transporter;
     } catch (err) {
@@ -99,21 +125,28 @@ function getTransporter(): Transporter | null {
   return null;
 }
 
+export async function verifySmtpTransporter(): Promise<boolean> {
+  const mailer = getTransporter();
+  if (!mailer) {
+    return false;
+  }
+  try {
+    await mailer.verify();
+    return true;
+  } catch (err) {
+    console.warn('[EmailService] SMTP transporter verification failed:', err);
+    return false;
+  }
+}
+
 export async function sendEmail(options: EmailOptions): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string }> {
   const mailer = getTransporter();
-  const host = (process.env.SMTP_HOST || '').toLowerCase();
-  const isResend = host.includes('resend');
-
-  // Resend requires onboarding@resend.dev when using testing sandbox without a verified custom domain
-  let from = process.env.SMTP_FROM;
-  if (!from || (isResend && from.includes('caexamchecker.ai'))) {
-    from = isResend ? 'onboarding@resend.dev' : 'support@caexamchecker.ai';
-  }
+  const from = getSenderAddress();
 
   if (mailer) {
     try {
       const info = await mailer.sendMail({
-        from: `"CA Exam Checker AI" <${from}>`,
+        from,
         to: options.to,
         subject: options.subject,
         html: options.html,
@@ -160,8 +193,7 @@ export async function sendPasswordResetEmail(
   resetToken: string,
   userName?: string
 ): Promise<boolean> {
-  const port = process.env.PORT || '3000';
-  const appUrl = process.env.APP_URL || (typeof window !== 'undefined' ? window.location.origin : `http://localhost:${port}`);
+  const appUrl = getAppBaseUrl();
   const resetUrl = `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(email)}`;
   const displayName = userName || 'Student';
 

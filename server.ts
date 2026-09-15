@@ -65,6 +65,36 @@ async function startServer() {
     });
   });
 
+  app.get('/api/health/email', async (req, res) => {
+    try {
+      const { verifySmtpTransporter, getSenderAddress } = await import('./server/services/emailService.js');
+      const isConnected = await verifySmtpTransporter();
+      const host = process.env.SMTP_HOST || 'smtp.resend.com';
+      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465;
+      const sender = getSenderAddress();
+
+      res.json({
+        status: isConnected ? 'ok' : 'degraded',
+        smtp: {
+          host,
+          port,
+          secure: port === 465,
+          senderDomain: sender.includes('@') ? sender.split('@')[1].replace('>', '') : 'caexamcheckerai.com',
+          sender,
+          transporterVerified: isConnected,
+          credentialsConfigured: Boolean(process.env.SMTP_PASS || process.env.RESEND_API_KEY),
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        status: 'error',
+        message: err.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
   app.get('/api/health/persistence', async (req, res) => {
     try {
       const { inspectCloudStorageStatus } = await import('./server/services/firebaseCloudStorageService.js');
