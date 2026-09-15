@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 
 // Increase default max listeners to accommodate Cloud Storage and Vite pipeline PassThrough streams
 EventEmitter.defaultMaxListeners = 100;
-import { initDatabase, closeDatabaseCleanly } from './server/db.js';
+import { db, initDatabase, closeDatabaseCleanly } from './server/db.js';
 import authRoutes from './server/routes/authRoutes.js';
 import studentRoutes from './server/routes/studentRoutes.js';
 import instituteRoutes from './server/routes/instituteRoutes.js';
@@ -20,13 +20,26 @@ async function startServer() {
   // Initialize Database schemas, indices, and baseline ICAI materials
   initDatabase();
 
-  // Hydrate persistent cloud data from Cloud Firestore (runs asynchronously)
-  hydrateFromFirestore()
-    .then(() => seedBaselineToFirestoreIfEmpty())
-    .catch((err) => console.warn('[Server] Firestore hydration note:', err));
+  // Hydrate persistent cloud data from Cloud Firestore BEFORE serving traffic
+  try {
+    console.log('[Server] Awaiting durable cloud state hydration from Cloud Firestore...');
+    const hydrationPromise = Promise.all([
+      hydrateFromFirestore(),
+      seedBaselineToFirestoreIfEmpty(),
+    ]);
+    const hydrationTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Firestore hydration timeout limit (20s) reached')), 20000)
+    );
+    await Promise.race([hydrationPromise, hydrationTimeout]);
+    console.log('[Server] Cloud Firestore state successfully restored to active runtime.');
+  } catch (err) {
+    console.warn('[Server] Firestore hydration note:', err);
+  }
 
   const app = express();
-  const PORT = 3000;
+  // Cloud Run and App Hosting automatically supply PORT (typically 8080).
+  // In local development or AI Studio preview, falls back to 3000.
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Basic CORS & headers
   app.use((req, res, next) => {
@@ -50,6 +63,31 @@ async function startServer() {
       service: 'CA Exam Checker AI Production API',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  app.get('/api/health/persistence', async (req, res) => {
+    try {
+      const { inspectCloudStorageStatus } = await import('./server/services/firebaseCloudStorageService.js');
+      const gcsStatus = await inspectCloudStorageStatus();
+      const evalCount = (db.prepare('SELECT count(*) as count FROM evaluations').get() as any)?.count || 0;
+      const userCount = (db.prepare('SELECT count(*) as count FROM users').get() as any)?.count || 0;
+      const matCount = (db.prepare('SELECT count(*) as count FROM evaluation_materials').get() as any)?.count || 0;
+
+      res.json({
+        status: 'ok',
+        cloudStorage: gcsStatus,
+        runtimeDatabase: {
+          driver: 'SQLite (WAL mode)',
+          evaluations: evalCount,
+          users: userCount,
+          materials: matCount,
+          authoritativeStore: 'Cloud Firestore + Google Cloud Storage',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
   });
 
   app.use('/api/auth', authRoutes);
@@ -76,18 +114,27 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`CA Exam Checker AI server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
 
-  const handleShutdown = () => {
-    console.log('[Server] Graceful shutdown initiated.');
-    closeDatabaseCleanly();
-    process.exit(0);
+  const handleShutdown = (signal: string) => {
+    console.log(`[Server] Graceful shutdown initiated (${signal}).`);
+    server.close(() => {
+      console.log('[Server] HTTP connections closed. Closing database cleanly...');
+      closeDatabaseCleanly();
+      process.exit(0);
+    });
+    // Force exit if connections take too long to close
+    setTimeout(() => {
+      console.warn('[Server] Force shutdown after timeout.');
+      closeDatabaseCleanly();
+      process.exit(0);
+    }, 5000).unref();
   };
 
-  process.once('SIGTERM', handleShutdown);
-  process.once('SIGINT', handleShutdown);
+  process.once('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.once('SIGINT', () => handleShutdown('SIGINT'));
 }
 
 startServer().catch((err) => {

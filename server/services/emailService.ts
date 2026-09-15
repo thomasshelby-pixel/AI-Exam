@@ -160,7 +160,8 @@ export async function sendPasswordResetEmail(
   resetToken: string,
   userName?: string
 ): Promise<boolean> {
-  const appUrl = process.env.APP_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+  const port = process.env.PORT || '3000';
+  const appUrl = process.env.APP_URL || (typeof window !== 'undefined' ? window.location.origin : `http://localhost:${port}`);
   const resetUrl = `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(email)}`;
   const displayName = userName || 'Student';
 
@@ -264,7 +265,8 @@ export interface RecheckCompletedEmailParams {
 export async function sendRecheckCompletedEmail(
   params: RecheckCompletedEmailParams
 ): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string }> {
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const port = process.env.PORT || '3000';
+  const appUrl = process.env.APP_URL || `http://localhost:${port}`;
   const evalUrl = `${appUrl}/evaluations/${params.evaluationId}`;
   const displayName = params.studentName || 'Student';
 
@@ -413,7 +415,8 @@ export interface SendCheckedCopyEmailParams {
 export async function sendCheckedCopyEmail(
   params: SendCheckedCopyEmailParams
 ): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string; auditId?: string }> {
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const port = process.env.PORT || '3000';
+  const appUrl = process.env.APP_URL || `http://localhost:${port}`;
   const evalUrl = `${appUrl}/evaluations/${params.evaluationId}`;
   const displayName = params.studentName || 'Student';
 

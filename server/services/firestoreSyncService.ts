@@ -59,6 +59,8 @@ export async function hydrateFromFirestore(): Promise<void> {
 
   try {
     console.log('[FirestoreSync] Starting hydration from Cloud Firestore...');
+    // Temporarily disable foreign key constraints during hydration to avoid order-of-insertion deadlocks
+    db.exec('PRAGMA foreign_keys = OFF;');
 
     // 1. Load tombstones
     const tombstones = await getAllFirestoreDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
@@ -77,6 +79,7 @@ export async function hydrateFromFirestore(): Promise<void> {
 
     // 2. Hydrate Users
     const users = await getAllFirestoreDocs<any>('users');
+    let uHydrated = 0;
     for (const u of users) {
       if (tombstoneSet.has(`users_${u.id}`)) continue;
       try {
@@ -94,6 +97,7 @@ export async function hydrateFromFirestore(): Promise<void> {
           u.id, u.email, u.password_hash || 'HASHED_PASS', u.full_name || '', u.phone || '',
           u.role || 'STUDENT', u.status || 'ACTIVE', u.account_classification || null, u.created_at || null
         );
+        uHydrated++;
       } catch (err) {
         // ignore individual conflict
       }
@@ -175,6 +179,22 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
+    // 5b. Hydrate Institute Memberships
+    const memberships = await getAllFirestoreDocs<any>('institute_memberships');
+    for (const m of memberships) {
+      try {
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, joined_at)
+          VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            batch_id = excluded.batch_id
+        `).run(m.id, m.institute_id, m.student_id, m.batch_id || null, m.status || 'APPROVED', m.joined_at || null);
+      } catch {
+        // ignore
+      }
+    }
+
     // 6. Hydrate Evaluation Materials (ICAI Question Papers, Suggested Answers, Rubrics)
     // First remove any tombstoned materials from local SQLite
     for (const t of tombstones) {
@@ -247,9 +267,9 @@ export async function hydrateFromFirestore(): Promise<void> {
 
     // 7. Hydrate Evaluations (Student Submissions, Grades, Annotations)
     const evaluations = await getAllFirestoreDocs<any>('evaluations');
+    let evHydrated = 0;
     for (const ev of evaluations) {
       if (tombstoneSet.has(`evaluations_${ev.id}`)) {
-        // Ensure tombstoned evaluations are definitely not in SQLite
         try {
           db.prepare('DELETE FROM evaluations WHERE id = ?').run(ev.id);
         } catch {}
@@ -272,8 +292,11 @@ export async function hydrateFromFirestore(): Promise<void> {
             maximum_marks = excluded.maximum_marks,
             percentage = excluded.percentage,
             grade = excluded.grade,
+            confidence_score = excluded.confidence_score,
             result_json = excluded.result_json,
             error_message = excluded.error_message,
+            document_validation_status = excluded.document_validation_status,
+            rejection_reason = excluded.rejection_reason,
             completed_at = excluded.completed_at
         `).run(
           ev.id, ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
@@ -285,9 +308,75 @@ export async function hydrateFromFirestore(): Promise<void> {
           ev.error_message || null, ev.document_validation_status || 'VERIFIED', ev.rejection_reason || null,
           ev.original_filename || 'student_answer_sheet.pdf', ev.created_at || new Date().toISOString(), ev.completed_at || null
         );
+        evHydrated++;
+      } catch (evErr) {
+        console.warn(`[FirestoreSync] Failed to insert evaluation ${ev.id}:`, evErr);
+      }
+    }
+
+    // 7b. Hydrate Recheck Requests
+    const rechecks = await getAllFirestoreDocs<any>('recheck_requests');
+    for (const r of rechecks) {
+      try {
+        db.prepare(`
+          INSERT INTO recheck_requests (
+            id, evaluation_id, student_id, question_number, sub_question, reason, student_notes,
+            status, requested_mode, reviewer_notes, adjusted_marks, student_email, subject, paper,
+            request_type, student_reason, original_marks, assigned_reviewer, resolution,
+            original_evaluation_version, revised_evaluation_version, original_checked_copy_id,
+            revised_checked_copy_id, original_report_id, revised_report_id, audit_info_json,
+            disputed_questions_json, resolved_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            reviewer_notes = excluded.reviewer_notes,
+            adjusted_marks = excluded.adjusted_marks,
+            resolution = excluded.resolution,
+            resolved_at = excluded.resolved_at
+        `).run(
+          r.id, r.evaluation_id, r.student_id, r.question_number || '', r.sub_question || null,
+          r.reason || '', r.student_notes || null, r.status || 'PENDING', r.requested_mode || null,
+          r.reviewer_notes || null, r.adjusted_marks || null, r.student_email || null,
+          r.subject || null, r.paper || null, r.request_type || 'SPECIFIC_QUESTION',
+          r.student_reason || null, r.original_marks || null, r.assigned_reviewer || null,
+          r.resolution || null, r.original_evaluation_version || 'v1', r.revised_evaluation_version || null,
+          r.original_checked_copy_id || null, r.revised_checked_copy_id || null,
+          r.original_report_id || null, r.revised_report_id || null, r.audit_info_json || null,
+          r.disputed_questions_json || null, r.resolved_at || null, r.created_at || null
+        );
       } catch {
         // ignore
       }
+    }
+
+    // 7c. Hydrate Payment Orders & Transactions & Purchases
+    const paymentOrders = await getAllFirestoreDocs<any>('payment_orders');
+    for (const po of paymentOrders) {
+      try {
+        db.prepare(`
+          INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET status = excluded.status
+        `).run(po.id, po.student_id, po.razorpay_order_id || po.id, po.quantity || 1, po.amount_paise || (po.amount_inr ? po.amount_inr * 100 : 9900), po.currency || 'INR', po.status || 'PAID', po.created_at || null);
+      } catch {}
+    }
+
+    const creditPurchases = await getAllFirestoreDocs<any>('student_credit_purchases');
+    for (const cp of creditPurchases) {
+      try {
+        db.prepare(`
+          INSERT INTO student_credit_purchases (id, user_id, order_id, payment_id, credits_purchased, credits_remaining, valid_from, expires_at, purchase_date, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            credits_remaining = excluded.credits_remaining,
+            status = excluded.status
+        `).run(
+          cp.id, cp.user_id, cp.order_id || null, cp.payment_id || null,
+          cp.credits_purchased || 0, cp.credits_remaining !== undefined ? cp.credits_remaining : cp.credits_purchased,
+          cp.valid_from || new Date().toISOString(), cp.expires_at || new Date(Date.now() + 365*24*3600000).toISOString(),
+          cp.purchase_date || new Date().toISOString(), cp.status || 'ACTIVE', cp.created_at || null
+        );
+      } catch {}
     }
 
     // 8. Hydrate Audit Logs
@@ -361,9 +450,117 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
-    console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations, ${users.length} users, ${legalDocs.length} legal documents from Firestore.`);
+    // 12. Hydrate Support Tickets
+    const supportTickets = await getAllFirestoreDocs<any>('support_tickets');
+    for (const st of supportTickets) {
+      try {
+        db.prepare(`
+          INSERT INTO support_tickets (id, user_id, subject, message, status, priority, category, role, resolution_note, resolved_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            resolution_note = excluded.resolution_note,
+            resolved_at = excluded.resolved_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          st.id, st.user_id, st.subject || '', st.message || '', st.status || 'OPEN',
+          st.priority || 'MEDIUM', st.category || 'GENERAL', st.role || 'STUDENT',
+          st.resolution_note || null, st.resolved_at || null, st.created_at || null
+        );
+      } catch {}
+    }
+
+    // 13. Hydrate Institute Materials & Tests
+    const instMaterials = await getAllFirestoreDocs<any>('institute_materials');
+    for (const im of instMaterials) {
+      try {
+        db.prepare(`
+          INSERT INTO institute_materials (
+            id, institute_id, title, level, subject_key, subject_name, paper, material_type,
+            question_paper_text, question_paper_pdf_base64, suggested_answers_text, suggested_answers_pdf_base64,
+            marking_scheme_text, marking_scheme_pdf_base64, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            question_paper_text = excluded.question_paper_text,
+            suggested_answers_text = excluded.suggested_answers_text,
+            marking_scheme_text = excluded.marking_scheme_text,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          im.id, im.institute_id, im.title, im.level, im.subject_key, im.subject_name,
+          im.paper || 'Paper 1', im.material_type || 'TEST_SERIES',
+          im.question_paper_text || '', im.question_paper_pdf_base64 || null,
+          im.suggested_answers_text || '', im.suggested_answers_pdf_base64 || null,
+          im.marking_scheme_text || null, im.marking_scheme_pdf_base64 || null,
+          im.created_at || null
+        );
+      } catch {}
+    }
+
+    const instTests = await getAllFirestoreDocs<any>('institute_tests');
+    for (const it of instTests) {
+      try {
+        db.prepare(`
+          INSERT INTO institute_tests (
+            id, institute_id, batch_id, title, level, subject_key, subject_name, paper,
+            checking_mode, institute_material_id, target_type, selected_student_ids,
+            maximum_marks, time_limit_minutes, deadline, instructions, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            deadline = excluded.deadline,
+            status = excluded.status
+        `).run(
+          it.id, it.institute_id, it.batch_id || null, it.title, it.level, it.subject_key, it.subject_name,
+          it.paper || 'Paper 1', it.checking_mode || 'INSTITUTE_MATERIAL', it.institute_material_id || null,
+          it.target_type || 'ALL', it.selected_student_ids || null, it.maximum_marks || 100,
+          it.time_limit_minutes || null, it.deadline || new Date(Date.now() + 7*24*3600000).toISOString(),
+          it.instructions || null, it.status || 'PUBLISHED', it.created_at || null
+        );
+      } catch {}
+    }
+
+    // 14. Auto-heal any orphaned student references in evaluations so foreign keys stay 100% intact
+    const orphanStudents = db.prepare(`
+      SELECT DISTINCT e.student_id FROM evaluations e
+      LEFT JOIN users u ON u.id = e.student_id
+      WHERE u.id IS NULL
+    `).all() as Array<{ student_id: string }>;
+
+    for (const orphan of orphanStudents) {
+      if (!orphan.student_id) continue;
+      try {
+        db.prepare(`
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, 'CA Student', '+919876543210', 'STUDENT', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO NOTHING
+        `).run(orphan.student_id, `student_${orphan.student_id}@caexamchecker.ai`, 'PERSISTED_HASH');
+
+        db.prepare(`
+          INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+          VALUES (?, 'WRO123456', 'INTERMEDIATE', 0, 0)
+          ON CONFLICT(user_id) DO NOTHING
+        `).run(orphan.student_id);
+
+        syncRecordToFirestore('users', orphan.student_id, {
+          id: orphan.student_id,
+          email: `student_${orphan.student_id}@caexamchecker.ai`,
+          full_name: 'CA Student',
+          role: 'STUDENT',
+          status: 'ACTIVE',
+          created_at: new Date().toISOString()
+        }).catch(() => {});
+      } catch (err) {
+        console.warn(`[FirestoreSync] Auto-heal notice for student ${orphan.student_id}:`, err);
+      }
+    }
+
+    console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
+  } finally {
+    // Always restore foreign key constraint validation
+    db.exec('PRAGMA foreign_keys = ON;');
   }
 }
 

@@ -2461,7 +2461,7 @@ router.get('/settings', (req: AuthRequest, res: Response) => {
     return res.json({
       environment: {
         nodeEnv: process.env.NODE_ENV || 'development',
-        port: 3000,
+        port: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
         database: 'SQLite (local WAL mode enabled)',
         razorpayConfigured: rzpConfigured,
         razorpayKeyIdSet: !!process.env.RAZORPAY_KEY_ID,

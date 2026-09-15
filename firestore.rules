@@ -112,5 +112,52 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // Recheck & Verification Requests
+    match /recheck_requests/{requestId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Student Credit Purchases & Entitlements
+    match /student_credit_purchases/{purchaseId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Support Tickets
+    match /support_tickets/{ticketId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Institute Tests
+    match /institute_tests/{testId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Permanent Free Entitlements
+    match /permanent_free_entitlements/{entitlementId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Referral Campaigns & Redemptions
+    match /referral_campaigns/{campaignId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /referral_redemptions/{redemptionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Pricing Settings
+    match /pricing_settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

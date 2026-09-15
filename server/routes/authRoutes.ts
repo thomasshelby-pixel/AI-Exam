@@ -6,6 +6,7 @@ import { generateToken, authenticateToken, authenticateRevocationToken, optional
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
+import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 
 const router = Router();
 
@@ -260,6 +261,14 @@ router.post('/register', (req: Request, res: Response) => {
 
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: fullName.trim() });
     const isPermanentFree = checkPermanentFreeAccess(normalizedEmail);
+
+    // Sync newly registered user and profile to Cloud Firestore immediately
+    try {
+      const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
+      if (uRow) syncRecordToFirestore('users', userId, uRow).catch(() => {});
+      if (spRow) syncRecordToFirestore('student_profiles', userId, spRow).catch(() => {});
+    } catch {}
 
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
@@ -597,6 +606,14 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
         role,
         status: 'ACTIVE',
       };
+
+      // Sync new Google user and student profile to Cloud Firestore
+      try {
+        const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+        const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
+        if (uRow) syncRecordToFirestore('users', userId, uRow).catch(() => {});
+        if (spRow) syncRecordToFirestore('student_profiles', userId, spRow).catch(() => {});
+      } catch {}
     }
 
     // 2-Device Limit Enforcement for Student Accounts (Permanent-free accounts are exempt)
@@ -1150,7 +1167,8 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
         `Password reset requested for ${user.email}`
       );
 
-      const appUrl = process.env.APP_URL || (req.headers.origin ? String(req.headers.origin) : 'http://localhost:3000');
+      const port = process.env.PORT || '3000';
+      const appUrl = process.env.APP_URL || (req.headers.origin ? String(req.headers.origin) : `http://localhost:${port}`);
       const resetUrl = `${appUrl}/reset-password?token=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(user.email)}`;
 
       // Record in-app notification so student can access reset directly from notification center
