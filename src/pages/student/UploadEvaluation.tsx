@@ -122,6 +122,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     navState.subjectKey || 'inter_advanced_accounting'
   );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
+  const [mtpSeries, setMtpSeries] = useState<1 | 2>(1);
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
@@ -376,7 +377,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         }>(
           `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
             attempt
-          )}&materialType=${materialType}`
+          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
         );
 
         setMaterialAvailable(res.available);
@@ -397,6 +398,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     selectedSubjectKey,
     attempt,
     materialType,
+    mtpSeries,
   ]);
 
   // Handle file drop & selection
@@ -476,6 +478,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           icaiRegistrationNumber: studentProfile?.icai_registration_number || 'N/A',
           level,
           materialType: evaluationSource === 'INSTITUTE' ? 'MOCK_EXAM' : materialType,
+          mtpSeries: evaluationSource !== 'INSTITUTE' && materialType === 'MTP' ? mtpSeries : undefined,
           modelGroup: selectedGroup !== 'ALL' ? selectedGroup : undefined,
           subjectKey: selectedSubjectKey,
           subjectName: currentSubject?.name || 'CA Subject',
@@ -967,10 +970,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 </div>
 
                 {/* Paper Type & Attempt */}
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className={`grid ${materialType === 'MTP' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'} gap-2.5`}>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Paper Type</label>
                     <select
+                      id="evaluation-paper-type-select"
                       value={materialType}
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
                       className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
@@ -981,9 +985,28 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     </select>
                   </div>
 
+                  {materialType === 'MTP' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                        <span>MTP Series</span>
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">Required</span>
+                      </label>
+                      <select
+                        id="evaluation-mtp-series-select"
+                        value={mtpSeries}
+                        onChange={(e) => setMtpSeries(Number(e.target.value) as 1 | 2)}
+                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400"
+                      >
+                        <option value={1}>Series 1</option>
+                        <option value={2}>Series 2</option>
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Target Attempt</label>
                     <select
+                      id="evaluation-target-attempt-select"
                       value={attempt}
                       onChange={(e) => setAttempt(e.target.value)}
                       className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"

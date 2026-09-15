@@ -476,17 +476,18 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
         try {
           db.prepare(`
             INSERT INTO evaluation_materials (
-              id, level, material_type, model_group, subject_key, subject_name,
+              id, level, material_type, mtp_series, model_group, subject_key, subject_name,
               paper, attempt, syllabus_version, chapter_topic,
               question_paper_title, question_paper_text, suggested_answers_text,
               marking_scheme_text, reference_guidance_text, amendments_provisions_text,
               effective_date, version, status, source_type, admin_approved,
               file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
               level = excluded.level,
               material_type = excluded.material_type,
+              mtp_series = excluded.mtp_series,
               model_group = excluded.model_group,
               subject_key = excluded.subject_key,
               subject_name = excluded.subject_name,
@@ -513,7 +514,7 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
               download_url = excluded.download_url,
               updated_at = CURRENT_TIMESTAMP
           `).run(
-            m.id, m.level, m.material_type, m.model_group || null, m.subject_key, m.subject_name,
+            m.id, m.level, m.material_type, m.mtp_series !== undefined && m.mtp_series !== null ? Number(m.mtp_series) : null, m.model_group || null, m.subject_key, m.subject_name,
             m.paper || 'Paper 1', m.attempt || 'Current', m.syllabus_version || 'New Scheme 2024',
             m.chapter_topic || null, m.question_paper_title, m.question_paper_text || '',
             m.suggested_answers_text || '', m.marking_scheme_text || '', m.reference_guidance_text || null,
@@ -529,7 +530,7 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     }
 
     let query = `
-      SELECT id, level, material_type, model_group, subject_key, subject_name,
+      SELECT id, level, material_type, mtp_series, model_group, subject_key, subject_name,
              paper, attempt, syllabus_version, chapter_topic,
              question_paper_title, effective_date, version, status,
              uploaded_by, created_at, updated_at,
@@ -544,6 +545,9 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     `;
     const params: any[] = [];
 
+    const { mtpSeries, mtp_series } = req.query;
+    const seriesParam = mtpSeries || mtp_series;
+
     if (level && level !== 'ALL') {
       query += ' AND level = ?';
       params.push(level);
@@ -551,6 +555,10 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     if (materialType && materialType !== 'ALL') {
       query += ' AND material_type = ?';
       params.push(materialType);
+    }
+    if (seriesParam && seriesParam !== 'ALL') {
+      query += ' AND (mtp_series = ? OR mtp_series = ?)';
+      params.push(Number(seriesParam), String(seriesParam));
     }
     if (subjectKey && subjectKey !== 'ALL') {
       query += ' AND subject_key = ?';
@@ -647,6 +655,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     const {
       level,
       materialType,
+      mtpSeries,
+      mtp_series,
       modelGroup,
       subjectKey,
       subjectName,
@@ -668,6 +678,18 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
 
     if (!level || !materialType || !subjectKey || !subjectName || !questionPaperTitle || !questionPaperText || !suggestedAnswersText) {
       return res.status(400).json({ error: 'Please provide required fields: level, materialType, subjectKey, subjectName, title, question paper text, and suggested answers text.' });
+    }
+
+    const parsedMtpSeries = (mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '')
+      ? Number(mtpSeries)
+      : (mtp_series !== undefined && mtp_series !== null && mtp_series !== '')
+        ? Number(mtp_series)
+        : undefined;
+
+    if (materialType === 'MTP') {
+      if (!parsedMtpSeries || (parsedMtpSeries !== 1 && parsedMtpSeries !== 2)) {
+        return res.status(400).json({ error: 'Please select an MTP Series (Series 1 or Series 2) to continue.' });
+      }
     }
 
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
@@ -732,7 +754,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       id: materialId,
       level,
       material_type: materialType,
-      model_group: modelGroup || null,
+      mtp_series: parsedMtpSeries || null,
+      modelGroup: modelGroup || null,
       subject_key: subjectKey,
       subject_name: subjectName,
       paper: paper || 'Paper 1',
@@ -771,16 +794,16 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     // 2. Insert into SQLite
     db.prepare(`
       INSERT INTO evaluation_materials (
-        id, level, material_type, model_group, subject_key, subject_name,
+        id, level, material_type, mtp_series, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, chapter_topic,
         question_paper_title, question_paper_text, suggested_answers_text,
         marking_scheme_text, reference_guidance_text, amendments_provisions_text,
         effective_date, version, status, source_type, admin_approved,
         file_id, storage_path, file_name, file_size, checksum, download_url,
         uploaded_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.model_group,
+      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series, materialRecord.modelGroup,
       materialRecord.subject_key, materialRecord.subject_name, materialRecord.paper, materialRecord.attempt,
       materialRecord.syllabus_version, materialRecord.chapter_topic, materialRecord.question_paper_title,
       materialRecord.question_paper_text, materialRecord.suggested_answers_text, materialRecord.marking_scheme_text,
@@ -834,6 +857,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const {
       level,
       materialType,
+      mtpSeries,
+      mtp_series,
       modelGroup,
       subjectKey,
       subjectName,
@@ -852,6 +877,12 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       status,
       attachedFile,
     } = req.body;
+
+    const parsedMtpSeries = (mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '')
+      ? Number(mtpSeries)
+      : (mtp_series !== undefined && mtp_series !== null && mtp_series !== '')
+        ? Number(mtp_series)
+        : undefined;
 
     let fileId = existing.file_id;
     let storagePath = existing.storage_path;
@@ -915,6 +946,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       UPDATE evaluation_materials
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
+          mtp_series = COALESCE(?, mtp_series),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
           subject_name = COALESCE(?, subject_name),
@@ -942,6 +974,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     `).run(
       level || null,
       materialType || null,
+      parsedMtpSeries !== undefined ? parsedMtpSeries : null,
       modelGroup || null,
       subjectKey || null,
       subjectName || null,

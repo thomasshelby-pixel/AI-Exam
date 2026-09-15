@@ -221,6 +221,25 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
       materialParams.push(materialType);
     }
 
+    if (materialType === 'MTP') {
+      const parsedMtpSeries = (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '') 
+        ? Number(req.body.mtpSeries) 
+        : (req.body.mtp_series !== undefined && req.body.mtp_series !== null && req.body.mtp_series !== '') 
+          ? Number(req.body.mtp_series) 
+          : undefined;
+
+      if (!parsedMtpSeries || (parsedMtpSeries !== 1 && parsedMtpSeries !== 2)) {
+        return res.status(400).json({
+          success: false,
+          code: 'MISSING_MTP_SERIES',
+          error: 'Please select an MTP Series (Series 1 or Series 2) to continue.',
+        });
+      }
+
+      materialQuery += ' AND (mtp_series = ? OR mtp_series = ?)';
+      materialParams.push(parsedMtpSeries, String(parsedMtpSeries));
+    }
+
     materialQuery += ' ORDER BY created_at DESC LIMIT 1';
     const referenceMaterial = db.prepare(materialQuery).get(...materialParams) as any;
 
@@ -427,6 +446,21 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });
     }
 
+    const parsedMtpSeries = (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '')
+      ? Number(req.body.mtpSeries)
+      : (req.body.mtp_series !== undefined && req.body.mtp_series !== null && req.body.mtp_series !== '')
+        ? Number(req.body.mtp_series)
+        : undefined;
+
+    if (materialType === 'MTP') {
+      if (!parsedMtpSeries) {
+        return res.status(400).json({ error: 'Please select an MTP Series (Series 1 or Series 2) to continue.' });
+      }
+      if (parsedMtpSeries !== 1 && parsedMtpSeries !== 2) {
+        return res.status(400).json({ error: 'Invalid MTP Series selected. Allowed options are Series 1 or Series 2.' });
+      }
+    }
+
     // 1. Fetch all active institute enrollments for this student
     const activeInstitutes = db.prepare(`
       SELECT m.id as membership_id, m.batch_id, i.id as institute_id, i.name as institute_name,
@@ -551,6 +585,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
         attempt,
         syllabusVersion: req.body.syllabusVersion,
         materialType,
+        mtpSeries: parsedMtpSeries,
         evaluationSource: requestedEvalSource,
         instituteId: resolvedSponsoringInstituteId || undefined,
         instituteMaterialId,
@@ -636,14 +671,14 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       INSERT INTO evaluations (
         id, student_id, evaluation_source, material_source, sponsoring_institute_id,
         institute_id, institute_enrollment_id, batch_id,
-        level, material_type, model_group, subject_key, subject_name,
+        level, material_type, mtp_series, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status,
         entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?,
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, 'PROCESSING', 'VALID',
         ?, 0, 0
@@ -659,6 +694,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       resolvedSponsoringBatchId,
       level,
       materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP'),
+      parsedMtpSeries || null,
       modelGroup || null,
       subjectKey,
       subjectName,
@@ -736,6 +772,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       icaiRegistrationNumber: icaiRegistrationNumber || 'N/A',
       level: level as CALevel,
       materialType: materialType as MaterialType,
+      mtpSeries: (parsedMtpSeries as 1 | 2) || undefined,
       modelGroup: modelGroup || undefined,
       subjectKey,
       subjectName,
@@ -820,7 +857,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
     let query = `
-      SELECT e.id, e.level, e.material_type, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
+      SELECT e.id, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
              e.rejection_reason, e.created_at, e.completed_at,
              e.evaluation_source, e.material_source, e.sponsoring_institute_id,

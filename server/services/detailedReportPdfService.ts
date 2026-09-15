@@ -202,7 +202,7 @@ export async function generateDetailedReportPdf(
     color: darkSlate,
   });
 
-  safeDrawText(p1, `Target Attempt: ${evalData.attempt || 'May 2026'}`, {
+  safeDrawText(p1, `Target Attempt: ${evalData.attempt || 'May 2026'}${evalData.mtpSeries ? ` (MTP Series ${evalData.mtpSeries})` : ''}`, {
     x: 280,
     y: y - 52,
     size: 8.5,

@@ -528,6 +528,7 @@ export interface EvaluateAnswerSheetParams {
   icaiRegistrationNumber: string;
   level: CALevel;
   materialType: MaterialType;
+  mtpSeries?: 1 | 2;
   subjectKey: string;
   subjectName: string;
   paper?: string;
@@ -1578,6 +1579,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     evaluationStandardDisclaimer:
       'This evaluation is an AI-powered diagnostic benchmark based on verified reference materials and marking guidelines. CA Exam Checker AI is an independent academic assessment platform and is not affiliated with, endorsed by, or representing the Institute of Chartered Accountants of India (ICAI).',
     isMcqPaper: isMcqOnly,
+    mtpSeries: params.mtpSeries,
     mcqScoringRuleApplied: {
       ruleId: mcqRule.id,
       level: mcqRule.course_level,
@@ -1634,6 +1636,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
   hardenedResult.fallbackReason = evaluationResult.fallbackReason;
   hardenedResult.evaluationStandardDisclaimer = evaluationResult.evaluationStandardDisclaimer;
   hardenedResult.isMcqPaper = evaluationResult.isMcqPaper;
+  hardenedResult.mtpSeries = evaluationResult.mtpSeries;
   hardenedResult.mcqScoringRuleApplied = evaluationResult.mcqScoringRuleApplied;
 
   return hardenedResult;

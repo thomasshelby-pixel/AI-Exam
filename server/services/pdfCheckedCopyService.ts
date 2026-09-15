@@ -19,6 +19,8 @@ export interface EvaluationData {
   instituteName?: string;
   batchName?: string;
   version?: string;
+  materialType?: string;
+  mtpSeries?: 1 | 2;
 }
 
 export interface DetailedQuestionResult {

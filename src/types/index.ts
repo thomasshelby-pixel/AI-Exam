@@ -219,6 +219,8 @@ export interface EvaluationResult {
   subjectKey: string;
   subjectName: string;
   materialType: MaterialType;
+  mtpSeries?: 1 | 2;
+  paper?: string;
   attempt?: string;
   evaluationDate: string;
   totalMarks: number;
@@ -458,6 +460,8 @@ export interface EvaluationRecord {
   subjectName: string;
   paper?: string;
   attempt?: string;
+  mtpSeries?: 1 | 2;
+  mtp_series?: 1 | 2;
   syllabusVersion?: string;
   materialId?: string;
   materialVersion?: string;
@@ -513,6 +517,8 @@ export interface EvaluationMaterial {
   subject_name?: string;
   paper?: string;
   attempt?: string;
+  mtpSeries?: 1 | 2;
+  mtp_series?: 1 | 2 | string;
   syllabusVersion?: string;
   syllabus_version?: string;
   chapterTopic?: string;

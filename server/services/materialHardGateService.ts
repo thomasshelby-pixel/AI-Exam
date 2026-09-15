@@ -30,6 +30,7 @@ export interface MaterialSourceManifest {
   attempt: string;
   syllabusVersion: string;
   materialType: string;
+  mtpSeries?: 1 | 2;
   materialSource: 'GLOBAL' | 'INSTITUTE';
   officialPaperMaxMarks: number;
   materialVerificationStatus: 'VERIFIED' | 'UNVERIFIED';
@@ -47,6 +48,7 @@ export interface VerifiedReferencePackage {
   paper: string;
   syllabusVersion: string;
   officialPaperMaxMarks: number;
+  mtpSeries?: 1 | 2;
   questionPaperTitle: string;
   questionPaperText: string;
   suggestedAnswersText: string;
@@ -65,6 +67,7 @@ export interface MaterialGateRequest {
   attempt?: string;
   syllabusVersion?: string;
   materialType?: string;
+  mtpSeries?: 1 | 2 | string | number;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
   instituteMaterialId?: string;
@@ -82,6 +85,19 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const isInstituteMode = request.evaluationSource === 'INSTITUTE';
   const normLevel = (request.level || 'INTERMEDIATE').toUpperCase();
   const subjectKey = String(request.subjectKey || '').trim();
+  const isMtp = request.materialType === 'MTP';
+
+  let normalizedSeries: 1 | 2 | undefined = undefined;
+  if (isMtp) {
+    if (request.mtpSeries === undefined || request.mtpSeries === null || String(request.mtpSeries).trim() === '') {
+      throw new Error('Please select an MTP Series (Series 1 or Series 2) to continue.');
+    }
+    const parsed = Number(request.mtpSeries);
+    if (parsed !== 1 && parsed !== 2) {
+      throw new Error('Invalid MTP Series selected. Allowed options are Series 1 or Series 2.');
+    }
+    normalizedSeries = parsed as 1 | 2;
+  }
 
   let rawMaterial: any = null;
   let materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
@@ -92,28 +108,42 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
         SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
                '1.0' as version, 'Institute Curriculum' as syllabus_version,
                question_paper_text, suggested_answers_text, marking_scheme_text,
+               mtp_series,
                100 as official_max_marks
         FROM institute_materials
         WHERE id = ? AND institute_id = ? AND status = 'ACTIVE'
       `).get(request.instituteMaterialId, request.instituteId);
+
+      if (rawMaterial && isMtp && normalizedSeries) {
+        if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
+          throw new Error('TAMPER_DETECTED: Requested material ID does not match selected MTP Series.');
+        }
+      }
     }
 
     if (!rawMaterial && request.instituteId) {
-      rawMaterial = db.prepare(`
+      let instQuery = `
         SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
                '1.0' as version, 'Institute Curriculum' as syllabus_version,
                question_paper_text, suggested_answers_text, marking_scheme_text,
+               mtp_series,
                100 as official_max_marks
         FROM institute_materials
         WHERE institute_id = ? AND level = ? AND subject_key = ? AND status = 'ACTIVE'
-        ORDER BY created_at DESC LIMIT 1
-      `).get(request.instituteId, normLevel, subjectKey);
+      `;
+      const instParams: any[] = [request.instituteId, normLevel, subjectKey];
+      if (isMtp && normalizedSeries) {
+        instQuery += ' AND (mtp_series = ? OR mtp_series = ?)';
+        instParams.push(normalizedSeries, String(normalizedSeries));
+      }
+      instQuery += ' ORDER BY created_at DESC LIMIT 1';
+      rawMaterial = db.prepare(instQuery).get(...instParams);
     }
   } else {
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, version, status, admin_approved,
+             attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
              reference_guidance_text, amendments_provisions_text,
              100 as official_max_marks
@@ -138,14 +168,20 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       params.push(request.materialType);
     }
 
+    if (isMtp && normalizedSeries) {
+      query += ' AND (mtp_series = ? OR mtp_series = ?)';
+      params.push(normalizedSeries, String(normalizedSeries));
+    }
+
     query += ' ORDER BY created_at DESC LIMIT 1';
     rawMaterial = db.prepare(query).get(...params);
 
     // Fallback: If specific attempt was not matched, find active approved material for the subject & level
-    if (!rawMaterial) {
+    // CRITICAL: NEVER fallback across MTP Series! If isMtp, no cross-series or general fallback allowed!
+    if (!rawMaterial && !isMtp) {
       rawMaterial = db.prepare(`
         SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-               attempt, syllabus_version, material_type, version, status, admin_approved,
+               attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
                question_paper_text, suggested_answers_text, marking_scheme_text,
                reference_guidance_text, amendments_provisions_text,
                100 as official_max_marks
@@ -159,11 +195,24 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
 
   // HARD-GATE CHECK: Material must exist
   if (!rawMaterial) {
-    const paperInfo = request.paper ? ` (${request.paper})` : '';
-    const attemptInfo = request.attempt ? ` [${request.attempt}]` : '';
+    if (isMtp && normalizedSeries) {
+      const subj = request.subjectName || request.subjectKey;
+      const att = request.attempt || 'Target Attempt';
+      throw new Error(
+        `Evaluation material for ${subj} MTP Series ${normalizedSeries} (${att}) is not available yet. Please select another paper or wait until the material is published.`
+      );
+    }
     throw new Error(
       `Evaluation material is not available for this paper yet. Please try again once the required material has been added.`
     );
+  }
+
+  if (isMtp && normalizedSeries) {
+    if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
+      throw new Error(
+        `MTP_SERIES_MISMATCH: Retrieved material series (${rawMaterial.mtp_series}) does not match requested MTP Series (${normalizedSeries}).`
+      );
+    }
   }
 
   const qpText = String(rawMaterial.question_paper_text || '').trim();
@@ -207,6 +256,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     attempt: rawMaterial.attempt || request.attempt || 'May 2026',
     syllabusVersion: rawMaterial.syllabus_version || request.syllabusVersion || 'New Scheme 2024',
     materialType: rawMaterial.material_type || request.materialType || 'MTP',
+    mtpSeries: normalizedSeries,
     materialSource,
     officialPaperMaxMarks,
     materialVerificationStatus: 'VERIFIED',
@@ -240,6 +290,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     paper: rawMaterial.paper || request.paper || 'Paper 1',
     syllabusVersion: rawMaterial.syllabus_version || 'New Scheme 2024',
     officialPaperMaxMarks,
+    mtpSeries: normalizedSeries,
     questionPaperTitle: rawMaterial.question_paper_title || 'ICAI Official Material',
     questionPaperText: qpText,
     suggestedAnswersText: saText,

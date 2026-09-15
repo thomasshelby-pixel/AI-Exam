@@ -39,6 +39,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   // Filters
   const [selectedLevel, setSelectedLevel] = useState<string>('ALL');
   const [selectedType, setSelectedType] = useState<string>('ALL');
+  const [selectedSeries, setSelectedSeries] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -56,6 +57,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   const initialFormState = {
     level: 'INTERMEDIATE' as CALevel,
     materialType: 'MTP' as MaterialType,
+    mtpSeries: 1 as 1 | 2,
     modelGroup: 'GROUP_1',
     subjectKey: 'inter_advanced_accounting',
     subjectName: 'Advanced Accounting',
@@ -196,6 +198,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       const params = new URLSearchParams();
       if (selectedLevel !== 'ALL') params.append('level', selectedLevel);
       if (selectedType !== 'ALL') params.append('materialType', selectedType);
+      if (selectedSeries !== 'ALL') params.append('mtpSeries', selectedSeries);
       if (selectedStatus !== 'ALL') params.append('status', selectedStatus);
       if (searchQuery.trim()) params.append('search', searchQuery.trim());
 
@@ -214,7 +217,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
   useEffect(() => {
     fetchMaterials();
-  }, [selectedLevel, selectedType, selectedStatus]);
+  }, [selectedLevel, selectedType, selectedSeries, selectedStatus]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -246,6 +249,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       setFormData({
         level: m.level || 'INTERMEDIATE',
         materialType: (m.material_type || 'MTP') as MaterialType,
+        mtpSeries: (m.mtp_series || m.mtpSeries || 1) as 1 | 2,
         modelGroup: m.model_group || 'GROUP_1',
         subjectKey: m.subject_key || 'inter_advanced_accounting',
         subjectName: m.subject_name || 'Advanced Accounting',
@@ -446,6 +450,17 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
               <option value="MODEL_TEST_PAPER">Model Test Paper</option>
             </select>
 
+            {/* MTP Series Filter */}
+            <select
+              value={selectedSeries}
+              onChange={(e) => setSelectedSeries(e.target.value)}
+              className="px-2.5 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-700 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">All Series</option>
+              <option value="1">Series 1</option>
+              <option value="2">Series 2</option>
+            </select>
+
             {/* Status Filter */}
             <select
               value={selectedStatus}
@@ -528,8 +543,13 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     </td>
 
                     <td className="py-3 px-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {m.material_type}
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 inline-flex items-center gap-1">
+                        <span>{m.material_type}</span>
+                        {m.material_type === 'MTP' && (
+                          <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-blue-100 text-blue-700">
+                            S{m.mtp_series || m.mtpSeries || 1}
+                          </span>
+                        )}
                       </span>
                     </td>
 
@@ -747,8 +767,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             </div>
 
             <form onSubmit={handleSubmitForm} className="p-6 overflow-y-auto space-y-4 text-xs">
-              {/* Row 1: Level, Material Type, Subject */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Row 1: Level, Material Type, MTP Series (if MTP), Subject */}
+              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">CA Level *</label>
                   <select
@@ -784,6 +804,24 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     <option value="MODEL_TEST_PAPER">Model Test Paper</option>
                   </select>
                 </div>
+
+                {formData.materialType === 'MTP' && (
+                  <div>
+                    <label className="block font-bold text-blue-700 mb-1 flex items-center justify-between">
+                      <span>MTP Series *</span>
+                      <span className="text-[10px] text-blue-600 bg-blue-50 px-1 rounded">Required</span>
+                    </label>
+                    <select
+                      id="admin-form-mtp-series-select"
+                      value={formData.mtpSeries}
+                      onChange={(e) => setFormData({ ...formData, mtpSeries: Number(e.target.value) as 1 | 2 })}
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg bg-blue-50/50 text-blue-800 font-semibold focus:outline-none focus:border-blue-600"
+                    >
+                      <option value={1}>Series 1 (Model Test 1)</option>
+                      <option value={2}>Series 2 (Model Test 2)</option>
+                    </select>
+                  </div>
+                )}
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Subject *</label>

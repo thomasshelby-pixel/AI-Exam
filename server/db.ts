@@ -204,6 +204,7 @@ export function initDatabase() {
       subject_name TEXT NOT NULL,
       paper TEXT,
       attempt TEXT,
+      mtp_series INTEGER,
       syllabus_version TEXT,
       material_id TEXT,
       material_version TEXT,
@@ -622,6 +623,7 @@ function runMigrations() {
 
   // Ensure evaluations has all enhanced columns
   addColumnIfNotExists('evaluations', 'evaluation_source', "TEXT DEFAULT 'PUBLIC'");
+  addColumnIfNotExists('evaluations', 'mtp_series', 'INTEGER');
   addColumnIfNotExists('evaluations', 'institute_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'institute_enrollment_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'batch_id', 'TEXT');
@@ -683,6 +685,29 @@ function runMigrations() {
   addColumnIfNotExists('recheck_requests', 'revised_report_id', 'TEXT');
   addColumnIfNotExists('recheck_requests', 'audit_info_json', 'TEXT');
   addColumnIfNotExists('recheck_requests', 'disputed_questions_json', 'TEXT');
+  addColumnIfNotExists('recheck_requests', 'mtp_series', 'INTEGER');
+  addColumnIfNotExists('institute_materials', 'mtp_series', 'INTEGER');
+
+  // Migrate existing MTP materials to populate mtp_series if missing
+  try {
+    db.prepare(`
+      UPDATE evaluation_materials 
+      SET mtp_series = 1 
+      WHERE material_type = 'MTP' 
+        AND (mtp_series IS NULL OR mtp_series = '' OR mtp_series = 'null')
+        AND (question_paper_title LIKE '%Series 1%' OR question_paper_title LIKE '%Series-1%' OR question_paper_title LIKE '%Series I%')
+    `).run();
+
+    db.prepare(`
+      UPDATE evaluation_materials 
+      SET mtp_series = 2 
+      WHERE material_type = 'MTP' 
+        AND (mtp_series IS NULL OR mtp_series = '' OR mtp_series = 'null')
+        AND (question_paper_title LIKE '%Series 2%' OR question_paper_title LIKE '%Series-2%' OR question_paper_title LIKE '%Series II%')
+    `).run();
+  } catch (migErr) {
+    console.warn('[DB Migration] Error migrating mtp_series:', migErr);
+  }
 
   // Ensure users and entities support account classification (NORMAL / TEST)
   addColumnIfNotExists('users', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");

@@ -22,6 +22,7 @@ export interface EvaluationJobData {
   icaiRegistrationNumber: string;
   level: CALevel;
   materialType: MaterialType;
+  mtpSeries?: 1 | 2;
   modelGroup?: string;
   subjectKey: string;
   subjectName: string;
@@ -122,6 +123,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       icaiRegistrationNumber: job.icaiRegistrationNumber || 'N/A',
       level: job.level,
       materialType: job.materialType,
+      mtpSeries: job.mtpSeries,
       subjectKey: job.subjectKey,
       subjectName: job.subjectName,
       paper: job.paper,
@@ -179,6 +181,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         subjectName: job.subjectName,
         paper: job.paper || 'Paper 1',
         attempt: job.attempt || 'May 2026',
+        materialType: job.materialType,
+        mtpSeries: job.mtpSeries,
         checkingMode: job.checkingMode,
         totalMarks: evaluationResult.totalMarks,
         maximumMarks: evaluationResult.maximumMarks,
@@ -222,6 +226,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         subjectName: job.subjectName,
         paper: job.paper || 'Paper 1',
         attempt: job.attempt || 'May 2026',
+        materialType: job.materialType,
+        mtpSeries: job.mtpSeries,
         checkingMode: job.checkingMode,
         totalMarks: evaluationResult.totalMarks,
         maximumMarks: evaluationResult.maximumMarks,
@@ -252,6 +258,43 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       ).catch((e) => console.warn('[AsyncEval] Warning persisting detailed report:', e));
     } catch (reportErr) {
       console.warn('[AsyncEval] Error pre-generating detailed report PDF:', reportErr);
+    }
+
+    // MTP Series Authoritative Integrity Gate (Requirement: verify series matching before COMPLETED)
+    if (job.materialType === 'MTP') {
+      const evalRow = db.prepare('SELECT mtp_series, material_id FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      const dbSeries = evalRow?.mtp_series !== undefined && evalRow?.mtp_series !== null ? Number(evalRow.mtp_series) : null;
+      const jobSeries = job.mtpSeries !== undefined && job.mtpSeries !== null ? Number(job.mtpSeries) : null;
+
+      let materialSeries: number | null = null;
+      if (evalRow?.material_id) {
+        const matRow = (db.prepare('SELECT mtp_series FROM evaluation_materials WHERE id = ?').get(evalRow.material_id) as any)
+          || (db.prepare('SELECT mtp_series FROM institute_materials WHERE id = ?').get(evalRow.material_id) as any);
+        if (matRow && matRow.mtp_series !== null && matRow.mtp_series !== undefined) {
+          materialSeries = Number(matRow.mtp_series);
+        }
+      }
+
+      const isSeriesValid = jobSeries === 1 || jobSeries === 2;
+      const matchesDb = dbSeries === jobSeries;
+      const matchesMaterial = materialSeries === null || materialSeries === jobSeries;
+
+      if (!isSeriesValid || !matchesDb || !matchesMaterial) {
+        const mismatchErr = `CRITICAL_INTEGRITY_VIOLATION: MTP Series mismatch detected (Job: ${jobSeries}, DB: ${dbSeries}, Material: ${materialSeries}). Evaluation halted to protect academic validity.`;
+        console.error(`[AsyncEval] ${mismatchErr}`);
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'FAILED',
+              progress_stage = 'FAILED',
+              progress_percentage = 0,
+              progress_message = ?,
+              error_message = ?,
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(mismatchErr, mismatchErr, evaluationId);
+        return;
+      }
     }
 
     // Validate authoritative consistency before finalizing
@@ -290,6 +333,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checked_copy_page_count = ?,
           checked_copy_status = ?,
           report_status = ?,
+          mtp_series = COALESCE(?, mtp_series),
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -317,6 +361,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       originalPageCount,
       checkedCopyStatus,
       reportStatus,
+      job.mtpSeries || null,
       evaluationId
     );
 

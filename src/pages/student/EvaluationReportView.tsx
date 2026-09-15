@@ -112,6 +112,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     caLevel,
     subjectName,
     materialType,
+    mtpSeries,
     attempt,
     evaluationDate,
     totalMarks,
@@ -393,7 +394,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white print:text-black">{subjectName}</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 print:text-gray-600">
-              CA {caLevel} • {materialType} Series • {attempt || 'May 2026'}
+              CA {caLevel} • {materialType === 'MTP' && mtpSeries ? `MTP Series ${mtpSeries}` : `${materialType} Series`} • {attempt || 'May 2026'}
             </p>
           </div>
 

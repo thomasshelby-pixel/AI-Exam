@@ -36,6 +36,7 @@ export interface ReferencePackage {
   attempt: string;
   syllabusVersion: string;
   materialType: string;
+  mtpSeries?: 1 | 2;
   effectiveDate: string;
   materialSource: 'GLOBAL' | 'INSTITUTE';
   officialPaperMaxMarks: number;
@@ -55,6 +56,7 @@ export interface BuildReferencePackageRequest {
   attempt?: string;
   syllabusVersion?: string;
   materialType?: string;
+  mtpSeries?: 1 | 2 | string | number;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
   instituteMaterialId?: string;
@@ -74,6 +76,19 @@ export function buildAuthoritativeReferencePackage(
   const isInstituteMode = request.evaluationSource === 'INSTITUTE';
   const normLevel = (request.level || 'INTERMEDIATE').toUpperCase();
   const subjectKey = String(request.subjectKey || '').trim();
+  const isMtp = request.materialType === 'MTP';
+
+  let normalizedSeries: 1 | 2 | undefined = undefined;
+  if (isMtp) {
+    if (request.mtpSeries === undefined || request.mtpSeries === null || String(request.mtpSeries).trim() === '') {
+      throw new Error('Please select an MTP Series (Series 1 or Series 2) to continue.');
+    }
+    const parsed = Number(request.mtpSeries);
+    if (parsed !== 1 && parsed !== 2) {
+      throw new Error('Invalid MTP Series selected. Allowed options are Series 1 or Series 2.');
+    }
+    normalizedSeries = parsed as 1 | 2;
+  }
 
   let rawMaterial: any = null;
   const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
@@ -84,28 +99,42 @@ export function buildAuthoritativeReferencePackage(
         SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
                '1.0' as version, 'Institute Curriculum' as syllabus_version,
                question_paper_text, suggested_answers_text, marking_scheme_text,
+               mtp_series,
                100 as official_max_marks, created_at
         FROM institute_materials
         WHERE id = ? AND institute_id = ? AND status = 'ACTIVE'
       `).get(request.instituteMaterialId, request.instituteId);
+
+      if (rawMaterial && isMtp && normalizedSeries) {
+        if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
+          throw new Error('TAMPER_DETECTED: Requested material ID does not match selected MTP Series.');
+        }
+      }
     }
 
     if (!rawMaterial && request.instituteId) {
-      rawMaterial = db.prepare(`
+      let instQuery = `
         SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
                '1.0' as version, 'Institute Curriculum' as syllabus_version,
                question_paper_text, suggested_answers_text, marking_scheme_text,
+               mtp_series,
                100 as official_max_marks, created_at
         FROM institute_materials
         WHERE institute_id = ? AND level = ? AND subject_key = ? AND status = 'ACTIVE'
-        ORDER BY created_at DESC LIMIT 1
-      `).get(request.instituteId, normLevel, subjectKey);
+      `;
+      const instParams: any[] = [request.instituteId, normLevel, subjectKey];
+      if (isMtp && normalizedSeries) {
+        instQuery += ' AND (mtp_series = ? OR mtp_series = ?)';
+        instParams.push(normalizedSeries, String(normalizedSeries));
+      }
+      instQuery += ' ORDER BY created_at DESC LIMIT 1';
+      rawMaterial = db.prepare(instQuery).get(...instParams);
     }
   } else {
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, version, status, admin_approved,
+             attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
              reference_guidance_text, amendments_provisions_text,
              100 as official_max_marks, created_at
@@ -130,13 +159,19 @@ export function buildAuthoritativeReferencePackage(
       params.push(request.materialType);
     }
 
+    if (isMtp && normalizedSeries) {
+      query += ' AND (mtp_series = ? OR mtp_series = ?)';
+      params.push(normalizedSeries, String(normalizedSeries));
+    }
+
     query += ' ORDER BY created_at DESC LIMIT 1';
     rawMaterial = db.prepare(query).get(...params);
 
-    if (!rawMaterial) {
+    // If specific attempt was not matched, fallback only for non-MTP materials!
+    if (!rawMaterial && !isMtp) {
       rawMaterial = db.prepare(`
         SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-               attempt, syllabus_version, material_type, version, status, admin_approved,
+               attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
                question_paper_text, suggested_answers_text, marking_scheme_text,
                reference_guidance_text, amendments_provisions_text,
                100 as official_max_marks, created_at
@@ -150,9 +185,24 @@ export function buildAuthoritativeReferencePackage(
 
   // HARD STOP GATE: Material must exist in authoritative store
   if (!rawMaterial) {
+    if (isMtp && normalizedSeries) {
+      const subj = request.subjectName || request.subjectKey;
+      const att = request.attempt || 'Target Attempt';
+      throw new Error(
+        `Evaluation material for ${subj} MTP Series ${normalizedSeries} (${att}) is not available yet. Please select another paper or wait until the material is published.`
+      );
+    }
     throw new Error(
       'Evaluation material is unavailable for this question. Please try again once the required verified material has been uploaded.'
     );
+  }
+
+  if (isMtp && normalizedSeries) {
+    if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
+      throw new Error(
+        `MTP_SERIES_MISMATCH: Retrieved material series (${rawMaterial.mtp_series}) does not match requested MTP Series (${normalizedSeries}).`
+      );
+    }
   }
 
   const qpText = String(rawMaterial.question_paper_text || '').trim();
@@ -248,6 +298,7 @@ export function buildAuthoritativeReferencePackage(
     attempt: rawMaterial.attempt || request.attempt || 'May 2026',
     syllabusVersion: rawMaterial.syllabus_version || request.syllabusVersion || 'New Scheme 2024',
     materialType: rawMaterial.material_type || request.materialType || 'MTP',
+    mtpSeries: normalizedSeries,
     effectiveDate: rawMaterial.created_at || new Date().toISOString().slice(0, 10),
     materialSource,
     officialPaperMaxMarks,

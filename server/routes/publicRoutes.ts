@@ -206,13 +206,13 @@ router.post('/referral/validate', (req: Request, res: Response) => {
 
 // Check whether reference material exists for a given subject, paper, and attempt
 router.get('/materials-check', (req: Request, res: Response) => {
-  const { level, subjectKey, attempt, paper, materialType } = req.query;
+  const { level, subjectKey, attempt, paper, materialType, mtpSeries, mtp_series } = req.query;
   if (!level || !subjectKey) {
     return res.status(400).json({ error: 'Level and subjectKey are required.' });
   }
 
   let query = `
-    SELECT id, question_paper_title, attempt, paper, material_type
+    SELECT id, question_paper_title, attempt, paper, material_type, mtp_series
     FROM evaluation_materials
     WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
     AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
@@ -233,6 +233,15 @@ router.get('/materials-check', (req: Request, res: Response) => {
   if (materialType && materialType !== 'ALL') {
     query += " AND (material_type = ? OR material_type = 'ALL')";
     params.push(String(materialType));
+  }
+
+  const rawSeries = mtpSeries || mtp_series;
+  if (materialType === 'MTP' && rawSeries) {
+    const seriesNum = Number(rawSeries);
+    if (seriesNum === 1 || seriesNum === 2) {
+      query += " AND (mtp_series = ? OR mtp_series = ?)";
+      params.push(seriesNum, String(seriesNum));
+    }
   }
 
   query += ' ORDER BY created_at DESC LIMIT 1';
