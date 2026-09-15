@@ -256,10 +256,34 @@ function buildTaxationPaperStructure(options: {
     { fullQuestionCode: 'Q8(b)', questionNumber: '8', subQuestionNumber: 'b', maximumMarks: 5, compulsory: false, isMcq: false, topic: 'Rule 88D - ITC Difference', section: 'B', division: 'B' },
   ];
 
+  // Check if text provides explicit overrides for questions (e.g. Q4(b) carrying 3 marks or Q6(a)(2) carrying 3 marks)
+  const combinedText = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
+  const parsedExplicit = extractSubQuestionsFromText(combinedText);
+  const overrideMap = new Map<string, number>();
+  for (const pe of parsedExplicit) {
+    overrideMap.set(pe.fullQuestionCode, pe.maximumMarks);
+  }
+
+  for (const sq of subQuestions) {
+    if (overrideMap.has(sq.fullQuestionCode)) {
+      sq.maximumMarks = overrideMap.get(sq.fullQuestionCode)!;
+    }
+  }
+
+  // If parsedExplicit contains sub-sub questions (like Q6(a)(1) or Q6(a)(2)), remove parent placeholder like Q6(a)
+  const hasSubSub = (parentCode: string) => parsedExplicit.some((pe) => pe.fullQuestionCode.startsWith(parentCode + '('));
+  const finalSubQuestions = subQuestions.filter((sq) => !hasSubSub(sq.fullQuestionCode));
+
+  for (const pe of parsedExplicit) {
+    if (!finalSubQuestions.some((s) => s.fullQuestionCode === pe.fullQuestionCode)) {
+      finalSubQuestions.push(pe);
+    }
+  }
+
   // Group into Questions
   const questionsMap = new Map<string, PaperStructureQuestion>();
 
-  for (const sq of subQuestions) {
+  for (const sq of finalSubQuestions) {
     if (sq.isMcq) continue;
 
     const key = `SEC_${sq.section}_Q${sq.questionNumber}`;
@@ -285,15 +309,74 @@ function buildTaxationPaperStructure(options: {
     q.subQuestions.push(sq);
   }
 
-  const mcqs = subQuestions.filter((sq) => sq.isMcq);
+  const mcqs = finalSubQuestions.filter((sq) => sq.isMcq);
 
   return {
     paperTitle: 'CA Intermediate – Paper 3: Taxation',
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
     questions: Array.from(questionsMap.values()),
-    subQuestions,
+    subQuestions: finalSubQuestions,
     mcqs,
   };
+}
+
+/**
+ * Universal Sub-Question and Max Marks Extractor from official scheme/question paper text.
+ * Accurately extracts questions like:
+ * "QUESTION 1 – 15 MARKS", "QUESTION 4(b) – 3 MARKS", "Q6(a)(1) - 2 MARKS", "Q6(a)(2) - 3 MARKS", "4(b) [3 Marks]"
+ */
+export function extractSubQuestionsFromText(text: string): PaperStructureSubQuestion[] {
+  const subQuestions: PaperStructureSubQuestion[] = [];
+  if (!text || typeof text !== 'string') return subQuestions;
+
+  const seen = new Set<string>();
+
+  // Regex 1: Explicit question indicators: "QUESTION 4(b) – 3 MARKS", "Q4(b) [3 Marks]", "Question 6(a)(2) - 3 Marks"
+  const regex1 = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\))?\s*(?:[-–—:]|\b|is|\.)\s*(?:(?:for|carrying)?\s*)?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex1.exec(text)) !== null) {
+    const qNum = match[1];
+    const subQ = match[2];
+    const marks = parseFloat(match[3]);
+    const code = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
+    if (!seen.has(code) && marks > 0) {
+      seen.add(code);
+      subQuestions.push({
+        fullQuestionCode: code,
+        questionNumber: qNum,
+        subQuestionNumber: subQ,
+        maximumMarks: marks,
+        compulsory: qNum === '1' || qNum === '5',
+        isMcq: false,
+        section: parseInt(qNum, 10) > 4 ? 'B' : 'A',
+        division: 'B',
+      });
+    }
+  }
+
+  // Regex 2: Bracketed question indicators at line start: "4(b) - 3 Marks" or "6(a)(2) [3 Marks]"
+  const regex2 = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  while ((match = regex2.exec(text)) !== null) {
+    const qNum = match[1];
+    const subQ = match[2];
+    const marks = parseFloat(match[3]);
+    const code = `Q${qNum}(${subQ})`;
+    if (!seen.has(code) && marks > 0) {
+      seen.add(code);
+      subQuestions.push({
+        fullQuestionCode: code,
+        questionNumber: qNum,
+        subQuestionNumber: subQ,
+        maximumMarks: marks,
+        compulsory: qNum === '1' || qNum === '5',
+        isMcq: false,
+        section: parseInt(qNum, 10) > 4 ? 'B' : 'A',
+        division: 'B',
+      });
+    }
+  }
+
+  return subQuestions;
 }
 
 /**
@@ -305,38 +388,8 @@ function buildGenericPaperStructure(options: {
   suggestedAnswersText?: string;
   officialPaperMaxMarks?: number;
 }): AuthoritativePaperStructure {
-  const scheme = options.markingSchemeText || '';
-  const subQuestions: PaperStructureSubQuestion[] = [];
-
-  // Match patterns like:
-  // "QUESTION 1 – 15 MARKS"
-  // "QUESTION 2(a) – 4 MARKS"
-  // "Q5(b) - 5 marks"
-  const regex = /(?:QUESTION|Q)\s*([0-9]+)(?:\s*\(([a-z0-9]+)\))?\s*[-–—:]\s*([0-9]+(?:\.[0-9]+)?)\s*MARKS?/gi;
-  let match: RegExpExecArray | null;
-
-  const seen = new Set<string>();
-
-  while ((match = regex.exec(scheme)) !== null) {
-    const qNum = match[1];
-    const subQ = match[2];
-    const marks = parseFloat(match[3]);
-
-    const code = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    if (seen.has(code)) continue;
-    seen.add(code);
-
-    subQuestions.push({
-      fullQuestionCode: code,
-      questionNumber: qNum,
-      subQuestionNumber: subQ,
-      maximumMarks: marks,
-      compulsory: qNum === '1' || qNum === '5',
-      isMcq: false,
-      section: parseInt(qNum, 10) > 4 ? 'B' : 'A',
-      division: 'B',
-    });
-  }
+  const combined = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
+  let subQuestions = extractSubQuestionsFromText(combined);
 
   // If no structured questions matched, fallback to standard CA 5-question pattern
   if (subQuestions.length === 0) {

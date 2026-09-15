@@ -54,6 +54,8 @@ export interface LockedQuestionReference {
 export function parseQuestionCode(code: string): {
   qNum: string;
   subQ?: string;
+  questionNumber: string;
+  subQuestion?: string;
   isMcq: boolean;
   cleanCode: string;
 } {
@@ -65,23 +67,58 @@ export function parseQuestionCode(code: string): {
     return {
       qNum: num || '1',
       subQ: 'MCQ',
+      questionNumber: num || '1',
+      subQuestion: 'MCQ',
       isMcq: true,
       cleanCode: `MCQ${num || '1'}`,
     };
   }
 
-  // Handle standard variants: "Question 5(a)", "Q5(a)", "5(a)", "5a", "Q.5(a)", "Ans 5(a)"
-  const matchSub = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(?:\(?([a-zA-Z0-9])\)?)?/i);
-  if (matchSub) {
-    const qNum = matchSub[1];
-    const rawSub = matchSub[2] ? matchSub[2].toLowerCase() : undefined;
-    const subQ = rawSub && rawSub.length === 1 && /[a-z]/i.test(rawSub) ? rawSub : undefined;
+  // Handle standard and nested variants: "Question 5(a)", "Q5(a)", "5(a)", "5a", "Q6(a)(1)", "Q6(a)(2)", "6(a)(i)"
+  const qNumMatch = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
+  if (qNumMatch) {
+    const qNum = qNumMatch[1];
+    const remaining = (qNumMatch[2] || '').trim();
+    let subQ: string | undefined;
+
+    if (remaining) {
+      // Nested sub-question: (a)(1) or (a)(i)
+      const nestedMatch = remaining.match(/^\(([a-zA-Z0-9]+)\)\s*\(([a-zA-Z0-9]+)\)/);
+      if (nestedMatch) {
+        subQ = `${nestedMatch[1].toLowerCase()}(${nestedMatch[2].toLowerCase()})`;
+      } else {
+        // Single bracket: (a) or [a]
+        const singleBracket = remaining.match(/^[\(\[]([a-zA-Z0-9]+)[\)\]]/);
+        if (singleBracket) {
+          subQ = singleBracket[1].toLowerCase();
+        } else {
+          // Direct token: a or a1 or a(1)
+          const directMatch = remaining.match(/^([a-zA-Z](?:\([a-zA-Z0-9]+\)|[0-9]+)?)/);
+          if (directMatch) {
+            subQ = directMatch[1].toLowerCase();
+          }
+        }
+      }
+    }
+
     const cleanCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    return { qNum, subQ, isMcq: false, cleanCode };
+    return {
+      qNum,
+      subQ,
+      questionNumber: qNum,
+      subQuestion: subQ,
+      isMcq: false,
+      cleanCode,
+    };
   }
 
   const digits = trimmed.replace(/[^0-9]/g, '');
-  return { qNum: digits || '1', isMcq: false, cleanCode: `Q${digits || '1'}` };
+  return {
+    qNum: digits || '1',
+    questionNumber: digits || '1',
+    isMcq: false,
+    cleanCode: `Q${digits || '1'}`,
+  };
 }
 
 /**

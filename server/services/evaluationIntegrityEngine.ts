@@ -479,7 +479,7 @@ export function normalizeQuestionComponents(
   }
 
   // 3. Finalize component bounds, deductions, and assessments
-  return adjustedComponents.map((c, idx) => {
+  const finalized = adjustedComponents.map((c, idx) => {
     const sAvailable = Math.max(0.25, Math.round(c.marksAvailable * 4) / 4);
     const sAwarded = Math.max(0, Math.min(sAvailable, Math.round(c.marksAwarded * 4) / 4));
     const sDeducted = Math.max(0, Math.round((sAvailable - sAwarded) * 4) / 4);
@@ -507,6 +507,27 @@ export function normalizeQuestionComponents(
       studentEvidence: c.studentEvidence || 'Candidate step evidence examined.',
     };
   });
+
+  // Final exact sum enforcement: SUM(marksAvailable) === questionMaxMarks & SUM(marksAwarded) === targetAwardedMarks
+  if (finalized.length > 0) {
+    const availSum = finalized.reduce((s, c) => s + c.marksAvailable, 0);
+    const availDiff = questionMaxMarks - availSum;
+    if (Math.abs(availDiff) > 0.001) {
+      const largestComp = [...finalized].sort((a, b) => b.marksAvailable - a.marksAvailable)[0];
+      largestComp.marksAvailable = Math.round((largestComp.marksAvailable + availDiff) * 4) / 4;
+      largestComp.marksDeducted = Math.max(0, Math.round((largestComp.marksAvailable - largestComp.marksAwarded) * 4) / 4);
+    }
+
+    const awardSum = finalized.reduce((s, c) => s + c.marksAwarded, 0);
+    const awardDiff = targetAwardedMarks - awardSum;
+    if (Math.abs(awardDiff) > 0.001) {
+      const eligibleComp = finalized.find((c) => c.marksAwarded + awardDiff <= c.marksAvailable && c.marksAwarded + awardDiff >= 0) || finalized[finalized.length - 1];
+      eligibleComp.marksAwarded = Math.max(0, Math.min(eligibleComp.marksAvailable, Math.round((eligibleComp.marksAwarded + awardDiff) * 4) / 4));
+      eligibleComp.marksDeducted = Math.max(0, Math.round((eligibleComp.marksAvailable - eligibleComp.marksAwarded) * 4) / 4);
+    }
+  }
+
+  return finalized;
 }
 
 /**

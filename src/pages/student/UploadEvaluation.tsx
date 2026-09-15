@@ -194,7 +194,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           evaluation: {
             id: string;
             status: string;
+            progress_stage?: string;
+            progress_percentage?: number;
+            progress_message?: string;
             rejection_reason?: string;
+            error_message?: string;
             resultJson?: EvaluationResult;
           };
         }>(`/api/student/evaluations/${activeEvaluationId}`);
@@ -211,21 +215,28 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (data.evaluation.resultJson) {
             onEvaluationComplete(activeEvaluationId, data.evaluation.resultJson);
           }
-        } else if (data.evaluation?.status === 'REJECTED') {
+        } else if (data.evaluation?.status === 'REJECTED' || data.evaluation?.status === 'FAILED') {
           clearInterval(interval);
           localStorage.removeItem('ca_active_eval_id');
           localStorage.removeItem('ca_active_eval_start');
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
-          setErrorMessage(data.evaluation.rejection_reason || 'Evaluation could not be completed.');
-          setRejectionDetails(
-            'Document validation safeguard triggered: Admit cards, certificates, hall tickets, and blank documents are strictly rejected. No evaluation credits have been deducted.'
-          );
+          setErrorMessage(data.evaluation.rejection_reason || data.evaluation.error_message || 'Evaluation could not be completed.');
+          if (data.evaluation.status === 'REJECTED') {
+            setRejectionDetails(
+              'Document validation safeguard triggered: Admit cards, certificates, hall tickets, and blank documents are strictly rejected. No evaluation credits have been deducted.'
+            );
+          }
+        } else if (data.evaluation?.progress_stage) {
+          const matchedStage = EVALUATION_PROGRESS_STAGES.find((s) => s.key === data.evaluation.progress_stage);
+          if (matchedStage) {
+            setEvalStep(matchedStage.key);
+          }
         }
       } catch (pollErr) {
         console.warn('Polling active evaluation error:', pollErr);
       }
-    }, 4000);
+    }, 3000);
 
     return () => {
       isSubscribed = false;
@@ -455,7 +466,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       const response = await apiRequest<{
         success: boolean;
         evaluationId: string;
-        result: EvaluationResult;
+        status?: string;
+        result?: EvaluationResult;
       }>('/api/student/evaluate', {
         method: 'POST',
         body: JSON.stringify({
@@ -479,13 +491,36 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         }),
       });
 
-      localStorage.removeItem('ca_active_eval_id');
-      localStorage.removeItem('ca_active_eval_start');
-      setActiveEvaluationId(null);
-      setEvalStep('IDLE');
-      await refreshUser();
-      onEvaluationComplete(response.evaluationId, response.result);
+      if (response.result) {
+        localStorage.removeItem('ca_active_eval_id');
+        localStorage.removeItem('ca_active_eval_start');
+        setActiveEvaluationId(null);
+        setEvalStep('IDLE');
+        await refreshUser();
+        onEvaluationComplete(response.evaluationId, response.result);
+      } else {
+        // Backend started async job! Keep activeEvaluationId active, and let polling take over.
+        setEvalStep('EVALUATING_ANSWERS');
+      }
     } catch (err: unknown) {
+      // Resilience check: verify if the evaluation was enqueued and is running in backend
+      try {
+        const verifyRes = await apiRequest<{ evaluation?: { id: string; status: string } }>(
+          `/api/student/evaluations/${newEvaluationId}`
+        );
+        if (
+          verifyRes.evaluation &&
+          verifyRes.evaluation.status !== 'FAILED' &&
+          verifyRes.evaluation.status !== 'REJECTED'
+        ) {
+          console.log('[UploadEvaluation] Evaluation is actively running in background:', newEvaluationId);
+          setEvalStep('EVALUATING_ANSWERS');
+          return;
+        }
+      } catch {
+        // Fall through to error
+      }
+
       localStorage.removeItem('ca_active_eval_id');
       localStorage.removeItem('ca_active_eval_start');
       setActiveEvaluationId(null);

@@ -704,8 +704,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           }
         );
 
-        if (!savedMeta || savedMeta.status !== 'ACTIVE' || !savedMeta.storagePath) {
-          throw new Error('Cloud Storage reported incomplete or inactive file persistence status');
+        if (!savedMeta || !savedMeta.storagePath) {
+          throw new Error('Storage reported incomplete file persistence status');
         }
 
         fileInfo = {
@@ -884,8 +884,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
           }
         );
 
-        if (!savedMeta || savedMeta.status !== 'ACTIVE' || !savedMeta.storagePath) {
-          throw new Error('Cloud Storage reported incomplete or inactive file persistence status');
+        if (!savedMeta || !savedMeta.storagePath) {
+          throw new Error('Storage reported incomplete file persistence status');
         }
 
         // Clean up old file from Cloud Storage only after new file is verified

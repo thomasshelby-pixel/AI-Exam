@@ -658,6 +658,13 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'entitlement_source', "TEXT DEFAULT 'PERSONAL_FREE'");
   addColumnIfNotExists('evaluations', 'consumed_from_institute_allocation', 'INTEGER DEFAULT 0');
   addColumnIfNotExists('evaluations', 'consumed_from_personal_credits', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'progress_stage', "TEXT DEFAULT 'QUEUED'");
+  addColumnIfNotExists('evaluations', 'progress_percentage', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'progress_message', "TEXT DEFAULT 'Evaluation queued'");
+  addColumnIfNotExists('evaluations', 'report_status', "TEXT DEFAULT 'PENDING'");
+  addColumnIfNotExists('evaluations', 'report_file_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'checked_copy_file_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'updated_at', 'TEXT');
 
   // Ensure recheck_requests has all enhanced workflow columns
   addColumnIfNotExists('recheck_requests', 'student_email', 'TEXT');

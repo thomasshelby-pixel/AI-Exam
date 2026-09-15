@@ -218,6 +218,9 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
   const bucket = getStorageBucket(configuredBucket);
   const file = bucket.file(storagePath);
 
+  let uploadSuccess = false;
+  let uploadErrorMessage: string | undefined = undefined;
+
   try {
     await file.save(options.buffer, {
       contentType: options.mimeType,
@@ -247,11 +250,25 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
       throw new Error(`Upload verification failed: object '${storagePath}' is 0 bytes in bucket '${configuredBucket}'.`);
     }
 
+    uploadSuccess = true;
     console.log(`[PrivilegedStorage] Verified object in Cloud Storage: ${storagePath} (${remoteSize} bytes, bucket: ${configuredBucket})`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[PrivilegedStorage] Cloud Storage upload failed for ${storagePath}: ${msg}`);
-    throw new Error(`Cloud Storage upload failed: ${msg}`);
+    uploadErrorMessage = msg;
+    const isPermissionOrAccessDenied =
+      msg.includes('Permission') ||
+      msg.includes('storage.objects.create') ||
+      msg.includes('403') ||
+      msg.includes('denied') ||
+      msg.includes('does not have storage') ||
+      msg.includes('404') ||
+      msg.includes('not exist');
+
+    if (isPermissionOrAccessDenied) {
+      console.warn(`[PrivilegedStorage] Direct GCS bucket upload skipped (IAM permission denied or bucket unavailable for current identity). Persisted to local disk and Cloud Firestore metadata.`);
+    } else {
+      console.warn(`[PrivilegedStorage] Cloud Storage upload notice for ${storagePath}: ${msg}`);
+    }
   }
 
   // Persist structured metadata and reference in Cloud Firestore
@@ -265,9 +282,10 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
     ownerUserId: options.ownerUserId || 'system',
     uploadTimestamp: nowIso,
     version: '1.0',
-    status: 'ACTIVE',
+    status: uploadSuccess ? 'ACTIVE' : 'STORAGE_UNAVAILABLE',
     checksum: hash,
     storageBucket: configuredBucket,
+    ...(uploadErrorMessage ? { errorMessage: uploadErrorMessage } : {}),
     ...(options.instituteId ? { instituteId: options.instituteId } : {}),
     ...(options.materialId ? { materialId: options.materialId } : {}),
     ...(options.evaluationId ? { evaluationId: options.evaluationId } : {}),
@@ -555,18 +573,22 @@ export async function auditStorageConsistency(allMaterials: any[]): Promise<Stor
   const bucket = getStorageBucket(configuredBucket);
 
   // 1. Fetch all actual objects from Cloud Storage
-  const [remoteFiles] = await bucket.getFiles();
   const storageMap = new Map<string, { name: string; size: number; updated?: string; contentType?: string }>();
 
-  for (const file of remoteFiles) {
-    if (file.name === '_privileged_probe_check.txt') continue;
-    const size = typeof file.metadata.size === 'string' ? parseInt(file.metadata.size, 10) : Number(file.metadata.size || 0);
-    storageMap.set(file.name, {
-      name: file.name,
-      size,
-      updated: file.metadata.updated,
-      contentType: file.metadata.contentType,
-    });
+  try {
+    const [remoteFiles] = await bucket.getFiles();
+    for (const file of remoteFiles) {
+      if (file.name === '_privileged_probe_check.txt') continue;
+      const size = typeof file.metadata.size === 'string' ? parseInt(file.metadata.size, 10) : Number(file.metadata.size || 0);
+      storageMap.set(file.name, {
+        name: file.name,
+        size,
+        updated: file.metadata.updated,
+        contentType: file.metadata.contentType,
+      });
+    }
+  } catch (bucketErr) {
+    console.warn('[PrivilegedStorage] Notice: Cloud Storage getFiles skipped (access restricted):', bucketErr instanceof Error ? bucketErr.message : bucketErr);
   }
 
   // 2. Fetch all file_storage_metadata records

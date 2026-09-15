@@ -101,16 +101,20 @@ export function applyMultiModeMarkingPhilosophy(
       };
     }
 
-    // For descriptive questions, apply strict ICAI examiner deductions:
-    // - Omission of statutory section / sub-section loses provision step credit
-    // - Calculation steps with arithmetic slips receive reduced partial credit
-    // - Incomplete working notes are penalized
+    // For descriptive questions, apply strict ICAI examiner evaluation:
+    // - Strict mode reflects stricter evidence-based evaluation, NOT arbitrary harshness.
+    // - Fully correct components with valid evidence are NEVER penalized.
+    // - If candidate cited section correctly (assessment === 'CORRECT'), strict mode acknowledges it.
+    // - Harsher scrutiny applies only to partial, vague, or calculation slips.
     const strictComponents: MarkingComponent[] = (sq.markingComponents || []).map((c) => {
       const avail = Number(c.marksAvailable) || 0;
       const stdAward = Number(c.marksAwarded) || 0;
       let strictAward = stdAward;
 
-      if (c.componentType === 'PROVISION' || c.componentType === 'PRINCIPLE') {
+      if (c.assessment === 'CORRECT' && (!c.deductionReason || c.marksDeducted === 0)) {
+        // Fully correct step: strict mode must preserve 100% credit
+        strictAward = stdAward;
+      } else if (c.componentType === 'PROVISION' || c.componentType === 'PRINCIPLE') {
         if (c.assessment !== 'CORRECT' || (c.deductionReason && /missing|inaccurate|partial/i.test(c.deductionReason))) {
           // Strict: no partial credit for vague or incomplete statutory citation
           strictAward = Math.min(stdAward, Math.round(stdAward * 0.5 * 2) / 2);
@@ -124,7 +128,7 @@ export function applyMultiModeMarkingPhilosophy(
         if (c.assessment !== 'CORRECT') {
           strictAward = 0;
         }
-      } else {
+      } else if (c.assessment !== 'CORRECT') {
         strictAward = Math.min(stdAward, Math.round(stdAward * 0.8 * 2) / 2);
       }
 
@@ -137,7 +141,9 @@ export function applyMultiModeMarkingPhilosophy(
         marksAwarded: strictAward,
         marksDeducted: strictDeducted,
         deductionReason: strictAward < stdAward
-          ? (c.deductionReason ? `${c.deductionReason} [Strict ICAI Benchmark: rigorous deduction for omission of statutory section or intermediate note].` : 'Strict ICAI deduction applied for lack of exhaustive technical detail.')
+          ? (c.deductionReason
+              ? `${c.deductionReason} [Strict Mode: no discretionary rounding granted for partial step].`
+              : (c.studentEvidence ? `Strict Mode deduction: variance identified in student response "${c.studentEvidence.slice(0, 80)}".` : 'Strict mode deduction applied for incomplete step execution.'))
           : c.deductionReason,
       };
     });

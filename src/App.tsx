@@ -88,6 +88,7 @@ const EvaluationReportWrapper: React.FC = () => {
 
       // If in progress, show progress and poll
       if (
+        evalData?.status === 'QUEUED' ||
         evalData?.status === 'PENDING' ||
         evalData?.status === 'UPLOADING' ||
         evalData?.status === 'READING_ANSWER_SHEET' ||
@@ -95,11 +96,14 @@ const EvaluationReportWrapper: React.FC = () => {
         evalData?.status === 'PROCESSING'
       ) {
         setProcessingStatus(
-          evalData.status === 'READING_ANSWER_SHEET'
+          (evalData as any).progress_message ||
+          (evalData.status === 'READING_ANSWER_SHEET'
             ? 'Analyzing handwritten pages and optical handwriting...'
             : evalData.status === 'EVALUATING_ANSWERS'
             ? 'Executing ICAI step-by-step mark allocation...'
-            : 'Synthesizing verified evaluation report...'
+            : evalData.status === 'QUEUED'
+            ? 'Queued for evaluation. Starting examiner pipeline...'
+            : 'Synthesizing verified evaluation report...')
         );
 
         setTimeout(() => fetchReport(true), 2500);

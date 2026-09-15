@@ -25,6 +25,7 @@ import { validateAuthoritativeConsistency } from '../services/evaluationIntegrit
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
+import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
 
 const router = Router();
 
@@ -727,293 +728,48 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       });
     }
 
-    // Step E: Update State to READING_ANSWER_SHEET -> EVALUATING_ANSWERS
-    db.prepare("UPDATE evaluations SET status = 'EVALUATING_ANSWERS' WHERE id = ?").run(evaluationId);
-
-    // Step F: Execute Full AI Step Marking Evaluation
-    const evaluationResult = await evaluateCAAnswerSheet({
+    // Step E: Enqueue Asynchronous Background Evaluation
+    enqueueEvaluation({
       evaluationId,
+      studentId,
       studentName: studentName || req.user!.fullName,
       icaiRegistrationNumber: icaiRegistrationNumber || 'N/A',
       level: level as CALevel,
       materialType: materialType as MaterialType,
+      modelGroup: modelGroup || undefined,
       subjectKey,
       subjectName,
-      paper: referenceMaterial.paper,
-      attempt,
+      paper: referenceMaterial.paper || 'Paper 1',
+      attempt: attempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
-      officialPaperMaxMarks: referenceMaterial.official_max_marks,
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
       mimeType: mimeType || 'application/pdf',
+      filename: filename || 'ca_answer_sheet.pdf',
+      pdfBuf,
       referenceQuestionPaperText: referenceMaterial.question_paper_text,
       referenceSuggestedAnswersText: referenceMaterial.suggested_answers_text,
       markingSchemeText: referenceMaterial.marking_scheme_text || '',
+      referenceMaterialTitle: referenceMaterial.question_paper_title,
+      referenceMaterialVersion: referenceMaterial.version,
+      referenceMaterialId: referenceMaterial.id,
+      officialPaperMaxMarks: referenceMaterial.official_max_marks,
+      entitlementSource,
+      resolvedSponsoringInstituteId,
+      resolvedSponsoringEnrollmentId,
+      resolvedSponsoringBatchId,
+      resolvedInstituteName,
+      requestedEvalSource,
+      personalEntitlement,
     });
-
-    // Step G: Finalize & Persist Evaluation
-    // Pre-generate structured annotations & Checked Copy (Rules 69-89)
-    let originalPageCount = 1;
-    let checkedCopyStatus = 'PENDING';
-    let structuredAnnotationsJson = '[]';
-
-    try {
-      const origDoc = await PDFDocument.load(pdfBuf, { ignoreEncryption: true });
-      originalPageCount = origDoc.getPageCount();
-
-      const meta = {
-        id: evaluationId,
-        studentName: studentName || req.user!.fullName,
-        level: level as CALevel,
-        subjectName,
-        paper: referenceMaterial.paper || 'Paper 1',
-        attempt: attempt || 'May 2026',
-        checkingMode: (checkingMode as CheckingMode) || 'standard',
-        totalMarks: evaluationResult.totalMarks,
-        maximumMarks: evaluationResult.maximumMarks,
-        percentage: evaluationResult.percentage,
-        grade: evaluationResult.grade,
-        createdAt: new Date().toISOString(),
-      };
-
-      const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
-      structuredAnnotationsJson = JSON.stringify(structuredAnn);
-
-      const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, pdfBuf);
-      const uploadsDir = path.join(process.cwd(), 'uploads');
-      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
-      fs.writeFileSync(checkedFilePath, checkedPdfBuf);
-      checkedCopyStatus = 'GENERATED';
-
-      // Persist checked copy to Firebase Cloud Storage
-      savePersistentFile(
-        `${evaluationId}_checked_copy`,
-        `${evaluationId}_checked_copy.pdf`,
-        'application/pdf',
-        checkedPdfBuf,
-        'EVALUATION_CHECKED_COPY',
-        {
-          ownerUserId: req.user!.id,
-          evaluationId,
-          instituteId: (req.user as any)?.instituteId || null,
-        }
-      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
-    } catch (annErr) {
-      console.warn('Could not pre-generate checked copy PDF in background:', annErr);
-    }
-
-    // Validate authoritative consistency before finalizing (Rule 14 & Rule 15)
-    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
-    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
-    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
-
-    if (!consistencyReport.isValid) {
-      console.warn(`[EvaluationIntegrity] Evaluation ${evaluationId} failed consistency checks:`, consistencyReport.errors);
-    }
-
-    db.prepare(`
-      UPDATE evaluations
-      SET status = ?,
-          rejection_reason = ?,
-          confidence_score = ?,
-          total_marks = ?,
-          maximum_marks = ?,
-          percentage = ?,
-          grade = ?,
-          model_used = ?,
-          model_display_name = ?,
-          model_provider = ?,
-          thinking_level = ?,
-          routing_reason = ?,
-          evaluation_engine_version = ?,
-          original_model = ?,
-          fallback_model = ?,
-          retry_count = ?,
-          prompt_tokens = ?,
-          completion_tokens = ?,
-          total_tokens = ?,
-          latency_ms = ?,
-          fallback_occurred = ?,
-          fallback_reason = ?,
-          result_json = ?,
-          annotations_json = ?,
-          original_page_count = ?,
-          checked_copy_page_count = ?,
-          checked_copy_status = ?,
-          completed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(
-      finalStatus,
-      validationReason,
-      evaluationResult.confidenceScore,
-      evaluationResult.totalMarks,
-      evaluationResult.maximumMarks,
-      evaluationResult.percentage,
-      evaluationResult.grade,
-      evaluationResult.modelUsed || 'gemini-3.8-flash',
-      evaluationResult.modelDisplayName || 'Google Gemini 3.8 Flash',
-      evaluationResult.modelProvider || 'gemini',
-      evaluationResult.thinkingLevel || 'HIGH',
-      evaluationResult.routingReason || 'Primary CA Evaluation: Gemini 3.8 Flash with high thinking',
-      evaluationResult.evaluationEngineVersion || '3.8.0-ca',
-      evaluationResult.originalModel || evaluationResult.modelUsed || 'gemini-3.8-flash',
-      evaluationResult.fallbackModel || null,
-      evaluationResult.retryCount || 0,
-      evaluationResult.promptTokens || 0,
-      evaluationResult.completionTokens || 0,
-      evaluationResult.totalTokens || 0,
-      evaluationResult.latencyMs || 0,
-      evaluationResult.fallbackOccurred ? 1 : 0,
-      evaluationResult.fallbackReason || null,
-      JSON.stringify(evaluationResult),
-      structuredAnnotationsJson,
-      originalPageCount,
-      originalPageCount,
-      checkedCopyStatus,
-      evaluationId
-    );
-
-    // Sync completed evaluation to Cloud Firestore
-    try {
-      const completedEvalRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
-      if (completedEvalRow) {
-        syncRecordToFirestore('evaluations', evaluationId, completedEvalRow as any);
-      }
-    } catch (syncErr) {
-      console.warn('[StudentRoutes] Error syncing completed evaluation to Firestore:', syncErr);
-    }
-
-    // Step H: Consume Credit / Quota ONLY ON SUCCESS
-    if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
-      const idempotencyKey = `inst_eval_${evaluationId}`;
-      const existingLedger = db.prepare('SELECT id FROM institute_usage_ledger WHERE idempotency_key = ?').get(idempotencyKey);
-      if (!existingLedger) {
-        // Atomic decrement of institute evaluation allowance
-        db.prepare(`
-          UPDATE institute_subscriptions
-          SET evaluations_used = evaluations_used + 1,
-              evaluations_remaining = MAX(0, evaluations_remaining - 1)
-          WHERE institute_id = ? AND status = 'ACTIVE'
-        `).run(resolvedSponsoringInstituteId);
-
-        // Record in institute_usage_ledger
-        db.prepare(`
-          INSERT INTO institute_usage_ledger (
-            id, institute_id, student_id, evaluation_id, usage_type,
-            evaluations_deducted, description, idempotency_key
-          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-        `).run(
-          `usg_${crypto.randomBytes(8).toString('hex')}`,
-          resolvedSponsoringInstituteId,
-          studentId,
-          evaluationId,
-          requestedEvalSource === 'PUBLIC' ? 'STUDENT_PUBLIC_EVALUATION' : 'STUDENT_EVALUATION',
-          `Sponsored ${requestedEvalSource} Evaluation (${subjectName}) for student`,
-          idempotencyKey
-        );
-
-        // Update evaluation breakdown
-        db.prepare(`
-          UPDATE evaluations
-          SET consumed_from_institute_allocation = 1,
-              consumed_from_personal_credits = 0
-          WHERE id = ?
-        `).run(evaluationId);
-
-        // Audit log
-        db.prepare(`
-          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-          VALUES (?, ?, ?, 'EVALUATION', ?, ?)
-        `).run(
-          `aud_${crypto.randomBytes(8).toString('hex')}`,
-          studentId,
-          requestedEvalSource === 'PUBLIC' ? 'EVALUATION_PUBLIC_INSTITUTE_SPONSORED' : 'EVALUATION_INSTITUTE_SPONSORED',
-          evaluationId,
-          `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
-        );
-      }
-    } else if (entitlementSource === 'PROMO' && personalEntitlement?.referralRedemptionId) {
-      db.prepare(`
-        UPDATE referral_redemptions
-        SET evaluations_used = evaluations_used + 1,
-            evaluations_remaining = MAX(0, evaluations_remaining - 1),
-            status = CASE WHEN evaluations_remaining - 1 <= 0 THEN 'EXHAUSTED' ELSE status END
-        WHERE id = ?
-      `).run(personalEntitlement.referralRedemptionId);
-
-      // Ledger entry for promotional evaluation consumption
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-        VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, 'Consumed 1 promotional evaluation (${personalEntitlement.referralCode || 'AI30'})')
-      `).run(
-        `cld_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        Math.max(0, (personalEntitlement.referralEvaluationsRemaining || 1) - 1),
-        evaluationId
-      );
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 0
-        WHERE id = ?
-      `).run(evaluationId);
-    } else if (entitlementSource === 'PERSONAL_FREE') {
-      db.prepare('UPDATE student_profiles SET free_evaluations_used = free_evaluations_used + 1 WHERE user_id = ?').run(studentId);
-      // Ledger entry for free tier consumption
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-        VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, 'Consumed 1 free tier evaluation')
-      `).run(
-        `cld_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        Math.max(0, (personalEntitlement?.freeEvaluationsRemaining || 1) - 1),
-        evaluationId
-      );
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 0
-        WHERE id = ?
-      `).run(evaluationId);
-    } else if (entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
-      // Enforce First-Expiring, First-Out (FEFO) and 3-month validity check
-      consumeCreditFEFO(studentId, evaluationId);
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 1
-        WHERE id = ?
-      `).run(evaluationId);
-
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'EVALUATION_PERSONAL_PURCHASED', 'EVALUATION', ?, ?)
-      `).run(
-        `aud_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        evaluationId,
-        '1 personal purchased credit deducted via FEFO.'
-      );
-    }
-
-    // Notification
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, ?, ?, 'EVALUATION')
-    `).run(
-      `notif_${crypto.randomBytes(8).toString('hex')}`,
-      studentId,
-      'Answer Sheet Evaluation Complete',
-      `Your evaluation for ${subjectName} is complete. You scored ${evaluationResult.totalMarks}/${evaluationResult.maximumMarks} (${evaluationResult.percentage}%).`
-    );
 
     return res.json({
       success: true,
       evaluationId,
-      result: evaluationResult,
+      status: 'PROCESSING',
+      progressStage: 'QUEUED',
+      progressPercentage: 5,
+      message: 'Answer sheet received and evaluation started in background.',
     });
   } catch (error: unknown) {
     console.error('Answer sheet evaluation error:', error);
@@ -1240,6 +996,74 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
+// 4.1 Get Evaluation Job Status (Universal Real-Time Status & Progress API)
+router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const userRole = req.user!.role;
+    const evaluationId = req.params.id;
+
+    let record: any;
+    const roleStr = String(userRole);
+    if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+    } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
+      record = db.prepare(`
+        SELECT e.* FROM evaluations e
+        LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
+        WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+      `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+    } else {
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
+    }
+
+    if (!record) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    const checkedCopyPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+    const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+
+    const checkedCopyReady = record.checked_copy_status === 'READY' || record.checked_copy_status === 'GENERATED' || fs.existsSync(checkedCopyPath);
+    const reportReady = record.report_status === 'READY' || fs.existsSync(reportPath);
+
+    let resultJson: any = null;
+    if (record.status === 'COMPLETED' && record.result_json) {
+      try {
+        resultJson = JSON.parse(record.result_json);
+      } catch {
+        resultJson = null;
+      }
+    }
+
+    return res.json({
+      evaluationId,
+      status: record.status,
+      progressStage: record.progress_stage || record.status,
+      progressPercentage: record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
+      progressMessage: record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
+      reportReady,
+      checkedCopyReady,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at || record.created_at,
+      completedAt: record.completed_at || null,
+      errorMessage: record.error_message || null,
+      rejectionReason: record.rejection_reason || null,
+      resultSummary: record.status === 'COMPLETED' ? {
+        totalMarks: record.total_marks,
+        maximumMarks: record.maximum_marks,
+        percentage: record.percentage,
+        grade: record.grade,
+      } : null,
+      result: resultJson,
+    });
+  } catch (error: any) {
+    console.error('Get evaluation status error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve evaluation status' });
+  }
+});
+
 // 4a. Download Checked Copy (Annotated Student Answer Sheet with Examiner Marks)
 router.get(
   ['/evaluations/:id/download-checked-copy', '/evaluations/:id/download-checked', '/evaluations/:id/checked-copy/download'],
@@ -1286,6 +1110,14 @@ router.get(
           code: 'EVALUATION_INCONSISTENCY',
           status: record.status,
           reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
+        });
+      }
+
+      if (record.status !== 'COMPLETED') {
+        return res.status(409).json({
+          error: 'Evaluation is still in progress. Please wait for evaluation to complete.',
+          code: 'EVALUATION_IN_PROGRESS',
+          status: record.status,
         });
       }
 
@@ -1481,6 +1313,31 @@ router.get(
           res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}_v1_archived.pdf"`);
           return res.send(v1Buffer);
         }
+      }
+
+      // Check if report PDF was already pre-generated and cached on disk
+      const reportFilePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+      if (fs.existsSync(reportFilePath)) {
+        const cachedBuffer = fs.readFileSync(reportFilePath);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
+        return res.send(cachedBuffer);
+      }
+
+      // Check persistent cloud storage
+      const persistentReport = await getPersistentFile(`${evaluationId}_report`, `Evaluation_Report_${evaluationId}.pdf`);
+      if (persistentReport && persistentReport.buffer) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
+        return res.send(persistentReport.buffer);
+      }
+
+      if (record.status !== 'COMPLETED') {
+        return res.status(409).json({
+          error: 'Evaluation is still in progress. Please wait for evaluation to complete.',
+          status: record.status,
+          code: 'EVALUATION_IN_PROGRESS',
+        });
       }
 
       let resultJson: any = null;
@@ -3010,140 +2867,44 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const studentProfile = db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(studentId) as any;
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
-    // Evaluate with Gemini
-    const evaluationResult = await evaluateCAAnswerSheet({
+    // Enqueue background evaluation
+    enqueueEvaluation({
       evaluationId,
+      studentId,
       studentName,
       icaiRegistrationNumber: icaiReg,
       level: test.level as CALevel,
+      materialType: 'MTP' as MaterialType,
       subjectKey: test.title.toLowerCase().replace(/[^a-z0-9]/g, '_'),
       subjectName: test.title,
-      materialType: 'MTP' as MaterialType,
+      paper: 'Institute Paper',
       attempt: 'Institute Series',
+      syllabusVersion: 'New Scheme 2024',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
       mimeType: mimeType || 'application/pdf',
+      filename: (req.body.filename as string) || 'institute_test_submission.pdf',
+      pdfBuf,
       referenceQuestionPaperText: test.question_paper_text,
       referenceSuggestedAnswersText: test.suggested_answers_text,
       markingSchemeText: test.marking_scheme_text || '',
+      referenceMaterialTitle: test.title,
+      referenceMaterialVersion: 'Institute Test Series',
+      referenceMaterialId: test.id,
+      officialPaperMaxMarks: test.total_marks || 100,
+      entitlementSource: 'INSTITUTE_ALLOCATION',
+      resolvedSponsoringInstituteId: test.institute_id,
+      resolvedInstituteName: null,
+      requestedEvalSource: 'INSTITUTE',
     });
-
-    // Generate annotations and pre-generate Checked Copy
-    let originalPageCount = 1;
-    let checkedCopyStatus = 'PENDING';
-    let structuredAnnotationsJson = '[]';
-
-    try {
-      const origDoc = await PDFDocument.load(pdfBuf, { ignoreEncryption: true });
-      originalPageCount = origDoc.getPageCount();
-
-      const meta = {
-        id: evaluationId,
-        studentName,
-        level: test.level as CALevel,
-        subjectName: test.title,
-        paper: 'Institute Paper',
-        attempt: 'Institute Series',
-        checkingMode: (checkingMode as CheckingMode) || 'standard',
-        totalMarks: evaluationResult.totalMarks,
-        maximumMarks: evaluationResult.maximumMarks,
-        percentage: evaluationResult.percentage,
-        grade: evaluationResult.grade,
-        createdAt: new Date().toISOString(),
-      };
-
-      const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
-      structuredAnnotationsJson = JSON.stringify(structuredAnn);
-
-      const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, pdfBuf);
-      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
-      fs.writeFileSync(checkedFilePath, checkedPdfBuf);
-      checkedCopyStatus = 'GENERATED';
-      savePersistentFile(
-        `${evaluationId}_checked_copy`,
-        `${evaluationId}_checked_copy.pdf`,
-        'application/pdf',
-        checkedPdfBuf,
-        'EVALUATION_CHECKED_COPY',
-        {
-          ownerUserId: studentId,
-          evaluationId,
-          instituteId: test.institute_id || null,
-        }
-      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
-    } catch (annErr) {
-      console.warn('Could not pre-generate checked copy for institute test:', annErr);
-    }
-
-    // Validate authoritative consistency before finalizing
-    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
-    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
-    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
-
-    // Persist final result
-    db.prepare(`
-      UPDATE evaluations
-      SET status = ?,
-          rejection_reason = ?,
-          confidence_score = ?,
-          total_marks = ?,
-          maximum_marks = ?,
-          percentage = ?,
-          grade = ?,
-          model_used = ?,
-          model_provider = ?,
-          prompt_tokens = ?,
-          completion_tokens = ?,
-          total_tokens = ?,
-          latency_ms = ?,
-          fallback_occurred = ?,
-          fallback_reason = ?,
-          result_json = ?,
-          annotations_json = ?,
-          original_page_count = ?,
-          checked_copy_page_count = ?,
-          checked_copy_status = ?,
-          completed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(
-      finalStatus,
-      validationReason,
-      evaluationResult.confidenceScore,
-      evaluationResult.totalMarks,
-      evaluationResult.maximumMarks,
-      evaluationResult.percentage,
-      evaluationResult.grade,
-      evaluationResult.modelUsed || 'gemini-3.8-flash',
-      evaluationResult.modelProvider || 'gemini',
-      evaluationResult.promptTokens || 0,
-      evaluationResult.completionTokens || 0,
-      evaluationResult.totalTokens || 0,
-      evaluationResult.latencyMs || 0,
-      evaluationResult.fallbackOccurred ? 1 : 0,
-      evaluationResult.fallbackReason || null,
-      JSON.stringify(evaluationResult),
-      structuredAnnotationsJson,
-      originalPageCount,
-      originalPageCount,
-      checkedCopyStatus,
-      evaluationId
-    );
-
-    // Notification
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, ?, ?, 'EVALUATION')
-    `).run(
-      `notif_${crypto.randomBytes(8).toString('hex')}`,
-      studentId,
-      'Institute Test Evaluation Complete',
-      `Your submission for "${test.title}" has been evaluated. You scored ${evaluationResult.totalMarks}/${evaluationResult.maximumMarks} (${evaluationResult.percentage}%).`
-    );
 
     return res.json({
       success: true,
       evaluationId,
-      result: evaluationResult,
+      status: 'PROCESSING',
+      progressStage: 'QUEUED',
+      progressPercentage: 5,
+      message: 'Institute test submitted and evaluation started in background.',
     });
   } catch (error: unknown) {
     console.error('Submit institute test error:', error);
@@ -3236,137 +2997,44 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const studentProfile = db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(studentId) as any;
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
-    // Evaluate with Gemini
-    const evaluationResult = await evaluateCAAnswerSheet({
+    // Enqueue background evaluation
+    enqueueEvaluation({
       evaluationId,
+      studentId,
       studentName,
       icaiRegistrationNumber: icaiReg,
       level: material.level as CALevel,
+      materialType: 'MTP' as MaterialType,
       subjectKey: material.subject_key || material.title.toLowerCase().replace(/[^a-z0-9]/g, '_'),
       subjectName: material.subject_name || material.title,
-      materialType: 'MTP' as MaterialType,
+      paper: material.paper || 'Paper 1',
       attempt: 'Institute Series',
+      syllabusVersion: 'New Scheme 2024',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
       mimeType: mimeType || 'application/pdf',
+      filename: (req.body.filename as string) || 'institute_material_submission.pdf',
+      pdfBuf,
       referenceQuestionPaperText: material.question_paper_text,
       referenceSuggestedAnswersText: material.suggested_answers_text,
       markingSchemeText: material.marking_scheme_text || '',
+      referenceMaterialTitle: material.title,
+      referenceMaterialVersion: 'Institute Material',
+      referenceMaterialId: material.id,
+      officialPaperMaxMarks: material.total_marks || 100,
+      entitlementSource: 'INSTITUTE_ALLOCATION',
+      resolvedSponsoringInstituteId: material.institute_id,
+      resolvedInstituteName: material.institute_name,
+      requestedEvalSource: 'INSTITUTE',
     });
-
-    let originalPageCount = 1;
-    let checkedCopyStatus = 'PENDING';
-    let structuredAnnotationsJson = '[]';
-
-    try {
-      const origDoc = await PDFDocument.load(pdfBuf, { ignoreEncryption: true });
-      originalPageCount = origDoc.getPageCount();
-
-      const meta = {
-        id: evaluationId,
-        studentName,
-        level: material.level as CALevel,
-        subjectName: material.subject_name || material.title,
-        paper: material.paper || 'Paper 1',
-        attempt: 'Institute Series',
-        checkingMode: (checkingMode as CheckingMode) || 'standard',
-        totalMarks: evaluationResult.totalMarks,
-        maximumMarks: evaluationResult.maximumMarks,
-        percentage: evaluationResult.percentage,
-        grade: evaluationResult.grade,
-        createdAt: new Date().toISOString(),
-      };
-
-      const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
-      structuredAnnotationsJson = JSON.stringify(structuredAnn);
-
-      const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, pdfBuf);
-      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
-      fs.writeFileSync(checkedFilePath, checkedPdfBuf);
-      checkedCopyStatus = 'GENERATED';
-      savePersistentFile(
-        `${evaluationId}_checked_copy`,
-        `${evaluationId}_checked_copy.pdf`,
-        'application/pdf',
-        checkedPdfBuf,
-        'EVALUATION_CHECKED_COPY',
-        {
-          ownerUserId: studentId,
-          evaluationId,
-          instituteId: material.institute_id || null,
-        }
-      ).catch((e) => console.warn('[StudentRoutes] Error persisting checked copy to Cloud Storage:', e));
-    } catch (annErr) {
-      console.warn('Could not pre-generate checked copy for institute material:', annErr);
-    }
-
-    // Validate authoritative consistency before finalizing
-    const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
-    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
-    const validationReason = consistencyReport.isValid ? null : consistencyReport.errors.join('; ');
-
-    db.prepare(`
-      UPDATE evaluations
-      SET status = ?,
-          rejection_reason = ?,
-          confidence_score = ?,
-          total_marks = ?,
-          maximum_marks = ?,
-          percentage = ?,
-          grade = ?,
-          model_used = ?,
-          model_provider = ?,
-          prompt_tokens = ?,
-          completion_tokens = ?,
-          total_tokens = ?,
-          latency_ms = ?,
-          fallback_occurred = ?,
-          fallback_reason = ?,
-          result_json = ?,
-          annotations_json = ?,
-          original_page_count = ?,
-          checked_copy_page_count = ?,
-          checked_copy_status = ?,
-          completed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(
-      finalStatus,
-      validationReason,
-      evaluationResult.confidenceScore,
-      evaluationResult.totalMarks,
-      evaluationResult.maximumMarks,
-      evaluationResult.percentage,
-      evaluationResult.grade,
-      evaluationResult.modelUsed || 'gemini-3.8-flash',
-      evaluationResult.modelProvider || 'gemini',
-      evaluationResult.promptTokens || 0,
-      evaluationResult.completionTokens || 0,
-      evaluationResult.totalTokens || 0,
-      evaluationResult.latencyMs || 0,
-      evaluationResult.fallbackOccurred ? 1 : 0,
-      evaluationResult.fallbackReason || null,
-      JSON.stringify(evaluationResult),
-      structuredAnnotationsJson,
-      originalPageCount,
-      originalPageCount,
-      checkedCopyStatus,
-      evaluationId
-    );
-
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, ?, ?, 'EVALUATION')
-    `).run(
-      `notif_${crypto.randomBytes(8).toString('hex')}`,
-      studentId,
-      'Institute Material Evaluation Complete',
-      `Your submission for "${material.title}" (${material.institute_name}) has been evaluated. You scored ${evaluationResult.totalMarks}/${evaluationResult.maximumMarks} (${evaluationResult.percentage}%).`
-    );
 
     return res.json({
       success: true,
       evaluationId,
-      result: evaluationResult,
+      status: 'PROCESSING',
+      progressStage: 'QUEUED',
+      progressPercentage: 5,
+      message: 'Institute material submitted and evaluation started in background.',
     });
   } catch (error: unknown) {
     console.error('Submit institute material error:', error);

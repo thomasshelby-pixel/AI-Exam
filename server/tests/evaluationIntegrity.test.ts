@@ -6,10 +6,11 @@ import {
   validateAuthoritativeConsistency,
   processEvaluationIntegrity,
 } from '../services/evaluationIntegrityEngine.js';
-import { EvaluationResult, MarkingComponent } from '../../src/types/index.js';
+import { EvaluationResult, MarkingComponent, QuestionEvaluation } from '../../src/types/index.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
+import { parseQuestionCode } from '../services/questionReferenceLock.js';
 
 console.log('================================================================');
 console.log('--- RUNNING CRITICAL CA EVALUATION ACCURACY & INTEGRITY TESTS ---');
@@ -1176,6 +1177,198 @@ console.log('\n--- TEST W: Multi-Mode Marking Invariants (Strict <= Standard <= 
     stdMcqTotal === 6 && strictMcqTotal === 6 && modMcqTotal === 6,
     `TEST W.5: MCQ marks are strictly deterministic and identical across all modes (${stdMcqTotal}/10)`
   );
+}
+
+// --------------------------------------------------------------------------
+// TEST X: Official Mark Ceiling Integrity (Q4(b) carrying 3 marks)
+// --------------------------------------------------------------------------
+console.log('\n--- TEST X: Official Mark Ceiling Integrity (Dynamic Scheme Override) ---');
+{
+  const schemeText = `
+  QUESTION 4(a) – 5 MARKS
+  QUESTION 4(b) – 3 MARKS
+  QUESTION 4(c) – 6 MARKS
+  `;
+
+  const paper = getAuthoritativePaperStructure({
+    subjectName: 'Taxation',
+    paper: 'Paper 3',
+    markingSchemeText: schemeText,
+  });
+
+  const q4b = paper.subQuestions.find((sq) => sq.fullQuestionCode === 'Q4(b)');
+  assert(q4b !== undefined, 'TEST X.1: Q4(b) found in authoritative paper structure');
+  assert(q4b?.maximumMarks === 3, `TEST X.2: Q4(b) maximumMarks dynamically set to 3 from scheme (got ${q4b?.maximumMarks})`);
+
+  // Normalize components for Q4(b) with maxMarks = 3
+  const components: MarkingComponent[] = [
+    {
+      componentId: 'Q4(b)_c1',
+      componentType: 'CALCULATION',
+      expectedRequirement: 'Correct indexation and deduction u/s 54',
+      studentEvidence: 'Correct indexation computation shown in working notes.',
+      marksAvailable: 2,
+      marksAwarded: 2,
+      marksDeducted: 0,
+      confidence: 95,
+      assessment: 'CORRECT',
+    },
+    {
+      componentId: 'Q4(b)_c2',
+      componentType: 'PROVISION',
+      expectedRequirement: 'Acquisition within prescribed timeline',
+      studentEvidence: 'Timeline cited accurately.',
+      marksAvailable: 1,
+      marksAwarded: 1,
+      marksDeducted: 0,
+      confidence: 95,
+      assessment: 'CORRECT',
+    },
+  ];
+
+  const normalized = normalizeQuestionComponents(components, 3, 3, '4');
+  const sumAvail = normalized.reduce((s, c) => s + c.marksAvailable, 0);
+  const sumAward = normalized.reduce((s, c) => s + c.marksAwarded, 0);
+
+  assert(sumAvail === 3, `TEST X.3: Components available marks sum to exactly 3 (got ${sumAvail})`);
+  assert(sumAward === 3, `TEST X.4: Components awarded marks sum to exactly 3 (got ${sumAward})`);
+}
+
+// --------------------------------------------------------------------------
+// TEST Y: Nested Sub-Question Parsing & Partial Credit (Q6(a)(1) & Q6(a)(2))
+// --------------------------------------------------------------------------
+console.log('\n--- TEST Y: Nested Sub-Question Parsing & Partial Credit ---');
+{
+  const parsed1 = parseQuestionCode('Q6(a)(1)');
+  const parsed2 = parseQuestionCode('Q6(a)(2)');
+  const parsed3 = parseQuestionCode('Question 6(b)');
+
+  assert(parsed1.questionNumber === '6' && parsed1.subQuestion === 'a(1)', 'TEST Y.1: parseQuestionCode correctly parses Q6(a)(1)');
+  assert(parsed2.questionNumber === '6' && parsed2.subQuestion === 'a(2)', 'TEST Y.2: parseQuestionCode correctly parses Q6(a)(2)');
+  assert(parsed3.questionNumber === '6' && parsed3.subQuestion === 'b', 'TEST Y.3: parseQuestionCode correctly parses Question 6(b)');
+
+  // Test partial credit across sub-parts
+  const subQ1Evaluation: QuestionEvaluation = {
+    questionNumber: '6',
+    subQuestion: 'a(1)',
+    maximumMarks: 2,
+    marksAwarded: 2,
+    marksLost: 0,
+    status: 'correct',
+    reasonForDeduction: 'Full marks awarded.',
+    detailedFeedback: 'Place of supply correctly identified as location of goods u/s 10(1)(a).',
+    confidence: 96,
+  };
+
+  const subQ2Evaluation: QuestionEvaluation = {
+    questionNumber: '6',
+    subQuestion: 'a(2)',
+    maximumMarks: 3,
+    marksAwarded: 1.5,
+    marksLost: 1.5,
+    status: 'partially_correct',
+    reasonForDeduction: '1.5 marks lost due to incomplete explanation of bill-to ship-to provisions.',
+    detailedFeedback: 'Partially correct. Identified Section 10(1)(b) but missed principal place of business application.',
+    confidence: 94,
+  };
+
+  const totalQ6Awarded = subQ1Evaluation.marksAwarded + subQ2Evaluation.marksAwarded;
+  const totalQ6Max = subQ1Evaluation.maximumMarks + subQ2Evaluation.maximumMarks;
+
+  assert(totalQ6Max === 5, 'TEST Y.4: Total Q6(a) maximum marks equals 5 (2 + 3)');
+  assert(totalQ6Awarded === 3.5, 'TEST Y.5: Partial credit preserved across sub-questions (2 + 1.5 = 3.5 marks, not 0)');
+}
+
+// --------------------------------------------------------------------------
+// TEST Z: Strict Mode Evidence Integrity (No Arbitrary Deductions for Correct Answers)
+// --------------------------------------------------------------------------
+console.log('\n--- TEST Z: Strict Mode Evidence Integrity ---');
+{
+  const fullyCorrectQuestion: QuestionEvaluation = {
+    questionNumber: '2',
+    subQuestion: 'a',
+    maximumMarks: 6,
+    marksAwarded: 6,
+    marksLost: 0,
+    status: 'correct',
+    reasonForDeduction: 'Full marks awarded.',
+    detailedFeedback: 'Flawless answer adhering strictly to statutory provisions and calculations.',
+    confidence: 98,
+    markingComponents: [
+      {
+        componentId: 'c1',
+        componentType: 'PROVISION',
+        expectedRequirement: 'Specified profession gross receipts <= 75 lakhs',
+        studentEvidence: 'Candidate cited Section 44ADA and gross receipts limit of 75 lakhs.',
+        marksAvailable: 2,
+        marksAwarded: 2,
+        marksDeducted: 0,
+        confidence: 95,
+        assessment: 'CORRECT',
+      },
+      {
+        componentId: 'c2',
+        componentType: 'CALCULATION',
+        expectedRequirement: '50% of gross receipts = 32,50,000',
+        studentEvidence: 'Candidate calculated 50% * 65,00,000 = 32,50,000 correctly.',
+        marksAvailable: 4,
+        marksAwarded: 4,
+        marksDeducted: 0,
+        confidence: 95,
+        assessment: 'CORRECT',
+      },
+    ],
+  };
+
+  const stdRes = applyMultiModeMarkingPhilosophy([fullyCorrectQuestion], 'standard');
+  const strictRes = applyMultiModeMarkingPhilosophy([fullyCorrectQuestion], 'strict');
+
+  const stdMarks = stdRes.activeQuestions[0].marksAwarded;
+  const strictMarks = strictRes.activeQuestions[0].marksAwarded;
+
+  assert(stdMarks === 6, 'TEST Z.1: Standard mode awards full 6/6 for fully correct question');
+  assert(strictMarks === 6, 'TEST Z.2: Strict mode preserves 100% credit for fully correct components with valid evidence');
+  assert(strictMarks <= stdMarks, 'TEST Z.3: Strict marks do not exceed Standard marks invariant holds');
+}
+
+// --------------------------------------------------------------------------
+// TEST AA: Universal Paper Structure Parser (Dynamic Non-Hardcoded Subjects)
+// --------------------------------------------------------------------------
+console.log('\n--- TEST AA: Universal Paper Structure Parser ---');
+{
+  const caFinalScheme = `
+  THE INSTITUTE OF CHARTERED ACCOUNTANTS OF INDIA
+  FINAL EXAMINATION: GROUP I
+  PAPER 2: ADVANCED FINANCIAL MANAGEMENT
+  
+  QUESTION 1 – 20 MARKS
+  (a) Foreign Exchange Risk Management [10 Marks]
+  (b) Portfolio Management [10 Marks]
+  
+  QUESTION 2 – 14 MARKS
+  QUESTION 2(a) – 8 MARKS
+  QUESTION 2(b) – 6 MARKS
+  
+  QUESTION 3 – 14 MARKS
+  QUESTION 3(a) – 7 MARKS
+  QUESTION 3(b) – 7 MARKS
+  `;
+
+  const dynamicPaper = getAuthoritativePaperStructure({
+    subjectName: 'Advanced Financial Management',
+    paper: 'Paper 2',
+    level: 'FINAL',
+    markingSchemeText: caFinalScheme,
+    officialPaperMaxMarks: 100,
+  });
+
+  assert(dynamicPaper.subQuestions.length > 0, 'TEST AA.1: Successfully extracted dynamic sub-questions without hardcoding');
+  const q2a = dynamicPaper.subQuestions.find((sq) => sq.fullQuestionCode === 'Q2(a)');
+  const q2b = dynamicPaper.subQuestions.find((sq) => sq.fullQuestionCode === 'Q2(b)');
+  
+  assert(q2a?.maximumMarks === 8, `TEST AA.2: Q2(a) dynamically parsed with 8 marks (got ${q2a?.maximumMarks})`);
+  assert(q2b?.maximumMarks === 6, `TEST AA.3: Q2(b) dynamically parsed with 6 marks (got ${q2b?.maximumMarks})`);
+  assert(dynamicPaper.totalPaperMaxMarks === 100, 'TEST AA.4: Official paper maximum marks is 100');
 }
 
 console.log('\n================================================================');

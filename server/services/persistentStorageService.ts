@@ -42,30 +42,44 @@ export async function savePersistentFile(
     evaluationId?: string | null;
   }
 ): Promise<CloudFileMetadata> {
+  // 1. Immediately cache locally to ensure local resilience and fast zero-latency serving
+  try {
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(DATA_UPLOADS_DIR)) {
+      fs.mkdirSync(DATA_UPLOADS_DIR, { recursive: true });
+    }
+    const localPath1 = path.join(UPLOADS_DIR, filename);
+    fs.writeFileSync(localPath1, buffer);
+    const localPath2 = path.join(DATA_UPLOADS_DIR, filename);
+    fs.writeFileSync(localPath2, buffer);
+    if (filename !== `${fileId}.pdf`) {
+      try {
+        fs.writeFileSync(path.join(UPLOADS_DIR, `${fileId}.pdf`), buffer);
+        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, `${fileId}.pdf`), buffer);
+      } catch {
+        // ignore alias write
+      }
+    }
+  } catch (err) {
+    console.warn('[PersistentStorage] Warning writing local cache:', err);
+  }
+
   const uploadOptions: UploadOptions = {
     fileId,
     filename,
     mimeType,
     buffer,
     ownerUserId: context?.ownerUserId,
-    instituteId: context?.instituteId,
-    materialId: context?.materialId,
+    instituteId: context?.instituteId || undefined,
+    materialId: context?.materialId || undefined,
     evaluationId: context?.evaluationId || (fileId.startsWith('eval_') ? fileId.split('_')[0] + '_' + fileId.split('_')[1] : undefined),
     category,
   };
 
-  // 1. Upload to Firebase Cloud Storage & record structured metadata in Firestore
+  // 2. Upload / mirror to Firebase Cloud Storage & record structured metadata in Firestore
   const metadata = await uploadFileToCloudStorage(uploadOptions);
-
-  // 2. Also keep local copy in working directory for zero-latency active response handling
-  try {
-    const localPath1 = path.join(UPLOADS_DIR, filename);
-    fs.writeFileSync(localPath1, buffer);
-    const localPath2 = path.join(DATA_UPLOADS_DIR, filename);
-    fs.writeFileSync(localPath2, buffer);
-  } catch (err) {
-    console.warn('[PersistentStorage] Warning writing local cache:', err);
-  }
 
   return metadata;
 }
