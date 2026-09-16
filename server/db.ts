@@ -688,6 +688,29 @@ function runMigrations() {
   addColumnIfNotExists('recheck_requests', 'mtp_series', 'INTEGER');
   addColumnIfNotExists('institute_materials', 'mtp_series', 'INTEGER');
 
+  // PYQ Source Format & Reference Package Tracking Columns
+  addColumnIfNotExists('evaluation_materials', 'source_format', "TEXT DEFAULT 'SEPARATE'");
+  addColumnIfNotExists('evaluation_materials', 'combined_source_material_id', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'question_material_id', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'suggested_answer_material_id', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'marking_scheme_material_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'pyq_source_format', 'TEXT');
+  addColumnIfNotExists('evaluations', 'normalized_package_json', 'TEXT');
+  addColumnIfNotExists('evaluations', 'question_sources_json', 'TEXT');
+  addColumnIfNotExists('institute_materials', 'source_format', "TEXT DEFAULT 'SEPARATE'");
+
+  // Migrate existing PYQ materials if source_format is empty or null (Requirement 15: Backward Compatibility)
+  try {
+    db.prepare(`
+      UPDATE evaluation_materials 
+      SET source_format = 'SEPARATE' 
+      WHERE material_type = 'PYQ' 
+        AND (source_format IS NULL OR source_format = '' OR source_format = 'null')
+    `).run();
+  } catch (migErr) {
+    console.warn('[DB Migration] Error migrating PYQ source_format:', migErr);
+  }
+
   // Migrate existing MTP materials to populate mtp_series if missing
   try {
     db.prepare(`

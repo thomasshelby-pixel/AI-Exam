@@ -7,8 +7,123 @@ import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSessio
 import { UserRole } from '../../src/types/index.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 
 const router = Router();
+
+/**
+ * Authoritative Firestore verification and automatic self-healing for distributed production environments.
+ * If a valid user is missing from local SQLite cache or has a stale hash, this queries Cloud Firestore directly,
+ * validates the cryptographic password hash, and heals the local SQLite records in real time.
+ */
+async function authenticateWithFirestoreFallback(
+  normalizedEmail: string,
+  rawPassword: string,
+  expectedRole?: UserRole
+): Promise<{
+  id: string;
+  email: string;
+  password_hash: string;
+  full_name: string;
+  role: UserRole;
+  status: string;
+} | null> {
+  const fdb = getFirestoreDb();
+  if (!fdb) return null;
+
+  try {
+    const usersRef = collection(fdb, 'users');
+    let snap = await getDocs(query(usersRef, where('email', '==', normalizedEmail)));
+    let fUserDoc: any = null;
+    if (!snap.empty) {
+      fUserDoc = snap.docs[0].data();
+    } else {
+      const allUsers = await getAllFirestoreDocs<any>('users');
+      fUserDoc = allUsers.find((u: any) => String(u.email || '').trim().toLowerCase() === normalizedEmail);
+    }
+
+    if (!fUserDoc) return null;
+
+    const fHash = fUserDoc.password_hash || fUserDoc.passwordHash || fUserDoc.password;
+    if (!fHash || typeof fHash !== 'string') return null;
+
+    if (!verifyPassword(rawPassword, fHash)) {
+      return null;
+    }
+
+    const uRole = (fUserDoc.role || 'STUDENT') as UserRole;
+    if (expectedRole && uRole !== expectedRole && uRole !== 'SUPER_ADMIN') {
+      return null;
+    }
+
+    const uId = fUserDoc.id || `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const uFullName = fUserDoc.full_name || fUserDoc.name || 'CA Student';
+    const uPhone = fUserDoc.phone || null;
+    const uStatus = fUserDoc.status || 'ACTIVE';
+    const uClassification = fUserDoc.account_classification || 'NORMAL';
+
+    try {
+      const colliding = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normalizedEmail, uId) as { id: string } | undefined;
+      if (colliding) {
+        db.prepare('DELETE FROM users WHERE id = ?').run(colliding.id);
+      }
+
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          email = excluded.email,
+          password_hash = excluded.password_hash,
+          full_name = excluded.full_name,
+          phone = excluded.phone,
+          role = excluded.role,
+          status = excluded.status,
+          account_classification = excluded.account_classification,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, fUserDoc.created_at || null);
+
+      if (uRole === 'STUDENT') {
+        const spDoc = await getFirestoreDoc<any>('student_profiles', uId);
+        if (spDoc) {
+          db.prepare(`
+            INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+              icai_registration_number = excluded.icai_registration_number,
+              ca_level = excluded.ca_level,
+              free_evaluations_used = excluded.free_evaluations_used,
+              purchased_credits = excluded.purchased_credits,
+              institute_id = excluded.institute_id,
+              batch_id = excluded.batch_id
+          `).run(
+            uId,
+            spDoc.icai_registration_number || '',
+            spDoc.ca_level || 'INTERMEDIATE',
+            spDoc.free_evaluations_used || 0,
+            spDoc.purchased_credits || 0,
+            spDoc.institute_id || null,
+            spDoc.batch_id || null
+          );
+        }
+      }
+    } catch (healErr) {
+      console.warn('[Auth] Error healing SQLite user from Firestore:', healErr);
+    }
+
+    return {
+      id: uId,
+      email: normalizedEmail,
+      password_hash: fHash,
+      full_name: uFullName,
+      role: uRole,
+      status: uStatus,
+    };
+  } catch (err) {
+    console.warn('[Auth] Firestore fallback auth error:', err);
+    return null;
+  }
+}
 
 // Helper: Automatically link pending institute invitations when user registers or signs in
 function syncPendingInstituteEnrollments(userId: string, email: string) {
@@ -51,7 +166,7 @@ function syncPendingInstituteEnrollments(userId: string, email: string) {
 }
 
 // Student Registration
-router.post('/register', (req: Request, res: Response) => {
+router.post('/register', async (req: Request, res: Response) => {
   try {
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
 
@@ -266,9 +381,11 @@ router.post('/register', (req: Request, res: Response) => {
     try {
       const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
       const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
-      if (uRow) syncRecordToFirestore('users', userId, uRow).catch(() => {});
-      if (spRow) syncRecordToFirestore('student_profiles', userId, spRow).catch(() => {});
-    } catch {}
+      if (uRow) await syncRecordToFirestore('users', userId, uRow);
+      if (spRow) await syncRecordToFirestore('student_profiles', userId, spRow);
+    } catch (syncErr) {
+      console.warn('[Auth] Register firestore sync warning:', syncErr);
+    }
 
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
@@ -295,7 +412,7 @@ router.post('/register', (req: Request, res: Response) => {
 });
 
 // Normal Professional SaaS Login (Server-Side RBAC)
-router.post('/login', (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -304,7 +421,7 @@ router.post('/login', (req: Request, res: Response) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const user = db.prepare(`
+    let user = db.prepare(`
       SELECT id, email, password_hash, full_name, role, status FROM users WHERE lower(email) = ?
     `).get(normalizedEmail) as {
       id: string;
@@ -315,7 +432,19 @@ router.post('/login', (req: Request, res: Response) => {
       status: string;
     } | undefined;
 
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    let isAuthenticated = false;
+    if (user && verifyPassword(password, user.password_hash)) {
+      isAuthenticated = true;
+    } else {
+      // Direct Cloud Firestore fallback & self-healing
+      const firestoreUser = await authenticateWithFirestoreFallback(normalizedEmail, password);
+      if (firestoreUser) {
+        user = firestoreUser;
+        isAuthenticated = true;
+      }
+    }
+
+    if (!user || !isAuthenticated) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -773,7 +902,7 @@ router.post('/institute/register', (req: Request, res: Response) => {
 });
 
 // SEPARATE INSTITUTE LOGIN FLOW
-router.post('/institute/login', (req: Request, res: Response) => {
+router.post('/institute/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -782,7 +911,7 @@ router.post('/institute/login', (req: Request, res: Response) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const user = db.prepare(`
+    let user = db.prepare(`
       SELECT id, email, password_hash, full_name, role, status FROM users WHERE lower(email) = ?
     `).get(normalizedEmail) as {
       id: string;
@@ -793,7 +922,18 @@ router.post('/institute/login', (req: Request, res: Response) => {
       status: string;
     } | undefined;
 
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    let isAuthenticated = false;
+    if (user && verifyPassword(password, user.password_hash)) {
+      isAuthenticated = true;
+    } else {
+      const firestoreUser = await authenticateWithFirestoreFallback(normalizedEmail, password, 'INSTITUTE_ADMIN');
+      if (firestoreUser) {
+        user = firestoreUser;
+        isAuthenticated = true;
+      }
+    }
+
+    if (!user || !isAuthenticated) {
       return res.status(401).json({ error: 'Invalid institute email or password.' });
     }
 

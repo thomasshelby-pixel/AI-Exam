@@ -153,9 +153,73 @@ export interface ReferenceTrace {
   deductionReason?: string;
 }
 
+export type PYQSourceFormat = 'SEPARATE' | 'COMBINED' | 'LEGACY';
+
+export interface EvaluationReferencePackage {
+  packageId: string;
+  evaluationId?: string;
+  sourceFormat: PYQSourceFormat;
+  level: CALevel;
+  subjectKey: string;
+  subjectName: string;
+  paper: string;
+  attempt: string;
+  materialType: MaterialType;
+  mtpSeries?: 1 | 2;
+  materialVersion: string;
+  sourceMaterialIds: {
+    questionMaterialId?: string;
+    suggestedAnswerMaterialId?: string;
+    combinedSourceMaterialId?: string;
+    markingSchemeMaterialId?: string;
+  };
+  questionPaper: {
+    questions: Array<{
+      questionId: string;
+      parentQuestionId?: string;
+      subQuestionId?: string;
+      exactQuestionText: string;
+      maximumMarks: number;
+      options?: string[];
+      questionType?: string;
+    }>;
+    rawText: string;
+  };
+  suggestedAnswers: {
+    answers: Array<{
+      questionId: string;
+      subQuestionId?: string;
+      referenceAnswer: string;
+      workingNotes?: string;
+      journalEntries?: string;
+      calculations?: string;
+      conclusions?: string;
+    }>;
+    rawText: string;
+  };
+  markingScheme: {
+    questions: Array<{
+      questionId: string;
+      subQuestionId?: string;
+      maximumMarks: number;
+      markableComponents?: string[];
+      stepGuidance?: string;
+    }>;
+    rawText: string;
+  };
+  retrievalTimestamp: string;
+  verificationStatus: 'VERIFIED' | 'UNVERIFIED';
+}
+
 export interface QuestionEvaluation {
   questionNumber: string;
   subQuestion?: string;
+  questionId?: string;
+  subQuestionId?: string;
+  questionSource?: string;
+  suggestedAnswerSource?: string;
+  markingSchemeSource?: string;
+  sourceFormat?: PYQSourceFormat;
   maximumMarks: number;
   marksAwarded: number;
   marksLost: number;
@@ -194,6 +258,12 @@ export interface QuestionEvaluation {
   negativeMarking?: number;
   sourceMaterialId?: string;
   sourceMaterialVersion?: string;
+  sources?: {
+    questionSourceId?: string;
+    suggestedAnswerSourceId?: string;
+    markingSchemeSourceId?: string;
+    sourceFormat?: string;
+  };
   suggestedAnswerReference?: string;
   explanation?: string;
   reviewerAdjustmentNotes?: string;
@@ -220,6 +290,15 @@ export interface EvaluationResult {
   subjectName: string;
   materialType: MaterialType;
   mtpSeries?: 1 | 2;
+  pyqSourceFormat?: PYQSourceFormat;
+  sourceFormat?: PYQSourceFormat | 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  sourceMaterialIds?: {
+    combinedSourceMaterialId?: string;
+    questionMaterialId?: string;
+    suggestedAnswerMaterialId?: string;
+    markingSchemeMaterialId?: string;
+  };
+  normalizedPackageId?: string;
   paper?: string;
   attempt?: string;
   evaluationDate: string;
@@ -519,6 +598,16 @@ export interface EvaluationMaterial {
   attempt?: string;
   mtpSeries?: 1 | 2;
   mtp_series?: 1 | 2 | string;
+  sourceFormat?: PYQSourceFormat;
+  source_format?: PYQSourceFormat;
+  combinedSourceMaterialId?: string;
+  combined_source_material_id?: string;
+  questionMaterialId?: string;
+  question_material_id?: string;
+  suggestedAnswerMaterialId?: string;
+  suggested_answer_material_id?: string;
+  markingSchemeMaterialId?: string;
+  marking_scheme_material_id?: string;
   syllabusVersion?: string;
   syllabus_version?: string;
   chapterTopic?: string;

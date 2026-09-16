@@ -206,13 +206,17 @@ router.post('/referral/validate', (req: Request, res: Response) => {
 
 // Check whether reference material exists for a given subject, paper, and attempt
 router.get('/materials-check', (req: Request, res: Response) => {
-  const { level, subjectKey, attempt, paper, materialType, mtpSeries, mtp_series } = req.query;
+  const { level, subjectKey, attempt, paper, materialType, mtpSeries, mtp_series, sourceFormat, source_format } = req.query;
   if (!level || !subjectKey) {
     return res.status(400).json({ error: 'Level and subjectKey are required.' });
   }
 
+  const isPyq = materialType === 'PYQ';
+  const isMtp = materialType === 'MTP';
+
   let query = `
-    SELECT id, question_paper_title, attempt, paper, material_type, mtp_series
+    SELECT id, question_paper_title, attempt, paper, material_type, mtp_series,
+           source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id
     FROM evaluation_materials
     WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
     AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
@@ -221,8 +225,13 @@ router.get('/materials-check', (req: Request, res: Response) => {
   const params: any[] = [String(level), String(subjectKey)];
 
   if (attempt && attempt !== 'Current' && attempt !== 'All') {
-    query += " AND (attempt = ? OR attempt = 'All')";
-    params.push(String(attempt));
+    if (isPyq || isMtp) {
+      query += " AND attempt = ?";
+      params.push(String(attempt));
+    } else {
+      query += " AND (attempt = ? OR attempt = 'All')";
+      params.push(String(attempt));
+    }
   }
 
   if (paper && paper !== 'All') {
@@ -236,12 +245,18 @@ router.get('/materials-check', (req: Request, res: Response) => {
   }
 
   const rawSeries = mtpSeries || mtp_series;
-  if (materialType === 'MTP' && rawSeries) {
+  if (isMtp && rawSeries) {
     const seriesNum = Number(rawSeries);
     if (seriesNum === 1 || seriesNum === 2) {
       query += " AND (mtp_series = ? OR mtp_series = ?)";
       params.push(seriesNum, String(seriesNum));
     }
+  }
+
+  const reqSourceFormat = sourceFormat || source_format;
+  if (isPyq && reqSourceFormat && reqSourceFormat !== 'ALL') {
+    query += " AND source_format = ?";
+    params.push(String(reqSourceFormat).toUpperCase());
   }
 
   query += ' ORDER BY created_at DESC LIMIT 1';
@@ -252,7 +267,9 @@ router.get('/materials-check', (req: Request, res: Response) => {
     material: material || null,
     message: material
       ? 'Matching evaluation material loaded'
-      : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.',
+      : isPyq
+        ? 'Evaluation material is not uploaded yet. Please try again once the required material has been added.'
+        : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.',
   });
 });
 

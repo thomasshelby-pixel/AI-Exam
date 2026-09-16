@@ -31,6 +31,11 @@ export interface MaterialSourceManifest {
   syllabusVersion: string;
   materialType: string;
   mtpSeries?: 1 | 2;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  combinedSourceMaterialId?: string;
+  questionMaterialId?: string;
+  suggestedAnswerMaterialId?: string;
+  markingSchemeMaterialId?: string;
   materialSource: 'GLOBAL' | 'INSTITUTE';
   officialPaperMaxMarks: number;
   materialVerificationStatus: 'VERIFIED' | 'UNVERIFIED';
@@ -42,6 +47,44 @@ export interface MaterialSourceManifest {
   amendmentsProvisions?: MaterialManifestItem;
 }
 
+export interface EvaluationEvidenceComponentMetadata {
+  materialId: string;
+  version: string;
+  checksum: string;
+  textLength: number;
+  mtpSeries?: 1 | 2 | null;
+  componentType: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'REFERENCE_GUIDANCE' | 'AMENDMENTS_PROVISIONS';
+  title?: string;
+  detectedSeries?: 1 | 2 | null;
+}
+
+export interface EvaluationEvidenceComponent {
+  text: string;
+  metadata: EvaluationEvidenceComponentMetadata;
+}
+
+export interface EvaluationEvidencePackage {
+  evaluationId: string;
+  requestedMtpSeries?: 1 | 2 | number | null;
+  materialType: string;
+  caLevel: string;
+  subjectKey: string;
+  subjectName: string;
+  paper?: string;
+  attempt?: string;
+  syllabusVersion?: string;
+  questionPaper: EvaluationEvidenceComponent;
+  suggestedAnswers: EvaluationEvidenceComponent;
+  markingScheme: EvaluationEvidenceComponent;
+  referenceGuidance?: EvaluationEvidenceComponent;
+  amendmentsProvisions?: EvaluationEvidenceComponent;
+  rawMaterialId?: string;
+  rawMaterialTitle?: string;
+  rawMaterialMtpSeries?: 1 | 2 | number | null;
+  retrievedAt: string;
+  integrityGateStatus: 'PENDING' | 'PASSED' | 'FAILED';
+}
+
 export interface VerifiedReferencePackage {
   id: string;
   version: string;
@@ -49,6 +92,11 @@ export interface VerifiedReferencePackage {
   syllabusVersion: string;
   officialPaperMaxMarks: number;
   mtpSeries?: 1 | 2;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  combinedSourceMaterialId?: string;
+  questionMaterialId?: string;
+  suggestedAnswerMaterialId?: string;
+  markingSchemeMaterialId?: string;
   questionPaperTitle: string;
   questionPaperText: string;
   suggestedAnswersText: string;
@@ -56,6 +104,7 @@ export interface VerifiedReferencePackage {
   referenceGuidanceText?: string;
   amendmentsProvisionsText?: string;
   manifest: MaterialSourceManifest;
+  evidencePackage?: EvaluationEvidencePackage;
 }
 
 export interface MaterialGateRequest {
@@ -68,6 +117,7 @@ export interface MaterialGateRequest {
   syllabusVersion?: string;
   materialType?: string;
   mtpSeries?: 1 | 2 | string | number;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY' | string;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
   instituteMaterialId?: string;
@@ -86,6 +136,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const normLevel = (request.level || 'INTERMEDIATE').toUpperCase();
   const subjectKey = String(request.subjectKey || '').trim();
   const isMtp = request.materialType === 'MTP';
+  const isPyq = request.materialType === 'PYQ';
 
   let normalizedSeries: 1 | 2 | undefined = undefined;
   if (isMtp) {
@@ -143,7 +194,9 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
+             attempt, syllabus_version, material_type, mtp_series,
+             source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+             file_id, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
              reference_guidance_text, amendments_provisions_text,
              100 as official_max_marks
@@ -173,15 +226,22 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       params.push(normalizedSeries, String(normalizedSeries));
     }
 
+    if (isPyq && request.sourceFormat && request.sourceFormat !== 'ALL') {
+      query += ' AND source_format = ?';
+      params.push(request.sourceFormat);
+    }
+
     query += ' ORDER BY created_at DESC LIMIT 1';
     rawMaterial = db.prepare(query).get(...params);
 
     // Fallback: If specific attempt was not matched, find active approved material for the subject & level
-    // CRITICAL: NEVER fallback across MTP Series! If isMtp, no cross-series or general fallback allowed!
-    if (!rawMaterial && !isMtp) {
+    // CRITICAL: NEVER fallback across MTP Series or PYQ Attempts!
+    if (!rawMaterial && !isMtp && !isPyq) {
       rawMaterial = db.prepare(`
         SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-               attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
+               attempt, syllabus_version, material_type, mtp_series,
+               source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+               file_id, version, status, admin_approved,
                question_paper_text, suggested_answers_text, marking_scheme_text,
                reference_guidance_text, amendments_provisions_text,
                100 as official_max_marks
@@ -200,6 +260,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       const att = request.attempt || 'Target Attempt';
       throw new Error(
         `Evaluation material for ${subj} MTP Series ${normalizedSeries} (${att}) is not available yet. Please select another paper or wait until the material is published.`
+      );
+    }
+    if (isPyq) {
+      throw new Error(
+        'Evaluation material is not uploaded yet. Please try again once the required material has been added.'
       );
     }
     throw new Error(
@@ -261,6 +326,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     officialPaperMaxMarks,
     materialVerificationStatus: 'VERIFIED',
     retrievedAt: new Date().toISOString(),
+    sourceFormat: (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY',
+    combinedSourceMaterialId: rawMaterial.source_format === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${rawMaterial.id}`) : undefined,
+    questionMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${rawMaterial.id}`) : undefined,
+    suggestedAnswerMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.suggested_answer_material_id || `mat_sa_${rawMaterial.id}`) : undefined,
+    markingSchemeMaterialId: msText.length > 0 ? (rawMaterial.marking_scheme_material_id || `mat_ms_${rawMaterial.id}`) : undefined,
     questionPaper: {
       materialId: rawMaterial.id,
       version: rawMaterial.version || '1.0',
@@ -284,13 +354,18 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     };
   }
 
-  return {
+  const verifiedPkg: VerifiedReferencePackage = {
     id: rawMaterial.id,
     version: rawMaterial.version || '1.0',
     paper: rawMaterial.paper || request.paper || 'Paper 1',
     syllabusVersion: rawMaterial.syllabus_version || 'New Scheme 2024',
     officialPaperMaxMarks,
     mtpSeries: normalizedSeries,
+    sourceFormat: (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY',
+    combinedSourceMaterialId: rawMaterial.source_format === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${rawMaterial.id}`) : undefined,
+    questionMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${rawMaterial.id}`) : undefined,
+    suggestedAnswerMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.suggested_answer_material_id || `mat_sa_${rawMaterial.id}`) : undefined,
+    markingSchemeMaterialId: msText.length > 0 ? (rawMaterial.marking_scheme_material_id || `mat_ms_${rawMaterial.id}`) : undefined,
     questionPaperTitle: rawMaterial.question_paper_title || 'ICAI Official Material',
     questionPaperText: qpText,
     suggestedAnswersText: saText,
@@ -299,4 +374,211 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     amendmentsProvisionsText: rawMaterial.amendments_provisions_text || undefined,
     manifest,
   };
+
+  // Build EvaluationEvidencePackage and enforce server-side integrity gate
+  const evidencePackage = buildEvaluationEvidencePackage(verifiedPkg, request);
+  enforceEvaluationEvidencePackageMtpGate(evidencePackage);
+  verifiedPkg.evidencePackage = evidencePackage;
+
+  return verifiedPkg;
+}
+
+/**
+ * Detects MTP Series (1 or 2) from text or title strings (e.g., "Series 1", "Series - I", "Series 2", "Series II").
+ */
+export function detectMtpSeriesFromText(content: string): 1 | 2 | null {
+  if (!content) return null;
+  const series1Pattern = /\b(?:mtp|mock\s+test\s+paper)?\s*[-–:]?\s*series\s*[-–:]?\s*(?:1|i\b|one)\b/i;
+  const series2Pattern = /\b(?:mtp|mock\s+test\s+paper)?\s*[-–:]?\s*series\s*[-–:]?\s*(?:2|ii\b|two)\b/i;
+
+  const has1 = series1Pattern.test(content);
+  const has2 = series2Pattern.test(content);
+
+  if (has1 && !has2) return 1;
+  if (has2 && !has1) return 2;
+  return null;
+}
+
+/**
+ * Constructs an authoritative EvaluationEvidencePackage from a VerifiedReferencePackage.
+ */
+export function buildEvaluationEvidencePackage(
+  pkg: VerifiedReferencePackage,
+  request: MaterialGateRequest
+): EvaluationEvidencePackage {
+  const normSeries = pkg.mtpSeries;
+  const qpDetected = detectMtpSeriesFromText(pkg.questionPaperTitle) || detectMtpSeriesFromText(pkg.questionPaperText.slice(0, 1000));
+  const saDetected = detectMtpSeriesFromText(pkg.questionPaperTitle) || detectMtpSeriesFromText(pkg.suggestedAnswersText.slice(0, 1000));
+  const msDetected = pkg.markingSchemeText ? detectMtpSeriesFromText(pkg.markingSchemeText.slice(0, 1000)) : null;
+
+  const qpChecksum = pkg.manifest?.questionPaper?.checksum || computeSha256(pkg.questionPaperText);
+  const saChecksum = pkg.manifest?.suggestedAnswers?.checksum || computeSha256(pkg.suggestedAnswersText);
+  const msChecksum = pkg.manifest?.markingScheme?.checksum || computeSha256(pkg.markingSchemeText || '');
+
+  return {
+    evaluationId: request.evaluationId,
+    requestedMtpSeries: normSeries,
+    materialType: pkg.manifest?.materialType || request.materialType || 'MTP',
+    caLevel: pkg.manifest?.caLevel || request.level || 'INTERMEDIATE',
+    subjectKey: pkg.manifest?.subjectKey || request.subjectKey,
+    subjectName: pkg.manifest?.subjectName || request.subjectName || 'Chartered Accountancy',
+    paper: pkg.paper || request.paper,
+    attempt: pkg.manifest?.attempt || request.attempt,
+    syllabusVersion: pkg.syllabusVersion,
+    rawMaterialId: pkg.id,
+    rawMaterialTitle: pkg.questionPaperTitle,
+    rawMaterialMtpSeries: normSeries,
+    retrievedAt: pkg.manifest?.retrievedAt || new Date().toISOString(),
+    integrityGateStatus: 'PENDING',
+    questionPaper: {
+      text: pkg.questionPaperText,
+      metadata: {
+        materialId: pkg.manifest?.questionPaper?.materialId || pkg.id,
+        version: pkg.manifest?.questionPaper?.version || pkg.version,
+        checksum: qpChecksum,
+        textLength: pkg.questionPaperText.length,
+        mtpSeries: normSeries,
+        componentType: 'QUESTION_PAPER',
+        title: pkg.questionPaperTitle,
+        detectedSeries: qpDetected,
+      },
+    },
+    suggestedAnswers: {
+      text: pkg.suggestedAnswersText,
+      metadata: {
+        materialId: pkg.manifest?.suggestedAnswers?.materialId || pkg.id,
+        version: pkg.manifest?.suggestedAnswers?.version || pkg.version,
+        checksum: saChecksum,
+        textLength: pkg.suggestedAnswersText.length,
+        mtpSeries: normSeries,
+        componentType: 'SUGGESTED_ANSWERS',
+        title: pkg.questionPaperTitle,
+        detectedSeries: saDetected,
+      },
+    },
+    markingScheme: {
+      text: pkg.markingSchemeText,
+      metadata: {
+        materialId: pkg.manifest?.markingScheme?.materialId || pkg.id,
+        version: pkg.manifest?.markingScheme?.version || pkg.version,
+        checksum: msChecksum,
+        textLength: (pkg.markingSchemeText || '').length,
+        mtpSeries: normSeries,
+        componentType: 'MARKING_SCHEME',
+        title: `${pkg.questionPaperTitle} Marking Scheme`,
+        detectedSeries: msDetected,
+      },
+    },
+  };
+}
+
+/**
+ * Server-side integrity gate in the evaluation pipeline that explicitly validates the 'mtpSeries'
+ * across the entire EvaluationEvidencePackage before triggering the AI evaluation.
+ * Compares the requested series against the metadata of the retrieved Question Paper,
+ * Suggested Answer, and Marking Scheme.
+ */
+export function enforceEvaluationEvidencePackageMtpGate(evidencePackage: EvaluationEvidencePackage): void {
+  const isMtp =
+    String(evidencePackage.materialType || '').toUpperCase() === 'MTP' ||
+    (evidencePackage.requestedMtpSeries !== undefined && evidencePackage.requestedMtpSeries !== null);
+
+  if (!isMtp) {
+    // Non-MTP examination paper. Skip MTP-specific checks.
+    evidencePackage.integrityGateStatus = 'PASSED';
+    return;
+  }
+
+  const reqSeries = evidencePackage.requestedMtpSeries;
+  if (reqSeries === undefined || reqSeries === null || (Number(reqSeries) !== 1 && Number(reqSeries) !== 2)) {
+    evidencePackage.integrityGateStatus = 'FAILED';
+    throw new Error(
+      `MTP_SERIES_GATE_ERROR: Please select a valid MTP Series (Series 1 or Series 2) to continue.`
+    );
+  }
+
+  const expectedSeries = Number(reqSeries) as 1 | 2;
+
+  // 1. Validate Question Paper evidence and metadata
+  const qp = evidencePackage.questionPaper;
+  if (!qp || !qp.text || qp.text.length < 50) {
+    evidencePackage.integrityGateStatus = 'FAILED';
+    throw new Error('EVALUATION_EVIDENCE_GATE_ERROR: Retrieved Question Paper evidence is missing or superficial.');
+  }
+
+  if (qp.metadata.mtpSeries !== undefined && qp.metadata.mtpSeries !== null) {
+    if (Number(qp.metadata.mtpSeries) !== expectedSeries) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error(
+        `MTP_SERIES_INTEGRITY_MISMATCH: Question Paper metadata MTP Series (${qp.metadata.mtpSeries}) does not match requested MTP Series (${expectedSeries}). AI evaluation aborted.`
+      );
+    }
+  }
+
+  const qpDetected = qp.metadata.detectedSeries || detectMtpSeriesFromText(qp.metadata.title || '') || detectMtpSeriesFromText(qp.text.slice(0, 1000));
+  if (qpDetected && qpDetected !== expectedSeries) {
+    evidencePackage.integrityGateStatus = 'FAILED';
+    throw new Error(
+      `MTP_SERIES_INTEGRITY_MISMATCH: Question Paper explicitly identifies as Series ${qpDetected}, which contradicts requested MTP Series ${expectedSeries}. AI evaluation aborted.`
+    );
+  }
+
+  // 2. Validate Suggested Answers evidence and metadata
+  const sa = evidencePackage.suggestedAnswers;
+  if (!sa || !sa.text || sa.text.length < 50) {
+    evidencePackage.integrityGateStatus = 'FAILED';
+    throw new Error('EVALUATION_EVIDENCE_GATE_ERROR: Retrieved Suggested Answers evidence is missing or superficial.');
+  }
+
+  if (sa.metadata.mtpSeries !== undefined && sa.metadata.mtpSeries !== null) {
+    if (Number(sa.metadata.mtpSeries) !== expectedSeries) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error(
+        `MTP_SERIES_INTEGRITY_MISMATCH: Suggested Answers metadata MTP Series (${sa.metadata.mtpSeries}) does not match requested MTP Series (${expectedSeries}). AI evaluation aborted.`
+      );
+    }
+  }
+
+  const saDetected = sa.metadata.detectedSeries || detectMtpSeriesFromText(sa.metadata.title || '') || detectMtpSeriesFromText(sa.text.slice(0, 1000));
+  if (saDetected && saDetected !== expectedSeries) {
+    evidencePackage.integrityGateStatus = 'FAILED';
+    throw new Error(
+      `MTP_SERIES_INTEGRITY_MISMATCH: Suggested Answers explicitly identifies as Series ${saDetected}, which contradicts requested MTP Series ${expectedSeries}. AI evaluation aborted.`
+    );
+  }
+
+  // 3. Validate Marking Scheme evidence and metadata
+  const ms = evidencePackage.markingScheme;
+  if (ms && ms.metadata) {
+    if (ms.metadata.mtpSeries !== undefined && ms.metadata.mtpSeries !== null) {
+      if (Number(ms.metadata.mtpSeries) !== expectedSeries) {
+        evidencePackage.integrityGateStatus = 'FAILED';
+        throw new Error(
+          `MTP_SERIES_INTEGRITY_MISMATCH: Marking Scheme metadata MTP Series (${ms.metadata.mtpSeries}) does not match requested MTP Series (${expectedSeries}). AI evaluation aborted.`
+        );
+      }
+    }
+
+    if (ms.text && ms.text.length > 0) {
+      const msDetected = ms.metadata.detectedSeries || detectMtpSeriesFromText(ms.metadata.title || '') || detectMtpSeriesFromText(ms.text.slice(0, 1000));
+      if (msDetected && msDetected !== expectedSeries) {
+        evidencePackage.integrityGateStatus = 'FAILED';
+        throw new Error(
+          `MTP_SERIES_INTEGRITY_MISMATCH: Marking Scheme explicitly identifies as Series ${msDetected}, which contradicts requested MTP Series ${expectedSeries}. AI evaluation aborted.`
+        );
+      }
+    }
+  }
+
+  // 4. Validate Raw Reference Package Series
+  if (evidencePackage.rawMaterialMtpSeries !== undefined && evidencePackage.rawMaterialMtpSeries !== null) {
+    if (Number(evidencePackage.rawMaterialMtpSeries) !== expectedSeries) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error(
+        `MTP_SERIES_INTEGRITY_MISMATCH: Retrieved reference material package MTP Series (${evidencePackage.rawMaterialMtpSeries}) does not match requested MTP Series (${expectedSeries}). AI evaluation aborted.`
+      );
+    }
+  }
+
+  evidencePackage.integrityGateStatus = 'PASSED';
 }

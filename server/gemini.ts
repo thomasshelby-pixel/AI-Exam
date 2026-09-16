@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
   CALevel,
@@ -26,6 +27,11 @@ import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageServi
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
+import {
+  EvaluationEvidencePackage,
+  enforceEvaluationEvidencePackageMtpGate,
+  detectMtpSeriesFromText,
+} from './services/materialHardGateService.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -545,6 +551,11 @@ export interface EvaluateAnswerSheetParams {
   referenceMaterialTitle?: string;
   referenceMaterialVersion?: string;
   referenceMaterialId?: string;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  combinedSourceMaterialId?: string;
+  questionMaterialId?: string;
+  suggestedAnswerMaterialId?: string;
+  markingSchemeMaterialId?: string;
 }
 
 /**
@@ -552,6 +563,75 @@ export interface EvaluateAnswerSheetParams {
  */
 export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): Promise<EvaluationResult> {
   const ai = getGemini();
+
+  // SERVER-SIDE INTEGRITY GATE: Validate mtpSeries across the entire EvaluationEvidencePackage
+  if (params.materialType === 'MTP' || (params.mtpSeries !== undefined && params.mtpSeries !== null)) {
+    const qpText = params.referenceQuestionPaperText || '';
+    const saText = params.referenceSuggestedAnswersText || '';
+    const msText = params.markingSchemeText || '';
+
+    const evidencePackage: EvaluationEvidencePackage = {
+      evaluationId: params.evaluationId,
+      requestedMtpSeries: params.mtpSeries,
+      materialType: params.materialType,
+      caLevel: params.level,
+      subjectKey: params.subjectKey,
+      subjectName: params.subjectName,
+      paper: params.paper,
+      attempt: params.attempt,
+      syllabusVersion: params.syllabusVersion,
+      rawMaterialId: params.referenceMaterialId,
+      rawMaterialTitle: params.referenceMaterialTitle,
+      rawMaterialMtpSeries: params.mtpSeries,
+      retrievedAt: new Date().toISOString(),
+      integrityGateStatus: 'PENDING',
+      questionPaper: {
+        text: qpText,
+        metadata: {
+          materialId: params.referenceMaterialId || 'ref_qp',
+          version: params.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(qpText, 'utf8').digest('hex'),
+          textLength: qpText.length,
+          mtpSeries: params.mtpSeries,
+          componentType: 'QUESTION_PAPER',
+          title: params.referenceMaterialTitle,
+          detectedSeries:
+            detectMtpSeriesFromText(params.referenceMaterialTitle || '') ||
+            detectMtpSeriesFromText(qpText.slice(0, 1000)),
+        },
+      },
+      suggestedAnswers: {
+        text: saText,
+        metadata: {
+          materialId: params.referenceMaterialId || 'ref_sa',
+          version: params.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(saText, 'utf8').digest('hex'),
+          textLength: saText.length,
+          mtpSeries: params.mtpSeries,
+          componentType: 'SUGGESTED_ANSWERS',
+          title: params.referenceMaterialTitle,
+          detectedSeries:
+            detectMtpSeriesFromText(params.referenceMaterialTitle || '') ||
+            detectMtpSeriesFromText(saText.slice(0, 1000)),
+        },
+      },
+      markingScheme: {
+        text: msText,
+        metadata: {
+          materialId: params.referenceMaterialId || 'ref_ms',
+          version: params.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(msText, 'utf8').digest('hex'),
+          textLength: msText.length,
+          mtpSeries: params.mtpSeries,
+          componentType: 'MARKING_SCHEME',
+          title: `${params.referenceMaterialTitle || 'Reference Material'} Marking Scheme`,
+          detectedSeries: detectMtpSeriesFromText(msText.slice(0, 1000)),
+        },
+      },
+    };
+
+    enforceEvaluationEvidencePackageMtpGate(evidencePackage);
+  }
 
   // Canonicalize subject name using full official ICAI title
   const canonicalSubjectName = getCanonicalPaperName(params.level, params.subjectName, params.subjectKey);
@@ -984,6 +1064,21 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 
           const allQuestions = [...mcqQuestions, ...descriptiveQuestions];
 
+          // Ensure all questions carry precise source grounding references
+          const questionSourceId = params.sourceFormat === 'COMBINED' ? params.combinedSourceMaterialId : params.questionMaterialId;
+          const suggestedAnswerSourceId = params.sourceFormat === 'COMBINED' ? params.combinedSourceMaterialId : params.suggestedAnswerMaterialId;
+          const markingSchemeSourceId = params.markingSchemeMaterialId;
+          const currentSourceFormat = params.sourceFormat || 'SEPARATE';
+
+          for (const q of allQuestions) {
+            q.sources = {
+              questionSourceId,
+              suggestedAnswerSourceId,
+              markingSchemeSourceId,
+              sourceFormat: currentSourceFormat,
+            };
+          }
+
           // Authoritative Multi-Mode Marking Philosophy
           // Invariant: attempted questions & max marks are 100% immutable across modes.
           // Strict <= Standard <= Moderate
@@ -1028,6 +1123,13 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             subjectName: params.subjectName,
             materialType: params.materialType,
             attempt: params.attempt,
+            sourceFormat: params.sourceFormat,
+            sourceMaterialIds: {
+              combinedSourceMaterialId: params.combinedSourceMaterialId,
+              questionMaterialId: params.questionMaterialId,
+              suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
+              markingSchemeMaterialId: params.markingSchemeMaterialId,
+            },
             evaluationDate: new Date().toISOString(),
             totalMarks: Math.round(calculatedTotal * 4) / 4,
             maximumMarks: officialMax,
@@ -1485,6 +1587,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
       flags: structuredEv.flags,
       isDerivedAllocation: isDerived,
       pageNumber: qPage,
+      sources: {
+        questionSourceId: params.sourceFormat === 'COMBINED' ? params.combinedSourceMaterialId : params.questionMaterialId,
+        suggestedAnswerSourceId: params.sourceFormat === 'COMBINED' ? params.combinedSourceMaterialId : params.suggestedAnswerMaterialId,
+        markingSchemeSourceId: params.markingSchemeMaterialId,
+        sourceFormat: params.sourceFormat || 'SEPARATE',
+      },
       stepMarkingBreakdown: components.map(c => ({
         step: `${c.componentType}: ${c.expectedRequirement}`,
         marksAwarded: c.marksAwarded,
@@ -1546,6 +1654,13 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     subjectName: params.subjectName,
     materialType: params.materialType,
     attempt: params.attempt,
+    sourceFormat: params.sourceFormat,
+    sourceMaterialIds: {
+      combinedSourceMaterialId: params.combinedSourceMaterialId,
+      questionMaterialId: params.questionMaterialId,
+      suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
+      markingSchemeMaterialId: params.markingSchemeMaterialId,
+    },
     evaluationDate: new Date().toISOString(),
     totalMarks: finalCalculatedTotal,
     maximumMarks: maxTotal,
@@ -1645,7 +1760,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 export async function extractMaterialFromPDF(
   fileBase64: string,
   mimeType: string = 'application/pdf',
-  documentRole: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'COMPLETE_SUITE' = 'COMPLETE_SUITE'
+  documentRole: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'COMPLETE_SUITE' | 'COMBINED_PYQ' = 'COMPLETE_SUITE'
 ): Promise<{
   questionPaperText?: string;
   suggestedAnswersText?: string;
@@ -1657,7 +1772,23 @@ export async function extractMaterialFromPDF(
 }> {
   const ai = getGemini();
 
-  const prompt = `You are a Chartered Accountant Examination Material Digitizer.
+  const isCombined = documentRole === 'COMBINED_PYQ';
+  const prompt = isCombined
+    ? `You are an expert Chartered Accountant Examination Material Digitizer.
+Analyze this official examination reference document which is a COMBINED Past Year Question Paper (PYQ) containing BOTH Question Paper content and Suggested Answers content.
+
+CRITICAL NORMALIZATION & SPLITTING DIRECTIVE:
+You must strictly separate and extract:
+1. questionPaperText: Pure Question Paper text only (all question stems, sub-questions like 1(a), 1(b), required tables, and maximum marks). DO NOT include suggested answers, working notes, or solutions in this field.
+2. suggestedAnswersText: Pure Suggested Answers text only (comprehensive model solutions, ledger accounts, journal entries, working notes, statutory provisions). DO NOT include question paper text or questions alone in this field.
+3. markingSchemeText: Step-wise marking guidance and examiner mark allocations if explicitly present; leave empty if none. Note that Marking Schemes are typically uploaded separately.
+4. extractedTitle: Official title (e.g. "CA Inter Advanced Accounting May 2026 PYQ [Combined]").
+5. detectedSubject: Detected CA subject name.
+6. detectedLevel: FOUNDATION, INTERMEDIATE, or FINAL.
+7. detectedAttempt: Examination attempt (e.g. May 2026, Nov 2025).
+
+Do NOT mix question text with answer text. Question identities (e.g. Q1(a), Q2(b)) must align exactly between both sections.`
+    : `You are a Chartered Accountant Examination Material Digitizer.
 Analyze this official examination reference document (Target Category: ${documentRole}).
 Extract the exact, complete, high-fidelity ground truth text:
 1. Question Paper text (all questions, sub-parts, tables, and marks allocation).

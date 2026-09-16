@@ -27,6 +27,13 @@ export interface MaterialTextDoc {
 export interface ReferencePackage {
   packageId: string;
   evaluationId: string;
+  sourceFormat: 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  sourceMaterialIds: {
+    questionMaterialId?: string;
+    suggestedAnswerMaterialId?: string;
+    combinedSourceMaterialId?: string;
+    markingSchemeMaterialId?: string;
+  };
   retrievalTimestamp: string;
   verificationStatus: 'VERIFIED' | 'UNVERIFIED';
   level: string;
@@ -57,6 +64,7 @@ export interface BuildReferencePackageRequest {
   syllabusVersion?: string;
   materialType?: string;
   mtpSeries?: 1 | 2 | string | number;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY' | string;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
   instituteMaterialId?: string;
@@ -77,6 +85,7 @@ export function buildAuthoritativeReferencePackage(
   const normLevel = (request.level || 'INTERMEDIATE').toUpperCase();
   const subjectKey = String(request.subjectKey || '').trim();
   const isMtp = request.materialType === 'MTP';
+  const isPyq = request.materialType === 'PYQ';
 
   let normalizedSeries: 1 | 2 | undefined = undefined;
   if (isMtp) {
@@ -134,7 +143,9 @@ export function buildAuthoritativeReferencePackage(
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
+             attempt, syllabus_version, material_type, mtp_series,
+             source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+             file_id, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
              reference_guidance_text, amendments_provisions_text,
              100 as official_max_marks, created_at
@@ -164,14 +175,21 @@ export function buildAuthoritativeReferencePackage(
       params.push(normalizedSeries, String(normalizedSeries));
     }
 
+    if (isPyq && request.sourceFormat && request.sourceFormat !== 'ALL') {
+      query += ' AND source_format = ?';
+      params.push(request.sourceFormat);
+    }
+
     query += ' ORDER BY created_at DESC LIMIT 1';
     rawMaterial = db.prepare(query).get(...params);
 
-    // If specific attempt was not matched, fallback only for non-MTP materials!
-    if (!rawMaterial && !isMtp) {
+    // If specific attempt was not matched, fallback only for non-MTP AND non-PYQ materials!
+    if (!rawMaterial && !isMtp && !isPyq) {
       rawMaterial = db.prepare(`
         SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-               attempt, syllabus_version, material_type, mtp_series, version, status, admin_approved,
+               attempt, syllabus_version, material_type, mtp_series,
+               source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+               file_id, version, status, admin_approved,
                question_paper_text, suggested_answers_text, marking_scheme_text,
                reference_guidance_text, amendments_provisions_text,
                100 as official_max_marks, created_at
@@ -190,6 +208,11 @@ export function buildAuthoritativeReferencePackage(
       const att = request.attempt || 'Target Attempt';
       throw new Error(
         `Evaluation material for ${subj} MTP Series ${normalizedSeries} (${att}) is not available yet. Please select another paper or wait until the material is published.`
+      );
+    }
+    if (isPyq) {
+      throw new Error(
+        'Evaluation material is not uploaded yet. Please try again once the required material has been added.'
       );
     }
     throw new Error(
@@ -286,9 +309,19 @@ export function buildAuthoritativeReferencePackage(
 
   const packageHash = computeSha256(`${qpChecksum}:${saChecksum}:${msChecksum}`);
 
+  const sourceFormat = (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  const sourceMaterialIds = {
+    combinedSourceMaterialId: sourceFormat === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${matId}`) : undefined,
+    questionMaterialId: sourceFormat === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${matId}`) : undefined,
+    suggestedAnswerMaterialId: sourceFormat === 'SEPARATE' ? (rawMaterial.suggested_answer_material_id || `mat_sa_${matId}`) : undefined,
+    markingSchemeMaterialId: msText ? (rawMaterial.marking_scheme_material_id || `mat_ms_${matId}`) : undefined,
+  };
+
   return {
     packageId: `ref_pkg_${packageHash.slice(0, 16)}`,
     evaluationId: request.evaluationId,
+    sourceFormat,
+    sourceMaterialIds,
     retrievalTimestamp: new Date().toISOString(),
     verificationStatus: 'VERIFIED',
     level: normLevel,

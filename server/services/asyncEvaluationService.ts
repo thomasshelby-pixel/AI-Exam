@@ -14,6 +14,11 @@ import { consumeCreditFEFO } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
+import {
+  EvaluationEvidencePackage,
+  enforceEvaluationEvidencePackageMtpGate,
+  detectMtpSeriesFromText,
+} from './materialHardGateService.js';
 
 export interface EvaluationJobData {
   evaluationId: string;
@@ -41,6 +46,11 @@ export interface EvaluationJobData {
   referenceMaterialVersion?: string;
   referenceMaterialId?: string;
   officialPaperMaxMarks?: number;
+  sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
+  combinedSourceMaterialId?: string;
+  questionMaterialId?: string;
+  suggestedAnswerMaterialId?: string;
+  markingSchemeMaterialId?: string;
   entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
   resolvedSponsoringInstituteId?: string | null;
   resolvedSponsoringEnrollmentId?: string | null;
@@ -117,6 +127,80 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       'Evaluating step-by-step working notes, legal provisions, and standard answers...'
     );
 
+    // SERVER-SIDE INTEGRITY GATE: Validate mtpSeries across the entire EvaluationEvidencePackage
+    // Compares requested series against metadata of retrieved Question Paper, Suggested Answer, and Marking Scheme
+    const evidencePackage: EvaluationEvidencePackage = {
+      evaluationId,
+      requestedMtpSeries: job.mtpSeries,
+      materialType: job.materialType,
+      caLevel: job.level,
+      subjectKey: job.subjectKey,
+      subjectName: job.subjectName,
+      paper: job.paper,
+      attempt: job.attempt,
+      syllabusVersion: job.syllabusVersion,
+      rawMaterialId: job.referenceMaterialId,
+      rawMaterialTitle: job.referenceMaterialTitle,
+      rawMaterialMtpSeries: job.mtpSeries,
+      retrievedAt: new Date().toISOString(),
+      integrityGateStatus: 'PENDING',
+      questionPaper: {
+        text: job.referenceQuestionPaperText,
+        metadata: {
+          materialId: job.referenceMaterialId || 'ref_qp',
+          version: job.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(job.referenceQuestionPaperText || '', 'utf8').digest('hex'),
+          textLength: (job.referenceQuestionPaperText || '').length,
+          mtpSeries: job.mtpSeries,
+          componentType: 'QUESTION_PAPER',
+          title: job.referenceMaterialTitle,
+          detectedSeries:
+            detectMtpSeriesFromText(job.referenceMaterialTitle || '') ||
+            detectMtpSeriesFromText((job.referenceQuestionPaperText || '').slice(0, 1000)),
+        },
+      },
+      suggestedAnswers: {
+        text: job.referenceSuggestedAnswersText,
+        metadata: {
+          materialId: job.referenceMaterialId || 'ref_sa',
+          version: job.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(job.referenceSuggestedAnswersText || '', 'utf8').digest('hex'),
+          textLength: (job.referenceSuggestedAnswersText || '').length,
+          mtpSeries: job.mtpSeries,
+          componentType: 'SUGGESTED_ANSWERS',
+          title: job.referenceMaterialTitle,
+          detectedSeries:
+            detectMtpSeriesFromText(job.referenceMaterialTitle || '') ||
+            detectMtpSeriesFromText((job.referenceSuggestedAnswersText || '').slice(0, 1000)),
+        },
+      },
+      markingScheme: {
+        text: job.markingSchemeText || '',
+        metadata: {
+          materialId: job.referenceMaterialId || 'ref_ms',
+          version: job.referenceMaterialVersion || '1.0',
+          checksum: crypto.createHash('sha256').update(job.markingSchemeText || '', 'utf8').digest('hex'),
+          textLength: (job.markingSchemeText || '').length,
+          mtpSeries: job.mtpSeries,
+          componentType: 'MARKING_SCHEME',
+          title: `${job.referenceMaterialTitle || 'Reference Material'} Marking Scheme`,
+          detectedSeries: detectMtpSeriesFromText((job.markingSchemeText || '').slice(0, 1000)),
+        },
+      },
+    };
+
+    try {
+      enforceEvaluationEvidencePackageMtpGate(evidencePackage);
+    } catch (gateErr: any) {
+      console.error(`[AsyncEval] Integrity Gate Mismatch for evaluation ${evaluationId}:`, gateErr.message);
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'REJECTED', rejection_reason = ?, completed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(gateErr.message, evaluationId);
+      throw gateErr;
+    }
+
     const evaluationResult = await evaluateCAAnswerSheet({
       evaluationId,
       studentName: job.studentName,
@@ -139,6 +223,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       referenceMaterialTitle: job.referenceMaterialTitle,
       referenceMaterialVersion: job.referenceMaterialVersion,
       referenceMaterialId: job.referenceMaterialId,
+      sourceFormat: job.sourceFormat,
+      combinedSourceMaterialId: job.combinedSourceMaterialId,
+      questionMaterialId: job.questionMaterialId,
+      suggestedAnswerMaterialId: job.suggestedAnswerMaterialId,
+      markingSchemeMaterialId: job.markingSchemeMaterialId,
     });
 
     // Stage 4: Marks Allocation & Consequential Verification
@@ -334,6 +423,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checked_copy_status = ?,
           report_status = ?,
           mtp_series = COALESCE(?, mtp_series),
+          pyq_source_format = COALESCE(?, pyq_source_format),
+          normalized_package_json = ?,
+          question_sources_json = ?,
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -362,6 +454,27 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       checkedCopyStatus,
       reportStatus,
       job.mtpSeries || null,
+      job.sourceFormat || null,
+      JSON.stringify({
+        materialId: job.referenceMaterialId,
+        title: job.referenceMaterialTitle,
+        version: job.referenceMaterialVersion,
+        materialType: job.materialType,
+        sourceFormat: job.sourceFormat || 'SEPARATE',
+        combinedSourceMaterialId: job.combinedSourceMaterialId,
+        questionMaterialId: job.questionMaterialId,
+        suggestedAnswerMaterialId: job.suggestedAnswerMaterialId,
+        markingSchemeMaterialId: job.markingSchemeMaterialId,
+      }),
+      JSON.stringify((evaluationResult.questions || []).map(q => ({
+        questionNumber: q.questionNumber,
+        sources: (q as any).sources || {
+          questionSourceId: job.sourceFormat === 'COMBINED' ? job.combinedSourceMaterialId : job.questionMaterialId,
+          suggestedAnswerSourceId: job.sourceFormat === 'COMBINED' ? job.combinedSourceMaterialId : job.suggestedAnswerMaterialId,
+          markingSchemeSourceId: job.markingSchemeMaterialId,
+          sourceFormat: job.sourceFormat || 'SEPARATE',
+        }
+      }))),
       evaluationId
     );
 

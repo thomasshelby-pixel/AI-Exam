@@ -476,18 +476,25 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
         try {
           db.prepare(`
             INSERT INTO evaluation_materials (
-              id, level, material_type, mtp_series, model_group, subject_key, subject_name,
+              id, level, material_type, mtp_series, source_format, combined_source_material_id,
+              question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+              model_group, subject_key, subject_name,
               paper, attempt, syllabus_version, chapter_topic,
               question_paper_title, question_paper_text, suggested_answers_text,
               marking_scheme_text, reference_guidance_text, amendments_provisions_text,
               effective_date, version, status, source_type, admin_approved,
               file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
               level = excluded.level,
               material_type = excluded.material_type,
               mtp_series = excluded.mtp_series,
+              source_format = excluded.source_format,
+              combined_source_material_id = excluded.combined_source_material_id,
+              question_material_id = excluded.question_material_id,
+              suggested_answer_material_id = excluded.suggested_answer_material_id,
+              marking_scheme_material_id = excluded.marking_scheme_material_id,
               model_group = excluded.model_group,
               subject_key = excluded.subject_key,
               subject_name = excluded.subject_name,
@@ -514,7 +521,13 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
               download_url = excluded.download_url,
               updated_at = CURRENT_TIMESTAMP
           `).run(
-            m.id, m.level, m.material_type, m.mtp_series !== undefined && m.mtp_series !== null ? Number(m.mtp_series) : null, m.model_group || null, m.subject_key, m.subject_name,
+            m.id, m.level, m.material_type, m.mtp_series !== undefined && m.mtp_series !== null ? Number(m.mtp_series) : null,
+            m.source_format || m.sourceFormat || 'SEPARATE',
+            m.combined_source_material_id || m.combinedSourceMaterialId || null,
+            m.question_material_id || m.questionMaterialId || null,
+            m.suggested_answer_material_id || m.suggestedAnswerMaterialId || null,
+            m.marking_scheme_material_id || m.markingSchemeMaterialId || null,
+            m.model_group || null, m.subject_key, m.subject_name,
             m.paper || 'Paper 1', m.attempt || 'Current', m.syllabus_version || 'New Scheme 2024',
             m.chapter_topic || null, m.question_paper_title, m.question_paper_text || '',
             m.suggested_answers_text || '', m.marking_scheme_text || '', m.reference_guidance_text || null,
@@ -530,7 +543,9 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     }
 
     let query = `
-      SELECT id, level, material_type, mtp_series, model_group, subject_key, subject_name,
+      SELECT id, level, material_type, mtp_series, source_format,
+             combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+             model_group, subject_key, subject_name,
              paper, attempt, syllabus_version, chapter_topic,
              question_paper_title, effective_date, version, status,
              uploaded_by, created_at, updated_at,
@@ -545,8 +560,9 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     `;
     const params: any[] = [];
 
-    const { mtpSeries, mtp_series } = req.query;
+    const { mtpSeries, mtp_series, sourceFormat, source_format } = req.query;
     const seriesParam = mtpSeries || mtp_series;
+    const sourceFormatParam = (sourceFormat || source_format) as string | undefined;
 
     if (level && level !== 'ALL') {
       query += ' AND level = ?';
@@ -555,6 +571,10 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     if (materialType && materialType !== 'ALL') {
       query += ' AND material_type = ?';
       params.push(materialType);
+    }
+    if (sourceFormatParam && sourceFormatParam !== 'ALL') {
+      query += ' AND source_format = ?';
+      params.push(sourceFormatParam);
     }
     if (seriesParam && seriesParam !== 'ALL') {
       query += ' AND (mtp_series = ? OR mtp_series = ?)';
@@ -692,6 +712,19 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       }
     }
 
+    const { sourceFormat, source_format } = req.body;
+    const rawSourceFormat = (sourceFormat || source_format || '').toString().trim().toUpperCase();
+    let normSourceFormat: 'SEPARATE' | 'COMBINED' = 'SEPARATE';
+    if (materialType === 'PYQ') {
+      if (rawSourceFormat === 'COMBINED') {
+        normSourceFormat = 'COMBINED';
+      } else if (rawSourceFormat === 'SEPARATE' || !rawSourceFormat) {
+        normSourceFormat = 'SEPARATE';
+      } else {
+        return res.status(400).json({ error: 'PYQ Source Format must be either SEPARATE or COMBINED.' });
+      }
+    }
+
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
     let fileInfo: {
       fileId: string;
@@ -750,11 +783,37 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     }
 
     const nowIso = new Date().toISOString();
+
+    let combinedSourceMaterialId: string | null = null;
+    let questionMaterialId: string | null = null;
+    let suggestedAnswerMaterialId: string | null = null;
+    let markingSchemeMaterialId: string | null = null;
+
+    if (materialType === 'PYQ') {
+      if (normSourceFormat === 'COMBINED') {
+        combinedSourceMaterialId = fileInfo?.fileId || `mat_comb_${materialId}`;
+        markingSchemeMaterialId = markingSchemeText?.trim() ? `mat_ms_${materialId}` : null;
+      } else {
+        questionMaterialId = fileInfo?.fileId || `mat_qp_${materialId}`;
+        suggestedAnswerMaterialId = `mat_sa_${materialId}`;
+        markingSchemeMaterialId = markingSchemeText?.trim() ? `mat_ms_${materialId}` : null;
+      }
+    } else {
+      questionMaterialId = fileInfo?.fileId || `mat_qp_${materialId}`;
+      suggestedAnswerMaterialId = `mat_sa_${materialId}`;
+      markingSchemeMaterialId = markingSchemeText?.trim() ? `mat_ms_${materialId}` : null;
+    }
+
     const materialRecord = {
       id: materialId,
       level,
       material_type: materialType,
       mtp_series: parsedMtpSeries || null,
+      source_format: normSourceFormat,
+      combined_source_material_id: combinedSourceMaterialId,
+      question_material_id: questionMaterialId,
+      suggested_answer_material_id: suggestedAnswerMaterialId,
+      marking_scheme_material_id: markingSchemeMaterialId,
       modelGroup: modelGroup || null,
       subject_key: subjectKey,
       subject_name: subjectName,
@@ -794,16 +853,21 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     // 2. Insert into SQLite
     db.prepare(`
       INSERT INTO evaluation_materials (
-        id, level, material_type, mtp_series, model_group, subject_key, subject_name,
+        id, level, material_type, mtp_series, source_format, combined_source_material_id,
+        question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+        model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, chapter_topic,
         question_paper_title, question_paper_text, suggested_answers_text,
         marking_scheme_text, reference_guidance_text, amendments_provisions_text,
         effective_date, version, status, source_type, admin_approved,
         file_id, storage_path, file_name, file_size, checksum, download_url,
         uploaded_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series, materialRecord.modelGroup,
+      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
+      materialRecord.source_format, materialRecord.combined_source_material_id,
+      materialRecord.question_material_id, materialRecord.suggested_answer_material_id, materialRecord.marking_scheme_material_id,
+      materialRecord.modelGroup,
       materialRecord.subject_key, materialRecord.subject_name, materialRecord.paper, materialRecord.attempt,
       materialRecord.syllabus_version, materialRecord.chapter_topic, materialRecord.question_paper_title,
       materialRecord.question_paper_text, materialRecord.suggested_answers_text, materialRecord.marking_scheme_text,
@@ -859,6 +923,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      sourceFormat,
+      source_format,
       modelGroup,
       subjectKey,
       subjectName,
@@ -942,11 +1008,22 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
 
     const nowIso = new Date().toISOString();
 
+    const rawPutSourceFormat = (sourceFormat || source_format || '').toString().trim().toUpperCase();
+    let normPutSourceFormat = rawPutSourceFormat || null;
+    const effectiveMatType = materialType || existing.material_type;
+    if (effectiveMatType === 'PYQ' && rawPutSourceFormat) {
+      if (!['SEPARATE', 'COMBINED'].includes(rawPutSourceFormat)) {
+        return res.status(400).json({ error: 'PYQ Source Format must be either SEPARATE or COMBINED.' });
+      }
+      normPutSourceFormat = rawPutSourceFormat;
+    }
+
     db.prepare(`
       UPDATE evaluation_materials
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
           mtp_series = COALESCE(?, mtp_series),
+          source_format = COALESCE(?, source_format),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
           subject_name = COALESCE(?, subject_name),
@@ -975,6 +1052,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       level || null,
       materialType || null,
       parsedMtpSeries !== undefined ? parsedMtpSeries : null,
+      normPutSourceFormat,
       modelGroup || null,
       subjectKey || null,
       subjectName || null,

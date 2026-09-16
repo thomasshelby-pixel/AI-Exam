@@ -393,8 +393,15 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               )}
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white print:text-black">{subjectName}</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 print:text-gray-600">
-              CA {caLevel} • {materialType === 'MTP' && mtpSeries ? `MTP Series ${mtpSeries}` : `${materialType} Series`} • {attempt || 'May 2026'}
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 print:text-gray-600 flex items-center flex-wrap gap-1.5">
+              <span>CA {caLevel} • {materialType === 'MTP' && mtpSeries ? `MTP Series ${mtpSeries}` : `${materialType} Series`} • {attempt || 'May 2026'}</span>
+              {(evaluationResult.pyqSourceFormat || (evaluationResult as any).sourceFormat) && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  {(evaluationResult.pyqSourceFormat || (evaluationResult as any).sourceFormat) === 'COMBINED'
+                    ? 'Combined QP + Answers'
+                    : 'Separate QP & Suggested Answers'}
+                </span>
+              )}
             </p>
           </div>
 
@@ -779,6 +786,19 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1">
                         <ShieldCheck className="w-3 h-3 text-emerald-700 dark:text-emerald-400" />
                         Rechecked (v2)
+                      </span>
+                    )}
+                    {(q.sources?.sourceFormat || q.sourceFormat || q.sources?.questionSourceId || q.questionSource) && (
+                      <span
+                        className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 flex items-center gap-1"
+                        title="Authoritative Grounding Source"
+                      >
+                        <FileText className="w-2.5 h-2.5 text-blue-500" />
+                        <span>
+                          {(q.sources?.sourceFormat || q.sourceFormat) === 'COMBINED'
+                            ? 'Combined Doc'
+                            : 'Suggested Answers'}
+                        </span>
                       </span>
                     )}
                   </div>

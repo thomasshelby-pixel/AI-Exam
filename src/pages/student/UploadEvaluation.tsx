@@ -123,6 +123,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [mtpSeries, setMtpSeries] = useState<1 | 2>(1);
+  const [pyqSourceFormat, setPyqSourceFormat] = useState<'AUTO' | 'COMBINED' | 'SEPARATE'>('AUTO');
+  const [detectedSourceFormat, setDetectedSourceFormat] = useState<'COMBINED' | 'SEPARATE' | null>(null);
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
@@ -373,17 +375,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       try {
         const res = await apiRequest<{
           available: boolean;
-          material?: { question_paper_title: string; attempt: string };
+          material?: {
+            question_paper_title: string;
+            attempt: string;
+            source_format?: 'COMBINED' | 'SEPARATE';
+          };
         }>(
           `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
             attempt
-          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
+          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}${
+            materialType === 'PYQ' && pyqSourceFormat !== 'AUTO' ? `&sourceFormat=${pyqSourceFormat}` : ''
+          }`
         );
 
         setMaterialAvailable(res.available);
         setMaterialTitle(res.material?.question_paper_title || '');
+        setDetectedSourceFormat(res.material?.source_format || null);
       } catch {
         setMaterialAvailable(false);
+        setDetectedSourceFormat(null);
       } finally {
         setCheckingMaterial(false);
       }
@@ -399,6 +409,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     attempt,
     materialType,
     mtpSeries,
+    pyqSourceFormat,
   ]);
 
   // Handle file drop & selection
@@ -484,6 +495,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           subjectName: currentSubject?.name || 'CA Subject',
           attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : attempt,
           checkingMode,
+          sourceFormat: materialType === 'PYQ'
+            ? (pyqSourceFormat !== 'AUTO' ? pyqSourceFormat : (detectedSourceFormat || undefined))
+            : undefined,
           fileBase64,
           mimeType: file.type || 'application/pdf',
           filename: file.name,
@@ -970,7 +984,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 </div>
 
                 {/* Paper Type & Attempt */}
-                <div className={`grid ${materialType === 'MTP' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'} gap-2.5`}>
+                <div className={`grid ${materialType === 'MTP' || materialType === 'PYQ' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'} gap-2.5`}>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Paper Type</label>
                     <select
@@ -999,6 +1013,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       >
                         <option value={1}>Series 1</option>
                         <option value={2}>Series 2</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {materialType === 'PYQ' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                        <span>Source Format</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Grounding</span>
+                      </label>
+                      <select
+                        id="evaluation-pyq-source-format-select"
+                        value={pyqSourceFormat}
+                        onChange={(e) => setPyqSourceFormat(e.target.value as 'AUTO' | 'COMBINED' | 'SEPARATE')}
+                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
+                      >
+                        <option value="AUTO">Auto-detect from Library</option>
+                        <option value="SEPARATE">Separate QP & Answers</option>
+                        <option value="COMBINED">Combined QP + Answers</option>
                       </select>
                     </div>
                   )}
@@ -1052,7 +1085,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   <span className="truncate">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Institute Question Paper & Model Answers Loaded'
-                      : 'ICAI Suggested Answers & Marking Scheme Loaded'}
+                      : materialType === 'PYQ' && detectedSourceFormat
+                        ? `ICAI PYQ Loaded (${detectedSourceFormat === 'COMBINED' ? 'Combined QP & Answers Document' : 'Separate QP & Suggested Answers'})`
+                        : 'ICAI Suggested Answers & Marking Scheme Loaded'}
                   </span>
                 </div>
               ) : (

@@ -452,6 +452,9 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
         ? Number(req.body.mtp_series)
         : undefined;
 
+    const rawSourceFormat = (req.body.sourceFormat || req.body.source_format || '').toString().trim().toUpperCase();
+    const sourceFormat = (rawSourceFormat === 'COMBINED' || rawSourceFormat === 'SEPARATE') ? (rawSourceFormat as 'SEPARATE' | 'COMBINED') : undefined;
+
     if (materialType === 'MTP') {
       if (!parsedMtpSeries) {
         return res.status(400).json({ error: 'Please select an MTP Series (Series 1 or Series 2) to continue.' });
@@ -586,6 +589,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
         syllabusVersion: req.body.syllabusVersion,
         materialType,
         mtpSeries: parsedMtpSeries,
+        sourceFormat,
         evaluationSource: requestedEvalSource,
         instituteId: resolvedSponsoringInstituteId || undefined,
         instituteMaterialId,
@@ -603,6 +607,11 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       version: verifiedPackage.version,
       paper: verifiedPackage.paper,
       syllabus_version: verifiedPackage.syllabusVersion,
+      source_format: verifiedPackage.sourceFormat,
+      combined_source_material_id: verifiedPackage.combinedSourceMaterialId,
+      question_material_id: verifiedPackage.questionMaterialId,
+      suggested_answer_material_id: verifiedPackage.suggestedAnswerMaterialId,
+      marking_scheme_material_id: verifiedPackage.markingSchemeMaterialId,
       official_max_marks: verifiedPackage.officialPaperMaxMarks,
       question_paper_title: verifiedPackage.questionPaperTitle,
       question_paper_text: verifiedPackage.questionPaperText,
@@ -671,14 +680,14 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       INSERT INTO evaluations (
         id, student_id, evaluation_source, material_source, sponsoring_institute_id,
         institute_id, institute_enrollment_id, batch_id,
-        level, material_type, mtp_series, model_group, subject_key, subject_name,
+        level, material_type, mtp_series, pyq_source_format, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status,
         entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?,
-        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, 'PROCESSING', 'VALID',
         ?, 0, 0
@@ -695,6 +704,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       level,
       materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP'),
       parsedMtpSeries || null,
+      referenceMaterial.source_format || null,
       modelGroup || null,
       subjectKey,
       subjectName,
@@ -791,6 +801,11 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       referenceMaterialVersion: referenceMaterial.version,
       referenceMaterialId: referenceMaterial.id,
       officialPaperMaxMarks: referenceMaterial.official_max_marks,
+      sourceFormat: referenceMaterial.source_format,
+      combinedSourceMaterialId: referenceMaterial.combined_source_material_id,
+      questionMaterialId: referenceMaterial.question_material_id,
+      suggestedAnswerMaterialId: referenceMaterial.suggested_answer_material_id,
+      markingSchemeMaterialId: referenceMaterial.marking_scheme_material_id,
       entitlementSource,
       resolvedSponsoringInstituteId,
       resolvedSponsoringEnrollmentId,
@@ -2919,6 +2934,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       icaiRegistrationNumber: icaiReg,
       level: test.level as CALevel,
       materialType: 'MTP' as MaterialType,
+      mtpSeries: (test.mtp_series as 1 | 2) || 1,
       subjectKey: test.title.toLowerCase().replace(/[^a-z0-9]/g, '_'),
       subjectName: test.title,
       paper: 'Institute Paper',
@@ -3049,6 +3065,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       icaiRegistrationNumber: icaiReg,
       level: material.level as CALevel,
       materialType: 'MTP' as MaterialType,
+      mtpSeries: (material.mtp_series as 1 | 2) || 1,
       subjectKey: material.subject_key || material.title.toLowerCase().replace(/[^a-z0-9]/g, '_'),
       subjectName: material.subject_name || material.title,
       paper: material.paper || 'Paper 1',

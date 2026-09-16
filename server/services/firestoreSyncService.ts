@@ -83,23 +83,38 @@ export async function hydrateFromFirestore(): Promise<void> {
     for (const u of users) {
       if (tombstoneSet.has(`users_${u.id}`)) continue;
       try {
+        const pHash = u.password_hash || u.passwordHash || u.password || 'HASHED_PASS';
+        const normEmail = String(u.email || '').trim().toLowerCase();
+        const userClassification = u.account_classification || 'NORMAL';
+
+        // Check for any colliding user in SQLite by email with a different ID
+        const collidingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normEmail, u.id) as { id: string } | undefined;
+        if (collidingUser) {
+          db.prepare('DELETE FROM users WHERE id = ?').run(collidingUser.id);
+        }
+
         db.prepare(`
           INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
+            password_hash = CASE
+              WHEN excluded.password_hash IS NOT NULL AND excluded.password_hash NOT IN ('HASHED_PASS', 'PERSISTED_HASH', '')
+              THEN excluded.password_hash
+              ELSE users.password_hash
+            END,
             full_name = excluded.full_name,
             role = excluded.role,
             status = excluded.status,
-            account_classification = COALESCE(excluded.account_classification, users.account_classification),
+            account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             updated_at = CURRENT_TIMESTAMP
         `).run(
-          u.id, u.email, u.password_hash || 'HASHED_PASS', u.full_name || '', u.phone || '',
-          u.role || 'STUDENT', u.status || 'ACTIVE', u.account_classification || null, u.created_at || null
+          u.id, normEmail, pHash, u.full_name || '', u.phone || '',
+          u.role || 'STUDENT', u.status || 'ACTIVE', userClassification, u.created_at || null
         );
         uHydrated++;
       } catch (err) {
-        // ignore individual conflict
+        console.warn(`[FirestoreSync] Failed to hydrate user ${u.id} (${u.email}):`, err);
       }
     }
 
@@ -607,12 +622,31 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       console.log('[FirestoreSync] Baseline materials already initialized or intentionally managed by admin; skipping automatic re-seeding.');
     }
 
-    const existingUsers = await getAllFirestoreDocs('users');
-    if (existingUsers.length === 0) {
-      console.log('[FirestoreSync] Seeding baseline admin users to Cloud Firestore...');
-      const localUsers = db.prepare("SELECT * FROM users WHERE role IN ('SUPER_ADMIN', 'SUPPORT_ADMIN')").all() as any[];
-      for (const u of localUsers) {
-        await setFirestoreDoc('users', u.id, u);
+    const existingUsers = await getAllFirestoreDocs<any>('users');
+    const existingEmailSet = new Set(existingUsers.map((u) => String(u.email || '').toLowerCase().trim()));
+
+    // Ensure baseline users are persisted in Cloud Firestore
+    const baselineUserQuery = `
+      SELECT * FROM users 
+      WHERE email IN (
+        'admin@caexamchecker.ai',
+        'superadmin@ca-exam-checker.com',
+        'caexamchecker.support@gmail.com',
+        'institute@apexca.edu',
+        'student@caexamchecker.ai',
+        'at9767676@gmail.com'
+      )
+    `;
+    const baselineUsers = db.prepare(baselineUserQuery).all() as any[];
+    for (const bu of baselineUsers) {
+      const normEmail = String(bu.email || '').toLowerCase().trim();
+      if (!existingEmailSet.has(normEmail)) {
+        await setFirestoreDoc('users', bu.id, bu);
+        const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
+        if (profile) {
+          await setFirestoreDoc('student_profiles', bu.id, profile);
+        }
+        console.log(`[FirestoreSync] Seeded baseline user ${bu.email} (${bu.id}) to Cloud Firestore.`);
       }
     }
 
