@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { normalizeAndSplitCombinedPyq } from './materialHardGateService.js';
 
 export interface MaterialTextDoc {
   materialId: string;
@@ -228,11 +229,23 @@ export function buildAuthoritativeReferencePackage(
     }
   }
 
-  const qpText = String(rawMaterial.question_paper_text || '').trim();
-  const saText = String(rawMaterial.suggested_answers_text || '').trim();
+  let qpText = String(rawMaterial.question_paper_text || '').trim();
+  let saText = String(rawMaterial.suggested_answers_text || '').trim();
   const msText = String(rawMaterial.marking_scheme_text || '').trim();
   const rgText = String(rawMaterial.reference_guidance_text || '').trim();
   const apText = String(rawMaterial.amendments_provisions_text || '').trim();
+
+  // If source format is COMBINED, ensure internal normalization into authoritative Question Paper & Suggested Answers
+  if (rawMaterial.source_format === 'COMBINED') {
+    if (!qpText || !saText || qpText === saText || qpText.length < 50 || saText.length < 50) {
+      const sourceForSplit = (qpText && qpText.length >= 50) ? qpText : saText;
+      if (sourceForSplit && sourceForSplit.length >= 50) {
+        const normalized = normalizeAndSplitCombinedPyq(sourceForSplit);
+        qpText = normalized.questionPaperText;
+        saText = normalized.suggestedAnswersText;
+      }
+    }
+  }
 
   // HARD STOP GATE: Question Paper and Suggested Answers must have substantial verified content
   if (qpText.length < 50 || saText.length < 50) {

@@ -358,7 +358,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       )}
 
       {/* Official ICAI Pattern Report Header Card */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black min-w-0">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-200 dark:border-slate-800 print:border-gray-300">
           <div>
             <div className="mb-3">
@@ -395,13 +395,6 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white print:text-black">{subjectName}</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 print:text-gray-600 flex items-center flex-wrap gap-1.5">
               <span>CA {caLevel} • {materialType === 'MTP' && mtpSeries ? `MTP Series ${mtpSeries}` : `${materialType} Series`} • {attempt || 'May 2026'}</span>
-              {(evaluationResult.pyqSourceFormat || (evaluationResult as any).sourceFormat) && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                  {(evaluationResult.pyqSourceFormat || (evaluationResult as any).sourceFormat) === 'COMBINED'
-                    ? 'Combined QP + Answers'
-                    : 'Separate QP & Suggested Answers'}
-                </span>
-              )}
             </p>
           </div>
 
@@ -429,7 +422,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   Question coverage, attempt discovery, and paper maximum are 100% constant across all 3 marking modes.
                 </p>
               </div>
-              <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800 text-xs shrink-0">
+              <div className="flex flex-wrap sm:inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800 text-xs max-w-full">
                 <button
                   type="button"
                   onClick={() => setSelectedMode('strict')}
@@ -794,17 +787,13 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                         title="Authoritative Grounding Source"
                       >
                         <FileText className="w-2.5 h-2.5 text-blue-500" />
-                        <span>
-                          {(q.sources?.sourceFormat || q.sourceFormat) === 'COMBINED'
-                            ? 'Combined Doc'
-                            : 'Suggested Answers'}
-                        </span>
+                        <span>Suggested Answers</span>
                       </span>
                     )}
                   </div>
 
                   {/* Marks Pills & Contest Button */}
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 flex-wrap">
                     <div className="flex items-center gap-2 text-xs font-mono font-bold">
                       <span className="text-emerald-700 dark:text-emerald-400">+{q.marksAwarded} Awarded</span>
                       {q.marksLost > 0 && <span className="text-rose-700 dark:text-rose-400">-{q.marksLost} Lost</span>}

@@ -123,8 +123,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [mtpSeries, setMtpSeries] = useState<1 | 2>(1);
-  const [pyqSourceFormat, setPyqSourceFormat] = useState<'AUTO' | 'COMBINED' | 'SEPARATE'>('AUTO');
-  const [detectedSourceFormat, setDetectedSourceFormat] = useState<'COMBINED' | 'SEPARATE' | null>(null);
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
@@ -378,22 +376,17 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           material?: {
             question_paper_title: string;
             attempt: string;
-            source_format?: 'COMBINED' | 'SEPARATE';
           };
         }>(
           `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
             attempt
-          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}${
-            materialType === 'PYQ' && pyqSourceFormat !== 'AUTO' ? `&sourceFormat=${pyqSourceFormat}` : ''
-          }`
+          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
         );
 
         setMaterialAvailable(res.available);
         setMaterialTitle(res.material?.question_paper_title || '');
-        setDetectedSourceFormat(res.material?.source_format || null);
       } catch {
         setMaterialAvailable(false);
-        setDetectedSourceFormat(null);
       } finally {
         setCheckingMaterial(false);
       }
@@ -409,7 +402,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     attempt,
     materialType,
     mtpSeries,
-    pyqSourceFormat,
   ]);
 
   // Handle file drop & selection
@@ -495,9 +487,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           subjectName: currentSubject?.name || 'CA Subject',
           attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : attempt,
           checkingMode,
-          sourceFormat: materialType === 'PYQ'
-            ? (pyqSourceFormat !== 'AUTO' ? pyqSourceFormat : (detectedSourceFormat || undefined))
-            : undefined,
           fileBase64,
           mimeType: file.type || 'application/pdf',
           filename: file.name,
@@ -561,7 +550,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 text-slate-800 dark:text-slate-100 space-y-6">
+    <div className="w-full max-w-5xl mx-auto px-3 sm:px-4 py-6 text-slate-800 dark:text-slate-100 space-y-6 min-w-0">
       {/* Title & ICAI Disclaimer Banner */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -984,14 +973,14 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 </div>
 
                 {/* Paper Type & Attempt */}
-                <div className={`grid ${materialType === 'MTP' || materialType === 'PYQ' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-2'} gap-2.5`}>
-                  <div>
+                <div className={`grid ${materialType === 'MTP' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-2.5`}>
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Paper Type</label>
                     <select
                       id="evaluation-paper-type-select"
                       value={materialType}
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 truncate"
                     >
                       <option value="MTP">MTP (Mock Test Paper)</option>
                       <option value="PYQ">PYQ (Past Year Question Paper)</option>
@@ -1000,7 +989,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   </div>
 
                   {materialType === 'MTP' && (
-                    <div>
+                    <div className="min-w-0">
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
                         <span>MTP Series</span>
                         <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">Required</span>
@@ -1009,40 +998,21 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                         id="evaluation-mtp-series-select"
                         value={mtpSeries}
                         onChange={(e) => setMtpSeries(Number(e.target.value) as 1 | 2)}
-                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400"
+                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 truncate"
                       >
-                        <option value={1}>Series 1</option>
-                        <option value={2}>Series 2</option>
+                        <option value={1}>Series 1 (Official ICAI)</option>
+                        <option value={2}>Series 2 (Official ICAI)</option>
                       </select>
                     </div>
                   )}
 
-                  {materialType === 'PYQ' && (
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
-                        <span>Source Format</span>
-                        <span className="text-[10px] text-slate-500 font-medium">Grounding</span>
-                      </label>
-                      <select
-                        id="evaluation-pyq-source-format-select"
-                        value={pyqSourceFormat}
-                        onChange={(e) => setPyqSourceFormat(e.target.value as 'AUTO' | 'COMBINED' | 'SEPARATE')}
-                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
-                      >
-                        <option value="AUTO">Auto-detect from Library</option>
-                        <option value="SEPARATE">Separate QP & Answers</option>
-                        <option value="COMBINED">Combined QP + Answers</option>
-                      </select>
-                    </div>
-                  )}
-
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Target Attempt</label>
                     <select
                       id="evaluation-target-attempt-select"
                       value={attempt}
                       onChange={(e) => setAttempt(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
+                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 truncate"
                     >
                       {availableAttempts.map((att) => (
                         <option key={att.id} value={att.attemptLabel}>
@@ -1066,7 +1036,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 onChange={(e) => setCheckingMode(e.target.value as CheckingMode)}
                 className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900"
               >
-                <option value="standard">Standard ICAI Marking (Balanced & Realistic)</option>
+                <option value="standard">Standard ICAI Marking (Balanced &amp; Realistic)</option>
                 <option value="strict">Strict Head Examiner (Conservative on Working Notes)</option>
                 <option value="lenient">Moderate Guidance (Emphasizes Partial Step Marks)</option>
               </select>
@@ -1080,20 +1050,20 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   Verifying Reference Material...
                 </p>
               ) : materialAvailable ? (
-                <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-lg font-medium">
+                <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-lg font-medium min-w-0">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  <span className="truncate">
+                  <span className="min-w-0 flex-1 break-words">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Institute Question Paper & Model Answers Loaded'
-                      : materialType === 'PYQ' && detectedSourceFormat
-                        ? `ICAI PYQ Loaded (${detectedSourceFormat === 'COMBINED' ? 'Combined QP & Answers Document' : 'Separate QP & Suggested Answers'})`
+                      : materialType === 'PYQ'
+                        ? 'Official ICAI Past Year Question Paper & Suggested Answers Loaded'
                         : 'ICAI Suggested Answers & Marking Scheme Loaded'}
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5 rounded-lg">
+                <div className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5 rounded-lg min-w-0">
                   <Info className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <span>
+                  <span className="min-w-0 flex-1 break-words">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Test material pending upload by academy.'
                       : 'Evaluation material is pending upload for this paper.'}

@@ -47,6 +47,7 @@ import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } fr
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 
 const router = Router();
 
@@ -685,8 +686,10 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       syllabusVersion,
       chapterTopic,
       questionPaperTitle,
-      questionPaperText,
-      suggestedAnswersText,
+      questionPaperText: rawQpText,
+      suggestedAnswersText: rawSaText,
+      combinedText,
+      combined_text,
       markingSchemeText,
       referenceGuidanceText,
       amendmentsProvisionsText,
@@ -695,10 +698,6 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       status,
       attachedFile,
     } = req.body;
-
-    if (!level || !materialType || !subjectKey || !subjectName || !questionPaperTitle || !questionPaperText || !suggestedAnswersText) {
-      return res.status(400).json({ error: 'Please provide required fields: level, materialType, subjectKey, subjectName, title, question paper text, and suggested answers text.' });
-    }
 
     const parsedMtpSeries = (mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '')
       ? Number(mtpSeries)
@@ -723,6 +722,26 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       } else {
         return res.status(400).json({ error: 'PYQ Source Format must be either SEPARATE or COMBINED.' });
       }
+    }
+
+    let questionPaperText = String(rawQpText || '').trim();
+    let suggestedAnswersText = String(rawSaText || '').trim();
+
+    if (materialType === 'PYQ' && normSourceFormat === 'COMBINED') {
+      const rawCombined = String(combinedText || combined_text || '').trim();
+      if (rawCombined && (!questionPaperText || !suggestedAnswersText || questionPaperText === suggestedAnswersText)) {
+        const split = normalizeAndSplitCombinedPyq(rawCombined);
+        questionPaperText = split.questionPaperText;
+        suggestedAnswersText = split.suggestedAnswersText;
+      } else if (questionPaperText && (!suggestedAnswersText || questionPaperText === suggestedAnswersText)) {
+        const split = normalizeAndSplitCombinedPyq(questionPaperText);
+        questionPaperText = split.questionPaperText;
+        suggestedAnswersText = split.suggestedAnswersText;
+      }
+    }
+
+    if (!level || !materialType || !subjectKey || !subjectName || !questionPaperTitle || !questionPaperText || !suggestedAnswersText) {
+      return res.status(400).json({ error: 'Please provide required fields: level, materialType, subjectKey, subjectName, title, question paper text, and suggested answers text.' });
     }
 
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
@@ -1018,6 +1037,18 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       normPutSourceFormat = rawPutSourceFormat;
     }
 
+    let updatedQpText = questionPaperText !== undefined ? String(questionPaperText).trim() : null;
+    let updatedSaText = suggestedAnswersText !== undefined ? String(suggestedAnswersText).trim() : null;
+
+    if (effectiveMatType === 'PYQ' && (normPutSourceFormat === 'COMBINED' || existing.source_format === 'COMBINED')) {
+      const rawCombined = String(req.body.combinedText || req.body.combined_text || '').trim();
+      if (rawCombined) {
+        const split = normalizeAndSplitCombinedPyq(rawCombined);
+        updatedQpText = split.questionPaperText;
+        updatedSaText = split.suggestedAnswersText;
+      }
+    }
+
     db.prepare(`
       UPDATE evaluation_materials
       SET level = COALESCE(?, level),
@@ -1061,8 +1092,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       syllabusVersion || null,
       chapterTopic || null,
       questionPaperTitle || null,
-      questionPaperText || null,
-      suggestedAnswersText || null,
+      updatedQpText !== undefined ? updatedQpText : (questionPaperText || null),
+      updatedSaText !== undefined ? updatedSaText : (suggestedAnswersText || null),
       markingSchemeText || null,
       referenceGuidanceText || null,
       amendmentsProvisionsText || null,

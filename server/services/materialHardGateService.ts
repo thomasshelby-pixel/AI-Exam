@@ -280,9 +280,21 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     }
   }
 
-  const qpText = String(rawMaterial.question_paper_text || '').trim();
-  const saText = String(rawMaterial.suggested_answers_text || '').trim();
+  let qpText = String(rawMaterial.question_paper_text || '').trim();
+  let saText = String(rawMaterial.suggested_answers_text || '').trim();
   const msText = String(rawMaterial.marking_scheme_text || '').trim();
+
+  // If source format is COMBINED, ensure internal normalization into authoritative Question Paper & Suggested Answers
+  if (rawMaterial.source_format === 'COMBINED') {
+    if (!qpText || !saText || qpText === saText || qpText.length < 50 || saText.length < 50) {
+      const sourceForSplit = (qpText && qpText.length >= 50) ? qpText : saText;
+      if (sourceForSplit && sourceForSplit.length >= 50) {
+        const normalized = normalizeAndSplitCombinedPyq(sourceForSplit);
+        qpText = normalized.questionPaperText;
+        saText = normalized.suggestedAnswersText;
+      }
+    }
+  }
 
   // HARD-GATE CHECK: Verified TXT content must not be blank or superficial
   if (qpText.length < 50 || saText.length < 50) {
@@ -581,4 +593,84 @@ export function enforceEvaluationEvidencePackageMtpGate(evidencePackage: Evaluat
   }
 
   evidencePackage.integrityGateStatus = 'PASSED';
+}
+
+/**
+ * Authoritatively separates/normalizes combined Question Paper + Suggested Answers text
+ * into distinct question paper and suggested answers components.
+ */
+export function normalizeAndSplitCombinedPyq(combinedText: string): {
+  questionPaperText: string;
+  suggestedAnswersText: string;
+} {
+  const text = String(combinedText || '').trim();
+  if (!text) {
+    return { questionPaperText: '', suggestedAnswersText: '' };
+  }
+
+  // 1. Check for single clear divider separating Question Paper from Suggested Answers
+  // e.g. "SUGGESTED ANSWERS", "SOLUTIONS", "MODEL SOLUTIONS", "ANSWERS TO QUESTIONS", "HINTS & SOLUTIONS"
+  const dividerRegex = /\n\s*(?:(?:ICAI\s+)?(?:SUGGESTED\s+ANSWERS?|SOLUTIONS?|MODEL\s+ANSWERS?|ANSWERS\s+TO\s+QUESTIONS?|HINTS\s*&\s*SOLUTIONS?))\s*(?:\n|:|\.|$)/i;
+  const match = dividerRegex.exec(text);
+
+  if (match && match.index > 50 && match.index < text.length - 50) {
+    const qpPart = text.slice(0, match.index).trim();
+    const saPart = text.slice(match.index).trim();
+    if (qpPart.length >= 30 && saPart.length >= 30) {
+      return {
+        questionPaperText: qpPart,
+        suggestedAnswersText: saPart,
+      };
+    }
+  }
+
+  // 2. Check for interleaved Questions and Answers
+  // Pattern: Question 1 ... Answer / Solution to Question 1 ... Question 2 ...
+  const tokenRegex = /(?:^|\n)(?:(?:QUESTION|Q\.?)\s*(?:NO\.?|[0-9]+)\b|(?:(?:SUGGESTED\s+)?ANSWER|SOLUTION|HINT)\s*(?:TO\s+)?(?:QUESTION|Q\.?)?\s*(?:NO\.?|[0-9]+)?\b)/gi;
+  const tokens: Array<{ index: number; type: 'Q' | 'A'; header: string }> = [];
+  let tokenMatch: RegExpExecArray | null;
+
+  while ((tokenMatch = tokenRegex.exec(text)) !== null) {
+    const headerStr = tokenMatch[0].trim();
+    const isAns = /(?:ANSWER|SOLUTION|HINT)/i.test(headerStr);
+    tokens.push({
+      index: tokenMatch.index,
+      type: isAns ? 'A' : 'Q',
+      header: headerStr,
+    });
+  }
+
+  if (tokens.length >= 2) {
+    const hasQ = tokens.some((t) => t.type === 'Q');
+    const hasA = tokens.some((t) => t.type === 'A');
+
+    if (hasQ && hasA) {
+      const qBlocks: string[] = [];
+      const aBlocks: string[] = [];
+
+      for (let i = 0; i < tokens.length; i++) {
+        const start = tokens[i].index;
+        const end = i + 1 < tokens.length ? tokens[i + 1].index : text.length;
+        const block = text.slice(start, end).trim();
+        if (tokens[i].type === 'Q') {
+          qBlocks.push(block);
+        } else {
+          aBlocks.push(block);
+        }
+      }
+
+      if (qBlocks.length > 0 && aBlocks.length > 0) {
+        return {
+          questionPaperText: qBlocks.join('\n\n'),
+          suggestedAnswersText: aBlocks.join('\n\n'),
+        };
+      }
+    }
+  }
+
+  // Fallback: Retain complete ground truth in both partitions with clear authoritative headings
+  return {
+    questionPaperText: `[AUTHORITATIVE COMBINED PYQ DOCUMENT - QUESTIONS]\n${text}`,
+    suggestedAnswersText: `[AUTHORITATIVE COMBINED PYQ DOCUMENT - SUGGESTED ANSWERS]\n${text}`,
+  };
 }

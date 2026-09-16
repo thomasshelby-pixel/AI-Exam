@@ -68,10 +68,12 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     questionPaperTitle: '',
     questionPaperText: '',
     suggestedAnswersText: '',
+    combinedText: '',
     markingSchemeText: '',
     referenceGuidanceText: '',
     amendmentsProvisionsText: '',
     effectiveDate: new Date().toISOString().split('T')[0],
+    sourceFormat: 'SEPARATE' as 'SEPARATE' | 'COMBINED',
     version: '1.0',
     status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE',
   };
@@ -104,7 +106,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   // Handle PDF / Text File Upload and AI Extraction
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    targetField: 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText' | 'ALL'
+    targetField: 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText' | 'combinedText' | 'ALL'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -113,6 +115,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       const text = await file.text();
       if (targetField === 'ALL') {
         setFormData((prev) => ({ ...prev, questionPaperText: text }));
+      } else if (targetField === 'combinedText') {
+        setFormData((prev) => ({ ...prev, combinedText: text, questionPaperText: text, suggestedAnswersText: text }));
       } else {
         setFormData((prev) => ({ ...prev, [targetField]: text }));
       }
@@ -129,7 +133,9 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         try {
           const base64 = reader.result as string;
           const role =
-            targetField === 'questionPaperText'
+            targetField === 'combinedText'
+              ? 'COMBINED_PYQ'
+              : targetField === 'questionPaperText'
               ? 'QUESTION_PAPER'
               : targetField === 'suggestedAnswersText'
               ? 'SUGGESTED_ANSWERS'
@@ -157,6 +163,12 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                 base64,
               },
             };
+            if (targetField === 'combinedText') {
+              const combinedJoined = `${ext.questionPaperText || ''}\n\n${ext.suggestedAnswersText || ''}`.trim();
+              next.combinedText = combinedJoined;
+              if (ext.questionPaperText) next.questionPaperText = ext.questionPaperText;
+              if (ext.suggestedAnswersText) next.suggestedAnswersText = ext.suggestedAnswersText;
+            }
             if (targetField === 'ALL' || targetField === 'questionPaperText') {
               if (ext.questionPaperText) next.questionPaperText = ext.questionPaperText;
             }
@@ -260,10 +272,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         questionPaperTitle: m.question_paper_title || '',
         questionPaperText: m.question_paper_text || '',
         suggestedAnswersText: m.suggested_answers_text || '',
+        combinedText: ((m.source_format || m.sourceFormat || '').toUpperCase() === 'COMBINED')
+          ? (m.question_paper_text === m.suggested_answers_text ? m.question_paper_text : `${m.question_paper_text || ''}\n\n${m.suggested_answers_text || ''}`.trim())
+          : '',
         markingSchemeText: m.marking_scheme_text || '',
         referenceGuidanceText: m.reference_guidance_text || '',
         amendmentsProvisionsText: m.amendments_provisions_text || '',
         effectiveDate: m.effective_date || new Date().toISOString().split('T')[0],
+        sourceFormat: ((m.source_format || m.sourceFormat || 'SEPARATE') as string).toUpperCase() === 'COMBINED' ? 'COMBINED' : 'SEPARATE',
         version: m.version || '1.0',
         status: m.status || 'ACTIVE',
       });
@@ -321,9 +337,23 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       alert('Please provide a title for the material.');
       return;
     }
-    if (!formData.questionPaperText.trim() || !formData.suggestedAnswersText.trim()) {
-      alert('Question Paper Text and Suggested Answers Text are required.');
-      return;
+
+    const isPyqCombined = formData.materialType === 'PYQ' && formData.sourceFormat === 'COMBINED';
+    const payload = { ...formData };
+    if (isPyqCombined) {
+      const combinedVal = (payload.combinedText || payload.questionPaperText || payload.suggestedAnswersText || '').trim();
+      if (!combinedVal) {
+        alert('Please provide the Combined Question Paper + Suggested Answers text or upload the file.');
+        return;
+      }
+      if (!payload.questionPaperText.trim()) payload.questionPaperText = combinedVal;
+      if (!payload.suggestedAnswersText.trim()) payload.suggestedAnswersText = combinedVal;
+      payload.combinedText = combinedVal;
+    } else {
+      if (!payload.questionPaperText.trim() || !payload.suggestedAnswersText.trim()) {
+        alert('Question Paper Text and Suggested Answers Text are required.');
+        return;
+      }
     }
 
     try {
@@ -331,13 +361,13 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       if (editingMaterial) {
         await apiRequest(`/api/admin/materials/${editingMaterial.id}`, {
           method: 'PUT',
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
         onNotify?.('Material updated successfully', 'success');
       } else {
         await apiRequest('/api/admin/materials', {
           method: 'POST',
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
         onNotify?.('New material added successfully', 'success');
       }
@@ -543,11 +573,16 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     </td>
 
                     <td className="py-3 px-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 inline-flex items-center gap-1">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 inline-flex items-center gap-1 flex-wrap">
                         <span>{m.material_type}</span>
                         {m.material_type === 'MTP' && (
                           <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-blue-100 text-blue-700">
                             S{m.mtp_series || m.mtpSeries || 1}
+                          </span>
+                        )}
+                        {m.material_type === 'PYQ' && (
+                          <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-purple-100 text-purple-700">
+                            {(m.source_format || m.sourceFormat) === 'COMBINED' ? 'Combined' : 'Separate'}
                           </span>
                         )}
                       </span>
@@ -658,11 +693,19 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
               {!loadingInspect && inspectFullText && (
                 <>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <div className={`grid grid-cols-2 ${inspectFullText.material_type === 'PYQ' ? 'sm:grid-cols-5' : 'sm:grid-cols-4'} gap-2 p-3 bg-slate-50 rounded-lg border border-slate-200`}>
                     <div>
                       <span className="text-[10px] text-slate-400 font-bold block">TYPE</span>
                       <span className="font-semibold text-slate-800">{inspectFullText.material_type}</span>
                     </div>
+                    {inspectFullText.material_type === 'PYQ' && (
+                      <div>
+                        <span className="text-[10px] text-purple-600 font-bold block">SOURCE FORMAT</span>
+                        <span className="font-semibold text-purple-800">
+                          {(inspectFullText.source_format || inspectFullText.sourceFormat) === 'COMBINED' ? 'Combined QP+Answers' : 'Separate QP & Answers'}
+                        </span>
+                      </div>
+                    )}
                     <div>
                       <span className="text-[10px] text-slate-400 font-bold block">SYLLABUS</span>
                       <span className="font-semibold text-slate-800">{inspectFullText.syllabus_version || 'New Scheme 2024'}</span>
@@ -767,8 +810,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             </div>
 
             <form onSubmit={handleSubmitForm} className="p-6 overflow-y-auto space-y-4 text-xs">
-              {/* Row 1: Level, Material Type, MTP Series (if MTP), Subject */}
-              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
+              {/* Row 1: Level, Material Type, MTP Series / PYQ Format, Subject */}
+              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' || formData.materialType === 'PYQ' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">CA Level *</label>
                   <select
@@ -819,6 +862,24 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     >
                       <option value={1}>Series 1 (Model Test 1)</option>
                       <option value={2}>Series 2 (Model Test 2)</option>
+                    </select>
+                  </div>
+                )}
+
+                {formData.materialType === 'PYQ' && (
+                  <div>
+                    <label className="block font-bold text-purple-700 mb-1 flex items-center justify-between">
+                      <span>Source Format *</span>
+                      <span className="text-[10px] text-purple-600 bg-purple-50 px-1 rounded">PYQ</span>
+                    </label>
+                    <select
+                      id="admin-form-pyq-source-format-select"
+                      value={formData.sourceFormat}
+                      onChange={(e) => setFormData({ ...formData, sourceFormat: e.target.value as 'SEPARATE' | 'COMBINED' })}
+                      className="w-full px-3 py-2 border border-purple-300 rounded-lg bg-purple-50/50 text-purple-800 font-semibold focus:outline-none focus:border-purple-600"
+                    >
+                      <option value="SEPARATE">A. Separate Question &amp; Suggested Answers</option>
+                      <option value="COMBINED">B. Combined Question Paper + Suggested Answers</option>
                     </select>
                   </div>
                 )}
@@ -956,100 +1017,187 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                 </div>
               </div>
 
-              {/* Question Paper Text */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-slate-700">
-                    1. Question Paper Text * (Ground Truth Questions)
-                  </label>
-                  <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer">
-                    {isExtractingDoc === 'questionPaperText' ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <FileUp className="w-3 h-3" />
-                    )}
-                    <span>{isExtractingDoc === 'questionPaperText' ? 'Extracting...' : 'Upload Question Paper PDF / TXT'}</span>
-                    <input
-                      type="file"
-                      accept=".pdf,.txt,.md"
-                      className="hidden"
-                      onChange={(e) => handleFileUpload(e, 'questionPaperText')}
-                      disabled={Boolean(isExtractingDoc)}
-                    />
-                  </label>
-                </div>
-                <textarea
-                  rows={4}
-                  value={formData.questionPaperText}
-                  onChange={(e) => setFormData({ ...formData, questionPaperText: e.target.value })}
-                  placeholder="Paste complete Question Paper text here, including question numbers and marks..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
-                  required
-                />
-              </div>
+              {/* COMBINED vs SEPARATE INPUTS */}
+              {formData.materialType === 'PYQ' && formData.sourceFormat === 'COMBINED' ? (
+                <div className="space-y-4">
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                    <span className="font-bold">Combined Format Mode:</span> Upload or paste a single document containing both Question Paper questions and Suggested Answers. The backend normalizer will partition this into separate reference packages. Marking Scheme remains a separate upload.
+                  </div>
 
-              {/* Suggested Answers Text */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-slate-700">
-                    2. Suggested Guideline Answers Text * (Ground Truth Answers)
-                  </label>
-                  <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 cursor-pointer">
-                    {isExtractingDoc === 'suggestedAnswersText' ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <FileUp className="w-3 h-3" />
-                    )}
-                    <span>{isExtractingDoc === 'suggestedAnswersText' ? 'Extracting...' : 'Upload Suggested Answers PDF / TXT'}</span>
-                    <input
-                      type="file"
-                      accept=".pdf,.txt,.md"
-                      className="hidden"
-                      onChange={(e) => handleFileUpload(e, 'suggestedAnswersText')}
-                      disabled={Boolean(isExtractingDoc)}
+                  {/* Combined Question Paper + Suggested Answers */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-slate-700">
+                        1. Combined Question Paper + Suggested Answers * (Questions & Model Solutions)
+                      </label>
+                      <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer">
+                        {isExtractingDoc === 'combinedText' ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileUp className="w-3 h-3" />
+                        )}
+                        <span>{isExtractingDoc === 'combinedText' ? 'Extracting...' : 'Upload Combined PYQ PDF / TXT'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'combinedText')}
+                          disabled={Boolean(isExtractingDoc)}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      rows={7}
+                      value={formData.combinedText || formData.questionPaperText}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormData({
+                          ...formData,
+                          combinedText: val,
+                          questionPaperText: val,
+                          suggestedAnswersText: val,
+                        });
+                      }}
+                      placeholder="Paste complete Combined Question Paper + Suggested Answers text here (or upload single combined PYQ PDF)..."
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
+                      required
                     />
-                  </label>
-                </div>
-                <textarea
-                  rows={5}
-                  value={formData.suggestedAnswersText}
-                  onChange={(e) => setFormData({ ...formData, suggestedAnswersText: e.target.value })}
-                  placeholder="Paste official suggested answers, journal entries, working notes, balance sheets, and conclusions..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
-                  required
-                />
-              </div>
+                  </div>
 
-              {/* Marking Scheme Text */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-slate-700">
-                    3. Marking Scheme Text (Step-by-Step Mark Breakdown)
-                  </label>
-                  <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded hover:bg-purple-100 cursor-pointer">
-                    {isExtractingDoc === 'markingSchemeText' ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <FileUp className="w-3 h-3" />
-                    )}
-                    <span>{isExtractingDoc === 'markingSchemeText' ? 'Extracting...' : 'Upload Marking Scheme PDF / TXT'}</span>
-                    <input
-                      type="file"
-                      accept=".pdf,.txt,.md"
-                      className="hidden"
-                      onChange={(e) => handleFileUpload(e, 'markingSchemeText')}
-                      disabled={Boolean(isExtractingDoc)}
+                  {/* Marking Scheme Text - ALWAYS SEPARATE */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <label className="font-bold text-slate-700">
+                          2. Marking Scheme Text (Step-by-Step Mark Breakdown)
+                        </label>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-700 border border-purple-200">
+                          Separate Input
+                        </span>
+                      </div>
+                      <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded hover:bg-purple-100 cursor-pointer">
+                        {isExtractingDoc === 'markingSchemeText' ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileUp className="w-3 h-3" />
+                        )}
+                        <span>{isExtractingDoc === 'markingSchemeText' ? 'Extracting...' : 'Upload Marking Scheme PDF / TXT'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'markingSchemeText')}
+                          disabled={Boolean(isExtractingDoc)}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={formData.markingSchemeText}
+                      onChange={(e) => setFormData({ ...formData, markingSchemeText: e.target.value })}
+                      placeholder="e.g. Step 1: 1 Mark for Calculation of Purchase Consideration; Step 2: 2 Marks for Journal Entries..."
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
                     />
-                  </label>
+                  </div>
                 </div>
-                <textarea
-                  rows={3}
-                  value={formData.markingSchemeText}
-                  onChange={(e) => setFormData({ ...formData, markingSchemeText: e.target.value })}
-                  placeholder="e.g. Step 1: 1 Mark for Calculation of Purchase Consideration; Step 2: 2 Marks for Journal Entries..."
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
-                />
-              </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Question Paper Text */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-slate-700">
+                        1. Question Paper Text * (Ground Truth Questions)
+                      </label>
+                      <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer">
+                        {isExtractingDoc === 'questionPaperText' ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileUp className="w-3 h-3" />
+                        )}
+                        <span>{isExtractingDoc === 'questionPaperText' ? 'Extracting...' : 'Upload Question Paper PDF / TXT'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'questionPaperText')}
+                          disabled={Boolean(isExtractingDoc)}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      rows={4}
+                      value={formData.questionPaperText}
+                      onChange={(e) => setFormData({ ...formData, questionPaperText: e.target.value })}
+                      placeholder="Paste complete Question Paper text here, including question numbers and marks..."
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  {/* Suggested Answers Text */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-slate-700">
+                        2. Suggested Guideline Answers Text * (Ground Truth Answers)
+                      </label>
+                      <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 cursor-pointer">
+                        {isExtractingDoc === 'suggestedAnswersText' ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileUp className="w-3 h-3" />
+                        )}
+                        <span>{isExtractingDoc === 'suggestedAnswersText' ? 'Extracting...' : 'Upload Suggested Answers PDF / TXT'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'suggestedAnswersText')}
+                          disabled={Boolean(isExtractingDoc)}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      rows={5}
+                      value={formData.suggestedAnswersText}
+                      onChange={(e) => setFormData({ ...formData, suggestedAnswersText: e.target.value })}
+                      placeholder="Paste official suggested answers, journal entries, working notes, balance sheets, and conclusions..."
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
+                      required
+                    />
+                  </div>
+
+                  {/* Marking Scheme Text */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-slate-700">
+                        3. Marking Scheme Text (Step-by-Step Mark Breakdown)
+                      </label>
+                      <label className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded hover:bg-purple-100 cursor-pointer">
+                        {isExtractingDoc === 'markingSchemeText' ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <FileUp className="w-3 h-3" />
+                        )}
+                        <span>{isExtractingDoc === 'markingSchemeText' ? 'Extracting...' : 'Upload Marking Scheme PDF / TXT'}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.md"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, 'markingSchemeText')}
+                          disabled={Boolean(isExtractingDoc)}
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={formData.markingSchemeText}
+                      onChange={(e) => setFormData({ ...formData, markingSchemeText: e.target.value })}
+                      placeholder="e.g. Step 1: 1 Mark for Calculation of Purchase Consideration; Step 2: 2 Marks for Journal Entries..."
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Examiner Comments / Guidance */}
               <div>
