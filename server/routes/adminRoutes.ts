@@ -48,6 +48,7 @@ import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../servic
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
+import { normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 
 const router = Router();
 
@@ -475,68 +476,7 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
           continue;
         }
         try {
-          db.prepare(`
-            INSERT INTO evaluation_materials (
-              id, level, material_type, mtp_series, source_format, combined_source_material_id,
-              question_material_id, suggested_answer_material_id, marking_scheme_material_id,
-              model_group, subject_key, subject_name,
-              paper, attempt, syllabus_version, chapter_topic,
-              question_paper_title, question_paper_text, suggested_answers_text,
-              marking_scheme_text, reference_guidance_text, amendments_provisions_text,
-              effective_date, version, status, source_type, admin_approved,
-              file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
-              created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET
-              level = excluded.level,
-              material_type = excluded.material_type,
-              mtp_series = excluded.mtp_series,
-              source_format = excluded.source_format,
-              combined_source_material_id = excluded.combined_source_material_id,
-              question_material_id = excluded.question_material_id,
-              suggested_answer_material_id = excluded.suggested_answer_material_id,
-              marking_scheme_material_id = excluded.marking_scheme_material_id,
-              model_group = excluded.model_group,
-              subject_key = excluded.subject_key,
-              subject_name = excluded.subject_name,
-              paper = excluded.paper,
-              attempt = excluded.attempt,
-              syllabus_version = excluded.syllabus_version,
-              chapter_topic = excluded.chapter_topic,
-              question_paper_title = excluded.question_paper_title,
-              question_paper_text = excluded.question_paper_text,
-              suggested_answers_text = excluded.suggested_answers_text,
-              marking_scheme_text = excluded.marking_scheme_text,
-              reference_guidance_text = excluded.reference_guidance_text,
-              amendments_provisions_text = excluded.amendments_provisions_text,
-              effective_date = excluded.effective_date,
-              version = excluded.version,
-              status = excluded.status,
-              source_type = excluded.source_type,
-              admin_approved = excluded.admin_approved,
-              file_id = excluded.file_id,
-              storage_path = excluded.storage_path,
-              file_name = excluded.file_name,
-              file_size = excluded.file_size,
-              checksum = excluded.checksum,
-              download_url = excluded.download_url,
-              updated_at = CURRENT_TIMESTAMP
-          `).run(
-            m.id, m.level, m.material_type, m.mtp_series !== undefined && m.mtp_series !== null ? Number(m.mtp_series) : null,
-            m.source_format || m.sourceFormat || 'SEPARATE',
-            m.combined_source_material_id || m.combinedSourceMaterialId || null,
-            m.question_material_id || m.questionMaterialId || null,
-            m.suggested_answer_material_id || m.suggestedAnswerMaterialId || null,
-            m.marking_scheme_material_id || m.markingSchemeMaterialId || null,
-            m.model_group || null, m.subject_key, m.subject_name,
-            m.paper || 'Paper 1', m.attempt || 'Current', m.syllabus_version || 'New Scheme 2024',
-            m.chapter_topic || null, m.question_paper_title, m.question_paper_text || '',
-            m.suggested_answers_text || '', m.marking_scheme_text || '', m.reference_guidance_text || null,
-            m.amendments_provisions_text || null, m.effective_date || null, m.version || '1.0',
-            m.status || 'ACTIVE', m.source_type || 'ADMIN', m.admin_approved !== undefined ? m.admin_approved : 1,
-            m.file_id || null, m.storage_path || null, m.file_name || null, m.file_size || null, m.checksum || null, m.download_url || null,
-            m.uploaded_by || 'ADMIN', m.created_at || null
-          );
+          syncMaterialRowToSqlite(m);
         } catch {}
       }
     } catch (syncErr) {
@@ -578,8 +518,11 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
       params.push(sourceFormatParam);
     }
     if (seriesParam && seriesParam !== 'ALL') {
-      query += ' AND (mtp_series = ? OR mtp_series = ?)';
-      params.push(Number(seriesParam), String(seriesParam));
+      const normSeries = normalizeMtpSeries(seriesParam);
+      if (normSeries) {
+        query += ' AND (mtp_series = ? OR mtp_series = ? OR CAST(mtp_series AS REAL) = ?)';
+        params.push(normSeries, String(normSeries), normSeries);
+      }
     }
     if (subjectKey && subjectKey !== 'ALL') {
       query += ' AND subject_key = ?';
@@ -699,14 +642,10 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       attachedFile,
     } = req.body;
 
-    const parsedMtpSeries = (mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '')
-      ? Number(mtpSeries)
-      : (mtp_series !== undefined && mtp_series !== null && mtp_series !== '')
-        ? Number(mtp_series)
-        : undefined;
+    const parsedMtpSeries = normalizeMtpSeries(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
 
     if (materialType === 'MTP') {
-      if (!parsedMtpSeries || (parsedMtpSeries !== 1 && parsedMtpSeries !== 2)) {
+      if (!parsedMtpSeries) {
         return res.status(400).json({ error: 'Please select an MTP Series (Series 1 or Series 2) to continue.' });
       }
     }
@@ -963,11 +902,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       attachedFile,
     } = req.body;
 
-    const parsedMtpSeries = (mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '')
-      ? Number(mtpSeries)
-      : (mtp_series !== undefined && mtp_series !== null && mtp_series !== '')
-        ? Number(mtp_series)
-        : undefined;
+    const parsedMtpSeries = (mtpSeries !== undefined || mtp_series !== undefined)
+      ? normalizeMtpSeries(mtpSeries !== undefined ? mtpSeries : mtp_series)
+      : undefined;
 
     let fileId = existing.file_id;
     let storagePath = existing.storage_path;

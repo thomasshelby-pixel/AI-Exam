@@ -11,6 +11,7 @@ import {
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance } from './studentCreditService.js';
+import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
 
 /**
  * Asynchronously mirrors an inserted or updated record from SQLite to Cloud Firestore.
@@ -229,54 +230,15 @@ export async function hydrateFromFirestore(): Promise<void> {
     for (const m of materials) {
       if (tombstoneSet.has(`evaluation_materials_${m.id}`) || tombstoneSet.has(`materials_${m.id}`)) continue;
       try {
-        db.prepare(`
-          INSERT INTO evaluation_materials (
-            id, level, material_type, model_group, subject_key, subject_name,
-            paper, attempt, syllabus_version, chapter_topic,
-            question_paper_title, question_paper_text, suggested_answers_text,
-            marking_scheme_text, reference_guidance_text, amendments_provisions_text,
-            effective_date, version, status, source_type, admin_approved,
-            file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-          ON CONFLICT(id) DO UPDATE SET
-            level = excluded.level,
-            material_type = excluded.material_type,
-            model_group = excluded.model_group,
-            subject_key = excluded.subject_key,
-            subject_name = excluded.subject_name,
-            paper = excluded.paper,
-            attempt = excluded.attempt,
-            syllabus_version = excluded.syllabus_version,
-            chapter_topic = excluded.chapter_topic,
-            question_paper_title = excluded.question_paper_title,
-            question_paper_text = excluded.question_paper_text,
-            suggested_answers_text = excluded.suggested_answers_text,
-            marking_scheme_text = excluded.marking_scheme_text,
-            reference_guidance_text = excluded.reference_guidance_text,
-            amendments_provisions_text = excluded.amendments_provisions_text,
-            effective_date = excluded.effective_date,
-            version = excluded.version,
-            status = excluded.status,
-            source_type = excluded.source_type,
-            admin_approved = excluded.admin_approved,
-            file_id = excluded.file_id,
-            storage_path = excluded.storage_path,
-            file_name = excluded.file_name,
-            file_size = excluded.file_size,
-            checksum = excluded.checksum,
-            download_url = excluded.download_url,
-            updated_at = CURRENT_TIMESTAMP
-        `).run(
-          m.id, m.level, m.material_type, m.model_group || null, m.subject_key, m.subject_name,
-          m.paper || 'Paper 1', m.attempt || 'Current', m.syllabus_version || 'New Scheme 2024',
-          m.chapter_topic || null, m.question_paper_title, m.question_paper_text,
-          m.suggested_answers_text, m.marking_scheme_text, m.reference_guidance_text || null,
-          m.amendments_provisions_text || null, m.effective_date || null, m.version || '1.0',
-          m.status || 'ACTIVE', m.source_type || 'ADMIN', m.admin_approved !== undefined ? m.admin_approved : 1,
-          m.file_id || null, m.storage_path || null, m.file_name || null, m.file_size || null, m.checksum || null, m.download_url || null,
-          m.uploaded_by || 'ADMIN', m.created_at || null
-        );
+        syncMaterialRowToSqlite(m);
+
+        // Normalize non-canonical mtp_series in Cloud Firestore as well (e.g. "1.0" -> 1, "2.0" -> 2)
+        const canonicalSeries = normalizeMtpSeries(m.mtp_series);
+        if (m.material_type === 'MTP' && canonicalSeries !== null && m.mtp_series !== canonicalSeries && m.mtp_series !== String(canonicalSeries)) {
+          setFirestoreDoc('evaluation_materials', m.id, { mtp_series: canonicalSeries }).catch((err) => {
+            console.warn(`[FirestoreSync] Failed to normalize mtp_series for ${m.id} in Firestore:`, err);
+          });
+        }
       } catch (matErr) {
         console.warn(`[FirestoreSync] Failed to hydrate material ${m.id}:`, matErr);
       }

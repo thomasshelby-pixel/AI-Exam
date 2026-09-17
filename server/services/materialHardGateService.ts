@@ -13,6 +13,7 @@
 
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { normalizeMtpSeries } from './materialLookupService.js';
 
 export interface MaterialManifestItem {
   materialId: string;
@@ -121,6 +122,7 @@ export interface MaterialGateRequest {
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
   instituteMaterialId?: string;
+  preloadedMaterial?: any;
 }
 
 function computeSha256(content: string): string {
@@ -140,20 +142,17 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
 
   let normalizedSeries: 1 | 2 | undefined = undefined;
   if (isMtp) {
-    if (request.mtpSeries === undefined || request.mtpSeries === null || String(request.mtpSeries).trim() === '') {
+    const norm = normalizeMtpSeries(request.mtpSeries);
+    if (!norm) {
       throw new Error('Please select an MTP Series (Series 1 or Series 2) to continue.');
     }
-    const parsed = Number(request.mtpSeries);
-    if (parsed !== 1 && parsed !== 2) {
-      throw new Error('Invalid MTP Series selected. Allowed options are Series 1 or Series 2.');
-    }
-    normalizedSeries = parsed as 1 | 2;
+    normalizedSeries = norm;
   }
 
-  let rawMaterial: any = null;
+  let rawMaterial: any = request.preloadedMaterial || null;
   let materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
-  if (isInstituteMode) {
+  if (isInstituteMode && !rawMaterial) {
     if (request.instituteMaterialId) {
       rawMaterial = db.prepare(`
         SELECT id, title as question_paper_title, level, subject_key, subject_name, paper,
@@ -166,7 +165,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       `).get(request.instituteMaterialId, request.instituteId);
 
       if (rawMaterial && isMtp && normalizedSeries) {
-        if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
+        if (normalizeMtpSeries(rawMaterial.mtp_series) !== normalizedSeries) {
           throw new Error('TAMPER_DETECTED: Requested material ID does not match selected MTP Series.');
         }
       }
@@ -184,13 +183,13 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       `;
       const instParams: any[] = [request.instituteId, normLevel, subjectKey];
       if (isMtp && normalizedSeries) {
-        instQuery += ' AND (mtp_series = ? OR mtp_series = ?)';
-        instParams.push(normalizedSeries, String(normalizedSeries));
+        instQuery += ' AND (mtp_series = ? OR mtp_series = ? OR CAST(mtp_series AS REAL) = ?)';
+        instParams.push(normalizedSeries, String(normalizedSeries), normalizedSeries);
       }
       instQuery += ' ORDER BY created_at DESC LIMIT 1';
       rawMaterial = db.prepare(instQuery).get(...instParams);
     }
-  } else {
+  } else if (!rawMaterial) {
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
@@ -222,8 +221,8 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     }
 
     if (isMtp && normalizedSeries) {
-      query += ' AND (mtp_series = ? OR mtp_series = ?)';
-      params.push(normalizedSeries, String(normalizedSeries));
+      query += ' AND (mtp_series = ? OR mtp_series = ? OR CAST(mtp_series AS REAL) = ?)';
+      params.push(normalizedSeries, String(normalizedSeries), normalizedSeries);
     }
 
     if (isPyq && request.sourceFormat && request.sourceFormat !== 'ALL') {

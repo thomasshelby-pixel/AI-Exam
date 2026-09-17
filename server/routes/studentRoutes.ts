@@ -26,6 +26,7 @@ import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/m
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
 import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
+import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
 
 const router = Router();
 
@@ -199,49 +200,30 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
     }
 
     // 1. Failure Condition: Load ICAI suggested answers & marking scheme from verified official materials
-    let materialQuery = `
-      SELECT * FROM evaluation_materials
-      WHERE level = ? AND subject_key = ? AND status = 'ACTIVE'
-      AND source_type = 'ADMIN' AND admin_approved = 1
-      AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
-      AND suggested_answers_text IS NOT NULL AND length(trim(suggested_answers_text)) > 20
-    `;
-    const materialParams: any[] = [level, subjectKey];
-
-    if (attempt && attempt !== 'Current' && attempt !== 'All') {
-      materialQuery += " AND (attempt = ? OR attempt = 'All')";
-      materialParams.push(attempt);
-    }
-    if (paper && paper !== 'All') {
-      materialQuery += " AND (paper = ? OR paper = 'All')";
-      materialParams.push(paper);
-    }
-    if (materialType && materialType !== 'ALL') {
-      materialQuery += " AND (material_type = ? OR material_type = 'ALL')";
-      materialParams.push(materialType);
-    }
-
+    let parsedMtpSeries: number | undefined = undefined;
     if (materialType === 'MTP') {
-      const parsedMtpSeries = (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '') 
-        ? Number(req.body.mtpSeries) 
-        : (req.body.mtp_series !== undefined && req.body.mtp_series !== null && req.body.mtp_series !== '') 
-          ? Number(req.body.mtp_series) 
-          : undefined;
-
-      if (!parsedMtpSeries || (parsedMtpSeries !== 1 && parsedMtpSeries !== 2)) {
+      const rawSeries = req.body.mtpSeries !== undefined ? req.body.mtpSeries : req.body.mtp_series;
+      const norm = normalizeMtpSeries(rawSeries);
+      if (!norm) {
         return res.status(400).json({
           success: false,
           code: 'MISSING_MTP_SERIES',
           error: 'Please select an MTP Series (Series 1 or Series 2) to continue.',
         });
       }
-
-      materialQuery += ' AND (mtp_series = ? OR mtp_series = ?)';
-      materialParams.push(parsedMtpSeries, String(parsedMtpSeries));
+      parsedMtpSeries = norm;
     }
 
-    materialQuery += ' ORDER BY created_at DESC LIMIT 1';
-    const referenceMaterial = db.prepare(materialQuery).get(...materialParams) as any;
+    const referenceMaterial = await findAuthoritativeMaterialWithFallback({
+      level,
+      subjectKey,
+      attempt,
+      paper,
+      materialType,
+      mtpSeries: parsedMtpSeries,
+      minTextLength: 20,
+      isAdminApprovedRequired: true,
+    });
 
     if (!referenceMaterial) {
       return res.status(422).json({
@@ -577,6 +559,24 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
     }
 
     // 4. Authoritative Reference Material Hard-Gate
+    let preloadedMat: any = null;
+    if (requestedEvalSource !== 'INSTITUTE') {
+      try {
+        preloadedMat = await findAuthoritativeMaterialWithFallback({
+          level,
+          subjectKey,
+          attempt,
+          paper: req.body.paper,
+          materialType,
+          mtpSeries: parsedMtpSeries,
+          sourceFormat,
+          minTextLength: 20,
+        });
+      } catch (lookupErr) {
+        console.warn('[StudentRoutes] Preloaded material lookup error:', lookupErr);
+      }
+    }
+
     let verifiedPackage: VerifiedReferencePackage;
     try {
       verifiedPackage = enforceMaterialHardGate({
@@ -593,6 +593,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
         evaluationSource: requestedEvalSource,
         instituteId: resolvedSponsoringInstituteId || undefined,
         instituteMaterialId,
+        preloadedMaterial: preloadedMat || undefined,
       });
     } catch (gateErr: any) {
       return res.status(400).json({
