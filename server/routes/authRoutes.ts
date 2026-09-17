@@ -1439,6 +1439,11 @@ router.post('/reset-password', async (req: Request, res: Response) => {
       user.id
     );
 
+    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+    if (updatedUser) {
+      syncRecordToFirestore('users', user.id, updatedUser).catch(() => {});
+    }
+
     // Mark token as used
     db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(resetRecord.id);
 

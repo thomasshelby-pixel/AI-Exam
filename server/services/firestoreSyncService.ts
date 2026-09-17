@@ -99,6 +99,8 @@ export async function hydrateFromFirestore(): Promise<void> {
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
+              WHEN users.role = 'SUPER_ADMIN' AND users.password_hash IS NOT NULL
+              THEN users.password_hash
               WHEN excluded.password_hash IS NOT NULL AND excluded.password_hash NOT IN ('HASHED_PASS', 'PERSISTED_HASH', '')
               THEN excluded.password_hash
               ELSE users.password_hash
@@ -647,6 +649,15 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
           await setFirestoreDoc('student_profiles', bu.id, profile);
         }
         console.log(`[FirestoreSync] Seeded baseline user ${bu.email} (${bu.id}) to Cloud Firestore.`);
+      } else if (bu.role === 'SUPER_ADMIN') {
+        // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
+        await setFirestoreDoc('users', bu.id, {
+          password_hash: bu.password_hash,
+          status: 'ACTIVE',
+          role: 'SUPER_ADMIN',
+          updated_at: new Date().toISOString()
+        });
+        console.log(`[FirestoreSync] Synchronized SUPER_ADMIN ${bu.email} credentials to Cloud Firestore.`);
       }
     }
 

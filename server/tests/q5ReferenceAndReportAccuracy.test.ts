@@ -8,9 +8,9 @@ console.log('================================================================');
 console.log('--- RUNNING Q5 REFERENCE GROUNDING & REPORT ACCURACY TEST ---');
 console.log('================================================================');
 
-// 1. Fetch official evaluation materials for CA Inter Taxation
+// 1. Fetch official evaluation materials for CA Inter Taxation (Series 1 contains the Q5 Cloak Room scenario)
 const mat = db
-  .prepare("SELECT * FROM evaluation_materials WHERE subject_key = 'inter_taxation' LIMIT 1")
+  .prepare("SELECT * FROM evaluation_materials WHERE subject_key = 'inter_taxation' AND (question_paper_title LIKE '%Series 1%' OR question_paper_title LIKE '%Series-1%') LIMIT 1")
   .get() as any;
 
 assert(mat, 'Evaluation materials for inter_taxation must exist');

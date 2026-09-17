@@ -2161,6 +2161,11 @@ router.post('/change-password', (req: AuthRequest, res: Response) => {
       WHERE id = ?
     `).run(newHash, studentId);
 
+    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(studentId) as any;
+    if (updatedUser) {
+      syncRecordToFirestore('users', studentId, updatedUser).catch(() => {});
+    }
+
     // Audit notification
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
