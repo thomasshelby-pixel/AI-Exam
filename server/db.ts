@@ -546,6 +546,33 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_recheck_eval ON recheck_requests(evaluation_id);
     CREATE INDEX IF NOT EXISTS idx_recheck_student ON recheck_requests(student_id);
 
+    CREATE TABLE IF NOT EXISTS evaluation_versions (
+      id TEXT PRIMARY KEY,
+      evaluation_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      version_tag TEXT NOT NULL,
+      parent_version_id TEXT,
+      status TEXT NOT NULL,
+      total_marks REAL NOT NULL,
+      maximum_marks REAL NOT NULL,
+      percentage REAL NOT NULL,
+      grade TEXT,
+      result_json TEXT NOT NULL,
+      amendment_reason TEXT,
+      amended_questions_json TEXT,
+      review_resolution TEXT,
+      admin_id TEXT,
+      admin_email TEXT,
+      checked_copy_file_id TEXT,
+      checked_copy_storage_path TEXT,
+      report_file_id TEXT,
+      report_storage_path TEXT,
+      audit_metadata_json TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_eval_versions_eval_id ON evaluation_versions(evaluation_id);
+
     CREATE TABLE IF NOT EXISTS email_audit_logs (
       id TEXT PRIMARY KEY,
       admin_id TEXT,
@@ -666,6 +693,13 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'report_status', "TEXT DEFAULT 'PENDING'");
   addColumnIfNotExists('evaluations', 'report_file_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'checked_copy_file_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'current_evaluation_version_id', "TEXT DEFAULT 'v1'");
+  addColumnIfNotExists('evaluations', 'evaluation_version', "TEXT DEFAULT 'v1'");
+  addColumnIfNotExists('evaluations', 'admin_review_status', 'TEXT');
+  addColumnIfNotExists('evaluations', 'admin_reviewed_at', 'TEXT');
+  addColumnIfNotExists('evaluations', 'admin_reviewer_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'admin_reviewer_email', 'TEXT');
+  addColumnIfNotExists('evaluations', 'admin_review_notes', 'TEXT');
   addColumnIfNotExists('evaluations', 'updated_at', 'TEXT');
 
   // Ensure recheck_requests has all enhanced workflow columns

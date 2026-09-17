@@ -10,6 +10,7 @@ import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
 import { AdminLegalSection } from '../../components/admin/AdminLegalSection.js';
 import { AdminPricingSection } from './AdminPricingSection.js';
 import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
+import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -2028,6 +2029,20 @@ export const AdminPortal: React.FC = () => {
                   evalClassificationFilter !== 'ALL' ||
                   evalSourceFilter !== 'ALL';
 
+                // Check for dedicated review subroute: /admin/evaluations/:id/review
+                if (pathParts.length >= 4 && pathParts[3] === 'review') {
+                  const reviewEvaluationId = pathParts[2];
+                  return (
+                    <AdminEvaluationReviewPage
+                      evaluationId={reviewEvaluationId}
+                      onBack={() => {
+                        navigate('/admin/evaluations');
+                        loadActiveSectionData();
+                      }}
+                    />
+                  );
+                }
+
                 return (
                   <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2092,6 +2107,7 @@ export const AdminPortal: React.FC = () => {
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-hidden focus:border-blue-500 cursor-pointer"
                           >
                             <option value="ALL">All Statuses</option>
+                            <option value="NEEDS_REVIEW">Needs Review</option>
                             <option value="COMPLETED">Completed</option>
                             <option value="PROCESSING">Processing</option>
                             <option value="FAILED">Failed</option>
@@ -2313,6 +2329,8 @@ export const AdminPortal: React.FC = () => {
                                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                           : ev.status === 'FAILED'
                                           ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                          : ev.status === 'NEEDS_REVIEW'
+                                          ? 'bg-amber-100 text-amber-900 border border-amber-300 font-bold'
                                           : 'bg-amber-50 text-amber-700 border border-amber-200'
                                       }`}
                                     >
@@ -2325,9 +2343,21 @@ export const AdminPortal: React.FC = () => {
                                     {new Date(ev.created_at).toLocaleDateString()}
                                   </td>
 
-                                  {/* Actions: View & Delete */}
+                                  {/* Actions: Review, View & Delete */}
                                   <td className="py-2.5 px-3 text-right">
                                     <div className="flex items-center justify-end gap-1.5">
+                                      {/* Review Action for NEEDS_REVIEW */}
+                                      {ev.status === 'NEEDS_REVIEW' && (
+                                        <button
+                                          onClick={() => navigate(`/admin/evaluations/${ev.id}/review`)}
+                                          className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                                          title="Review & Amend Evaluation"
+                                        >
+                                          <ShieldCheck className="w-3.5 h-3.5" />
+                                          Review
+                                        </button>
+                                      )}
+
                                       {/* View Details Action */}
                                       <button
                                         onClick={() => handleViewEvaluationDetails(ev.id)}

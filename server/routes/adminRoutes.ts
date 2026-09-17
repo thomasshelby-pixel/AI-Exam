@@ -2357,6 +2357,758 @@ router.post('/evaluations/bulk-delete', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Helper: Calculate ICAI Grade from percentage
+function computeIcaIGrade(percentage: number): string {
+  if (percentage >= 75) return 'Distinction (A+)';
+  if (percentage >= 60) return 'First Class (A)';
+  if (percentage >= 50) return 'Second Class (B)';
+  if (percentage >= 40) return 'Pass (C)';
+  return 'Needs Improvement (F)';
+}
+
+// Helper: Retrieve or synthesize original student submission PDF buffer for artifact regeneration
+async function getOriginalPdfBufferForAdmin(evaluationId: string, evalRecord: any): Promise<Buffer> {
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  const origPath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+  if (fs.existsSync(origPath)) {
+    return fs.readFileSync(origPath);
+  }
+  const persistent = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
+  if (persistent?.buffer) {
+    return persistent.buffer;
+  }
+  let rJson: any = {};
+  try {
+    rJson = JSON.parse(evalRecord.result_json || '{}');
+  } catch {}
+  return await generateOriginalSubmissionPdf({
+    id: evalRecord.id,
+    studentName: evalRecord.student_name || 'CA Student',
+    level: evalRecord.level,
+    subjectName: evalRecord.subject_name,
+    paper: evalRecord.paper,
+    attempt: evalRecord.attempt,
+    checkingMode: evalRecord.checking_mode,
+    totalMarks: evalRecord.total_marks,
+    maximumMarks: evalRecord.maximum_marks,
+    percentage: evalRecord.percentage,
+    grade: evalRecord.grade,
+    createdAt: evalRecord.created_at,
+  }, rJson);
+}
+
+// 15a. Admin Review & Amendment Workflow: Fetch Evaluation Details for Review
+router.get('/evaluations/:id/review', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const evaluation = db.prepare(`
+      SELECT e.*,
+             u.full_name as student_name,
+             u.email as student_email,
+             p.icai_registration_number,
+             i.name as institute_name
+      FROM evaluations e
+      JOIN users u ON u.id = e.student_id
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
+      WHERE e.id = ?
+    `).get(evaluationId) as any;
+
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    let resultJson: any = null;
+    if (evaluation.result_json) {
+      try {
+        resultJson = JSON.parse(evaluation.result_json);
+      } catch (err) {
+        console.warn('Failed to parse result_json for review:', err);
+      }
+    }
+
+    // Fetch immutable version history
+    const versions = db.prepare(`
+      SELECT id, evaluation_id, version_number, version_tag, parent_version_id,
+             status, total_marks, maximum_marks, percentage, grade,
+             amendment_reason, amended_questions_json, review_resolution,
+             admin_id, admin_email, created_at
+      FROM evaluation_versions
+      WHERE evaluation_id = ?
+      ORDER BY version_number ASC
+    `).all(evaluationId);
+
+    // Check availability of artifacts
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    const origPath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+    const checkedPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+    const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+
+    const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`));
+    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`));
+    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`));
+
+    return res.json({
+      evaluation,
+      resultJson,
+      activeVersion: evaluation.current_evaluation_version_id || evaluation.evaluation_version || 'v1',
+      versions,
+      artifacts: {
+        hasOriginal,
+        hasCheckedCopy,
+        hasReport,
+        originalUrl: `/api/admin/evaluations/${evaluationId}/artifacts/original`,
+        checkedCopyUrl: `/api/admin/evaluations/${evaluationId}/artifacts/checked-copy`,
+        reportUrl: `/api/admin/evaluations/${evaluationId}/artifacts/report`,
+      },
+    });
+  } catch (error: any) {
+    console.error('Get evaluation review error:', error);
+    return res.status(500).json({ error: 'Failed to load evaluation review details' });
+  }
+});
+
+// 15b. Stream/Download Immutable Original Student Submission
+router.get('/evaluations/:id/artifacts/original', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const isInline = req.query.inline === 'true' || req.query.view === 'true';
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+
+    let buffer: Buffer | null = null;
+    let contentType = 'application/pdf';
+
+    if (fs.existsSync(originalFilePath)) {
+      buffer = fs.readFileSync(originalFilePath);
+    } else {
+      const persistent = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
+      if (persistent?.buffer) {
+        buffer = persistent.buffer;
+      } else {
+        // Check alternate image extensions
+        for (const ext of ['.png', '.jpg', '.jpeg']) {
+          const imgPath = path.join(uploadsDir, `${evaluationId}_original${ext}`);
+          if (fs.existsSync(imgPath)) {
+            buffer = fs.readFileSync(imgPath);
+            contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
+            break;
+          }
+        }
+      }
+    }
+
+    if (!buffer) {
+      const evalRecord = db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
+      if (evalRecord) {
+        buffer = await getOriginalPdfBufferForAdmin(evaluationId, evalRecord);
+      }
+    }
+
+    if (!buffer) {
+      return res.status(404).json({ error: 'Original answer sheet file not found' });
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${isInline ? 'inline' : 'attachment'}; filename="Original_${evaluationId}.pdf"`);
+    return res.send(buffer);
+  } catch (error: any) {
+    console.error('Stream original artifact error:', error);
+    return res.status(500).json({ error: 'Failed to load original answer sheet' });
+  }
+});
+
+// 15c. Stream/Download Checked Copy PDF (supports ?version=v1 or ?version=v2)
+router.get('/evaluations/:id/artifacts/checked-copy', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const isInline = req.query.inline === 'true' || req.query.view === 'true';
+    const requestedVersion = (req.query.version as string || '').toLowerCase();
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+
+    let buffer: Buffer | null = null;
+
+    if (requestedVersion === 'v1') {
+      const v1Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v1.pdf`);
+      if (fs.existsSync(v1Path)) {
+        buffer = fs.readFileSync(v1Path);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_checked_copy_v1`, `${evaluationId}_checked_copy_v1.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    } else if (requestedVersion === 'v2') {
+      const v2Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v2.pdf`);
+      if (fs.existsSync(v2Path)) {
+        buffer = fs.readFileSync(v2Path);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_checked_copy_v2`, `${evaluationId}_checked_copy_v2.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    }
+
+    if (!buffer) {
+      const activePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+      if (fs.existsSync(activePath)) {
+        buffer = fs.readFileSync(activePath);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    }
+
+    if (!buffer) {
+      // Dynamically generate if result_json exists
+      const evalRecord = db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
+      if (evalRecord && evalRecord.result_json) {
+        const rJson = JSON.parse(evalRecord.result_json);
+        const origBuf = await getOriginalPdfBufferForAdmin(evaluationId, evalRecord);
+        buffer = await generateCheckedCopyPdf({
+          id: evalRecord.id,
+          studentName: evalRecord.student_name || 'CA Student',
+          level: evalRecord.level,
+          subjectName: evalRecord.subject_name,
+          paper: evalRecord.paper,
+          attempt: evalRecord.attempt,
+          checkingMode: evalRecord.checking_mode,
+          totalMarks: evalRecord.total_marks,
+          maximumMarks: evalRecord.maximum_marks,
+          percentage: evalRecord.percentage,
+          grade: evalRecord.grade,
+          createdAt: evalRecord.created_at,
+          version: evalRecord.evaluation_version || 'v1',
+        }, rJson, origBuf);
+      }
+    }
+
+    if (!buffer) {
+      return res.status(404).json({ error: 'Checked copy file not found' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${isInline ? 'inline' : 'attachment'}; filename="Checked_Copy_${evaluationId}${requestedVersion ? `_${requestedVersion}` : ''}.pdf"`);
+    return res.send(buffer);
+  } catch (error: any) {
+    console.error('Stream checked copy artifact error:', error);
+    return res.status(500).json({ error: 'Failed to load checked copy' });
+  }
+});
+
+// 15d. Stream/Download Detailed Report PDF (supports ?version=v1 or ?version=v2)
+router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const isInline = req.query.inline === 'true' || req.query.view === 'true';
+    const requestedVersion = (req.query.version as string || '').toLowerCase();
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+
+    let buffer: Buffer | null = null;
+
+    if (requestedVersion === 'v1') {
+      const v1Path = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+      if (fs.existsSync(v1Path)) {
+        buffer = fs.readFileSync(v1Path);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_report_v1`, `${evaluationId}_report_v1.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    } else if (requestedVersion === 'v2') {
+      const v2Path = path.join(uploadsDir, `${evaluationId}_report_v2.pdf`);
+      if (fs.existsSync(v2Path)) {
+        buffer = fs.readFileSync(v2Path);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_report_v2`, `${evaluationId}_report_v2.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    }
+
+    if (!buffer) {
+      const activePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+      if (fs.existsSync(activePath)) {
+        buffer = fs.readFileSync(activePath);
+      } else {
+        const p = await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`);
+        if (p?.buffer) buffer = p.buffer;
+      }
+    }
+
+    if (!buffer) {
+      const evalRecord = db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
+      if (evalRecord && evalRecord.result_json) {
+        const rJson = JSON.parse(evalRecord.result_json);
+        buffer = await generateDetailedReportPdf({
+          id: evalRecord.id,
+          studentName: evalRecord.student_name || 'CA Student',
+          level: evalRecord.level,
+          subjectName: evalRecord.subject_name,
+          paper: evalRecord.paper,
+          attempt: evalRecord.attempt,
+          checkingMode: evalRecord.checking_mode,
+          totalMarks: evalRecord.total_marks,
+          maximumMarks: evalRecord.maximum_marks,
+          percentage: evalRecord.percentage,
+          grade: evalRecord.grade,
+          createdAt: evalRecord.created_at,
+          version: evalRecord.evaluation_version || 'v1',
+        }, rJson);
+      }
+    }
+
+    if (!buffer) {
+      return res.status(404).json({ error: 'Report file not found' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${isInline ? 'inline' : 'attachment'}; filename="Report_${evaluationId}${requestedVersion ? `_${requestedVersion}` : ''}.pdf"`);
+    return res.send(buffer);
+  } catch (error: any) {
+    console.error('Stream report artifact error:', error);
+    return res.status(500).json({ error: 'Failed to load evaluation report' });
+  }
+});
+
+// 15e. Admin Review & Amendment: Save & Finalize Review Workflow
+router.post('/evaluations/:id/review/finalize', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const { amendments, overallReason, affirmAsIs, recheckRequestId } = req.body || {};
+
+    if (!overallReason || typeof overallReason !== 'string' || overallReason.trim().length < 3) {
+      return res.status(400).json({ error: 'Please provide a clear reason / reviewer justification for this review action.' });
+    }
+
+    const evalRecord = db.prepare(`
+      SELECT e.*,
+             u.full_name as student_name,
+             u.email as student_email
+      FROM evaluations e
+      JOIN users u ON u.id = e.student_id
+      WHERE e.id = ?
+    `).get(evaluationId) as any;
+
+    if (!evalRecord) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    let currentResultJson: any = null;
+    try {
+      currentResultJson = JSON.parse(evalRecord.result_json || '{}');
+    } catch {
+      return res.status(500).json({ error: 'Invalid evaluation result data structure.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+    // Step 1: Ensure Immutable Baseline V1 is preserved
+    const v1Id = `${evaluationId}_v1`;
+    const existingV1 = db.prepare('SELECT id FROM evaluation_versions WHERE id = ?').get(v1Id);
+    if (!existingV1) {
+      const v1CheckedFileId = `${evaluationId}_checked_copy_v1`;
+      const v1ReportFileId = `${evaluationId}_report_v1`;
+
+      db.prepare(`
+        INSERT INTO evaluation_versions (
+          id, evaluation_id, version_number, version_tag, parent_version_id,
+          status, total_marks, maximum_marks, percentage, grade,
+          result_json, amendment_reason, amended_questions_json, review_resolution,
+          admin_id, admin_email, checked_copy_file_id, report_file_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        v1Id,
+        evaluationId,
+        1,
+        'v1',
+        null,
+        evalRecord.status,
+        evalRecord.total_marks ?? 0,
+        evalRecord.maximum_marks ?? 100,
+        evalRecord.percentage ?? 0,
+        evalRecord.grade || null,
+        evalRecord.result_json || '{}',
+        null,
+        null,
+        'INITIAL_AI_EVALUATION',
+        null,
+        null,
+        v1CheckedFileId,
+        v1ReportFileId,
+        evalRecord.created_at || nowIso
+      );
+
+      // Sync V1 to Firestore
+      await syncRecordToFirestore('evaluation_versions', v1Id, {
+        id: v1Id,
+        evaluation_id: evaluationId,
+        version_number: 1,
+        version_tag: 'v1',
+        parent_version_id: null,
+        status: evalRecord.status,
+        total_marks: evalRecord.total_marks,
+        maximum_marks: evalRecord.maximum_marks,
+        percentage: evalRecord.percentage,
+        grade: evalRecord.grade,
+        result_json: evalRecord.result_json,
+        review_resolution: 'INITIAL_AI_EVALUATION',
+        created_at: evalRecord.created_at || nowIso,
+      });
+
+      // Preserve existing active files as V1 backup
+      const activeCheckedPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+      const v1CheckedPath = path.join(uploadsDir, `${evaluationId}_checked_copy_v1.pdf`);
+      if (fs.existsSync(activeCheckedPath) && !fs.existsSync(v1CheckedPath)) {
+        try {
+          fs.copyFileSync(activeCheckedPath, v1CheckedPath);
+          const v1CheckedBuf = fs.readFileSync(v1CheckedPath);
+          await savePersistentFile(`${evaluationId}_checked_copy_v1`, `${evaluationId}_checked_copy_v1.pdf`, 'application/pdf', v1CheckedBuf, 'EVALUATION_CHECKED_COPY');
+        } catch (copyErr) {
+          console.warn('[AdminReview] Warning copying V1 checked copy:', copyErr);
+        }
+      }
+
+      const activeReportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+      const v1ReportPath = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+      if (fs.existsSync(activeReportPath) && !fs.existsSync(v1ReportPath)) {
+        try {
+          fs.copyFileSync(activeReportPath, v1ReportPath);
+          const v1ReportBuf = fs.readFileSync(v1ReportPath);
+          await savePersistentFile(`${evaluationId}_report_v1`, `${evaluationId}_report_v1.pdf`, 'application/pdf', v1ReportBuf, 'EVALUATION_REPORT');
+        } catch (copyErr) {
+          console.warn('[AdminReview] Warning copying V1 report:', copyErr);
+        }
+      }
+    }
+
+    // Step 2: Calculate New Marks and Apply Amendments
+    const updatedEvalResult = JSON.parse(JSON.stringify(currentResultJson));
+    const questions: any[] = updatedEvalResult.questions || [];
+
+    let hasActualScoreChange = false;
+
+    if (!affirmAsIs && Array.isArray(amendments) && amendments.length > 0) {
+      for (const amendment of amendments) {
+        const qIndex = questions.findIndex(
+          (q: any) =>
+            q.questionNumber === amendment.questionNumber &&
+            (!amendment.subQuestion || q.subQuestion === amendment.subQuestion)
+        );
+
+        if (qIndex !== -1) {
+          const targetQ = questions[qIndex];
+          const newAwarded = Number(amendment.marksAwarded);
+
+          if (isNaN(newAwarded) || newAwarded < 0) {
+            return res.status(400).json({
+              error: `Invalid awarded marks for Question ${amendment.questionNumber}: cannot be negative.`,
+            });
+          }
+          if (newAwarded > targetQ.maximumMarks) {
+            return res.status(400).json({
+              error: `Awarded marks (${newAwarded}) cannot exceed maximum marks (${targetQ.maximumMarks}) for Question ${amendment.questionNumber}.`,
+            });
+          }
+
+          if (newAwarded !== targetQ.marksAwarded) {
+            hasActualScoreChange = true;
+          }
+
+          targetQ.marksAwarded = newAwarded;
+          targetQ.marksLost = Math.max(0, targetQ.maximumMarks - newAwarded);
+          targetQ.status =
+            newAwarded === targetQ.maximumMarks
+              ? 'correct'
+              : newAwarded > 0
+              ? 'partially_correct'
+              : 'incorrect';
+
+          if (amendment.reasonForDeduction !== undefined) {
+            targetQ.reasonForDeduction = amendment.reasonForDeduction;
+          }
+          if (amendment.detailedFeedback !== undefined) {
+            targetQ.detailedFeedback = amendment.detailedFeedback;
+          }
+          targetQ.reviewerAdjustmentNotes = amendment.amendmentReason || overallReason.trim();
+        }
+      }
+    }
+
+    // Recalculate Totals
+    const maxPaperMarks = Number(evalRecord.maximum_marks) || updatedEvalResult.maximumMarks || 100;
+    const newTotalMarks = Math.round(questions.reduce((sum: number, q: any) => sum + (Number(q.marksAwarded) || 0), 0) * 100) / 100;
+    const newPercentage = Math.round(((newTotalMarks / maxPaperMarks) * 100) * 100) / 100;
+    const newGrade = computeIcaIGrade(newPercentage);
+
+    updatedEvalResult.totalMarks = newTotalMarks;
+    updatedEvalResult.maximumMarks = maxPaperMarks;
+    updatedEvalResult.percentage = newPercentage;
+    updatedEvalResult.grade = newGrade;
+    updatedEvalResult.version = 'v2';
+    updatedEvalResult.adminReview = {
+      reviewedBy: req.user!.email,
+      reviewerId: req.user!.id,
+      reviewedAt: nowIso,
+      action: affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED',
+      reason: overallReason.trim(),
+      previousMarks: evalRecord.total_marks,
+      newMarks: newTotalMarks,
+    };
+
+    // Step 3: Regenerate V2 Artifacts (Checked Copy & Detailed Report)
+    const origPdfBuffer = await getOriginalPdfBufferForAdmin(evaluationId, evalRecord);
+
+    const v2CheckedCopyBuffer = await generateCheckedCopyPdf(
+      {
+        id: evaluationId,
+        studentName: evalRecord.student_name || 'CA Student',
+        level: evalRecord.level,
+        subjectName: evalRecord.subject_name,
+        paper: evalRecord.paper,
+        attempt: evalRecord.attempt,
+        checkingMode: evalRecord.checking_mode,
+        totalMarks: newTotalMarks,
+        maximumMarks: maxPaperMarks,
+        percentage: newPercentage,
+        grade: newGrade,
+        createdAt: evalRecord.created_at,
+        version: 'v2',
+      },
+      updatedEvalResult,
+      origPdfBuffer
+    );
+
+    const v2ReportBuffer = await generateDetailedReportPdf(
+      {
+        id: evaluationId,
+        studentName: evalRecord.student_name || 'CA Student',
+        level: evalRecord.level,
+        subjectName: evalRecord.subject_name,
+        paper: evalRecord.paper,
+        attempt: evalRecord.attempt,
+        checkingMode: evalRecord.checking_mode,
+        totalMarks: newTotalMarks,
+        maximumMarks: maxPaperMarks,
+        percentage: newPercentage,
+        grade: newGrade,
+        createdAt: evalRecord.created_at,
+        version: 'v2',
+      },
+      updatedEvalResult
+    );
+
+    // Save V2 files on disk (both as the active canonical copy and the v2 archive copy)
+    fs.writeFileSync(path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`), v2CheckedCopyBuffer);
+    fs.writeFileSync(path.join(uploadsDir, `${evaluationId}_checked_copy_v2.pdf`), v2CheckedCopyBuffer);
+    fs.writeFileSync(path.join(uploadsDir, `${evaluationId}_report.pdf`), v2ReportBuffer);
+    fs.writeFileSync(path.join(uploadsDir, `${evaluationId}_report_v2.pdf`), v2ReportBuffer);
+
+    // Persist to Google Cloud Storage / Persistent Storage
+    await savePersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`, 'application/pdf', v2CheckedCopyBuffer, 'EVALUATION_CHECKED_COPY');
+    await savePersistentFile(`${evaluationId}_checked_copy_v2`, `${evaluationId}_checked_copy_v2.pdf`, 'application/pdf', v2CheckedCopyBuffer, 'EVALUATION_CHECKED_COPY');
+    await savePersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`, 'application/pdf', v2ReportBuffer, 'EVALUATION_REPORT');
+    await savePersistentFile(`${evaluationId}_report_v2`, `${evaluationId}_report_v2.pdf`, 'application/pdf', v2ReportBuffer, 'EVALUATION_REPORT');
+
+    // Step 4: Record V2 in evaluation_versions
+    const v2Id = `${evaluationId}_v2`;
+    db.prepare(`
+      INSERT INTO evaluation_versions (
+        id, evaluation_id, version_number, version_tag, parent_version_id,
+        status, total_marks, maximum_marks, percentage, grade,
+        result_json, amendment_reason, amended_questions_json, review_resolution,
+        admin_id, admin_email, checked_copy_file_id, report_file_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        total_marks = excluded.total_marks,
+        maximum_marks = excluded.maximum_marks,
+        percentage = excluded.percentage,
+        grade = excluded.grade,
+        result_json = excluded.result_json,
+        amendment_reason = excluded.amendment_reason,
+        amended_questions_json = excluded.amended_questions_json,
+        review_resolution = excluded.review_resolution,
+        admin_id = excluded.admin_id,
+        admin_email = excluded.admin_email,
+        created_at = excluded.created_at
+    `).run(
+      v2Id,
+      evaluationId,
+      2,
+      'v2',
+      v1Id,
+      'COMPLETED',
+      newTotalMarks,
+      maxPaperMarks,
+      newPercentage,
+      newGrade,
+      JSON.stringify(updatedEvalResult),
+      overallReason.trim(),
+      JSON.stringify(amendments || []),
+      affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED_AND_FINALIZED',
+      req.user!.id,
+      req.user!.email,
+      `${evaluationId}_checked_copy_v2`,
+      `${evaluationId}_report_v2`,
+      nowIso
+    );
+
+    // Sync V2 to Firestore collection
+    await syncRecordToFirestore('evaluation_versions', v2Id, {
+      id: v2Id,
+      evaluation_id: evaluationId,
+      version_number: 2,
+      version_tag: 'v2',
+      parent_version_id: v1Id,
+      status: 'COMPLETED',
+      total_marks: newTotalMarks,
+      maximum_marks: maxPaperMarks,
+      percentage: newPercentage,
+      grade: newGrade,
+      result_json: JSON.stringify(updatedEvalResult),
+      amendment_reason: overallReason.trim(),
+      amended_questions_json: JSON.stringify(amendments || []),
+      review_resolution: affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED_AND_FINALIZED',
+      admin_id: req.user!.id,
+      admin_email: req.user!.email,
+      created_at: nowIso,
+    });
+
+    // Step 5: Authoritatively Update evaluations Table
+    const reviewStatus = affirmAsIs ? 'AFFIRMED' : 'AMENDED';
+    db.prepare(`
+      UPDATE evaluations
+      SET status = 'COMPLETED',
+          total_marks = ?,
+          maximum_marks = ?,
+          percentage = ?,
+          grade = ?,
+          result_json = ?,
+          current_evaluation_version_id = 'v2',
+          evaluation_version = 'v2',
+          checked_copy_status = 'READY',
+          report_status = 'READY',
+          rejection_reason = null,
+          admin_review_status = ?,
+          admin_reviewed_at = ?,
+          admin_reviewer_id = ?,
+          admin_reviewer_email = ?,
+          admin_review_notes = ?,
+          completed_at = COALESCE(completed_at, ?),
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      newTotalMarks,
+      maxPaperMarks,
+      newPercentage,
+      newGrade,
+      JSON.stringify(updatedEvalResult),
+      reviewStatus,
+      nowIso,
+      req.user!.id,
+      req.user!.email,
+      overallReason.trim(),
+      nowIso,
+      nowIso,
+      evaluationId
+    );
+
+    // Sync updated evaluation to Cloud Firestore
+    const updatedEvalForSync = {
+      ...evalRecord,
+      status: 'COMPLETED',
+      total_marks: newTotalMarks,
+      maximum_marks: maxPaperMarks,
+      percentage: newPercentage,
+      grade: newGrade,
+      result_json: JSON.stringify(updatedEvalResult),
+      current_evaluation_version_id: 'v2',
+      evaluation_version: 'v2',
+      checked_copy_status: 'READY',
+      report_status: 'READY',
+      rejection_reason: null,
+      admin_review_status: reviewStatus,
+      admin_reviewed_at: nowIso,
+      admin_reviewer_id: req.user!.id,
+      admin_reviewer_email: req.user!.email,
+      admin_review_notes: overallReason.trim(),
+      updated_at: nowIso,
+    };
+    await syncRecordToFirestore('evaluations', evaluationId, updatedEvalForSync);
+
+    // Step 6: If associated with a recheck request, update it
+    if (recheckRequestId) {
+      try {
+        db.prepare(`
+          UPDATE recheck_requests
+          SET status = ?,
+              reviewer_notes = ?,
+              adjusted_marks = ?,
+              revised_evaluation_version = 'v2',
+              resolved_at = ?
+          WHERE id = ?
+        `).run(
+          affirmAsIs ? 'APPROVED' : 'ADJUSTED',
+          overallReason.trim(),
+          newTotalMarks,
+          nowIso,
+          recheckRequestId
+        );
+      } catch (rErr) {
+        console.warn('[AdminReview] Warning updating linked recheck request:', rErr);
+      }
+    }
+
+    // Step 7: Record Audit Log
+    const auditLogId = `audit_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+      VALUES (?, ?, ?, 'evaluations', ?, ?, ?)
+    `).run(
+      auditLogId,
+      req.user!.id,
+      affirmAsIs ? 'EVALUATION_REVIEW_AFFIRMED' : 'EVALUATION_AMENDED_BY_ADMIN',
+      evaluationId,
+      JSON.stringify({
+        adminEmail: req.user!.email,
+        action: affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED',
+        previousMarks: evalRecord.total_marks,
+        newMarks: newTotalMarks,
+        scoreDelta: Math.round((newTotalMarks - (evalRecord.total_marks || 0)) * 100) / 100,
+        grade: newGrade,
+        percentage: newPercentage,
+        reason: overallReason.trim(),
+        amendedQuestionsCount: amendments ? amendments.length : 0,
+        activeVersion: 'v2',
+      }),
+      nowIso
+    );
+
+    return res.json({
+      success: true,
+      message: affirmAsIs
+        ? 'Evaluation reviewed and affirmed as-is. Status updated to COMPLETED (Active Version V2).'
+        : `Evaluation successfully amended and finalized. New score: ${newTotalMarks}/${maxPaperMarks} (${newPercentage}%). Checked copy and report regenerated.`,
+      activeVersion: 'v2',
+      evaluation: {
+        id: evaluationId,
+        status: 'COMPLETED',
+        total_marks: newTotalMarks,
+        maximum_marks: maxPaperMarks,
+        percentage: newPercentage,
+        grade: newGrade,
+        current_evaluation_version_id: 'v2',
+        evaluation_version: 'v2',
+        admin_review_status: reviewStatus,
+        admin_reviewed_at: nowIso,
+      },
+      resultJson: updatedEvalResult,
+    });
+  } catch (error: any) {
+    console.error('Finalize evaluation review error:', error);
+    return res.status(500).json({
+      error: error.message || 'Failed to finalize evaluation review',
+    });
+  }
+});
+
 // 16. Pricing Management
 router.get('/pricing', (req: AuthRequest, res: Response) => {
   try {

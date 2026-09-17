@@ -263,8 +263,10 @@ export async function hydrateFromFirestore(): Promise<void> {
             consumed_from_institute_allocation, consumed_from_personal_credits,
             total_marks, maximum_marks, percentage, grade, confidence_score,
             status, result_json, error_message, document_validation_status, rejection_reason,
-            original_filename, created_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            original_filename, current_evaluation_version_id, evaluation_version,
+            admin_review_status, admin_reviewed_at, admin_reviewer_id, admin_reviewer_email, admin_review_notes,
+            created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             status = excluded.status,
             total_marks = excluded.total_marks,
@@ -276,6 +278,13 @@ export async function hydrateFromFirestore(): Promise<void> {
             error_message = excluded.error_message,
             document_validation_status = excluded.document_validation_status,
             rejection_reason = excluded.rejection_reason,
+            current_evaluation_version_id = excluded.current_evaluation_version_id,
+            evaluation_version = excluded.evaluation_version,
+            admin_review_status = excluded.admin_review_status,
+            admin_reviewed_at = excluded.admin_reviewed_at,
+            admin_reviewer_id = excluded.admin_reviewer_id,
+            admin_reviewer_email = excluded.admin_reviewer_email,
+            admin_review_notes = excluded.admin_review_notes,
             completed_at = excluded.completed_at
         `).run(
           ev.id, ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
@@ -285,7 +294,15 @@ export async function hydrateFromFirestore(): Promise<void> {
           ev.total_marks !== undefined ? ev.total_marks : null, ev.maximum_marks || 100, ev.percentage !== undefined ? ev.percentage : null,
           ev.grade || null, ev.confidence_score || null, ev.status || 'COMPLETED', ev.result_json || null,
           ev.error_message || null, ev.document_validation_status || 'VERIFIED', ev.rejection_reason || null,
-          ev.original_filename || 'student_answer_sheet.pdf', ev.created_at || new Date().toISOString(), ev.completed_at || null
+          ev.original_filename || 'student_answer_sheet.pdf',
+          ev.current_evaluation_version_id || ev.evaluation_version || 'v1',
+          ev.evaluation_version || 'v1',
+          ev.admin_review_status || null,
+          ev.admin_reviewed_at || null,
+          ev.admin_reviewer_id || null,
+          ev.admin_reviewer_email || null,
+          ev.admin_review_notes || null,
+          ev.created_at || new Date().toISOString(), ev.completed_at || null
         );
         evHydrated++;
       } catch (evErr) {
@@ -325,6 +342,60 @@ export async function hydrateFromFirestore(): Promise<void> {
         );
       } catch {
         // ignore
+      }
+    }
+
+    // 7b2. Hydrate Evaluation Versions (Immutable V1/V2 records)
+    const evalVersions = await getAllFirestoreDocs<any>('evaluation_versions');
+    for (const evVer of evalVersions) {
+      try {
+        db.prepare(`
+          INSERT INTO evaluation_versions (
+            id, evaluation_id, version_number, version_tag, parent_version_id,
+            status, total_marks, maximum_marks, percentage, grade,
+            result_json, amendment_reason, amended_questions_json, review_resolution,
+            admin_id, admin_email, checked_copy_file_id, checked_copy_storage_path,
+            report_file_id, report_storage_path, audit_metadata_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            total_marks = excluded.total_marks,
+            maximum_marks = excluded.maximum_marks,
+            percentage = excluded.percentage,
+            grade = excluded.grade,
+            result_json = excluded.result_json,
+            amendment_reason = excluded.amendment_reason,
+            amended_questions_json = excluded.amended_questions_json,
+            review_resolution = excluded.review_resolution,
+            admin_id = excluded.admin_id,
+            admin_email = excluded.admin_email,
+            audit_metadata_json = excluded.audit_metadata_json
+        `).run(
+          evVer.id,
+          evVer.evaluation_id,
+          evVer.version_number || 1,
+          evVer.version_tag || 'v1',
+          evVer.parent_version_id || null,
+          evVer.status || 'COMPLETED',
+          evVer.total_marks ?? 0,
+          evVer.maximum_marks ?? 100,
+          evVer.percentage ?? 0,
+          evVer.grade || null,
+          typeof evVer.result_json === 'string' ? evVer.result_json : JSON.stringify(evVer.result_json || {}),
+          evVer.amendment_reason || null,
+          typeof evVer.amended_questions_json === 'string' ? evVer.amended_questions_json : (evVer.amended_questions_json ? JSON.stringify(evVer.amended_questions_json) : null),
+          evVer.review_resolution || null,
+          evVer.admin_id || null,
+          evVer.admin_email || null,
+          evVer.checked_copy_file_id || null,
+          evVer.checked_copy_storage_path || null,
+          evVer.report_file_id || null,
+          evVer.report_storage_path || null,
+          typeof evVer.audit_metadata_json === 'string' ? evVer.audit_metadata_json : (evVer.audit_metadata_json ? JSON.stringify(evVer.audit_metadata_json) : null),
+          evVer.created_at || new Date().toISOString()
+        );
+      } catch (verErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate evaluation_version ${evVer.id}:`, verErr);
       }
     }
 
