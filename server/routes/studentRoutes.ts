@@ -29,6 +29,7 @@ import { extractRelevantReferenceSnippets } from '../services/questionChunkEvalu
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
 import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
+import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 
 const router = Router();
 
@@ -174,10 +175,28 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
           subject: e.subject_name,
           score: e.percentage,
         })),
+      examinerProfile: getStudentExaminerProfile(studentId),
     });
   } catch (error: unknown) {
     console.error('Student dashboard error:', error);
     return res.status(500).json({ error: 'Failed to load dashboard data' });
+  }
+});
+
+// Personal Examiner Profile / Mark-Loss DNA Endpoint (Evidence-based Longitudinal Learning)
+router.get('/examiner-profile', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    // Security & Privacy: Student may access only their own Examiner Profile
+    if (req.user!.role !== 'STUDENT' && req.user!.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Unauthorized: Examiner profile is accessible only by the student.' });
+    }
+
+    const profile = getStudentExaminerProfile(studentId);
+    return res.json({ profile });
+  } catch (error: unknown) {
+    console.error('Student examiner profile error:', error);
+    return res.status(500).json({ error: 'Failed to load personal examiner profile' });
   }
 });
 
@@ -442,6 +461,21 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       instituteId,
       instituteMaterialId,
     } = req.body;
+
+    // Reject unsupported CS / CMA evaluation attempts safely
+    const requestedExamType = (req.body.examType || req.body.exam_type || req.body.course || '').toString().trim().toUpperCase();
+    if (requestedExamType === 'CS' || requestedExamType === 'CMA' || (requestedExamType !== '' && requestedExamType !== 'CA')) {
+      return res.status(400).json({
+        error: `${requestedExamType} examination evaluation is Coming Soon. Currently only CA evaluation is supported.`,
+      });
+    }
+
+    const rawLevel = (level || '').toString().toUpperCase();
+    if (rawLevel.startsWith('CS_') || rawLevel.startsWith('CMA_') || rawLevel === 'CS' || rawLevel === 'CMA') {
+      return res.status(400).json({
+        error: 'CS and CMA examination evaluation is Coming Soon. Currently only CA evaluation is supported.',
+      });
+    }
 
     if (!fileBase64 || !level || !subjectKey || !subjectName) {
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });

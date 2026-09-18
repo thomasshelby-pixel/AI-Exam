@@ -162,7 +162,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   onNavigateDashboard,
   onOpenCreditsModal,
 }) => {
-  const { user: authUser, setUser } = useAuth();
+  const { user: authUser, setUser, refreshUser } = useAuth();
 
   // Profile Form States
   const [profileData, setProfileData] = useState<ProfileApiResponse | null>(null);
@@ -262,12 +262,17 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setProfileMessage({ type: 'success', text: res.message || 'Profile updated successfully.' });
 
       // Update auth context if user object changed
-      if (authUser) {
+      if (authUser && typeof setUser === 'function') {
         setUser({
           ...authUser,
           fullName: fullName.trim(),
           phone: phone.trim(),
         });
+      }
+
+      // Sync backend user state with AuthContext
+      if (typeof refreshUser === 'function') {
+        refreshUser().catch(() => {});
       }
 
       // Refresh data

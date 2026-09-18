@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   Sun,
   Moon,
+  Dna,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -46,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
     <header className="sticky top-0 z-40 h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors duration-150">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
         <div className="flex items-center justify-between h-full">
-          {/* Logo */}
+          {/* Logo / Brand Block */}
           <div
             id="brand-logo"
             onClick={() => {
@@ -58,9 +59,41 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 onNavigate('landing');
               }
             }}
-            className="flex items-center gap-2.5 cursor-pointer select-none group"
+            className={
+              user && isStudent
+                ? 'flex items-center gap-2.5 cursor-pointer select-none group shrink-0 min-w-max'
+                : 'flex items-center gap-2.5 cursor-pointer select-none group'
+            }
           >
-            <BrandLogo size="sm" showSubtitle={true} />
+            {user && isStudent ? (
+              <div id="student-portal-brand-block" className="inline-flex items-center gap-2.5 select-none shrink-0 whitespace-nowrap">
+                {/* Official Emblem Mark */}
+                <div className="w-7 h-7 shrink-0 transition duration-200 group-hover:scale-105">
+                  <img
+                    src="/favicon.svg"
+                    alt="CA Exam Checker AI Logo"
+                    className="w-full h-full object-contain rounded-lg shadow-sm"
+                  />
+                </div>
+
+                {/* Typography Hierarchy */}
+                <div className="flex flex-col justify-center shrink-0 whitespace-nowrap leading-none">
+                  <div className="font-black tracking-tight text-slate-900 dark:text-white leading-none flex items-center gap-1.5 text-sm whitespace-nowrap">
+                    <span className="text-slate-950 dark:text-white font-black tracking-tight whitespace-nowrap">
+                      CA EXAM CHECKER
+                    </span>
+                    <span className="font-black tracking-wider uppercase bg-blue-600 text-white rounded font-mono shadow-2xs text-[9px] px-1 py-0.2 shrink-0 whitespace-nowrap">
+                      AI
+                    </span>
+                  </div>
+                  <span className="text-[10px] tracking-wider uppercase font-extrabold text-blue-700 dark:text-blue-400 mt-1 whitespace-nowrap">
+                    CHECKED LIKE AN EXAMINER
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <BrandLogo size="sm" showSubtitle={true} />
+            )}
           </div>
 
           {/* Desktop Nav Items */}
@@ -175,6 +208,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       }`}
                     >
                       My Reports
+                    </button>
+                    <button
+                      id="nav-student-examiner-profile"
+                      onClick={() => onNavigate('student-examiner-profile')}
+                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                        currentView === 'student-examiner-profile'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Dna className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span>Examiner Profile</span>
                     </button>
                     <button
                       id="nav-student-profile"
@@ -457,6 +502,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
                   >
                     My Past Reports
+                  </button>
+                  <button
+                    onClick={() => {
+                      onNavigate('student-examiner-profile');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1.5"
+                  >
+                    <Dna className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <span>Personal Examiner Profile</span>
                   </button>
                   <button
                     onClick={() => {

@@ -11,6 +11,7 @@ export interface SuspendedAccountInfo {
 
 interface AuthContextType {
   user: User | null;
+  setUser: React.Dispatch<React.SetStateAction<User | null>>;
   profile: Record<string, unknown> | null;
   token: string | null;
   isAuthenticated: boolean;
@@ -253,6 +254,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        setUser,
         profile,
         token,
         isAuthenticated,

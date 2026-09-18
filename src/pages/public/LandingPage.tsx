@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   CheckCircle2,
   Scale,
@@ -7,8 +7,10 @@ import {
   ShieldCheck,
   Zap,
   BookOpen,
+  Lock,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo';
+import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
@@ -22,6 +24,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigatePricing,
   onNavigateHowItWorks,
 }) => {
+  const [modalExam, setModalExam] = useState<ComingSoonExamType | null>(null);
+
   return (
     <div className="text-slate-800 dark:text-slate-100 space-y-16 py-8">
       {/* Hero Section */}
@@ -30,7 +34,26 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <BrandLogo variant="full" size="md" />
         </div>
 
-        <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold shadow-2xs">
+        {/* Examination Choice Bar */}
+        <div className="inline-flex items-center gap-2 p-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 shadow-2xs">
+          <span className="px-3 py-1 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" /> CA (Active)
+          </span>
+          <button
+            onClick={() => setModalExam('CS')}
+            className="px-3 py-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+          >
+            <Lock className="w-3 h-3 text-slate-400" /> CS <span className="text-[10px] text-slate-400 font-normal">(Coming Soon)</span>
+          </button>
+          <button
+            onClick={() => setModalExam('CMA')}
+            className="px-3 py-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+          >
+            <Lock className="w-3 h-3 text-slate-400" /> CMA <span className="text-[10px] text-slate-400 font-normal">(Coming Soon)</span>
+          </button>
+        </div>
+
+        <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold shadow-2xs block sm:inline-flex">
           <Sparkles className="w-3.5 h-3.5" />
           <span>India&apos;s Dedicated CA Examination-Style AI Evaluation Platform</span>
         </div>
@@ -178,6 +201,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </button>
         </div>
       </section>
+
+      {modalExam && (
+        <ComingSoonModal
+          isOpen={!!modalExam}
+          examType={modalExam}
+          onClose={() => setModalExam(null)}
+        />
+      )}
     </div>
   );
 };

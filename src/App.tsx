@@ -31,6 +31,7 @@ import { MyEvaluations } from './pages/student/MyEvaluations.js';
 import { StudentProfilePage } from './pages/student/StudentProfilePage.js';
 import { StudentEnrollmentsPage } from './pages/student/StudentEnrollmentsPage.js';
 import { EvaluationReportView } from './pages/student/EvaluationReportView.js';
+import { PersonalExaminerProfilePage } from './pages/student/PersonalExaminerProfilePage.js';
 import { InstitutePortal } from './pages/institute/InstitutePortal.js';
 import { AdminPortal } from './pages/admin/AdminPortal.js';
 import { EvaluationResult } from './types/index.js';
@@ -196,6 +197,7 @@ const PublicAndStudentLayout: React.FC<{
   else if (pathname === '/register') currentView = 'register';
   else if (pathname.startsWith('/student/upload')) currentView = 'student-upload';
   else if (pathname.startsWith('/student/evaluations')) currentView = 'student-evaluations';
+  else if (pathname.startsWith('/student/examiner-profile')) currentView = 'student-examiner-profile';
   else if (pathname.startsWith('/student')) currentView = 'student-dashboard';
 
   const handleNavigate = (view: string) => {
@@ -230,6 +232,9 @@ const PublicAndStudentLayout: React.FC<{
         break;
       case 'student-evaluations':
         navigate('/student/evaluations');
+        break;
+      case 'student-examiner-profile':
+        navigate('/student/examiner-profile');
         break;
       case 'student-profile':
         navigate('/student/profile');
@@ -545,6 +550,7 @@ const AppRoutes: React.FC = () => {
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                   onNavigateProfile={() => navigate('/student/profile')}
                   onNavigateEnrollments={() => navigate('/student/enrollments')}
+                  onNavigateExaminerProfile={() => navigate('/student/examiner-profile')}
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
@@ -597,6 +603,21 @@ const AppRoutes: React.FC = () => {
                 <MyEvaluations
                   onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                   onNavigateUpload={() => navigate('/student/upload')}
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/examiner-profile"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <PersonalExaminerProfilePage
+                  onNavigateUpload={() => navigate('/student/upload')}
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
+                  onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>

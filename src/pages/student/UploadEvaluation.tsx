@@ -25,6 +25,7 @@ import {
   Lightbulb,
   X,
 } from 'lucide-react';
+import { ExamSelector } from '../../components/common/ExamSelector.js';
 
 interface UploadEvaluationProps {
   onEvaluationComplete: (evaluationId: string, result: EvaluationResult) => void;
@@ -943,6 +944,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     </p>
                   </div>
                 )}
+
+                {/* Examination Selector (CA active, CS/CMA Coming Soon) */}
+                <ExamSelector className="mb-3.5" />
 
                 {/* Level selection */}
                 <div>

@@ -596,6 +596,20 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_email_logs_eval ON email_audit_logs(evaluation_id);
     CREATE INDEX IF NOT EXISTS idx_email_logs_recip ON email_audit_logs(recipient);
     CREATE INDEX IF NOT EXISTS idx_email_logs_recheck ON email_audit_logs(recheck_request_id);
+
+    CREATE TABLE IF NOT EXISTS student_examiner_profiles (
+      student_id TEXT PRIMARY KEY,
+      evaluations_analysed INTEGER DEFAULT 0,
+      recurring_patterns_count INTEGER DEFAULT 0,
+      improved_patterns_count INTEGER DEFAULT 0,
+      attention_needed_count INTEGER DEFAULT 0,
+      marks_recovered_total REAL DEFAULT 0,
+      profile_data_json TEXT NOT NULL,
+      last_evaluation_id TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_examiner_profile_student ON student_examiner_profiles(student_id);
   `);
 
   runMigrations();
@@ -2852,3 +2866,5 @@ export function closeDatabaseCleanly(): void {
     console.warn('[DB] Warning while closing database:', err);
   }
 }
+
+export default db;

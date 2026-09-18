@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Zap, ArrowRight, ShieldCheck, CreditCard, Sparkles, Building2, Users, Award } from 'lucide-react';
+import { CheckCircle2, Zap, ArrowRight, ShieldCheck, CreditCard, Sparkles, Building2, Users, Award, Lock } from 'lucide-react';
+import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
 
 interface PricingPageProps {
   onNavigateRegister: () => void;
@@ -18,6 +19,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
   const [instituteCycle, setInstituteCycle] = useState<'MONTHLY' | 'QUARTERLY' | 'ANNUAL'>('ANNUAL');
   const [selectedQty, setSelectedQty] = useState<number>(10);
   const [customQty, setCustomQty] = useState<string>('');
+  const [modalExam, setModalExam] = useState<ComingSoonExamType | null>(null);
 
   const currentQuantity = customQty ? Math.max(1, parseInt(customQty, 10) || 1) : selectedQty;
   const totalPrice = currentQuantity * 10;
@@ -61,6 +63,28 @@ export const PricingPage: React.FC<PricingPageProps> = ({
           >
             <Building2 className="w-3.5 h-3.5" />
             <span>Coaching Institutes & Faculties</span>
+          </button>
+        </div>
+
+        {/* Examination Type Status */}
+        <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Supported Examinations:</span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold">
+            <CheckCircle2 className="w-3 h-3" /> CA (Active)
+          </span>
+          <button
+            type="button"
+            onClick={() => setModalExam('CS')}
+            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-semibold hover:border-slate-300 transition cursor-pointer"
+          >
+            <Lock className="w-2.5 h-2.5 text-slate-400" /> CS (Coming Soon)
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalExam('CMA')}
+            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[11px] font-semibold hover:border-slate-300 transition cursor-pointer"
+          >
+            <Lock className="w-2.5 h-2.5 text-slate-400" /> CMA (Coming Soon)
           </button>
         </div>
       </div>
@@ -531,6 +555,14 @@ export const PricingPage: React.FC<PricingPageProps> = ({
           </div>
         </div>
       </div>
+
+      {modalExam && (
+        <ComingSoonModal
+          isOpen={!!modalExam}
+          examType={modalExam}
+          onClose={() => setModalExam(null)}
+        />
+      )}
     </div>
   );
 };

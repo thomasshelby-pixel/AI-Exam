@@ -22,6 +22,7 @@ import {
   Gift,
   Upload,
   X,
+  Dna,
 } from 'lucide-react';
 
 interface StudentDashboardProps {
@@ -31,6 +32,7 @@ interface StudentDashboardProps {
   onOpenCreditsModal: () => void;
   onNavigateProfile?: () => void;
   onNavigateEnrollments?: () => void;
+  onNavigateExaminerProfile?: () => void;
 }
 
 export interface CreditLotSummary {
@@ -99,6 +101,15 @@ interface DashboardData {
     status: string;
     joined_at: string;
   }>;
+  examinerProfile?: {
+    evaluationsAnalysed: number;
+    insufficientHistory: boolean;
+    recurringPatternsCount: number;
+    improvedPatternsCount: number;
+    attentionNeededCount: number;
+    marksRecoveredTotal: number;
+    message?: string;
+  };
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -108,6 +119,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onOpenCreditsModal,
   onNavigateProfile,
   onNavigateEnrollments,
+  onNavigateExaminerProfile,
 }) => {
   const { user, profile } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -457,6 +469,92 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {metrics.passProbability}
           </div>
           <div className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-1">Step-marking compliance</div>
+        </div>
+      </div>
+
+      {/* 🧬 Permanent Examiner Profile / Mark-Loss DNA Card */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm relative overflow-hidden">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-2 flex-1">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-[11px] font-bold">
+              <Dna className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Mark-Loss DNA</span>
+            </div>
+
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <span>🧬 Your Personal Examiner Profile</span>
+            </h2>
+
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
+              {data?.examinerProfile?.insufficientHistory || !data?.examinerProfile || (data?.examinerProfile?.evaluationsAnalysed || 0) < 2
+                ? 'Your evaluation history is building your personal examiner profile. Complete a few evaluations to identify recurring mark-loss patterns.'
+                : 'Your evaluation history is building your personal examiner profile. Tracking recurring step-marking slipups, improved answer patterns, and marks recovered.'}
+            </p>
+
+            {/* Metrics Chips */}
+            {data?.examinerProfile && !data.examinerProfile.insufficientHistory ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
+                  <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                    Evaluations Analysed
+                  </div>
+                  <div className="text-lg font-black text-slate-900 dark:text-white">
+                    {data.examinerProfile.evaluationsAnalysed}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
+                  <div className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400">
+                    Recurring Patterns
+                  </div>
+                  <div className="text-lg font-black text-amber-700 dark:text-amber-300">
+                    {data.examinerProfile.recurringPatternsCount}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
+                  <div className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400">
+                    Improved Patterns
+                  </div>
+                  <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">
+                    {data.examinerProfile.improvedPatternsCount}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60">
+                  <div className="text-[10px] uppercase font-bold text-indigo-700 dark:text-indigo-400">
+                    Needs Attention
+                  </div>
+                  <div className="text-lg font-black text-indigo-700 dark:text-indigo-300">
+                    {data.examinerProfile.attentionNeededCount}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-400">
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  Evaluations Analysed: {data?.examinerProfile?.evaluationsAnalysed ?? metrics.totalEvaluations} •{' '}
+                </span>
+                <span>
+                  {(data?.examinerProfile?.evaluationsAnalysed ?? metrics.totalEvaluations) === 1
+                    ? '1 evaluation analysed. Patterns are marked "recurring" only when verified across multiple papers.'
+                    : 'Complete 2 full evaluations to unlock longitudinal mark-loss pattern tracking.'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex sm:flex-col justify-end shrink-0">
+            {onNavigateExaminerProfile && (
+              <button
+                onClick={onNavigateExaminerProfile}
+                className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm inline-flex items-center gap-2 cursor-pointer"
+              >
+                <span>View My Examiner Profile</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
