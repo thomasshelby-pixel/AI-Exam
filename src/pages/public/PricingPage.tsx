@@ -84,13 +84,13 @@ export const PricingPage: React.FC<PricingPageProps> = ({
               </div>
 
               <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                Every newly registered CA student receives 2 full 100-mark answer sheet evaluations at zero cost.
+                Every CA student receives 2 full-100-mark answer sheet evaluations every month at zero cost.
               </p>
 
               <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3 text-xs text-slate-700 dark:text-slate-300">
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span className="font-medium text-slate-900 dark:text-white">2 Full Answer Sheet Evaluations (FREE)</span>
+                  <span className="font-medium text-slate-900 dark:text-white">2 Full Answer Sheet Evaluations / Month</span>
                 </div>
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -99,10 +99,6 @@ export const PricingPage: React.FC<PricingPageProps> = ({
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <span>Working Notes & Presentation Feedback</span>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Section 39 / MCQ Zero-Penalty Validation</span>
                 </div>
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />

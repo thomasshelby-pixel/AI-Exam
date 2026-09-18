@@ -1036,7 +1036,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               </button>
             </div>
 
-            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3.5 space-y-2 border border-slate-200 dark:border-slate-700">
+            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3.5 space-y-2.5 border border-slate-200 dark:border-slate-700">
               <div className="flex justify-between text-xs">
                 <span className="text-slate-500 dark:text-slate-400">Current Entitlement Tier:</span>
                 <span className="font-bold text-slate-900 dark:text-white">
@@ -1047,29 +1047,41 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     : entitlement?.tier === 'INSTITUTE_SPONSORED'
                     ? 'Institute Sponsored'
                     : entitlement?.tier === 'PURCHASED_CREDITS'
-                    ? 'Purchased Credits (3-Month FEFO)'
+                    ? 'Purchased Credits'
                     : 'Free Starter Tier'}
                 </span>
               </div>
 
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Purchased Credits Balance:</span>
+                <span className="text-slate-500 dark:text-slate-400">Monthly Free Evaluations:</span>
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                  {entitlement?.freeEvaluationsRemaining ?? 0}/2 remaining this month
+                </span>
+              </div>
+
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500 dark:text-slate-400">Paid Credits (Never Resets):</span>
                 <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
                   {profile?.purchasedCredits || 0} credits
                 </span>
               </div>
 
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Free Tier Remaining:</span>
-                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                  {entitlement?.freeEvaluationsRemaining || 0} checks
+              <div className="flex justify-between text-xs pt-1 border-t border-slate-200 dark:border-slate-700 font-semibold">
+                <span className="text-slate-700 dark:text-slate-300">Total Evaluations Available:</span>
+                <span className="font-mono text-slate-900 dark:text-white">
+                  {(entitlement?.freeEvaluationsRemaining || 0) + (profile?.purchasedCredits || 0)} total
                 </span>
               </div>
             </div>
 
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              All evaluations are processed with full ICAI Step-by-Step Marking and verified audit logging. Purchased credits have 3 months validity under FEFO queueing.
-            </p>
+            <div className="space-y-1 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+              <p>
+                <strong>Evaluation Priority:</strong> Every month you get 2 free evaluations. The system automatically consumes free evaluations first, and only consumes paid credits after your monthly free evaluations are exhausted.
+              </p>
+              <p className="text-[10px] text-slate-400">
+                * Monthly free evaluations reset on the 1st of each calendar month and do not carry forward. Paid credits remain safely stored in your account until used.
+              </p>
+            </div>
           </div>
         </div>
       </div>

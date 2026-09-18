@@ -106,10 +106,15 @@ export function initDatabase() {
       icai_registration_number TEXT NOT NULL,
       ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
       free_evaluations_used INTEGER NOT NULL DEFAULT 0,
+      monthly_free_evaluations_used INTEGER NOT NULL DEFAULT 0,
+      monthly_free_evaluations_limit INTEGER NOT NULL DEFAULT 2,
+      free_evaluation_reset_month TEXT DEFAULT '2026-09',
       purchased_credits INTEGER NOT NULL DEFAULT 0,
+      paid_credits INTEGER NOT NULL DEFAULT 0,
       institute_id TEXT,
       batch_id TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -1091,11 +1096,28 @@ function runMigrations() {
     console.warn('Historical credit migration warning:', err);
   }
 
-  // Student Profiles enhancements (City, preferred subjects, avatar URL)
+  // Student Profiles enhancements (City, preferred subjects, avatar URL, monthly free evaluations)
   addColumnIfNotExists('student_profiles', 'city', 'TEXT');
   addColumnIfNotExists('student_profiles', 'preferred_subjects', 'TEXT');
   addColumnIfNotExists('student_profiles', 'avatar_url', 'TEXT');
   addColumnIfNotExists('student_profiles', 'updated_at', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'monthly_free_evaluations_used', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('student_profiles', 'monthly_free_evaluations_limit', 'INTEGER NOT NULL DEFAULT 2');
+  addColumnIfNotExists('student_profiles', 'free_evaluation_reset_month', "TEXT DEFAULT '2026-09'");
+  addColumnIfNotExists('student_profiles', 'paid_credits', 'INTEGER NOT NULL DEFAULT 0');
+
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    db.prepare(`
+      UPDATE student_profiles
+      SET free_evaluation_reset_month = COALESCE(free_evaluation_reset_month, ?),
+          monthly_free_evaluations_limit = COALESCE(monthly_free_evaluations_limit, 2),
+          paid_credits = CASE WHEN (paid_credits IS NULL OR paid_credits = 0) AND purchased_credits > 0 THEN purchased_credits ELSE COALESCE(paid_credits, 0) END
+      WHERE free_evaluation_reset_month IS NULL OR monthly_free_evaluations_limit IS NULL
+    `).run(currentMonth);
+  } catch (initErr) {
+    console.warn('[DB] Monthly free evaluation column initial sync warning:', initErr);
+  }
 
   // Referral campaigns & redemptions tracking enhancements
   addColumnIfNotExists('referral_campaigns', 'max_evaluations', 'INTEGER NOT NULL DEFAULT 15');

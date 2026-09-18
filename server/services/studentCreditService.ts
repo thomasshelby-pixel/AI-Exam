@@ -38,6 +38,137 @@ export interface StudentCreditStatus {
   lots: CreditLotSummary[];
 }
 
+export interface MonthlyFreeEvaluationStatus {
+  userId: string;
+  monthlyFreeEvaluationsUsed: number;
+  monthlyFreeEvaluationsLimit: number;
+  freeEvaluationResetMonth: string;
+  freeEvaluationsRemaining: number;
+  paidCredits: number;
+}
+
+export interface StudentCreditDetailedSummary {
+  monthlyFreeEvaluationsUsed: number;
+  monthlyFreeEvaluationsLimit: number;
+  freeEvaluationResetMonth: string;
+  freeEvaluationsRemaining: number;
+  paidCredits: number;
+  totalAvailable: number;
+  canEvaluate: boolean;
+  statusMessage: string;
+}
+
+/**
+ * Returns the current calendar month formatted as 'YYYY-MM'.
+ * Calculated strictly from server/database date, not client date.
+ */
+export function getCurrentServerMonth(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+}
+
+/**
+ * Ensures monthly free evaluations are reset at the beginning of each calendar month.
+ * - Sets monthlyFreeEvaluationsUsed = 0
+ * - Sets monthlyFreeEvaluationsLimit = 2
+ * - Sets freeEvaluationResetMonth to current server calendar month
+ * - DO NOT modify paidCredits.
+ * - Idempotent and thread-safe: Prevents duplicate resets for the same month.
+ */
+export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEvaluationStatus {
+  const currentMonth = getCurrentServerMonth();
+
+  const profile = db.prepare(`
+    SELECT user_id, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+           free_evaluations_used, purchased_credits, paid_credits
+    FROM student_profiles
+    WHERE user_id = ?
+  `).get(userId) as any;
+
+  if (!profile) {
+    const paidCredits = getValidStudentCreditBalance(userId);
+    return {
+      userId,
+      monthlyFreeEvaluationsUsed: 0,
+      monthlyFreeEvaluationsLimit: 2,
+      freeEvaluationResetMonth: currentMonth,
+      freeEvaluationsRemaining: 2,
+      paidCredits,
+    };
+  }
+
+  const resetMonth = profile.free_evaluation_reset_month;
+
+  // If new month started or resetMonth not initialized, perform automatic monthly reset
+  if (!resetMonth || resetMonth !== currentMonth) {
+    db.prepare(`
+      UPDATE student_profiles
+      SET monthly_free_evaluations_used = 0,
+          monthly_free_evaluations_limit = 2,
+          free_evaluation_reset_month = ?,
+          free_evaluations_used = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND (free_evaluation_reset_month IS NULL OR free_evaluation_reset_month != ?)
+    `).run(currentMonth, userId, currentMonth);
+
+    const paidCredits = getValidStudentCreditBalance(userId);
+    return {
+      userId,
+      monthlyFreeEvaluationsUsed: 0,
+      monthlyFreeEvaluationsLimit: 2,
+      freeEvaluationResetMonth: currentMonth,
+      freeEvaluationsRemaining: 2,
+      paidCredits,
+    };
+  }
+
+  const limit = typeof profile.monthly_free_evaluations_limit === 'number' ? profile.monthly_free_evaluations_limit : 2;
+  const used = typeof profile.monthly_free_evaluations_used === 'number' ? profile.monthly_free_evaluations_used : 0;
+  const freeRemaining = Math.max(0, limit - used);
+  const paidCredits = getValidStudentCreditBalance(userId);
+
+  return {
+    userId,
+    monthlyFreeEvaluationsUsed: used,
+    monthlyFreeEvaluationsLimit: limit,
+    freeEvaluationResetMonth: resetMonth,
+    freeEvaluationsRemaining: freeRemaining,
+    paidCredits,
+  };
+}
+
+/**
+ * Returns detailed separate balances for Free Evaluations and Paid Credits.
+ * Never combines them into a single indistinguishable balance.
+ */
+export function getStudentCreditDetailedSummary(userId: string): StudentCreditDetailedSummary {
+  const status = ensureMonthlyFreeEvaluationsReset(userId);
+  const totalAvailable = status.freeEvaluationsRemaining + status.paidCredits;
+  const canEvaluate = totalAvailable > 0;
+
+  let statusMessage = '';
+  if (status.freeEvaluationsRemaining > 0) {
+    statusMessage = `Free Evaluations: ${status.freeEvaluationsRemaining}/${status.monthlyFreeEvaluationsLimit} remaining this month`;
+  } else if (status.paidCredits > 0) {
+    statusMessage = `Paid Credits: ${status.paidCredits} available`;
+  } else {
+    statusMessage = 'Your free evaluations for this month are exhausted. Please purchase credits to continue.';
+  }
+
+  return {
+    monthlyFreeEvaluationsUsed: status.monthlyFreeEvaluationsUsed,
+    monthlyFreeEvaluationsLimit: status.monthlyFreeEvaluationsLimit,
+    freeEvaluationResetMonth: status.freeEvaluationResetMonth,
+    freeEvaluationsRemaining: status.freeEvaluationsRemaining,
+    paidCredits: status.paidCredits,
+    totalAvailable,
+    canEvaluate,
+    statusMessage,
+  };
+}
+
 /**
  * Calculates an expiry date exactly 3 months from purchaseDate/issuanceDate.
  * Example:
@@ -232,6 +363,18 @@ export function recordCreditPurchase(params: {
 
   const totalValidCredits = getValidStudentCreditBalance(userId);
 
+  try {
+    db.prepare(`
+      UPDATE student_profiles
+      SET purchased_credits = ?,
+          paid_credits = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(totalValidCredits, totalValidCredits, userId);
+  } catch (profErr) {
+    console.warn('[studentCreditService] Profile sync error on purchase:', profErr);
+  }
+
   return {
     lotId,
     expiresAt,
@@ -288,6 +431,18 @@ export function consumeCreditFEFO(
 
   const totalRemaining = getValidStudentCreditBalance(userId);
 
+  try {
+    db.prepare(`
+      UPDATE student_profiles
+      SET purchased_credits = ?,
+          paid_credits = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(totalRemaining, totalRemaining, userId);
+  } catch (profErr) {
+    console.warn('[studentCreditService] Profile sync error on consume:', profErr);
+  }
+
   // Credit Ledger record
   const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
   db.prepare(`
@@ -308,6 +463,181 @@ export function consumeCreditFEFO(
     lotExpiresAt: earliestLot.expires_at,
     totalRemaining,
   };
+}
+
+/**
+ * Atomic evaluation credit deduction on evaluation start/acceptance.
+ * 
+ * EVALUATION CONSUMPTION PRIORITY:
+ * FIRST  -> Consume 1 monthly FREE evaluation if any free evaluation remains.
+ * SECOND -> Only after all monthly free evaluations are exhausted, consume 1 PAID CREDIT.
+ * 
+ * If free = 0 AND paid = 0, throws:
+ * "Your free evaluations for this month are exhausted. Please purchase credits to continue."
+ */
+export function consumeEvaluationEntitlementAtomic(params: {
+  userId: string;
+  evaluationId?: string;
+}): {
+  source: 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+  freeRemaining: number;
+  paidCredits: number;
+  consumedLotId?: string;
+} {
+  const { userId, evaluationId } = params;
+  const evalRefId = evaluationId || `eval_${crypto.randomBytes(6).toString('hex')}`;
+
+  // 1. Ensure monthly reset is current before consuming
+  const status = ensureMonthlyFreeEvaluationsReset(userId);
+
+  // 2. PRIORITY 1: Consume 1 monthly FREE evaluation if any free evaluation remains
+  if (status.freeEvaluationsRemaining > 0) {
+    const updateRes = db.prepare(`
+      UPDATE student_profiles
+      SET monthly_free_evaluations_used = monthly_free_evaluations_used + 1,
+          free_evaluations_used = free_evaluations_used + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+        AND monthly_free_evaluations_used < monthly_free_evaluations_limit
+    `).run(userId);
+
+    if (updateRes.changes > 0) {
+      const newFreeRemaining = Math.max(0, status.freeEvaluationsRemaining - 1);
+      const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, -1, 'FREE_MONTHLY_EVALUATION', ?, ?, ?)
+      `).run(
+        ledgerId,
+        userId,
+        newFreeRemaining,
+        evalRefId,
+        `Consumed 1 monthly free evaluation (${status.freeEvaluationResetMonth})`
+      );
+
+      if (evaluationId) {
+        db.prepare(`
+          UPDATE evaluations
+          SET entitlement_source = 'PERSONAL_FREE',
+              consumed_from_personal_credits = 0,
+              consumed_from_institute_allocation = 0
+          WHERE id = ?
+        `).run(evaluationId);
+      }
+
+      return {
+        source: 'PERSONAL_FREE',
+        freeRemaining: newFreeRemaining,
+        paidCredits: status.paidCredits,
+      };
+    }
+  }
+
+  // 3. PRIORITY 2: Only after all monthly free evaluations are exhausted, consume 1 PAID CREDIT
+  const validPaid = getValidStudentCreditBalance(userId);
+  if (validPaid > 0) {
+    const fefoResult = consumeCreditFEFO(userId, evalRefId);
+
+    if (evaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET entitlement_source = 'PERSONAL_PURCHASED_CREDIT',
+            consumed_from_personal_credits = 1,
+            consumed_from_institute_allocation = 0
+        WHERE id = ?
+      `).run(evaluationId);
+    }
+
+    return {
+      source: 'PERSONAL_PURCHASED_CREDIT',
+      freeRemaining: 0,
+      paidCredits: fefoResult.totalRemaining,
+      consumedLotId: fefoResult.lotId,
+    };
+  }
+
+  // 4. INSUFFICIENT CREDITS (free = 0 AND paid = 0)
+  throw new Error('Your free evaluations for this month are exhausted. Please purchase credits to continue.');
+}
+
+/**
+ * Restores/refunds consumed credit if evaluation encounters a fatal failure during background processing.
+ */
+export function refundEvaluationCreditAtomic(params: {
+  userId: string;
+  evaluationId?: string;
+  entitlementSource: string;
+}): void {
+  const { userId, evaluationId, entitlementSource } = params;
+  const evalRefId = evaluationId || 'unknown_eval';
+
+  try {
+    if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY') {
+      db.prepare(`
+        UPDATE student_profiles
+        SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,
+            free_evaluations_used = CASE WHEN free_evaluations_used > 0 THEN free_evaluations_used - 1 ELSE 0 END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(userId);
+
+      const status = ensureMonthlyFreeEvaluationsReset(userId);
+      const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, 1, 'REFUND_MONTHLY_FREE', ?, ?, 'Restored 1 monthly free evaluation due to evaluation processing failure')
+      `).run(ledgerId, userId, status.freeEvaluationsRemaining, evalRefId);
+    } else if (entitlementSource === 'PERSONAL_PURCHASED_CREDIT' || entitlementSource === 'PAID_CREDIT') {
+      const ledgerEntry = db.prepare(`
+        SELECT note FROM credit_ledger
+        WHERE student_id = ? AND evaluation_id = ? AND source = 'CONSUMED_EVALUATION'
+        ORDER BY created_at DESC LIMIT 1
+      `).get(userId, evalRefId) as { note: string } | undefined;
+
+      let lotIdToRefund: string | null = null;
+      if (ledgerEntry && ledgerEntry.note) {
+        const match = ledgerEntry.note.match(/Lot (crd_[a-zA-Z0-9]+)/);
+        if (match) lotIdToRefund = match[1];
+      }
+
+      if (lotIdToRefund) {
+        db.prepare(`
+          UPDATE student_credit_purchases
+          SET credits_remaining = credits_remaining + 1,
+              status = 'ACTIVE',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND user_id = ?
+        `).run(lotIdToRefund, userId);
+      } else {
+        db.prepare(`
+          UPDATE student_credit_purchases
+          SET credits_remaining = credits_remaining + 1,
+              status = 'ACTIVE',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ? AND id = (
+            SELECT id FROM student_credit_purchases WHERE user_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1
+          )
+        `).run(userId, userId);
+      }
+
+      const totalRemaining = getValidStudentCreditBalance(userId);
+      db.prepare(`
+        UPDATE student_profiles
+        SET purchased_credits = ?,
+            paid_credits = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(totalRemaining, totalRemaining, userId);
+
+      const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, 1, 'REFUND_PURCHASED_CREDIT', ?, ?, 'Refunded 1 purchased credit due to evaluation processing failure')
+      `).run(ledgerId, userId, totalRemaining, evalRefId);
+    }
+  } catch (err) {
+    console.warn(`[StudentCreditService] Error refunding credit for user ${userId}:`, err);
+  }
 }
 
 /**

@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
-import { getValidStudentCreditBalance } from './services/studentCreditService.js';
+import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -306,6 +306,10 @@ export interface StudentEntitlement {
   instituteEvaluationsRemaining?: number;
   freeEvaluationsRemaining: number;
   purchasedCredits: number;
+  paidCredits?: number;
+  monthlyFreeEvaluationsUsed?: number;
+  monthlyFreeEvaluationsLimit?: number;
+  freeEvaluationResetMonth?: string;
   instituteSponsored: boolean;
   instituteName?: string;
   sponsoringInstituteId?: string;
@@ -337,24 +341,20 @@ export function getStudentEntitlement(
       tier: 'EXHAUSTED',
       freeEvaluationsRemaining: 0,
       purchasedCredits: 0,
+      paidCredits: 0,
+      monthlyFreeEvaluationsUsed: 0,
+      monthlyFreeEvaluationsLimit: 2,
+      freeEvaluationResetMonth: '',
       instituteSponsored: false,
       hasPermanentFreeAccess: false,
       reason: 'User not found',
     };
   }
 
-  // Get user's personal credit status for balance reporting
-  const profile = db.prepare(`
-    SELECT free_evaluations_used, purchased_credits, institute_id FROM student_profiles WHERE user_id = ?
-  `).get(userId) as {
-    free_evaluations_used: number;
-    purchased_credits: number;
-    institute_id?: string;
-  } | undefined;
-
-  const freeUsed = profile ? profile.free_evaluations_used : 0;
-  const purchased = getValidStudentCreditBalance(userId);
-  const freeRemaining = Math.max(0, 2 - freeUsed);
+  // Get user's monthly free evaluations and paid credits
+  const monthlyStatus = ensureMonthlyFreeEvaluationsReset(userId);
+  const freeRemaining = monthlyStatus.freeEvaluationsRemaining;
+  const purchased = monthlyStatus.paidCredits;
   const isPermanentFree = checkPermanentFreeAccess(user.email);
 
   // 1. Query all currently ACTIVE institute enrollments for this student
@@ -537,7 +537,7 @@ export function getStudentEntitlement(
     console.warn('Referral check warning:', err);
   }
 
-  // Normal Student First 2 Answer Sheets Free
+  // Normal Student Monthly Free Evaluations (FIRST priority)
   if (freeRemaining > 0) {
     return {
       canEvaluate: true,
@@ -545,13 +545,17 @@ export function getStudentEntitlement(
       evaluationsRemaining: freeRemaining + purchased,
       freeEvaluationsRemaining: freeRemaining,
       purchasedCredits: purchased,
+      paidCredits: purchased,
+      monthlyFreeEvaluationsUsed: monthlyStatus.monthlyFreeEvaluationsUsed,
+      monthlyFreeEvaluationsLimit: monthlyStatus.monthlyFreeEvaluationsLimit,
+      freeEvaluationResetMonth: monthlyStatus.freeEvaluationResetMonth,
       instituteSponsored: false,
       hasPermanentFreeAccess: false,
-      reason: `${freeRemaining} Free Evaluation${freeRemaining > 1 ? 's' : ''} Remaining`,
+      reason: `Free Evaluations: ${freeRemaining}/${monthlyStatus.monthlyFreeEvaluationsLimit} remaining this month`,
     };
   }
 
-  // Purchased Credits
+  // Purchased Credits (SECOND priority, only after all monthly free are exhausted)
   if (purchased > 0) {
     return {
       canEvaluate: true,
@@ -559,9 +563,13 @@ export function getStudentEntitlement(
       evaluationsRemaining: purchased,
       freeEvaluationsRemaining: 0,
       purchasedCredits: purchased,
+      paidCredits: purchased,
+      monthlyFreeEvaluationsUsed: monthlyStatus.monthlyFreeEvaluationsUsed,
+      monthlyFreeEvaluationsLimit: monthlyStatus.monthlyFreeEvaluationsLimit,
+      freeEvaluationResetMonth: monthlyStatus.freeEvaluationResetMonth,
       instituteSponsored: false,
       hasPermanentFreeAccess: false,
-      reason: `${purchased} Purchased Credit${purchased > 1 ? 's' : ''} Available`,
+      reason: `Paid Credits: ${purchased} available`,
     };
   }
 
@@ -571,8 +579,12 @@ export function getStudentEntitlement(
     evaluationsRemaining: 0,
     freeEvaluationsRemaining: 0,
     purchasedCredits: purchased,
+    paidCredits: purchased,
+    monthlyFreeEvaluationsUsed: monthlyStatus.monthlyFreeEvaluationsUsed,
+    monthlyFreeEvaluationsLimit: monthlyStatus.monthlyFreeEvaluationsLimit,
+    freeEvaluationResetMonth: monthlyStatus.freeEvaluationResetMonth,
     instituteSponsored: false,
     hasPermanentFreeAccess: false,
-    reason: 'You have exhausted your free evaluations. Please purchase evaluation credits to continue.',
+    reason: 'Your free evaluations for this month are exhausted. Please purchase credits to continue.',
   };
 }

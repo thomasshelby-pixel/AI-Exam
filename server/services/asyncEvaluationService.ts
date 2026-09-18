@@ -10,7 +10,11 @@ import {
   generateDetailedReportPdf,
   buildStructuredAnnotations,
 } from './pdfCheckedCopyService.js';
-import { consumeCreditFEFO } from './studentCreditService.js';
+import {
+  consumeCreditFEFO,
+  consumeEvaluationEntitlementAtomic,
+  refundEvaluationCreditAtomic,
+} from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
@@ -58,6 +62,7 @@ export interface EvaluationJobData {
   resolvedInstituteName?: string | null;
   requestedEvalSource: 'PUBLIC' | 'INSTITUTE';
   personalEntitlement?: any;
+  creditAlreadyConsumed?: boolean;
 }
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId
@@ -548,43 +553,29 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
             consumed_from_personal_credits = 0
         WHERE id = ?
       `).run(evaluationId);
-    } else if (entitlementSource === 'PERSONAL_FREE') {
-      db.prepare('UPDATE student_profiles SET free_evaluations_used = free_evaluations_used + 1 WHERE user_id = ?').run(studentId);
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-        VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, 'Consumed 1 free tier evaluation')
-      `).run(
-        `cld_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        Math.max(0, (personalEntitlement?.freeEvaluationsRemaining || 1) - 1),
-        evaluationId
-      );
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 0
-        WHERE id = ?
-      `).run(evaluationId);
-    } else if (entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
-      consumeCreditFEFO(studentId, evaluationId);
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 1
-        WHERE id = ?
-      `).run(evaluationId);
-
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'EVALUATION_PERSONAL_PURCHASED', 'EVALUATION', ?, ?)
-      `).run(
-        `aud_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        evaluationId,
-        '1 personal purchased credit deducted via FEFO.'
-      );
+    } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
+      if (!job.creditAlreadyConsumed) {
+        // If not already deducted at acceptance time, atomically deduct now
+        consumeEvaluationEntitlementAtomic({
+          userId: studentId,
+          evaluationId,
+        });
+      } else {
+        // Already deducted atomically at acceptance time; record completion audit log
+        try {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, 'EVALUATION_COMPLETED_CREDIT', 'EVALUATION', ?, ?)
+          `).run(
+            `aud_${crypto.randomBytes(8).toString('hex')}`,
+            studentId,
+            evaluationId,
+            `Evaluation completed successfully under entitlement source: ${entitlementSource}`
+          );
+        } catch (auditErr) {
+          console.warn('[AsyncEval] Audit log error:', auditErr);
+        }
+      }
     }
 
     // Stage 8: Student Notification
@@ -617,6 +608,19 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     console.error(`[AsyncEval] Evaluation failed for ${evaluationId}:`, error);
 
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
+
+    // Refund credit/free evaluation atomically if it was already deducted on acceptance
+    if (job.creditAlreadyConsumed && (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+      try {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId,
+          entitlementSource,
+        });
+      } catch (refundErr) {
+        console.warn(`[AsyncEval] Refund error on failure for ${evaluationId}:`, refundErr);
+      }
+    }
 
     // Mark as failed in DB, NO CREDITS CONSUMED
     db.prepare(`

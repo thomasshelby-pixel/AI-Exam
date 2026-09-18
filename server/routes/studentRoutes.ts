@@ -17,6 +17,8 @@ import {
   consumeCreditFEFO,
   getStudentCreditStatus,
   getValidStudentCreditBalance,
+  consumeEvaluationEntitlementAtomic,
+  getStudentCreditDetailedSummary,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
@@ -144,10 +146,15 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       profile,
       enrolledInstitutes,
       creditStatus,
+      creditSummary: getStudentCreditDetailedSummary(studentId),
       metrics: {
         totalEvaluations: totalCount,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
+        paidCredits: creditStatus.totalValidCredits,
+        monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
+        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
         expiringSoonCredits: creditStatus.expiringSoonCredits,
         earliestExpiryDate: creditStatus.earliestExpiryDate,
         instituteSponsored: entitlement.instituteSponsored,
@@ -397,9 +404,21 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
   }
 });
 
+// Track in-flight evaluations per student to prevent double-submission on double click
+const inFlightStudentEvaluations = new Set<string>();
+
 // 2. Upload and Evaluate Answer Sheet
 router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   const studentId = req.user!.id;
+
+  // Prevent double deduction or concurrent submissions if user double-clicks Evaluate
+  if (inFlightStudentEvaluations.has(studentId)) {
+    return res.status(429).json({
+      error: 'An evaluation is already in progress for your account. Please wait a moment.',
+    });
+  }
+  inFlightStudentEvaluations.add(studentId);
+
   const evaluationId =
     req.body?.evaluationId && typeof req.body.evaluationId === 'string' && req.body.evaluationId.startsWith('eval_')
       ? req.body.evaluationId
@@ -775,6 +794,29 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       });
     }
 
+    // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
+    let creditAlreadyConsumed = false;
+    if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
+      try {
+        const deductionResult = consumeEvaluationEntitlementAtomic({
+          userId: studentId,
+          evaluationId,
+        });
+        creditAlreadyConsumed = true;
+        entitlementSource = deductionResult.source;
+      } catch (deductErr: any) {
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(deductErr.message, evaluationId);
+
+        return res.status(402).json({
+          error: deductErr.message || 'Your free evaluations for this month are exhausted. Please purchase credits to continue.',
+        });
+      }
+    }
+
     // Step E: Enqueue Asynchronous Background Evaluation
     enqueueEvaluation({
       evaluationId,
@@ -814,6 +856,7 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       resolvedInstituteName,
       requestedEvalSource,
       personalEntitlement,
+      creditAlreadyConsumed,
     });
 
     return res.json({
@@ -863,6 +906,8 @@ router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req:
       error: userFacingMsg,
       isPrepaymentDepleted: isPrepayment,
     });
+  } finally {
+    inFlightStudentEvaluations.delete(studentId);
   }
 });
 
@@ -1867,6 +1912,7 @@ router.get('/credits', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const entitlement = getStudentEntitlement(studentId);
+    const creditSummary = getStudentCreditDetailedSummary(studentId);
 
     const ledger = db.prepare(`
       SELECT id, amount, source, balance_after, order_id, payment_id, evaluation_id, note, created_at
@@ -1878,6 +1924,7 @@ router.get('/credits', (req: AuthRequest, res: Response) => {
 
     return res.json({
       entitlement,
+      creditSummary,
       ledger,
     });
   } catch (error: unknown) {
@@ -1974,7 +2021,12 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         preferredSubjects: preferredSubjectsList,
         avatarUrl: profile?.avatar_url || '',
         freeEvaluationsUsed: profile?.free_evaluations_used || 0,
+        monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
+        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
+        freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
+        paidCredits: creditStatus.totalValidCredits,
         instituteId: profile?.institute_id || null,
         instituteName: profile?.institute_name || null,
         instituteCode: profile?.institute_code || null,
@@ -1985,6 +2037,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
       enrolledInstitutes,
       entitlement,
       creditStatus,
+      creditSummary: getStudentCreditDetailedSummary(studentId),
       activePromo: activePromo ? {
         id: activePromo.id,
         referralCode: activePromo.referral_code,

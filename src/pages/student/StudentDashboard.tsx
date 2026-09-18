@@ -390,7 +390,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* Entitlement Card */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
-            <span>Evaluation Access</span>
+            <span>Free Evaluations</span>
             <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           </div>
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
@@ -398,10 +398,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Sponsored</span>
-            ) : metrics.freeEvaluationsRemaining > 0 ? (
-              <span>{metrics.freeEvaluationsRemaining} Free</span>
             ) : (
-              <span>{metrics.purchasedCredits} Credits</span>
+              <span>
+                {metrics.freeEvaluationsRemaining}/2 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">remaining</span>
+              </span>
             )}
           </div>
           <div className="text-xs font-medium mt-1">
@@ -409,18 +409,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Full evaluation access active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Via {metrics.instituteName || 'Institute'}</span>
-            ) : metrics.freeEvaluationsRemaining > 0 ? (
-              <span className="text-blue-600 dark:text-blue-400">{metrics.freeEvaluationsRemaining} trial evaluations active</span>
-            ) : metrics.expiringSoonCredits && metrics.expiringSoonCredits > 0 ? (
-              <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
-                <Clock className="w-3 h-3 inline" /> {metrics.expiringSoonCredits} credits expiring soon
-              </span>
-            ) : metrics.earliestExpiryDate ? (
-              <span className="text-slate-500 dark:text-slate-400">
-                Expires {new Date(metrics.earliestExpiryDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-              </span>
             ) : (
-              <span className="text-slate-500 dark:text-slate-400">3-Month validity</span>
+              <div className="space-y-0.5">
+                <div className="text-slate-600 dark:text-slate-300">
+                  Paid Credits: <strong className="text-blue-600 dark:text-blue-400">{metrics.purchasedCredits}</strong>
+                  {metrics.purchasedCredits > 0 && (
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px]"> ({metrics.freeEvaluationsRemaining + metrics.purchasedCredits} total)</span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Resets monthly • Consumes free evaluations first
+                </div>
+              </div>
             )}
           </div>
         </div>
