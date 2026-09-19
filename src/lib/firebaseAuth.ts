@@ -305,9 +305,11 @@ export async function verifyFirebasePhoneNumber(
       const verificationId = await phoneProvider.verifyPhoneNumber(phoneInfoOptions, verifier);
 
       if (!verificationId) {
+        logMfaDiagnostic('SMS verificationId received: NO');
         throw new Error('PhoneAuthProvider.verifyPhoneNumber did not return a valid verificationId.');
       }
 
+      logMfaDiagnostic('SMS verificationId received: YES');
       logMfaDiagnostic('SMS request succeeded', {
         verificationIdCreated: 'YES',
       });
@@ -318,6 +320,7 @@ export async function verifyFirebasePhoneNumber(
         mode: 'IDENTITY_PLATFORM_MFA',
       };
     } catch (mfaError: any) {
+      logMfaDiagnostic('SMS verificationId received: NO', { error: mfaError?.message });
       logMfaDiagnostic('identity-platform-mfa-step-failure', {
         errorCode: mfaError?.code || 'UNKNOWN_ERROR',
         errorName: mfaError?.name || 'Error',
@@ -353,9 +356,11 @@ export async function verifyFirebasePhoneNumber(
     }
 
     if (!verificationId) {
+      logMfaDiagnostic('SMS verificationId received: NO');
       throw new Error('Firebase phone verification failed to return a verificationId.');
     }
 
+    logMfaDiagnostic('SMS verificationId received: YES');
     logMfaDiagnostic('SMS request succeeded', {
       verificationIdCreated: 'YES',
     });
@@ -366,6 +371,7 @@ export async function verifyFirebasePhoneNumber(
       mode: 'STANDARD_PHONE_AUTH',
     };
   } catch (error: any) {
+    logMfaDiagnostic('SMS verificationId received: NO', { error: error?.message });
     logMfaDiagnostic('verifyPhoneNumber-failure', {
       errorCode: error?.code || 'UNKNOWN_ERROR',
       errorName: error?.name || 'Error',
@@ -389,7 +395,7 @@ export async function confirmFirebaseMfaOtp(
   otpCode: string,
   confirmationResult?: ConfirmationResult | null,
   mfaDisplayName: string = 'Personal Mobile'
-): Promise<{ idToken?: string; credential?: any }> {
+): Promise<{ idToken?: string; credential?: any; alreadyEnrolled?: boolean }> {
   logMfaDiagnostic('OTP verification started');
 
   const cleanCode = otpCode.trim().replace(/\D/g, '');
@@ -407,32 +413,78 @@ export async function confirmFirebaseMfaOtp(
 
   try {
     // Step 1: PhoneAuthProvider.credential(currentVerificationId, enteredVerificationCode)
-    const credential = PhoneAuthProvider.credential(verificationId, cleanCode);
-    logMfaDiagnostic('credential created: YES');
+    let credential: any;
+    try {
+      credential = PhoneAuthProvider.credential(verificationId, cleanCode);
+      logMfaDiagnostic('credential creation success/failure', { status: 'success' });
+    } catch (credErr) {
+      logMfaDiagnostic('credential creation success/failure', { status: 'failure', error: credErr });
+      throw credErr;
+    }
 
     const currentUser = await getCurrentFirebaseUser();
 
     // Step 2 & 3: MultiFactor enrollment if currentUser is present
     if (currentUser) {
-      try {
-        const assertion = PhoneMultiFactorGenerator.assertion(credential);
-        logMfaDiagnostic('assertion created: YES');
+      const factorsBefore = multiFactor(currentUser).enrolledFactors || [];
+      const countBefore = factorsBefore.length;
+      logMfaDiagnostic('enrolledFactors count BEFORE enrollment', { count: countBefore });
 
-        logMfaDiagnostic('MFA enroll started');
-        await multiFactor(currentUser).enroll(assertion, mfaDisplayName);
-        logMfaDiagnostic('MFA enroll succeeded: YES');
+      const phoneFactorBefore = factorsBefore.some(
+        (f) => f.factorId === 'phone' || f.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+      );
 
+      // Re-enrollment safety: If user already has an enrolled phone factor
+      if (phoneFactorBefore) {
+        logMfaDiagnostic('phone factor present AFTER enrollment: YES', { alreadyEnrolled: true });
         await currentUser.reload();
         const idToken = await currentUser.getIdToken(true);
-        return { idToken, credential };
+        logMfaDiagnostic('auth state refreshed');
+        return { idToken, credential, alreadyEnrolled: true };
+      }
+
+      let assertion: any;
+      try {
+        assertion = PhoneMultiFactorGenerator.assertion(credential);
+        logMfaDiagnostic('assertion creation success/failure', { status: 'success' });
+      } catch (assErr) {
+        logMfaDiagnostic('assertion creation success/failure', { status: 'failure', error: assErr });
+        throw assErr;
+      }
+
+      logMfaDiagnostic('enrollment started');
+      try {
+        await multiFactor(currentUser).enroll(assertion, mfaDisplayName);
+        logMfaDiagnostic('multiFactor.enroll success/failure', { status: 'success' });
       } catch (enrollErr: any) {
-        logMfaDiagnostic('MFA enroll failed: YES', {
+        logMfaDiagnostic('multiFactor.enroll success/failure', {
+          status: 'failure',
           errorCode: enrollErr?.code,
-          errorName: enrollErr?.name,
           errorMessage: enrollErr?.message,
         });
-        throw enrollErr;
+
+        if (enrollErr?.code === 'auth/second-factor-already-in-use') {
+          logMfaDiagnostic('phone factor already in use, proceeding safely');
+        } else {
+          throw enrollErr;
+        }
       }
+
+      // Immediately verify: multiFactor(user).enrolledFactors contains a phone factor
+      await currentUser.reload();
+      const freshUser = auth.currentUser || currentUser;
+      const factorsAfter = freshUser ? multiFactor(freshUser).enrolledFactors || [] : [];
+      const countAfter = factorsAfter.length;
+      const phoneFactorPresent = factorsAfter.some(
+        (f) => f.factorId === 'phone' || f.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+      );
+
+      logMfaDiagnostic('enrolledFactors count AFTER enrollment', { count: countAfter });
+      logMfaDiagnostic(`phone factor present AFTER enrollment: ${phoneFactorPresent ? 'YES' : 'NO'}`);
+
+      const idToken = await freshUser.getIdToken(true);
+      logMfaDiagnostic('auth state refreshed');
+      return { idToken, credential };
     }
 
     // Direct phone confirmation if user was signed in via phone credential
@@ -441,6 +493,7 @@ export async function confirmFirebaseMfaOtp(
       const userCredential = await confirmationResult.confirm(cleanCode);
       idToken = await userCredential.user.getIdToken();
       logMfaDiagnostic('confirmationResult.confirm-success');
+      logMfaDiagnostic('auth state refreshed');
       return { idToken, credential };
     }
 
@@ -453,6 +506,26 @@ export async function confirmFirebaseMfaOtp(
       errorMessage: err?.message,
     });
     throw err;
+  }
+}
+
+/**
+ * Checks if the current Firebase user already has an enrolled phone factor.
+ */
+export async function getFirebaseEnrolledPhoneFactors(): Promise<{
+  hasPhoneFactor: boolean;
+  enrolledCount: number;
+}> {
+  try {
+    const user = await getCurrentFirebaseUser();
+    if (!user) return { hasPhoneFactor: false, enrolledCount: 0 };
+    const factors = multiFactor(user).enrolledFactors || [];
+    const hasPhone = factors.some(
+      (f) => f.factorId === 'phone' || f.factorId === PhoneMultiFactorGenerator.FACTOR_ID
+    );
+    return { hasPhoneFactor: hasPhone, enrolledCount: factors.length };
+  } catch {
+    return { hasPhoneFactor: false, enrolledCount: 0 };
   }
 }
 

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
+import { isDeviceTrusted } from './services/trustService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -193,13 +194,22 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       }
     }
 
+    const deviceId =
+      (req.headers['x-device-id'] as string)?.trim() ||
+      (req.query.deviceId as string)?.trim();
+    const trustToken =
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
+
     req.user = {
       id: user.id,
       email: user.email,
       role: user.role,
       fullName: user.full_name,
       sessionId: decoded.sessionId,
-      mfaVerified: !!decoded.mfaVerified,
+      mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
 
     next();
@@ -287,15 +297,27 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
       email: string;
       role: UserRole;
       fullName: string;
+      sessionId?: string;
+      mfaVerified?: boolean;
     };
 
-    const user = db.prepare('SELECT id, email, role, full_name, status FROM users WHERE id = ?').get(decoded.id) as {
+    const user = db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE id = ?').get(decoded.id) as {
       id: string;
       email: string;
       role: UserRole;
       full_name: string;
       status: string;
+      mfa_enabled: number;
     } | undefined;
+
+    const deviceId =
+      (req.headers['x-device-id'] as string)?.trim() ||
+      (req.query.deviceId as string)?.trim();
+    const trustToken =
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    const deviceIsTrusted = !!(user && deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
 
     if (user && (user.status === 'ACTIVE' || user.status === 'SUSPENDED')) {
       req.user = {
@@ -303,6 +325,8 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
         email: user.email,
         role: user.role,
         fullName: user.full_name,
+        sessionId: decoded.sessionId,
+        mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
       };
       if (user.status === 'SUSPENDED') {
         (req as any).isSuspended = true;
@@ -332,7 +356,17 @@ export function requireRole(...allowedRoles: UserRole[]) {
     if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN') {
       const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
 
-      if (!dbUser?.mfa_enabled || !req.user.mfaVerified) {
+      const deviceId =
+        (req.headers['x-device-id'] as string)?.trim() ||
+        (req.query.deviceId as string)?.trim();
+      const trustToken =
+        (req.headers['x-device-trust-token'] as string)?.trim() ||
+        (req as any).cookies?.['ca_trust_token'];
+
+      const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
+      const isMfaVerified = !!req.user.mfaVerified || deviceIsTrusted;
+
+      if (!dbUser?.mfa_enabled || !isMfaVerified) {
         return res.status(403).json({
           error: 'SMS Multi-Factor Authentication is mandatory for administrative access. Please complete MFA verification.',
           code: 'MFA_REQUIRED',

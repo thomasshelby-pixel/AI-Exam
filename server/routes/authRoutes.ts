@@ -535,7 +535,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
     const normalizedEmail = email.trim().toLowerCase();
     let user = db.prepare(`
-      SELECT id, email, password_hash, full_name, role, status FROM users WHERE lower(email) = ?
+      SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
     `).get(normalizedEmail) as {
       id: string;
       email: string;
@@ -543,6 +543,8 @@ router.post('/login', async (req: Request, res: Response) => {
       full_name: string;
       role: UserRole;
       status: string;
+      mfa_enabled?: number;
+      mfa_phone?: string | null;
     } | undefined;
 
     let isAuthenticated = false;
@@ -687,6 +689,8 @@ router.post('/login', async (req: Request, res: Response) => {
 
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+
     return res.json({
       token,
       user: {
@@ -696,6 +700,10 @@ router.post('/login', async (req: Request, res: Response) => {
         role: user.role,
         status: user.status,
         hasPermanentFreeAccess: isPermanentFree,
+        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
+        mfaVerified: true,
+        mfaMandatory: isMandatoryRole,
       },
     });
   } catch (error: unknown) {
@@ -875,7 +883,7 @@ router.post('/institute/login', async (req: Request, res: Response) => {
 
     const normalizedEmail = email.trim().toLowerCase();
     let user = db.prepare(`
-      SELECT id, email, password_hash, full_name, role, status FROM users WHERE lower(email) = ?
+      SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
     `).get(normalizedEmail) as {
       id: string;
       email: string;
@@ -883,6 +891,8 @@ router.post('/institute/login', async (req: Request, res: Response) => {
       full_name: string;
       role: UserRole;
       status: string;
+      mfa_enabled?: number;
+      mfa_phone?: string | null;
     } | undefined;
 
     let isAuthenticated = false;
@@ -971,6 +981,10 @@ router.post('/institute/login', async (req: Request, res: Response) => {
         fullName: user.full_name,
         role: user.role,
         status: user.status,
+        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
+        mfaVerified: true,
+        mfaMandatory: true,
       },
     });
   } catch (error: unknown) {
@@ -1178,6 +1192,29 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
       profileData = { institute };
     }
 
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+    const mfaEnabled = Boolean(user.mfa_enabled);
+
+    const deviceId =
+      (req.headers['x-device-id'] as string)?.trim() ||
+      (req.query.deviceId as string)?.trim();
+    const trustToken =
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
+
+    let mfaVerified = false;
+    if (!isMandatoryRole) {
+      mfaVerified = !mfaEnabled || !!req.user?.mfaVerified;
+    } else {
+      if (mfaEnabled) {
+        mfaVerified = !!req.user?.mfaVerified || deviceIsTrusted;
+      } else {
+        mfaVerified = false;
+      }
+    }
+
     return res.json({
       user: {
         id: user.id,
@@ -1188,10 +1225,10 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
         status: user.status,
         createdAt: user.created_at,
         hasPermanentFreeAccess: isPermanentFree,
-        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
-        mfaVerified: req.user.mfaVerified ?? false,
-        mfaMandatory: user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN',
+        mfaVerified,
+        mfaMandatory: isMandatoryRole,
       },
       profile: profileData,
     });

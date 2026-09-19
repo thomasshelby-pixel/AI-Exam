@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import {
   authenticateToken,
+  optionalAuthenticateToken,
   generateToken,
   generateMfaSessionToken,
   verifyMfaSessionToken,
@@ -26,6 +27,8 @@ import {
 import { UserRole } from '../../src/types/index.js';
 
 const router = Router();
+
+router.use(optionalAuthenticateToken);
 
 /**
  * Helper to resolve user from either an active MFA session token OR an authenticated request
@@ -448,12 +451,26 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
     ).get(req.user.id) as { mfa_enabled: number; mfa_phone: string | null; role: UserRole } | undefined;
 
     const isMandatoryRole = req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN';
+    const mfaEnabled = Boolean(dbUser?.mfa_enabled);
+
+    const deviceId =
+      (req.headers['x-device-id'] as string)?.trim() ||
+      (req.query.deviceId as string)?.trim();
+    const trustToken =
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
+
+    const mfaVerified = isMandatoryRole
+      ? (mfaEnabled && (!!req.user.mfaVerified || deviceIsTrusted))
+      : (!mfaEnabled || !!req.user.mfaVerified);
 
     return res.json({
       role: req.user.role,
       mfaMandatory: isMandatoryRole,
-      mfaEnabled: Boolean(dbUser?.mfa_enabled),
-      mfaVerified: req.user.mfaVerified ?? false,
+      mfaEnabled,
+      mfaVerified,
       maskedPhone: dbUser?.mfa_phone ? maskPhoneNumber(dbUser.mfa_phone) : null,
     });
   } catch (err: any) {

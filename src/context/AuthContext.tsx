@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, UserRole } from '../types/index.js';
 import { apiRequest } from '../api/client.js';
 import { MfaModal } from '../components/auth/MfaModal.js';
+import { logMfaDiagnostic } from '../lib/firebaseAuth.js';
 
 export interface SuspendedAccountInfo {
   reason: string;
@@ -32,6 +33,7 @@ interface AuthContextType {
   clearSuspension: () => void;
   mfaChallenge: MfaChallengeState | null;
   triggerMfaEnrollment: (phone?: string) => void;
+  triggerMfaChallenge: () => Promise<void>;
   cancelMfaChallenge: () => void;
   verifyMfaChallenge: (otpCode: string) => Promise<User>;
   resendMfaChallenge: () => Promise<void>;
@@ -91,6 +93,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  const triggerMfaChallenge = async (): Promise<void> => {
+    try {
+      const res = await apiRequest<{ canonicalPhoneE164?: string; maskedPhone: string }>('/api/auth/mfa/send-challenge', {
+        method: 'POST',
+      });
+      setMfaChallenge({
+        isOpen: true,
+        mode: 'CHALLENGE',
+        mfaSessionToken: '',
+        canonicalPhoneE164: res.canonicalPhoneE164,
+        maskedPhone: res.maskedPhone,
+        role: user?.role,
+      });
+    } catch {
+      setMfaChallenge({
+        isOpen: true,
+        mode: 'CHALLENGE',
+        mfaSessionToken: '',
+        canonicalPhoneE164: undefined,
+        maskedPhone: user?.mfaPhone || undefined,
+        role: user?.role,
+      });
+    }
+  };
+
   const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
     if (!mfaChallenge?.mfaSessionToken) {
       throw new Error('No active MFA verification session found.');
@@ -104,22 +131,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }),
     });
 
+    logMfaDiagnostic('backend MFA state synchronized', {
+      mfaEnabled: res.user?.mfaEnabled,
+      mfaVerified: res.user?.mfaVerified,
+    });
+
     if (res.trustToken) {
       localStorage.setItem('ca_device_trust_token', res.trustToken);
+      logMfaDiagnostic('trusted device state created');
     }
 
     localStorage.setItem('ca_exam_checker_token', res.token);
     setToken(res.token);
-    setUser(res.user);
+
+    const verifiedUser: User = {
+      ...res.user,
+      mfaEnabled: true,
+      mfaVerified: true,
+    };
+    setUser(verifiedUser);
     setSuspendedAccount(null);
 
     const onSuccessCb = mfaChallenge.onSuccess;
     setMfaChallenge(null);
-    if (onSuccessCb) {
-      onSuccessCb(res.user);
+
+    try {
+      await refreshUser();
+      logMfaDiagnostic('auth state refreshed');
+    } catch {
+      // Keep verifiedUser
     }
-    refreshUser().catch(() => {});
-    return res.user;
+
+    if (onSuccessCb) {
+      onSuccessCb(verifiedUser);
+    }
+    return verifiedUser;
   };
 
   const resendMfaChallenge = async (): Promise<void> => {
@@ -151,6 +197,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const verifyMfaEnroll = async (phone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
+    logMfaDiagnostic('enrollment started');
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/enroll/verify', {
       method: 'POST',
       body: JSON.stringify({
@@ -162,24 +209,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }),
     });
 
+    logMfaDiagnostic('backend MFA state synchronized', {
+      mfaEnabled: res.user?.mfaEnabled,
+      mfaVerified: res.user?.mfaVerified,
+    });
+
     if (res.trustToken) {
       localStorage.setItem('ca_device_trust_token', res.trustToken);
+      logMfaDiagnostic('trusted device state created');
     }
 
     if (res.token) {
       localStorage.setItem('ca_exam_checker_token', res.token);
       setToken(res.token);
     }
-    if (res.user) {
-      setUser(res.user);
-    }
+
+    const verifiedUser: User = {
+      ...res.user,
+      mfaEnabled: true,
+      mfaVerified: true,
+    };
+    setUser(verifiedUser);
+
     const onSuccessCb = mfaChallenge?.onSuccess;
     setMfaChallenge(null);
-    if (onSuccessCb && res.user) {
-      onSuccessCb(res.user);
+
+    try {
+      await refreshUser();
+      logMfaDiagnostic('auth state refreshed');
+    } catch {
+      // Keep verifiedUser
     }
-    refreshUser().catch(() => {});
-    return res.user;
+
+    if (onSuccessCb && verifiedUser) {
+      onSuccessCb(verifiedUser);
+    }
+
+    return verifiedUser;
   };
 
   const disableMfa = async (): Promise<void> => {
@@ -449,6 +515,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearSuspension,
         mfaChallenge,
         triggerMfaEnrollment,
+        triggerMfaChallenge,
         cancelMfaChallenge,
         verifyMfaChallenge,
         resendMfaChallenge,

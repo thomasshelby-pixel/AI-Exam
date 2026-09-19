@@ -8,12 +8,14 @@ import {
   mapFirebasePhoneAuthError,
   logMfaDiagnostic,
   resetRecaptchaVerifier,
+  getFirebaseEnrolledPhoneFactors,
 } from '../../lib/firebaseAuth.js';
 
 export type MfaUiState = 'IDLE' | 'SENDING_SMS' | 'SMS_SENT' | 'VERIFYING_OTP' | 'VERIFIED' | 'ERROR';
 
 export const MfaModal: React.FC = () => {
   const {
+    user,
     mfaChallenge,
     cancelMfaChallenge,
     verifyMfaChallenge,
@@ -65,8 +67,36 @@ export const MfaModal: React.FC = () => {
         mode: mfaChallenge.mode,
         role: mfaChallenge.role,
       });
+
+      // Re-enrollment safety check: If modal was opened in ENROLL mode, check if phone factor is already enrolled
+      if (mfaChallenge.mode === 'ENROLL') {
+        if (user?.mfaEnabled) {
+          logMfaDiagnostic('phone factor present AFTER enrollment: YES', {
+            source: 'user-auth-state',
+          });
+          setMfaState('VERIFIED');
+          setSuccessMsg('SMS MFA is already enabled for this account.');
+          setTimeout(() => {
+            cancelMfaChallenge();
+          }, 1200);
+          return;
+        }
+
+        getFirebaseEnrolledPhoneFactors().then(({ hasPhoneFactor }) => {
+          if (hasPhoneFactor) {
+            logMfaDiagnostic('phone factor present AFTER enrollment: YES', {
+              source: 'firebase-enrolled-factors',
+            });
+            setMfaState('VERIFIED');
+            setSuccessMsg('SMS MFA factor is already enrolled.');
+            setTimeout(() => {
+              cancelMfaChallenge();
+            }, 1200);
+          }
+        });
+      }
     }
-  }, [mfaChallenge?.isOpen, mfaChallenge?.mode]);
+  }, [mfaChallenge?.isOpen, mfaChallenge?.mode, user?.mfaEnabled]);
 
   // Cooldown countdown - only runs when SMS has actually been sent
   useEffect(() => {
@@ -287,8 +317,16 @@ export const MfaModal: React.FC = () => {
     setCanResend(false);
     setCooldown(30);
 
-    // Clear OTP inputs on resend
+    // Explicitly clear any existing verificationId and confirmation result before triggering new phone verification
+    currentVerificationIdRef.current = null;
+    setFirebaseVerificationId(null);
+    setFirebaseConfirmation(null);
+
+    // Reset all OTP input fields
     setOtpDigits(['', '', '', '', '', '']);
+    inputRefs.current.forEach((input) => {
+      if (input) input.value = '';
+    });
 
     logMfaDiagnostic('resend occurred: YES');
 

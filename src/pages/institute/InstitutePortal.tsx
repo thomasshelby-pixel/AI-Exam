@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
+import { logMfaDiagnostic } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
@@ -38,7 +39,7 @@ import {
 } from 'lucide-react';
 
 export const InstitutePortal: React.FC = () => {
-  const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment } = useAuth();
+  const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -688,24 +689,71 @@ export const InstitutePortal: React.FC = () => {
     );
   }
 
-  if (user?.mfaVerified === false) {
+  // Check institute administrative MFA requirement
+  const isMfaMandatoryRole = user?.role === 'INSTITUTE_ADMIN';
+  const isMfaEnrolled = Boolean(user?.mfaEnabled);
+  const isMfaVerified = user?.mfaVerified === true;
+  const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
+
+  useEffect(() => {
+    if (user && isMfaMandatoryRole) {
+      logMfaDiagnostic('route guard decision', {
+        allow: !isMfaBlocked,
+        role: user.role,
+        mfaEnabled: user.mfaEnabled,
+        mfaVerified: user.mfaVerified,
+      });
+
+      if (!isMfaBlocked) {
+        logMfaDiagnostic('final redirect destination', {
+          destination: '/institute/dashboard',
+        });
+      }
+    }
+  }, [user, isMfaBlocked, isMfaMandatoryRole]);
+
+  if (isMfaBlocked) {
+    if (!isMfaEnrolled) {
+      return (
+        <div className="min-h-[80vh] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 rounded-2xl p-8 max-w-md w-full text-center shadow-xl">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4 border border-amber-200 dark:border-amber-800/60">
+              <ShieldAlert className="w-7 h-7" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+              Mandatory Administrative MFA Setup
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+              Multi-Factor Authentication via SMS is mandatory for all Institute Administrators. You must enroll and verify your mobile phone number before gaining access to institutional student data and mock tests.
+            </p>
+            <button
+              onClick={() => triggerMfaEnrollment()}
+              className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
+            >
+              Enroll SMS MFA Factor
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-[80vh] flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 rounded-2xl p-8 max-w-md w-full text-center shadow-xl">
-          <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4 border border-amber-200 dark:border-amber-800/60">
+        <div className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-2xl p-8 max-w-md w-full text-center shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto mb-4 border border-blue-200 dark:border-blue-800/60">
             <ShieldAlert className="w-7 h-7" />
           </div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
             SMS MFA Verification Required
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-            Multi-Factor Authentication via SMS is mandatory for all Institute Administrators. You must verify your mobile phone number before gaining access to institutional student data and mock tests.
+            Please complete your SMS Two-Factor verification challenge to access institutional controls from this device.
           </p>
           <button
-            onClick={() => triggerMfaEnrollment()}
-            className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
+            onClick={() => triggerMfaChallenge()}
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
           >
-            Complete SMS MFA Verification
+            Verify Administrator Identity
           </button>
         </div>
       </div>
