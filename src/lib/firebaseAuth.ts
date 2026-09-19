@@ -149,18 +149,40 @@ export interface FirebasePhoneVerificationResult {
   verificationId: string;
   confirmationResult?: ConfirmationResult;
   mode: 'IDENTITY_PLATFORM_MFA' | 'STANDARD_PHONE_AUTH';
+  session?: any;
+}
+
+/**
+ * Retrieves the current Firebase Auth user after guaranteeing auth state is restored.
+ */
+export async function getCurrentFirebaseUser(): Promise<User | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    if (typeof (auth as any).authStateReady === 'function') {
+      await auth.authStateReady();
+    }
+    const user = auth.currentUser;
+    if (user) {
+      try {
+        await user.reload();
+      } catch {
+        // Non-fatal if offline
+      }
+    }
+    return auth.currentUser;
+  } catch (err) {
+    console.warn('[MFA] Error resolving authStateReady:', err);
+    return auth.currentUser;
+  }
 }
 
 /**
  * Executes the formal Firebase Identity Platform MFA flow:
- * 1. Super Admin is authenticated
- * 2. User email is verified
- * 3. Recent authentication/re-authentication succeeds if required
- * 4. multiFactor(user).getSession() succeeds
- * 5. RecaptchaVerifier initializes successfully
- * 6. PhoneInfoOptions is created correctly
- * 7. PhoneAuthProvider.verifyPhoneNumber(...) is actually called
- * 8. verifyPhoneNumber returns a verificationId
+ * 1. Inspect authenticated Firebase user
+ * 2. Obtain fresh MultiFactorSession via multiFactor(currentUser).getSession()
+ * 3. Initialize invisible reCAPTCHA verifier
+ * 4. Call PhoneAuthProvider.verifyPhoneNumber({ phoneNumber, session }, verifier)
+ * 5. Return Firebase verificationId
  *
  * ONLY resolves when Firebase has successfully returned a valid verificationId.
  * NEVER hides failure behind fake success.
@@ -169,7 +191,7 @@ export async function verifyFirebasePhoneNumber(
   rawPhone: string,
   containerId: string = 'recaptcha-mfa-container'
 ): Promise<FirebasePhoneVerificationResult> {
-  logMfaDiagnostic('MFA-setup-started', {
+  logMfaDiagnostic('SMS request started', {
     targetPhoneMasked: maskPhoneForLogs(rawPhone),
     firebaseProjectId: auth.app.options.projectId,
   });
@@ -182,8 +204,8 @@ export async function verifyFirebasePhoneNumber(
     throw formatErr;
   }
 
-  // Step 1: Inspect Firebase Auth current user
-  const currentUser = auth.currentUser;
+  // Await auth state readiness before checking currentUser
+  const currentUser = await getCurrentFirebaseUser();
 
   if (currentUser) {
     logMfaDiagnostic('firebase-user-authenticated', {
@@ -191,78 +213,64 @@ export async function verifyFirebasePhoneNumber(
       emailVerified: currentUser.emailVerified,
     });
 
-    // Step 2: Check email verification if required by project policy
-    if (!currentUser.emailVerified) {
-      logMfaDiagnostic('firebase-user-email-unverified', {
-        emailVerified: false,
-      });
-    }
-
     try {
-      // Step 4: multiFactor(user).getSession()
       logMfaDiagnostic('mfa-session-request-started');
       const session = await multiFactor(currentUser).getSession();
       logMfaDiagnostic('mfa-session-success');
 
-      // Step 5: RecaptchaVerifier initializes successfully
       const verifier = initRecaptchaVerifier(containerId);
 
-      // Step 6: PhoneInfoOptions is created correctly
       const phoneInfoOptions: PhoneInfoOptions = {
         phoneNumber: e164,
         session,
       };
-      logMfaDiagnostic('phone-info-options-created', { hasSession: !!session });
 
-      // Step 7: PhoneAuthProvider.verifyPhoneNumber(...) is actually called
       const phoneProvider = new PhoneAuthProvider(auth);
       logMfaDiagnostic('PhoneAuthProvider.verifyPhoneNumber-called');
 
-      // Step 8: verifyPhoneNumber returns a verificationId
       const verificationId = await phoneProvider.verifyPhoneNumber(phoneInfoOptions, verifier);
 
       if (!verificationId) {
         throw new Error('PhoneAuthProvider.verifyPhoneNumber did not return a valid verificationId.');
       }
 
-      logMfaDiagnostic('verifyPhoneNumber-success', { hasVerificationId: true });
+      logMfaDiagnostic('SMS request succeeded', {
+        verificationIdCreated: 'YES',
+      });
+
       return {
         verificationId,
+        session,
         mode: 'IDENTITY_PLATFORM_MFA',
       };
     } catch (mfaError: any) {
       logMfaDiagnostic('identity-platform-mfa-step-failure', {
         errorCode: mfaError?.code || 'UNKNOWN_ERROR',
+        errorName: mfaError?.name || 'Error',
         errorMessage: mfaError?.message,
       });
 
-      // Reset reCAPTCHA on failure so user can retry cleanly
       resetRecaptchaVerifier();
       throw mfaError;
     }
   }
 
-  // Fallback if currentUser is null (client logged into app via application backend session)
+  // Fallback if currentUser is null in browser session
   logMfaDiagnostic('auth-currentUser-null-using-phone-auth-provider', {
     message: 'User authenticated via backend session; initiating direct Firebase Phone verification',
   });
 
   try {
-    // Step 5: RecaptchaVerifier initializes successfully
     const verifier = initRecaptchaVerifier(containerId);
-
-    // Step 7: PhoneAuthProvider / signInWithPhoneNumber called
     const phoneProvider = new PhoneAuthProvider(auth);
-    logMfaDiagnostic('direct-phone-verification-called');
 
-    // Call verifyPhoneNumber or signInWithPhoneNumber
     let verificationId: string;
     let confirmationResult: ConfirmationResult | undefined;
 
     try {
       verificationId = await phoneProvider.verifyPhoneNumber(e164, verifier);
     } catch (directPhoneProviderErr: any) {
-      logMfaDiagnostic('PhoneAuthProvider.verifyPhoneNumber-string-failed-trying-signInWithPhoneNumber', {
+      logMfaDiagnostic('PhoneAuthProvider.verifyPhoneNumber-fallback-to-signInWithPhoneNumber', {
         errorCode: directPhoneProviderErr?.code,
         errorMessage: directPhoneProviderErr?.message,
       });
@@ -274,7 +282,10 @@ export async function verifyFirebasePhoneNumber(
       throw new Error('Firebase phone verification failed to return a verificationId.');
     }
 
-    logMfaDiagnostic('verifyPhoneNumber-success', { hasVerificationId: true });
+    logMfaDiagnostic('SMS request succeeded', {
+      verificationIdCreated: 'YES',
+    });
+
     return {
       verificationId,
       confirmationResult,
@@ -283,6 +294,7 @@ export async function verifyFirebasePhoneNumber(
   } catch (error: any) {
     logMfaDiagnostic('verifyPhoneNumber-failure', {
       errorCode: error?.code || 'UNKNOWN_ERROR',
+      errorName: error?.name || 'Error',
       errorMessage: error?.message,
     });
     resetRecaptchaVerifier();
@@ -291,18 +303,20 @@ export async function verifyFirebasePhoneNumber(
 }
 
 /**
- * Validates the SMS OTP code using:
- * Step 10: User enters OTP
- * Step 11: PhoneAuthProvider.credential(verificationId, otp)
- * Step 12: PhoneMultiFactorGenerator.assertion(credential)
- * Step 13: multiFactor(user).enroll(assertion, 'Personal Mobile')
+ * Validates the SMS OTP code and executes MFA enrollment:
+ * 1. PhoneAuthProvider.credential(verificationId, code)
+ * 2. PhoneMultiFactorGenerator.assertion(credential)
+ * 3. multiFactor(currentUser).enroll(assertion, mfaDisplayName)
+ *
+ * Distinguishes enrollment errors without falsely labeling unrelated errors as invalid OTP.
  */
 export async function confirmFirebaseMfaOtp(
   verificationId: string,
   otpCode: string,
-  confirmationResult?: ConfirmationResult | null
+  confirmationResult?: ConfirmationResult | null,
+  mfaDisplayName: string = 'Personal Mobile'
 ): Promise<{ idToken?: string; credential?: any }> {
-  logMfaDiagnostic('confirm-MFA-otp-started', { hasVerificationId: !!verificationId });
+  logMfaDiagnostic('OTP verification started');
 
   const cleanCode = otpCode.trim().replace(/\D/g, '');
   if (cleanCode.length !== 6) {
@@ -311,32 +325,49 @@ export async function confirmFirebaseMfaOtp(
     throw lenErr;
   }
 
-  try {
-    // Step 11: PhoneAuthProvider.credential(...)
-    const credential = PhoneAuthProvider.credential(verificationId, cleanCode);
-    logMfaDiagnostic('phone-auth-credential-created');
+  if (!verificationId) {
+    const idErr = new Error('No active verification ID found. Please request a new verification code.');
+    (idErr as any).code = 'auth/invalid-verification-id';
+    throw idErr;
+  }
 
-    // Step 12 & 13: MultiFactor enrollment if currentUser is present
-    if (auth.currentUser) {
+  try {
+    // Step 1: PhoneAuthProvider.credential(currentVerificationId, enteredVerificationCode)
+    const credential = PhoneAuthProvider.credential(verificationId, cleanCode);
+    logMfaDiagnostic('credential created: YES');
+
+    const currentUser = await getCurrentFirebaseUser();
+
+    // Step 2 & 3: MultiFactor enrollment if currentUser is present
+    if (currentUser) {
       try {
         const assertion = PhoneMultiFactorGenerator.assertion(credential);
-        logMfaDiagnostic('phone-multifactor-assertion-created');
-        await multiFactor(auth.currentUser).enroll(assertion, 'Personal Mobile');
-        logMfaDiagnostic('multiFactor.enroll-success');
+        logMfaDiagnostic('assertion created: YES');
+
+        logMfaDiagnostic('MFA enroll started');
+        await multiFactor(currentUser).enroll(assertion, mfaDisplayName);
+        logMfaDiagnostic('MFA enroll succeeded: YES');
+
+        await currentUser.reload();
+        const idToken = await currentUser.getIdToken(true);
+        return { idToken, credential };
       } catch (enrollErr: any) {
-        logMfaDiagnostic('multiFactor.enroll-failure', {
+        logMfaDiagnostic('MFA enroll failed: YES', {
           errorCode: enrollErr?.code,
+          errorName: enrollErr?.name,
           errorMessage: enrollErr?.message,
         });
         throw enrollErr;
       }
     }
 
+    // Direct phone confirmation if user was signed in via phone credential
     let idToken: string | undefined;
     if (confirmationResult) {
       const userCredential = await confirmationResult.confirm(cleanCode);
       idToken = await userCredential.user.getIdToken();
       logMfaDiagnostic('confirmationResult.confirm-success');
+      return { idToken, credential };
     }
 
     logMfaDiagnostic('confirm-MFA-otp-success');
@@ -344,6 +375,7 @@ export async function confirmFirebaseMfaOtp(
   } catch (err: any) {
     logMfaDiagnostic('confirm-MFA-otp-failure', {
       errorCode: err?.code || 'UNKNOWN_ERROR',
+      errorName: err?.name || 'Error',
       errorMessage: err?.message,
     });
     throw err;
@@ -352,15 +384,26 @@ export async function confirmFirebaseMfaOtp(
 
 /**
  * Maps Firebase Auth Phone errors to transparent, detailed diagnostics with exact Firebase error codes.
+ * Ensures that unrelated errors (quota, network, session expiration) are NEVER converted to "invalid verification code".
  */
 export function mapFirebasePhoneAuthError(error: any): string {
   const code: string = error?.code || '';
   const rawMsg: string = error?.message || '';
 
-  const prefix = code ? `[Firebase Error: ${code}] ` : '';
-
-  if (code === 'auth/operation-not-allowed') {
-    return `${prefix}Phone Authentication (SMS) is NOT enabled in this Firebase project. Go to Firebase Console -> Authentication -> Sign-in method and enable the "Phone" provider.`;
+  if (code === 'auth/invalid-verification-code') {
+    return 'Incorrect verification code. Please enter the latest code sent to your phone.';
+  }
+  if (code === 'auth/code-expired') {
+    return 'The verification code has expired. Please request a new code.';
+  }
+  if (code === 'auth/session-expired') {
+    return 'The verification session has expired. Please request a new code.';
+  }
+  if (code === 'auth/invalid-verification-id') {
+    return 'The verification ID is invalid or stale. Please request a new code.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many attempts. Please wait a few moments before trying again.';
   }
   if (
     code === 'auth/quota-exceeded' ||
@@ -368,40 +411,37 @@ export function mapFirebasePhoneAuthError(error: any): string {
     rawMsg.toLowerCase().includes('quota') ||
     rawMsg.toLowerCase().includes('billing')
   ) {
-    return `${prefix}Firebase SMS quota exceeded or Google Cloud Billing account is not linked. SMS verification requires active Cloud Billing on project gen-lang-client-0211426234.`;
+    return 'Firebase SMS quota exceeded or Google Cloud billing is not active. SMS verification requires active billing on project gen-lang-client-0211426234.';
   }
-  if (code === 'auth/too-many-requests') {
-    return `${prefix}Too many SMS requests sent from this IP or to this mobile number. Firebase has temporarily throttled requests. Please wait a few minutes before retrying.`;
+  if (code === 'auth/operation-not-allowed') {
+    return 'Phone Authentication (SMS) is NOT enabled in Firebase Console. Go to Authentication -> Sign-in method and enable the "Phone" provider.';
   }
   if (code === 'auth/invalid-phone-number') {
-    return `${prefix}Invalid phone number format. Please provide a valid 10-digit mobile number with country code (e.g. +91 9876543210).`;
+    return 'Invalid phone number format. Please provide a valid 10-digit mobile number with country code (e.g. +91 9876543210).';
   }
   if (code === 'auth/captcha-check-failed') {
-    return `${prefix}reCAPTCHA security verification failed or domain is unauthorized. Ensure caexamcheckerai.com is in Authorized Domains in Firebase Console.`;
-  }
-  if (code === 'auth/invalid-verification-code') {
-    return `${prefix}Incorrect 6-digit verification code. Please check your SMS and enter the exact 6 digits.`;
-  }
-  if (code === 'auth/code-expired') {
-    return `${prefix}The verification code has expired. Please request a new verification code.`;
+    return 'reCAPTCHA security verification failed or domain is unauthorized. Ensure caexamcheckerai.com is in Authorized Domains.';
   }
   if (code === 'auth/requires-recent-login') {
-    return `${prefix}MFA enrollment requires recent authentication. Please sign out, log back in, and immediately retry MFA setup.`;
+    return 'MFA enrollment requires recent authentication. Please sign out, log back in, and immediately retry MFA setup.';
   }
   if (code === 'auth/unverified-email') {
-    return `${prefix}Account email address must be verified before enrolling in Multi-Factor Authentication.`;
+    return 'Account email address must be verified before enrolling in Multi-Factor Authentication.';
+  }
+  if (code === 'auth/no-current-user') {
+    return 'No active Firebase authenticated user session found for Super Admin. Please ensure you are logged into Firebase.';
   }
   if (code === 'auth/network-request-failed') {
-    return `${prefix}Network error contacting Firebase Identity Platform. Please check your connection and retry.`;
+    return 'Network error contacting Firebase Identity Platform. Please check your internet connection and retry.';
   }
   if (code === 'auth/missing-phone-number') {
-    return `${prefix}Mobile phone number is required.`;
+    return 'Mobile phone number is required.';
   }
   if (code === 'auth/invalid-app-credential') {
-    return `${prefix}Invalid Firebase app credential or SafetyNet/reCAPTCHA token rejection.`;
+    return 'Invalid Firebase app credential or SafetyNet/reCAPTCHA token rejection.';
   }
 
-  return `${prefix}${rawMsg || 'An error occurred during Firebase phone verification.'}`;
+  return rawMsg || 'An error occurred during Firebase phone verification.';
 }
 
 

@@ -35,7 +35,7 @@ interface AuthContextType {
   verifyMfaChallenge: (otpCode: string) => Promise<User>;
   resendMfaChallenge: () => Promise<void>;
   sendMfaEnrollCode: (phone: string) => Promise<{ maskedPhone: string }>;
-  verifyMfaEnroll: (phone: string, otpCode: string) => Promise<User>;
+  verifyMfaEnroll: (phone: string, otpCode?: string, verificationId?: string, idToken?: string) => Promise<User>;
   disableMfa: () => Promise<void>;
   login: (email: string, password: string) => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
@@ -141,12 +141,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
-  const verifyMfaEnroll = async (phone: string, otpCode: string): Promise<User> => {
+  const verifyMfaEnroll = async (phone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
     const res = await apiRequest<{ token: string; user: User }>('/api/auth/mfa/enroll/verify', {
       method: 'POST',
       body: JSON.stringify({
         phone,
         otpCode,
+        verificationId,
+        idToken,
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
       }),
     });

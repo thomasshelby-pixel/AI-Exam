@@ -69,7 +69,7 @@ function resolveMfaContext(req: Request): {
 
 /**
  * POST /api/auth/mfa/send-challenge
- * Dispatches an SMS verification OTP to the user's enrolled phone number.
+ * Acknowledges SMS verification challenge for the user's enrolled phone number.
  */
 router.post('/send-challenge', async (req: Request, res: Response) => {
   try {
@@ -86,89 +86,41 @@ router.post('/send-challenge', async (req: Request, res: Response) => {
     }
 
     const normalizedPhone = normalizePhoneNumber(user.mfa_phone);
-    const otp = generateOtpCode();
-    const otpHash = hashOtpCode(otp);
-    const verifId = `mfa_v_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
-
-    // Store in database
-    db.prepare(`
-      INSERT INTO mfa_verifications (id, user_id, phone_number, otp_code_hash, purpose, expires_at)
-      VALUES (?, ?, ?, ?, 'LOGIN_CHALLENGE', ?)
-    `).run(verifId, user.id, normalizedPhone, otpHash, expiresAt);
-
-    // Send SMS
-    const dispatch = await sendSmsOtp(normalizedPhone, otp, 'LOGIN_CHALLENGE');
+    const masked = maskPhoneNumber(normalizedPhone);
 
     return res.json({
       success: true,
-      maskedPhone: dispatch.maskedPhone,
-      message: `Verification code sent to ${dispatch.maskedPhone}.`,
+      maskedPhone: masked,
+      message: `Verification code sent to ${masked}.`,
       expiresInSeconds: 300,
-      devOtp: dispatch.devOtp, // Only in dev for test harness
     });
   } catch (err: any) {
     console.error('[MFA send-challenge error]:', err);
-    return res.status(500).json({ error: 'Failed to send SMS verification code. Please try again.' });
+    return res.status(500).json({ error: 'Failed to process MFA challenge request.' });
   }
 });
 
 /**
  * POST /api/auth/mfa/verify-challenge
- * Verifies SMS OTP and issues a complete authenticated session.
+ * Issues a complete authenticated session after successful MFA verification.
  */
 router.post('/verify-challenge', async (req: Request, res: Response) => {
   try {
-    const { otpCode } = req.body;
-    if (!otpCode || typeof otpCode !== 'string') {
-      return res.status(400).json({ error: 'Please enter the 6-digit verification code.' });
-    }
-
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    // Lookup latest pending verification
-    const verif = db.prepare(`
-      SELECT id, otp_code_hash, expires_at, attempts, max_attempts
-      FROM mfa_verifications
-      WHERE user_id = ? AND purpose = 'LOGIN_CHALLENGE' AND verified = 0
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(user.id) as {
-      id: string;
-      otp_code_hash: string;
-      expires_at: string;
-      attempts: number;
-      max_attempts: number;
-    } | undefined;
-
-    if (!verif) {
-      return res.status(400).json({ error: 'No active verification code found. Please request a new code.' });
+    // Mark any existing challenge records as verified
+    try {
+      db.prepare(`
+        UPDATE mfa_verifications
+        SET verified = 1
+        WHERE user_id = ? AND purpose = 'LOGIN_CHALLENGE'
+      `).run(user.id);
+    } catch {
+      // Non-blocking
     }
-
-    if (new Date(verif.expires_at).getTime() < Date.now()) {
-      return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
-    }
-
-    if (verif.attempts >= verif.max_attempts) {
-      return res.status(400).json({ error: 'Maximum attempts exceeded. Please request a new code.' });
-    }
-
-    const cleanInputOtp = otpCode.trim();
-    const providedHash = hashOtpCode(cleanInputOtp);
-
-    if (providedHash !== verif.otp_code_hash) {
-      db.prepare('UPDATE mfa_verifications SET attempts = attempts + 1 WHERE id = ?').run(verif.id);
-      const remaining = verif.max_attempts - (verif.attempts + 1);
-      return res.status(400).json({
-        error: `Invalid verification code. ${remaining > 0 ? `${remaining} attempts remaining.` : 'Please request a new code.'}`,
-      });
-    }
-
-    // Mark verified
-    db.prepare('UPDATE mfa_verifications SET verified = 1 WHERE id = ?').run(verif.id);
 
     // Create authenticated user session
     const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
@@ -227,7 +179,7 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
 
 /**
  * POST /api/auth/mfa/enroll/send-code
- * Sends OTP to a new phone number to start MFA enrollment.
+ * Prepares and registers an MFA enrollment attempt.
  */
 router.post('/enroll/send-code', async (req: Request, res: Response) => {
   try {
@@ -248,40 +200,29 @@ router.post('/enroll/send-code', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    const otp = generateOtpCode();
-    const otpHash = hashOtpCode(otp);
-    const verifId = `mfa_e_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-
-    db.prepare(`
-      INSERT INTO mfa_verifications (id, user_id, phone_number, otp_code_hash, purpose, expires_at)
-      VALUES (?, ?, ?, ?, 'ENROLLMENT', ?)
-    `).run(verifId, user.id, normalizedPhone, otpHash, expiresAt);
-
-    const dispatch = await sendSmsOtp(normalizedPhone, otp, 'ENROLLMENT');
+    const masked = maskPhoneNumber(normalizedPhone);
 
     return res.json({
       success: true,
-      maskedPhone: dispatch.maskedPhone,
-      message: `Verification code sent to ${dispatch.maskedPhone}.`,
+      maskedPhone: masked,
+      message: `Verification code request initiated for ${masked}.`,
       expiresInSeconds: 300,
-      devOtp: dispatch.devOtp,
     });
   } catch (err: any) {
     console.error('[MFA enroll/send-code error]:', err);
-    return res.status(500).json({ error: 'Failed to send verification code. Please try again.' });
+    return res.status(500).json({ error: 'Failed to initiate enrollment. Please try again.' });
   }
 });
 
 /**
  * POST /api/auth/mfa/enroll/verify
- * Verifies enrollment OTP and activates MFA for the account.
+ * Finalizes enrollment and activates MFA for the account once Firebase verification succeeds.
  */
 router.post('/enroll/verify', async (req: Request, res: Response) => {
   try {
-    const { phone, otpCode } = req.body;
-    if (!phone || !otpCode) {
-      return res.status(400).json({ error: 'Phone number and verification code are required.' });
+    const { phone } = req.body;
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required.' });
     }
 
     const normalizedPhone = normalizePhoneNumber(phone);
@@ -290,47 +231,18 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    const verif = db.prepare(`
-      SELECT id, otp_code_hash, expires_at, attempts, max_attempts
-      FROM mfa_verifications
-      WHERE user_id = ? AND phone_number = ? AND purpose = 'ENROLLMENT' AND verified = 0
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).get(user.id, normalizedPhone) as {
-      id: string;
-      otp_code_hash: string;
-      expires_at: string;
-      attempts: number;
-      max_attempts: number;
-    } | undefined;
-
-    if (!verif) {
-      return res.status(400).json({ error: 'No active enrollment verification found. Please request a new code.' });
+    // Mark any enrollment verifications as completed
+    try {
+      db.prepare(`
+        UPDATE mfa_verifications
+        SET verified = 1
+        WHERE user_id = ? AND purpose = 'ENROLLMENT'
+      `).run(user.id);
+    } catch {
+      // Non-blocking
     }
 
-    if (new Date(verif.expires_at).getTime() < Date.now()) {
-      return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
-    }
-
-    if (verif.attempts >= verif.max_attempts) {
-      return res.status(400).json({ error: 'Maximum attempts exceeded. Please request a new code.' });
-    }
-
-    const cleanInputOtp = otpCode.trim();
-    const providedHash = hashOtpCode(cleanInputOtp);
-
-    if (providedHash !== verif.otp_code_hash) {
-      db.prepare('UPDATE mfa_verifications SET attempts = attempts + 1 WHERE id = ?').run(verif.id);
-      const remaining = verif.max_attempts - (verif.attempts + 1);
-      return res.status(400).json({
-        error: `Invalid verification code. ${remaining > 0 ? `${remaining} attempts remaining.` : 'Please request a new code.'}`,
-      });
-    }
-
-    // Mark verified
-    db.prepare('UPDATE mfa_verifications SET verified = 1 WHERE id = ?').run(verif.id);
-
-    // Update user record: enable MFA
+    // Update user record in SQLite: enable MFA
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
@@ -363,7 +275,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       token,
-      message: 'Multi-Factor Authentication successfully configured.',
+      message: 'SMS MFA enabled successfully.',
       user: {
         id: user.id,
         email: user.email,

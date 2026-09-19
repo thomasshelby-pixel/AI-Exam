@@ -76,26 +76,14 @@ async function evaluateMfaRequirementForLogin(user: {
   });
 
   const normalizedPhone = normalizePhoneNumber(mfaPhone!);
-  const otp = generateOtpCode();
-  const otpHash = hashOtpCode(otp);
-  const verifId = `mfa_v_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-
-  db.prepare(`
-    INSERT INTO mfa_verifications (id, user_id, phone_number, otp_code_hash, purpose, expires_at)
-    VALUES (?, ?, ?, ?, 'LOGIN_CHALLENGE', ?)
-  `).run(verifId, user.id, normalizedPhone, otpHash, expiresAt);
-
-  const dispatch = await sendSmsOtp(normalizedPhone, otp, 'LOGIN_CHALLENGE');
 
   return {
     requireMfa: true,
     mfaEnrolled: true,
     mfaSessionToken: sessionToken,
-    maskedPhone: dispatch.maskedPhone,
+    maskedPhone: maskPhoneNumber(normalizedPhone),
     role: user.role,
-    devOtp: dispatch.devOtp,
-    message: `SMS verification code sent to ${dispatch.maskedPhone}.`,
+    message: `SMS verification required for ${maskPhoneNumber(normalizedPhone)}.`,
   };
 }
 
@@ -613,7 +601,6 @@ router.post('/login', async (req: Request, res: Response) => {
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
         message: mfaCheck.message,
-        devOtp: mfaCheck.devOtp,
       });
     }
 
@@ -917,7 +904,6 @@ router.post('/institute/login', async (req: Request, res: Response) => {
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
         message: mfaCheck.message,
-        devOtp: mfaCheck.devOtp,
       });
     }
 

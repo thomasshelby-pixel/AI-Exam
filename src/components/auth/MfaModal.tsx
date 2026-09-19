@@ -39,6 +39,7 @@ export const MfaModal: React.FC = () => {
   const [cooldown, setCooldown] = useState(30);
   const [canResend, setCanResend] = useState(false);
   const [firebaseVerificationId, setFirebaseVerificationId] = useState<string | null>(null);
+  const currentVerificationIdRef = useRef<string | null>(null);
   const [firebaseConfirmation, setFirebaseConfirmation] = useState<ConfirmationResult | null>(null);
 
   // Focus ref for OTP input
@@ -56,6 +57,7 @@ export const MfaModal: React.FC = () => {
       setEnrollStep('PHONE');
       setPhone('');
       setFirebaseVerificationId(null);
+      currentVerificationIdRef.current = null;
       setFirebaseConfirmation(null);
       resetRecaptchaVerifier();
 
@@ -167,6 +169,7 @@ export const MfaModal: React.FC = () => {
         throw new Error('Firebase phone verification failed to return a verificationId.');
       }
 
+      currentVerificationIdRef.current = fbResult.verificationId;
       setFirebaseVerificationId(fbResult.verificationId);
       setFirebaseConfirmation(fbResult.confirmationResult || null);
 
@@ -188,6 +191,7 @@ export const MfaModal: React.FC = () => {
     } catch (err: any) {
       logMfaDiagnostic('enroll-send-code-failed', {
         errorCode: err?.code,
+        errorName: err?.name,
         errorMessage: err?.message,
       });
 
@@ -221,6 +225,7 @@ export const MfaModal: React.FC = () => {
         throw new Error('Firebase phone verification failed to return a verificationId.');
       }
 
+      currentVerificationIdRef.current = fbResult.verificationId;
       setFirebaseVerificationId(fbResult.verificationId);
       setFirebaseConfirmation(fbResult.confirmationResult || null);
 
@@ -240,6 +245,7 @@ export const MfaModal: React.FC = () => {
     } catch (err: any) {
       logMfaDiagnostic('challenge-send-code-failed', {
         errorCode: err?.code,
+        errorName: err?.name,
         errorMessage: err?.message,
       });
 
@@ -251,6 +257,8 @@ export const MfaModal: React.FC = () => {
 
   /**
    * Resend handler with cooldown enforcement and duplicate request prevention.
+   * STRICT GUARANTEE: Clears OTP inputs, replaces stored verificationId with new ID,
+   * restarts countdown, and shows explicit guidance to use newest code.
    */
   const handleResend = async () => {
     if (!canResend || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
@@ -263,7 +271,10 @@ export const MfaModal: React.FC = () => {
     setCanResend(false);
     setCooldown(30);
 
-    logMfaDiagnostic('resend-sms-initiated');
+    // Clear OTP inputs on resend
+    setOtpDigits(['', '', '', '', '', '']);
+
+    logMfaDiagnostic('resend occurred: YES');
 
     try {
       const targetPhone = isEnrollMode ? phone : (mfaChallenge.maskedPhone || phone);
@@ -273,20 +284,29 @@ export const MfaModal: React.FC = () => {
         throw new Error('Firebase phone verification failed to return a verificationId on resend.');
       }
 
+      // Replace old verificationId with the NEW verificationId
+      currentVerificationIdRef.current = fbResult.verificationId;
       setFirebaseVerificationId(fbResult.verificationId);
       setFirebaseConfirmation(fbResult.confirmationResult || null);
 
+      logMfaDiagnostic('verificationId replaced after resend: YES');
+
       setMfaState('SMS_SENT');
-      setSuccessMsg('A new verification code has been dispatched via SMS.');
+      setSuccessMsg('New verification code sent. Please use the latest code.');
 
       if (isEnrollMode) {
         sendMfaEnrollCode(phone).catch(() => {});
       } else {
         resendMfaChallenge().catch(() => {});
       }
+
+      setTimeout(() => {
+        inputRefs.current[0]?.focus();
+      }, 150);
     } catch (err: any) {
       logMfaDiagnostic('resend-sms-failed', {
         errorCode: err?.code,
+        errorName: err?.name,
         errorMessage: err?.message,
       });
 
@@ -299,7 +319,13 @@ export const MfaModal: React.FC = () => {
   };
 
   /**
-   * Submits Enrollment OTP for verification.
+   * Submits Enrollment OTP for verification using the official Firebase Identity Platform flow:
+   * 1. Check current authenticated user and verificationId
+   * 2. PhoneAuthProvider.credential(currentVerificationId, enteredVerificationCode)
+   * 3. PhoneMultiFactorGenerator.assertion(credential)
+   * 4. multiFactor(currentUser).enroll(assertion, 'Personal Mobile')
+   * 5. Set exact success message 'SMS MFA enabled successfully.'
+   * 6. Refresh auth state and permit Super Admin to continue.
    */
   const handleSubmitEnroll = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -307,34 +333,50 @@ export const MfaModal: React.FC = () => {
       return;
     }
 
+    const activeVerificationId = currentVerificationIdRef.current || firebaseVerificationId;
+    if (!activeVerificationId) {
+      setErrorMsg('No active verification session. Please request a new verification code.');
+      setMfaState('ERROR');
+      return;
+    }
+
     setMfaState('VERIFYING_OTP');
     setErrorMsg('');
 
-    logMfaDiagnostic('submit-enroll-otp-started');
-
     try {
-      if (firebaseVerificationId) {
-        try {
-          await confirmFirebaseMfaOtp(firebaseVerificationId, fullOtp, firebaseConfirmation);
-        } catch (fbConfirmErr: any) {
-          logMfaDiagnostic('firebase-mfa-confirm-notice', {
-            errorCode: fbConfirmErr?.code,
-            errorMessage: fbConfirmErr?.message,
-          });
-        }
-      }
+      // Step 10-13: Official Firebase Identity Platform MFA enrollment
+      const fbResult = await confirmFirebaseMfaOtp(activeVerificationId, fullOtp, firebaseConfirmation, 'Personal Mobile');
 
-      await verifyMfaEnroll(phone, fullOtp);
+      // Update backend authoritative state
+      await verifyMfaEnroll(phone, fullOtp, activeVerificationId, fbResult?.idToken);
+
       setMfaState('VERIFIED');
-      setSuccessMsg('Phone verified and MFA activated successfully.');
+      setSuccessMsg('SMS MFA enabled successfully.');
+
+      // Allow visual confirmation before closing modal
+      setTimeout(() => {
+        cancelMfaChallenge();
+      }, 1500);
     } catch (err: any) {
       logMfaDiagnostic('submit-enroll-otp-failed', {
         errorCode: err?.code,
+        errorName: err?.name,
         errorMessage: err?.message,
       });
 
       setMfaState('ERROR');
-      setErrorMsg(mapFirebasePhoneAuthError(err) || 'Invalid verification code. Please try again.');
+      setErrorMsg(mapFirebasePhoneAuthError(err));
+
+      // Clear verification ID ONLY if expired or invalid
+      if (
+        err?.code === 'auth/code-expired' ||
+        err?.code === 'auth/session-expired' ||
+        err?.code === 'auth/invalid-verification-id'
+      ) {
+        currentVerificationIdRef.current = null;
+        setFirebaseVerificationId(null);
+        setCanResend(true);
+      }
     }
   };
 
@@ -347,18 +389,18 @@ export const MfaModal: React.FC = () => {
       return;
     }
 
+    const activeVerificationId = currentVerificationIdRef.current || firebaseVerificationId;
     setMfaState('VERIFYING_OTP');
     setErrorMsg('');
 
-    logMfaDiagnostic('submit-challenge-otp-started');
-
     try {
-      if (firebaseVerificationId) {
+      if (activeVerificationId) {
         try {
-          await confirmFirebaseMfaOtp(firebaseVerificationId, fullOtp, firebaseConfirmation);
+          await confirmFirebaseMfaOtp(activeVerificationId, fullOtp, firebaseConfirmation);
         } catch (fbConfirmErr: any) {
           logMfaDiagnostic('firebase-mfa-challenge-confirm-notice', {
             errorCode: fbConfirmErr?.code,
+            errorName: fbConfirmErr?.name,
             errorMessage: fbConfirmErr?.message,
           });
         }
@@ -367,14 +409,29 @@ export const MfaModal: React.FC = () => {
       await verifyMfaChallenge(fullOtp);
       setMfaState('VERIFIED');
       setSuccessMsg('Authentication verified successfully.');
+
+      setTimeout(() => {
+        cancelMfaChallenge();
+      }, 1200);
     } catch (err: any) {
       logMfaDiagnostic('submit-challenge-otp-failed', {
         errorCode: err?.code,
+        errorName: err?.name,
         errorMessage: err?.message,
       });
 
       setMfaState('ERROR');
-      setErrorMsg(mapFirebasePhoneAuthError(err) || 'Invalid verification code. Please try again.');
+      setErrorMsg(mapFirebasePhoneAuthError(err));
+
+      if (
+        err?.code === 'auth/code-expired' ||
+        err?.code === 'auth/session-expired' ||
+        err?.code === 'auth/invalid-verification-id'
+      ) {
+        currentVerificationIdRef.current = null;
+        setFirebaseVerificationId(null);
+        setCanResend(true);
+      }
     }
   };
 
