@@ -360,6 +360,99 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/auth/mfa/sync-factor
+ * Synchronizes authoritative account state when a valid phone factor is already enrolled in Firebase.
+ * Satisfies existing enrolled factor without initiating a duplicate SMS enrollment flow.
+ */
+router.post('/sync-factor', async (req: Request, res: Response) => {
+  try {
+    const { user, error } = resolveMfaContext(req);
+    if (!user || error) {
+      return res.status(401).json({ error: error || 'Unauthorized' });
+    }
+
+    const { phone } = req.body;
+    let canonicalPhone = user.mfa_phone;
+    if (phone) {
+      const normResult = normalizePhoneToE164(phone);
+      if (normResult.canonicalPhoneE164) {
+        canonicalPhone = normResult.canonicalPhoneE164;
+      }
+    }
+
+    db.prepare(`
+      UPDATE users
+      SET mfa_enabled = 1,
+          mfa_phone = COALESCE(?, mfa_phone),
+          mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(canonicalPhone, user.id);
+
+    const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+    const token = generateToken(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.full_name,
+      },
+      sessionId,
+      true
+    );
+
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
+
+    const trust = markDeviceAsTrusted({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      userAgent: req.headers['user-agent'] as string,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
+    });
+
+    res.cookie('ca_token', token, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie('ca_trust_token', trust.trustToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({
+      success: true,
+      token,
+      trustToken: trust.trustToken,
+      deviceId,
+      deviceTrusted: true,
+      message: 'MFA factor synchronized successfully.',
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.full_name,
+        mfaEnabled: true,
+        mfaVerified: true,
+        mfaPhone: canonicalPhone ? maskPhoneNumber(canonicalPhone) : null,
+      },
+    });
+  } catch (err: any) {
+    console.error('[MFA sync-factor error]:', err);
+    return res.status(500).json({ error: 'Failed to synchronize MFA factor.' });
+  }
+});
+
+/**
  * GET /api/auth/mfa/trusted-devices
  * Lists active trusted devices for the authenticated user.
  */

@@ -18,10 +18,12 @@ export const MfaModal: React.FC = () => {
     user,
     mfaChallenge,
     cancelMfaChallenge,
+    closeMfaModal,
     verifyMfaChallenge,
     resendMfaChallenge,
     sendMfaEnrollCode,
     verifyMfaEnroll,
+    syncMfaFactor,
   } = useAuth();
 
   // Mode state: 'CHALLENGE' or 'ENROLL'
@@ -85,21 +87,32 @@ export const MfaModal: React.FC = () => {
           });
           setMfaState('VERIFIED');
           setSuccessMsg('SMS MFA is already enabled for this account.');
+          if (mfaChallenge.onSuccess && user) {
+            mfaChallenge.onSuccess(user);
+          }
           setTimeout(() => {
-            cancelMfaChallenge();
+            closeMfaModal();
           }, 1200);
           return;
         }
 
-        getFirebaseEnrolledPhoneFactors().then(({ hasPhoneFactor }) => {
+        getFirebaseEnrolledPhoneFactors().then(async ({ hasPhoneFactor }) => {
           if (hasPhoneFactor) {
             logMfaDiagnostic('phone factor present AFTER enrollment: YES', {
               source: 'firebase-enrolled-factors',
             });
             setMfaState('VERIFIED');
             setSuccessMsg('SMS MFA factor is already enrolled.');
+            try {
+              const syncedUser = await syncMfaFactor();
+              if (mfaChallenge.onSuccess && syncedUser) {
+                mfaChallenge.onSuccess(syncedUser);
+              }
+            } catch {
+              // Non-fatal
+            }
             setTimeout(() => {
-              cancelMfaChallenge();
+              closeMfaModal();
             }, 1200);
           }
         });
@@ -509,7 +522,7 @@ export const MfaModal: React.FC = () => {
 
       // Allow visual confirmation before closing modal
       setTimeout(() => {
-        cancelMfaChallenge();
+        closeMfaModal();
       }, 1500);
     } catch (err: any) {
       logMfaDiagnostic('submit-enroll-otp-failed', {
@@ -565,7 +578,7 @@ export const MfaModal: React.FC = () => {
       setSuccessMsg('Authentication verified successfully.');
 
       setTimeout(() => {
-        cancelMfaChallenge();
+        closeMfaModal();
       }, 1200);
     } catch (err: any) {
       logMfaDiagnostic('submit-challenge-otp-failed', {
@@ -936,7 +949,7 @@ export const MfaModal: React.FC = () => {
           )}
         </div>
       </div>
-      <div id="recaptcha-mfa-container" className="hidden" />
+      <div id="recaptcha-mfa-container" className="flex justify-center my-1" />
     </div>
   );
 };

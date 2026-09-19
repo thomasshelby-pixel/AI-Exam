@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
-import { logMfaDiagnostic } from '../../lib/firebaseAuth.js';
+import { logMfaDiagnostic, getFirebaseEnrolledPhoneFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 
 export const InstitutePortal: React.FC = () => {
-  const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge } = useAuth();
+  const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge, syncMfaFactor, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
@@ -695,6 +695,33 @@ export const InstitutePortal: React.FC = () => {
   const isMfaVerified = user?.mfaVerified === true;
   const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
 
+  // Requirement 11: Detect existing enrolled factor before displaying blocking setup UI
+  const [isCheckingEnrolledFactor, setIsCheckingEnrolledFactor] = useState<boolean>(false);
+  const factorCheckAttemptedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
+      factorCheckAttemptedRef.current = true;
+      setIsCheckingEnrolledFactor(true);
+      getFirebaseEnrolledPhoneFactors()
+        .then(async ({ hasPhoneFactor }) => {
+          if (hasPhoneFactor) {
+            logMfaDiagnostic('phone factor present BEFORE enrollment: YES', {
+              source: 'institute-portal-gate',
+            });
+            await syncMfaFactor();
+            await refreshUser();
+          }
+        })
+        .catch((err) => {
+          logMfaDiagnostic('factor-check-failed', { error: err?.message });
+        })
+        .finally(() => {
+          setIsCheckingEnrolledFactor(false);
+        });
+    }
+  }, [isMfaMandatoryRole, isMfaEnrolled, syncMfaFactor, refreshUser]);
+
   useEffect(() => {
     if (user && isMfaMandatoryRole) {
       logMfaDiagnostic('route guard decision', {
@@ -711,6 +738,22 @@ export const InstitutePortal: React.FC = () => {
       }
     }
   }, [user, isMfaBlocked, isMfaMandatoryRole]);
+
+  if (isCheckingEnrolledFactor) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 max-w-sm w-full text-center shadow-lg">
+          <div className="w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-1">
+            Verifying Security Credentials
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Checking administrative MFA factor enrollment status...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (isMfaBlocked) {
     if (!isMfaEnrolled) {

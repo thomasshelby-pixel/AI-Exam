@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types/index.js';
-import { apiRequest } from '../api/client.js';
+import { apiRequest, getOrCreateDeviceId } from '../api/client.js';
 import { MfaModal } from '../components/auth/MfaModal.js';
 import { logMfaDiagnostic } from '../lib/firebaseAuth.js';
 
@@ -35,10 +35,12 @@ interface AuthContextType {
   triggerMfaEnrollment: (phone?: string) => void;
   triggerMfaChallenge: () => Promise<void>;
   cancelMfaChallenge: () => void;
+  closeMfaModal: () => void;
   verifyMfaChallenge: (otpCode: string) => Promise<User>;
   resendMfaChallenge: () => Promise<void>;
   sendMfaEnrollCode: (phone: string) => Promise<{ maskedPhone: string }>;
   verifyMfaEnroll: (phone: string, otpCode?: string, verificationId?: string, idToken?: string) => Promise<User>;
+  syncMfaFactor: (phone?: string) => Promise<User>;
   disableMfa: () => Promise<void>;
   login: (email: string, password: string) => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
@@ -84,6 +86,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMfaChallenge(null);
   };
 
+  const closeMfaModal = () => {
+    setMfaChallenge(null);
+  };
+
   const triggerMfaEnrollment = (phone?: string) => {
     setMfaChallenge({
       isOpen: true,
@@ -123,11 +129,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('No active MFA verification session found.');
     }
 
+    const deviceId = getOrCreateDeviceId();
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/verify-challenge', {
       method: 'POST',
       body: JSON.stringify({
         mfaSessionToken: mfaChallenge.mfaSessionToken,
         otpCode,
+        deviceId,
       }),
     });
 
@@ -198,6 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const verifyMfaEnroll = async (phone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
     logMfaDiagnostic('enrollment started');
+    const deviceId = getOrCreateDeviceId();
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/enroll/verify', {
       method: 'POST',
       body: JSON.stringify({
@@ -206,12 +215,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         verificationId,
         idToken,
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
+        deviceId,
       }),
     });
 
     logMfaDiagnostic('backend MFA state synchronized', {
       mfaEnabled: res.user?.mfaEnabled,
       mfaVerified: res.user?.mfaVerified,
+    });
+
+    if (res.trustToken) {
+      localStorage.setItem('ca_device_trust_token', res.trustToken);
+      logMfaDiagnostic('trusted device state created');
+    }
+
+    if (res.token) {
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+    }
+
+    const verifiedUser: User = {
+      ...res.user,
+      mfaEnabled: true,
+      mfaVerified: true,
+    };
+    setUser(verifiedUser);
+
+    const onSuccessCb = mfaChallenge?.onSuccess;
+    setMfaChallenge(null);
+
+    try {
+      await refreshUser();
+      logMfaDiagnostic('auth state refreshed');
+    } catch {
+      // Keep verifiedUser
+    }
+
+    if (onSuccessCb && verifiedUser) {
+      onSuccessCb(verifiedUser);
+    }
+
+    return verifiedUser;
+  };
+
+  const syncMfaFactor = async (phone?: string): Promise<User> => {
+    logMfaDiagnostic('syncing existing MFA factor');
+    const deviceId = getOrCreateDeviceId();
+    const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/sync-factor', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        mfaSessionToken: mfaChallenge?.mfaSessionToken,
+        deviceId,
+      }),
     });
 
     if (res.trustToken) {
@@ -338,6 +394,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string): Promise<User> => {
     try {
+      const deviceId = getOrCreateDeviceId();
+      const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
       const res = await apiRequest<{
         token: string;
         user: User;
@@ -349,7 +407,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role?: string;
       }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, deviceId, trustToken }),
       });
 
       if (res.mfaRequired && res.mfaSessionToken) {
@@ -382,6 +440,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const instituteLogin = async (email: string, password: string): Promise<User> => {
     try {
+      const deviceId = getOrCreateDeviceId();
+      const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
       const res = await apiRequest<{
         token: string;
         user: User;
@@ -393,7 +453,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role?: string;
       }>('/api/auth/institute/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, deviceId, trustToken }),
       });
 
       if (res.mfaRequired && res.mfaSessionToken) {
@@ -517,10 +577,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         triggerMfaEnrollment,
         triggerMfaChallenge,
         cancelMfaChallenge,
+        closeMfaModal,
         verifyMfaChallenge,
         resendMfaChallenge,
         sendMfaEnrollCode,
         verifyMfaEnroll,
+        syncMfaFactor,
         disableMfa,
         login,
         instituteLogin,
