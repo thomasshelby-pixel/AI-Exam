@@ -47,9 +47,18 @@ export const MfaModal: React.FC = () => {
   // Focus ref for OTP input
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // Synchronous in-flight mutex to prevent duplicate clicks, rapid submit events, or simultaneous dispatches
+  const isSmsDispatchingRef = useRef(false);
+  const hasInitializedRef = useRef(false);
+
   // Reset states when modal opens - strictly IDLE with NO pre-emptive success message
   useEffect(() => {
     if (mfaChallenge?.isOpen) {
+      if (hasInitializedRef.current) {
+        // Prevent re-running initialization on component re-renders while modal is open
+        return;
+      }
+      hasInitializedRef.current = true;
       setMfaState('IDLE');
       setOtpDigits(['', '', '', '', '', '']);
       setErrorMsg('');
@@ -95,15 +104,20 @@ export const MfaModal: React.FC = () => {
           }
         });
       }
+    } else {
+      hasInitializedRef.current = false;
+      isSmsDispatchingRef.current = false;
     }
   }, [mfaChallenge?.isOpen, mfaChallenge?.mode, user?.mfaEnabled]);
 
-  // Cooldown countdown - only runs when SMS has actually been sent
+  // Cooldown countdown - counts down whenever cooldown > 0, independently of re-renders
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (cooldown > 0 && mfaState === 'SMS_SENT') {
-      timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    } else if (cooldown === 0 && mfaState === 'SMS_SENT') {
+    if (cooldown > 0) {
+      timer = setTimeout(() => {
+        setCooldown((c) => Math.max(0, c - 1));
+      }, 1000);
+    } else if (cooldown === 0 && (mfaState === 'SMS_SENT' || mfaState === 'ERROR')) {
       setCanResend(true);
     }
     return () => clearTimeout(timer);
@@ -171,11 +185,17 @@ export const MfaModal: React.FC = () => {
   /**
    * Triggers SMS dispatch for Enrollment.
    * STRICT GUARANTEE: Never sets success message unless verifyPhoneNumber returns a valid verificationId.
+   * Enforces single deliberate user action and blocks duplicate clicks or submit events.
    */
   const handleSendEnrollCode = async (e: React.FormEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+
     // Guard against duplicate requests & rapid double clicks
-    if (mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+    if (isSmsDispatchingRef.current || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+      logMfaDiagnostic('duplicate request prevented', {
+        reason: 'enroll_request_already_in_progress',
+      });
       return;
     }
 
@@ -190,6 +210,7 @@ export const MfaModal: React.FC = () => {
         ? `+${cleanPhone}`
         : `+91${cleanPhone.slice(-10)}`;
 
+    isSmsDispatchingRef.current = true;
     setMfaState('SENDING_SMS');
     setErrorMsg('');
     setSuccessMsg('');
@@ -234,6 +255,13 @@ export const MfaModal: React.FC = () => {
       setSuccessMsg(''); // Absolute requirement: Never show success on failure
       const userFriendlyErr = mapFirebasePhoneAuthError(err);
       setErrorMsg(userFriendlyErr);
+
+      if (err?.code === 'auth/too-many-requests') {
+        setCooldown(60);
+        setCanResend(false);
+      }
+    } finally {
+      isSmsDispatchingRef.current = false;
     }
   };
 
@@ -241,12 +269,22 @@ export const MfaModal: React.FC = () => {
    * Triggers SMS dispatch for Login Challenge mode.
    * STRICT GUARANTEE: Uses canonicalPhoneE164, NEVER maskedPhone for verification.
    * Never sets success message unless verifyPhoneNumber returns a valid verificationId.
+   * Enforces single deliberate user action and blocks duplicate clicks or submit events.
    */
-  const handleSendChallengeCode = async () => {
-    if (mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+  const handleSendChallengeCode = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    if (isSmsDispatchingRef.current || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+      logMfaDiagnostic('duplicate request prevented', {
+        reason: 'challenge_request_already_in_progress',
+      });
       return;
     }
 
+    isSmsDispatchingRef.current = true;
     setMfaState('SENDING_SMS');
     setErrorMsg('');
     setSuccessMsg('');
@@ -298,6 +336,13 @@ export const MfaModal: React.FC = () => {
       setMfaState('ERROR');
       setSuccessMsg('');
       setErrorMsg(mapFirebasePhoneAuthError(err));
+
+      if (err?.code === 'auth/too-many-requests') {
+        setCooldown(60);
+        setCanResend(false);
+      }
+    } finally {
+      isSmsDispatchingRef.current = false;
     }
   };
 
@@ -305,17 +350,37 @@ export const MfaModal: React.FC = () => {
    * Resend handler with cooldown enforcement and duplicate request prevention.
    * STRICT GUARANTEE: Clears OTP inputs, replaces stored verificationId with new ID,
    * restarts countdown, and shows explicit guidance to use newest code.
+   * Never allows resend while cooldown is active or an SMS is already dispatching.
    */
-  const handleResend = async () => {
-    if (!canResend || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+  const handleResend = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    logMfaDiagnostic('resend requested');
+
+    if (!canResend || cooldown > 0) {
+      logMfaDiagnostic('duplicate request prevented', {
+        reason: 'cooldown_active',
+        cooldownRemaining: cooldown,
+      });
       return;
     }
 
+    if (isSmsDispatchingRef.current || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+      logMfaDiagnostic('duplicate request prevented', {
+        reason: 'resend_request_in_progress',
+      });
+      return;
+    }
+
+    isSmsDispatchingRef.current = true;
+    setCanResend(false);
+    setCooldown(30);
     setMfaState('SENDING_SMS');
     setErrorMsg('');
     setSuccessMsg('');
-    setCanResend(false);
-    setCooldown(30);
 
     // Explicitly clear any existing verificationId and confirmation result before triggering new phone verification
     currentVerificationIdRef.current = null;
@@ -365,6 +430,8 @@ export const MfaModal: React.FC = () => {
 
       setMfaState('SMS_SENT');
       setSuccessMsg('New verification code sent. Please use the latest code.');
+      setCooldown(30);
+      setCanResend(false);
 
       if (isEnrollMode) {
         sendMfaEnrollCode(targetPhone).catch(() => {});
@@ -385,8 +452,18 @@ export const MfaModal: React.FC = () => {
       setMfaState('ERROR');
       setSuccessMsg('');
       setErrorMsg(mapFirebasePhoneAuthError(err));
-      // Re-enable resend so user is not locked out on error
-      setCanResend(true);
+
+      if (err?.code === 'auth/too-many-requests') {
+        // Enforce 60s cooldown; do NOT immediately retry or re-enable resend!
+        setCooldown(60);
+        setCanResend(false);
+      } else {
+        // Ensure a minimum 15-second cooldown to prevent spamming
+        setCooldown((c) => Math.max(c, 15));
+        setCanResend(false);
+      }
+    } finally {
+      isSmsDispatchingRef.current = false;
     }
   };
 
@@ -512,7 +589,7 @@ export const MfaModal: React.FC = () => {
     }
   };
 
-  const isSending = mfaState === 'SENDING_SMS';
+  const isSending = mfaState === 'SENDING_SMS' || isSmsDispatchingRef.current;
   const isVerifying = mfaState === 'VERIFYING_OTP';
 
   return (
@@ -706,16 +783,16 @@ export const MfaModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleResend}
-                  disabled={!canResend || isSending || isVerifying}
+                  disabled={!canResend || cooldown > 0 || isSending || isVerifying}
                   className={`font-semibold transition ${
-                    canResend && !isSending && !isVerifying
+                    canResend && cooldown === 0 && !isSending && !isVerifying
                       ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
                       : 'text-slate-400 cursor-not-allowed'
                   }`}
                 >
                   {isSending
                     ? 'Dispatching SMS...'
-                    : canResend
+                    : canResend && cooldown === 0
                     ? 'Resend SMS code'
                     : `Resend in ${cooldown}s`}
                 </button>
@@ -766,7 +843,7 @@ export const MfaModal: React.FC = () => {
                     type="button"
                     onClick={handleSendChallengeCode}
                     disabled={isSending}
-                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     {isSending ? (
                       <>
@@ -812,16 +889,16 @@ export const MfaModal: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleResend}
-                      disabled={!canResend || isSending || isVerifying}
+                      disabled={!canResend || cooldown > 0 || isSending || isVerifying}
                       className={`font-semibold transition ${
-                        canResend && !isSending && !isVerifying
+                        canResend && cooldown === 0 && !isSending && !isVerifying
                           ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
                           : 'text-slate-400 cursor-not-allowed'
                       }`}
                     >
                       {isSending
                         ? 'Dispatching SMS...'
-                        : canResend
+                        : canResend && cooldown === 0
                         ? 'Resend code'
                         : `Resend in ${cooldown}s`}
                     </button>
