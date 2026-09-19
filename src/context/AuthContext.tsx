@@ -1,12 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types/index.js';
 import { apiRequest } from '../api/client.js';
+import { MfaModal } from '../components/auth/MfaModal.js';
 
 export interface SuspendedAccountInfo {
   reason: string;
   suspendedAt: string;
   userId: string;
   revocationToken: string;
+}
+
+export interface MfaChallengeState {
+  isOpen: boolean;
+  mode: 'CHALLENGE' | 'ENROLL';
+  mfaSessionToken: string;
+  maskedPhone?: string;
+  role?: string;
+  onSuccess?: (user: User) => void;
+  onCancel?: () => void;
 }
 
 interface AuthContextType {
@@ -18,6 +29,14 @@ interface AuthContextType {
   isLoading: boolean;
   suspendedAccount: SuspendedAccountInfo | null;
   clearSuspension: () => void;
+  mfaChallenge: MfaChallengeState | null;
+  triggerMfaEnrollment: (phone?: string) => void;
+  cancelMfaChallenge: () => void;
+  verifyMfaChallenge: (otpCode: string) => Promise<User>;
+  resendMfaChallenge: () => Promise<void>;
+  sendMfaEnrollCode: (phone: string) => Promise<{ maskedPhone: string }>;
+  verifyMfaEnroll: (phone: string, otpCode: string) => Promise<User>;
+  disableMfa: () => Promise<void>;
   login: (email: string, password: string) => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
   instituteRegister: (data: {
@@ -38,6 +57,15 @@ interface AuthContextType {
     caLevel: string;
     referralCode?: string;
   }) => Promise<User>;
+  loginWithGoogle: (idToken: string, profile?: { icaiRegistrationNumber?: string; caLevel?: string; fullName?: string; phone?: string }) => Promise<{ user?: User; code?: string; onboardingToken?: string; tempUser?: { email: string; fullName: string } }>;
+  completeGoogleProfile: (data: {
+    onboardingToken: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }) => Promise<User>;
   submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -51,8 +79,112 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('ca_exam_checker_token'));
   const [suspendedAccount, setSuspendedAccount] = useState<SuspendedAccountInfo | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
 
   const clearSuspension = () => setSuspendedAccount(null);
+
+  const cancelMfaChallenge = () => {
+    if (mfaChallenge?.onCancel) {
+      mfaChallenge.onCancel();
+    }
+    setMfaChallenge(null);
+  };
+
+  const triggerMfaEnrollment = (phone?: string) => {
+    setMfaChallenge({
+      isOpen: true,
+      mode: 'ENROLL',
+      mfaSessionToken: '',
+      role: user?.role,
+    });
+  };
+
+  const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
+    if (!mfaChallenge?.mfaSessionToken) {
+      throw new Error('No active MFA verification session found.');
+    }
+
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/mfa/verify-challenge', {
+      method: 'POST',
+      body: JSON.stringify({
+        mfaSessionToken: mfaChallenge.mfaSessionToken,
+        otpCode,
+      }),
+    });
+
+    localStorage.setItem('ca_exam_checker_token', res.token);
+    setToken(res.token);
+    setUser(res.user);
+    setSuspendedAccount(null);
+
+    const onSuccessCb = mfaChallenge.onSuccess;
+    setMfaChallenge(null);
+    if (onSuccessCb) {
+      onSuccessCb(res.user);
+    }
+    refreshUser().catch(() => {});
+    return res.user;
+  };
+
+  const resendMfaChallenge = async (): Promise<void> => {
+    if (!mfaChallenge?.mfaSessionToken) {
+      throw new Error('No active MFA session found.');
+    }
+    const res = await apiRequest<{ maskedPhone: string }>('/api/auth/mfa/send-challenge', {
+      method: 'POST',
+      body: JSON.stringify({
+        mfaSessionToken: mfaChallenge.mfaSessionToken,
+      }),
+    });
+    setMfaChallenge((prev) => (prev ? { ...prev, maskedPhone: res.maskedPhone } : null));
+  };
+
+  const sendMfaEnrollCode = async (phone: string): Promise<{ maskedPhone: string }> => {
+    const res = await apiRequest<{ maskedPhone: string }>('/api/auth/mfa/enroll/send-code', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        mfaSessionToken: mfaChallenge?.mfaSessionToken,
+      }),
+    });
+    return res;
+  };
+
+  const verifyMfaEnroll = async (phone: string, otpCode: string): Promise<User> => {
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/mfa/enroll/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone,
+        otpCode,
+        mfaSessionToken: mfaChallenge?.mfaSessionToken,
+      }),
+    });
+
+    if (res.token) {
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+    }
+    if (res.user) {
+      setUser(res.user);
+    }
+    const onSuccessCb = mfaChallenge?.onSuccess;
+    setMfaChallenge(null);
+    if (onSuccessCb && res.user) {
+      onSuccessCb(res.user);
+    }
+    refreshUser().catch(() => {});
+    return res.user;
+  };
+
+  const disableMfa = async (): Promise<void> => {
+    await apiRequest('/api/auth/mfa/disable', {
+      method: 'POST',
+    });
+    if (user) {
+      setUser({ ...user, mfaEnabled: false, mfaPhone: null });
+    }
+    refreshUser().catch(() => {});
+  };
 
   const handleSuspension = (payload: any): boolean => {
     const susp =
@@ -134,10 +266,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string): Promise<User> => {
     try {
-      const res = await apiRequest<{ token: string; user: User }>('/api/auth/login', {
+      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
+
+      if (res.mfaRequired && res.mfaSessionToken) {
+        return new Promise<User>((resolve, reject) => {
+          setMfaChallenge({
+            isOpen: true,
+            mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
+            mfaSessionToken: res.mfaSessionToken!,
+            maskedPhone: res.maskedPhone,
+            role: res.role,
+            onSuccess: (verifiedUser) => resolve(verifiedUser),
+            onCancel: () => reject(new Error('MFA verification was cancelled.')),
+          });
+        });
+      }
 
       localStorage.setItem('ca_exam_checker_token', res.token);
       setToken(res.token);
@@ -154,10 +300,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const instituteLogin = async (email: string, password: string): Promise<User> => {
     try {
-      const res = await apiRequest<{ token: string; user: User }>('/api/auth/institute/login', {
+      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/institute/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
+
+      if (res.mfaRequired && res.mfaSessionToken) {
+        return new Promise<User>((resolve, reject) => {
+          setMfaChallenge({
+            isOpen: true,
+            mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
+            mfaSessionToken: res.mfaSessionToken!,
+            maskedPhone: res.maskedPhone,
+            role: res.role,
+            onSuccess: (verifiedUser) => resolve(verifiedUser),
+            onCancel: () => reject(new Error('MFA verification was cancelled.')),
+          });
+        });
+      }
 
       localStorage.setItem('ca_exam_checker_token', res.token);
       setToken(res.token);
@@ -218,6 +378,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.user;
   };
 
+  const loginWithGoogle = async (
+    idToken: string,
+    profileData?: { icaiRegistrationNumber?: string; caLevel?: string; fullName?: string; phone?: string }
+  ): Promise<{ user?: User; code?: string; onboardingToken?: string; tempUser?: { email: string; fullName: string } }> => {
+    try {
+      const res = await apiRequest<{
+        token?: string;
+        user?: User;
+        code?: string;
+        message?: string;
+        onboardingToken?: string;
+        tempUser?: { email: string; fullName: string };
+      }>('/api/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ idToken, profile: profileData }),
+      });
+
+      if (res.code === 'PROFILE_INCOMPLETE' && res.onboardingToken) {
+        return {
+          code: res.code,
+          onboardingToken: res.onboardingToken,
+          tempUser: res.tempUser,
+        };
+      }
+
+      if ((res as any).mfaRequired && (res as any).mfaSessionToken) {
+        return new Promise<{ user?: User }>((resolve, reject) => {
+          setMfaChallenge({
+            isOpen: true,
+            mode: (res as any).mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
+            mfaSessionToken: (res as any).mfaSessionToken!,
+            maskedPhone: (res as any).maskedPhone,
+            role: (res as any).role,
+            onSuccess: (verifiedUser) => resolve({ user: verifiedUser }),
+            onCancel: () => reject(new Error('MFA verification was cancelled.')),
+          });
+        });
+      }
+
+      if (res.token && res.user) {
+        localStorage.setItem('ca_exam_checker_token', res.token);
+        setToken(res.token);
+        setUser(res.user);
+        setSuspendedAccount(null);
+        refreshUser().catch(() => {});
+        return { user: res.user };
+      }
+
+      return res;
+    } catch (err: any) {
+      handleSuspension(err) || handleSuspension(err?.data);
+      throw err;
+    }
+  };
+
+  const completeGoogleProfile = async (data: {
+    onboardingToken: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }): Promise<User> => {
+    try {
+      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/google/complete-profile', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+
+      if (res.mfaRequired && res.mfaSessionToken) {
+        return new Promise<User>((resolve, reject) => {
+          setMfaChallenge({
+            isOpen: true,
+            mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
+            mfaSessionToken: res.mfaSessionToken!,
+            maskedPhone: res.maskedPhone,
+            role: res.role,
+            onSuccess: (verifiedUser) => resolve(verifiedUser),
+            onCancel: () => reject(new Error('MFA verification was cancelled.')),
+          });
+        });
+      }
+
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+      setUser(res.user);
+      setSuspendedAccount(null);
+      refreshUser().catch(() => {});
+      return res.user;
+    } catch (err: any) {
+      handleSuspension(err) || handleSuspension(err?.data);
+      throw err;
+    }
+  };
+
   const submitRevocationRequest = async (
     appealReason: string,
     explanation: string,
@@ -261,16 +516,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         suspendedAccount,
         clearSuspension,
+        mfaChallenge,
+        triggerMfaEnrollment,
+        cancelMfaChallenge,
+        verifyMfaChallenge,
+        resendMfaChallenge,
+        sendMfaEnrollCode,
+        verifyMfaEnroll,
+        disableMfa,
         login,
         instituteLogin,
         instituteRegister,
         register,
+        loginWithGoogle,
+        completeGoogleProfile,
         submitRevocationRequest,
         logout,
         refreshUser,
       }}
     >
       {children}
+      <MfaModal />
     </AuthContext.Provider>
   );
 };

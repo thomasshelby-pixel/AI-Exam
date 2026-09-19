@@ -411,7 +411,7 @@ router.post('/admin/publish/:id', authenticateToken, requireRole('SUPER_ADMIN'),
     return res.status(404).json({ error: 'Legal document not found' });
   }
 
-  const adminEmail = req.user?.email || 'admin@caexamchecker.ai';
+  const adminEmail = req.user?.email || 'caexamchecker.support@gmail.com';
   const nowIso = new Date().toISOString();
 
   // 1. Archive previous published version of the same doc_type

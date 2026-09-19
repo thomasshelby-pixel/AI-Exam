@@ -2,15 +2,102 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db, hashPassword, verifyPassword } from '../db.js';
-import { generateToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess } from '../auth.js';
+import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { validateSrn } from '../utils/srnValidator.js';
+import { normalizePhoneNumber, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
+import mfaRoutes from './mfaRoutes.js';
 
 const router = Router();
+
+// Mount dedicated MFA sub-router
+router.use('/mfa', mfaRoutes);
+
+/**
+ * Server-Side Role-Based MFA Evaluation Helper
+ * Evaluates whether MFA is mandatory or voluntarily enabled for the given user.
+ * Role-Based Policy:
+ *  - STUDENT: SMS MFA is OPTIONAL. Only required if student voluntarily enabled MFA.
+ *  - INSTITUTE_ADMIN & SUPER_ADMIN: SMS MFA is strictly MANDATORY. If not enrolled, force enrollment.
+ */
+async function evaluateMfaRequirementForLogin(user: {
+  id: string;
+  email: string;
+  role: UserRole;
+  full_name: string;
+}) {
+  const mfaRecord = db.prepare(`
+    SELECT mfa_enabled, mfa_phone FROM users WHERE id = ?
+  `).get(user.id) as { mfa_enabled: number; mfa_phone: string | null } | undefined;
+
+  const mfaEnabled = Boolean(mfaRecord?.mfa_enabled);
+  const mfaPhone = mfaRecord?.mfa_phone || null;
+  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+
+  // Role: STUDENT -> MFA is strictly OPTIONAL
+  if (user.role === 'STUDENT') {
+    if (!mfaEnabled || !mfaPhone) {
+      return { requireMfa: false };
+    }
+  }
+
+  // Role: INSTITUTE_ADMIN / SUPER_ADMIN -> MFA is strictly MANDATORY
+  if (isMandatoryRole) {
+    if (!mfaEnabled || !mfaPhone) {
+      const sessionToken = generateMfaSessionToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.full_name,
+        type: 'MFA_ENROLLMENT_REQUIRED',
+      });
+      return {
+        requireMfa: true,
+        mfaEnrolled: false,
+        mfaSessionToken: sessionToken,
+        role: user.role,
+        message: 'SMS Multi-Factor Authentication is required for this administrative account.',
+      };
+    }
+  }
+
+  // Active enrolled MFA verification challenge
+  const sessionToken = generateMfaSessionToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    fullName: user.full_name,
+    type: 'MFA_CHALLENGE',
+  });
+
+  const normalizedPhone = normalizePhoneNumber(mfaPhone!);
+  const otp = generateOtpCode();
+  const otpHash = hashOtpCode(otp);
+  const verifId = `mfa_v_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  db.prepare(`
+    INSERT INTO mfa_verifications (id, user_id, phone_number, otp_code_hash, purpose, expires_at)
+    VALUES (?, ?, ?, ?, 'LOGIN_CHALLENGE', ?)
+  `).run(verifId, user.id, normalizedPhone, otpHash, expiresAt);
+
+  const dispatch = await sendSmsOtp(normalizedPhone, otp, 'LOGIN_CHALLENGE');
+
+  return {
+    requireMfa: true,
+    mfaEnrolled: true,
+    mfaSessionToken: sessionToken,
+    maskedPhone: dispatch.maskedPhone,
+    role: user.role,
+    devOtp: dispatch.devOtp,
+    message: `SMS verification code sent to ${dispatch.maskedPhone}.`,
+  };
+}
 
 /**
  * Authoritative Firestore verification and automatic self-healing for distributed production environments.
@@ -174,6 +261,14 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Please provide all required fields (Name, Email, Password, ICAI Registration Number).' });
     }
 
+    const srnValidation = validateSrn(icaiRegistrationNumber);
+    if (!srnValidation.isValid) {
+      return res.status(400).json({
+        error: srnValidation.error,
+        code: 'INVALID_SRN',
+      });
+    }
+
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
     }
@@ -284,7 +379,7 @@ router.post('/register', async (req: Request, res: Response) => {
       db.prepare(`
         INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
         VALUES (?, ?, ?, 0, 0)
-      `).run(userId, icaiRegistrationNumber.trim().toUpperCase(), caLevel || 'INTERMEDIATE');
+      `).run(userId, srnValidation.normalized, caLevel || 'INTERMEDIATE');
 
       // If referral / promo code was applied, insert redemption record transactionally
       if (promoCampaign) {
@@ -507,6 +602,21 @@ router.post('/login', async (req: Request, res: Response) => {
       syncPendingInstituteEnrollments(user.id, user.email);
     }
 
+    // Role-Based MFA Evaluation:
+    // Check if MFA challenge is required or if mandatory enrollment is needed
+    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    if (mfaCheck.requireMfa) {
+      return res.json({
+        mfaRequired: true,
+        mfaEnrolled: mfaCheck.mfaEnrolled,
+        mfaSessionToken: mfaCheck.mfaSessionToken,
+        maskedPhone: mfaCheck.maskedPhone,
+        role: mfaCheck.role,
+        message: mfaCheck.message,
+        devOtp: mfaCheck.devOtp,
+      });
+    }
+
     // 2-Device Limit Enforcement for Student Accounts (Permanent-free accounts are exempt)
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
@@ -570,66 +680,71 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
-// GOOGLE SIGN-IN DISABLED: Google authentication flow has been completely discontinued.
-// Production authentication enforces standard Email, Password, Forgot Password, and Registration.
-router.post('/google', (_req: Request, res: Response) => {
-  return res.status(403).json({
-    error: 'Google Sign-In is disabled. Please sign in or register with your email and password.',
-    code: 'GOOGLE_AUTH_DISABLED',
-  });
-});
+interface VerifiedGoogleIdentity {
+  email: string;
+  fullName: string;
+  uid: string;
+}
 
-/* DISABLED GOOGLE AUTH IMPLEMENTATION
-router.post('/google_disabled', async (req: Request, res: Response) => {
+export function verifyGoogleToken(token: string): { valid: boolean; identity?: VerifiedGoogleIdentity; error?: string; code?: string } {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Google authentication credential is required.', code: 'GOOGLE_AUTH_FAILED' };
+  }
+  const parts = token.trim().split('.');
+  if (parts.length !== 3) {
+    return { valid: false, error: 'Malformed authentication token.', code: 'GOOGLE_AUTH_FAILED' };
+  }
+
+  let payload: any;
   try {
-    const { credential, email: clientEmail, fullName: clientName } = req.body;
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+  } catch {
+    return { valid: false, error: 'Invalid authentication token encoding.', code: 'GOOGLE_AUTH_FAILED' };
+  }
 
-    const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (payload.exp && payload.exp < nowSec - 60) {
+    return { valid: false, error: 'Google session has expired. Please sign in again.', code: 'GOOGLE_AUTH_FAILED' };
+  }
 
-    // Check if Google OAuth is configured
-    if (!googleClientId && !credential) {
+  if (!payload.email || typeof payload.email !== 'string') {
+    return { valid: false, error: 'Google credential missing email address.', code: 'GOOGLE_AUTH_FAILED' };
+  }
+
+  if (payload.email_verified === false) {
+    return { valid: false, error: 'Google email address is not verified.', code: 'GOOGLE_AUTH_FAILED' };
+  }
+
+  return {
+    valid: true,
+    identity: {
+      email: payload.email.toLowerCase().trim(),
+      fullName: payload.name || payload.given_name || 'CA Student',
+      uid: payload.sub || payload.user_id || payload.uid || `usr_${crypto.randomBytes(8).toString('hex')}`,
+    },
+  };
+}
+
+// Google Sign-In Endpoint
+router.post('/google', async (req: Request, res: Response) => {
+  try {
+    const rawToken = req.body?.idToken || req.body?.credential;
+    if (!rawToken || typeof rawToken !== 'string') {
       return res.status(400).json({
-        error: 'NOT CONFIGURED: Google OAuth Client ID is not configured on the server. Please set GOOGLE_CLIENT_ID in Settings > Secrets.',
-        code: 'NOT_CONFIGURED',
+        error: 'Google authentication credential is required.',
+        code: 'GOOGLE_AUTH_FAILED',
       });
     }
 
-    let verifiedEmail = '';
-    let verifiedName = 'CA Candidate';
-
-    if (credential) {
-      // Decode JWT token from Google
-      try {
-        const parts = credential.split('.');
-        if (parts.length === 3) {
-          const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf-8');
-          const payload = JSON.parse(payloadJson);
-          if (payload.email) {
-            verifiedEmail = payload.email.toLowerCase().trim();
-            verifiedName = payload.name || payload.given_name || clientName || 'CA Candidate';
-          }
-        }
-      } catch (err) {
-        console.warn('Google credential decode error:', err);
-      }
-    }
-
-    if (!verifiedEmail && clientEmail) {
-      if (!googleClientId) {
-        return res.status(400).json({
-          error: 'NOT CONFIGURED: Google OAuth Client ID is not configured on the server. Please set GOOGLE_CLIENT_ID in Settings > Secrets.',
-          code: 'NOT_CONFIGURED',
-        });
-      }
-      verifiedEmail = clientEmail.toLowerCase().trim();
-      verifiedName = clientName || 'CA Candidate';
-    }
-
-    if (!verifiedEmail) {
-      return res.status(400).json({
-        error: 'Invalid Google authentication credential. Could not verify email address.',
+    const verification = verifyGoogleToken(rawToken);
+    if (!verification.valid || !verification.identity) {
+      return res.status(401).json({
+        error: verification.error || 'Google authentication failed. Please try again.',
+        code: verification.code || 'GOOGLE_AUTH_FAILED',
       });
     }
+
+    const { email: verifiedEmail, fullName: verifiedName } = verification.identity;
 
     // Check if user already exists in database
     let user = db.prepare(`
@@ -643,7 +758,7 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
     } | undefined;
 
     if (user) {
-      // Enforce account status for existing user
+      // 1. Enforce account status for existing user
       if (user.status === 'SUSPENDED') {
         const suspension = db.prepare(`
           SELECT reason, internal_note, created_at FROM account_suspensions
@@ -687,7 +802,63 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
         return res.status(403).json({
           error: 'Your account has been deactivated. Please contact support.',
           status: user.status,
+          code: 'ACCOUNT_DISABLED',
         });
+      }
+
+      // Check role constraints
+      if (user.role === 'INSTITUTE_ADMIN') {
+        return res.status(403).json({
+          error: 'This account is registered as a Coaching Institute Admin. Please sign in via the Institute Portal.',
+          code: 'ROLE_MISMATCH',
+        });
+      }
+
+      // Check student profile completeness (ICAI SRN check)
+      const studentProfile = db.prepare(`
+        SELECT * FROM student_profiles WHERE user_id = ?
+      `).get(user.id) as any;
+
+      const isSrnValid = studentProfile && validateSrn(studentProfile.icai_registration_number).isValid;
+
+      if (!isSrnValid) {
+        // Check if client provided profile in this request
+        if (req.body?.profile?.icaiRegistrationNumber) {
+          const srnVal = validateSrn(req.body.profile.icaiRegistrationNumber);
+          if (!srnVal.isValid) {
+            return res.status(400).json({ error: srnVal.error, code: 'INVALID_SRN' });
+          }
+          if (studentProfile) {
+            db.prepare(`
+              UPDATE student_profiles
+              SET icai_registration_number = ?,
+                  ca_level = COALESCE(?, ca_level),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE user_id = ?
+            `).run(srnVal.normalized, req.body.profile.caLevel || null, user.id);
+          } else {
+            db.prepare(`
+              INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+              VALUES (?, ?, ?, 0, 0)
+            `).run(user.id, srnVal.normalized, req.body.profile.caLevel || 'INTERMEDIATE');
+          }
+        } else {
+          // Issue temporary onboarding token to complete profile
+          const onboardingToken = jwt.sign(
+            { email: verifiedEmail, fullName: user.full_name, userId: user.id, type: 'GOOGLE_ONBOARDING' },
+            JWT_SECRET,
+            { expiresIn: '30m' }
+          );
+          return res.json({
+            code: 'PROFILE_INCOMPLETE',
+            message: 'Please complete your CA Student profile with a valid ICAI Student Registration Number.',
+            onboardingToken,
+            tempUser: {
+              email: verifiedEmail,
+              fullName: user.full_name,
+            },
+          });
+        }
       }
 
       if (user.role === 'STUDENT') {
@@ -695,57 +866,75 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
       }
     } else {
       // New user via Google Sign-In
-      // MANDATORY SECURITY RULE: Google Sign-In must NOT create Admin or Institute Admin accounts automatically.
-      // Normal Google registration MUST create a STUDENT.
-      const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
-      const randomPassword = crypto.randomBytes(32).toString('hex');
-      const passwordHash = hashPassword(randomPassword);
-      const role: UserRole = 'STUDENT';
+      // MANDATORY SECURITY RULE: Google Sign-In must NOT create Admin or Institute Admin accounts.
+      // Role is STRICTLY 'STUDENT'.
+      if (req.body?.profile?.icaiRegistrationNumber) {
+        const srnVal = validateSrn(req.body.profile.icaiRegistrationNumber);
+        if (!srnVal.isValid) {
+          return res.status(400).json({ error: srnVal.error, code: 'INVALID_SRN' });
+        }
 
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, role, status)
-        VALUES (?, ?, ?, ?, 'STUDENT', 'ACTIVE')
-      `).run(userId, verifiedEmail, passwordHash, verifiedName);
+        const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+        const randomPassword = crypto.randomBytes(32).toString('hex');
+        const passwordHash = hashPassword(randomPassword);
+        const role: UserRole = 'STUDENT';
 
-      // Create student profile with default free credits
-      db.prepare(`
-        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
-        VALUES (?, 'NEW_STUDENT', 'INTERMEDIATE', 0, 0)
-      `).run(userId);
+        db.prepare(`
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+          VALUES (?, ?, ?, ?, ?, 'STUDENT', 'ACTIVE')
+        `).run(userId, verifiedEmail, passwordHash, req.body.profile.fullName || verifiedName, req.body.profile.phone || null);
 
-      // Automatically link any pending coaching institute enrollment for this email
-      syncPendingInstituteEnrollments(userId, verifiedEmail);
+        db.prepare(`
+          INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+          VALUES (?, ?, ?, 0, 0)
+        `).run(userId, srnVal.normalized, req.body.profile.caLevel || 'INTERMEDIATE');
 
-      // Welcome Notification
-      db.prepare(`
-        INSERT INTO notifications (id, user_id, title, message, type)
-        VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your Google account has been linked. You receive 2 free full-paper evaluations!', 'SYSTEM')
-      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+        syncPendingInstituteEnrollments(userId, verifiedEmail);
 
-      // Audit log
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'GOOGLE_SIGNUP', 'USER', ?, 'New student account created via Google OAuth')
-      `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, userId);
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, title, message, type)
+          VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your Google account has been linked. You receive 2 free full-paper evaluations!', 'SYSTEM')
+        `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
 
-      user = {
-        id: userId,
-        email: verifiedEmail,
-        full_name: verifiedName,
-        role,
-        status: 'ACTIVE',
-      };
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, 'GOOGLE_SIGNUP', 'USER', ?, 'New student account created via Google OAuth')
+        `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, userId);
 
-      // Sync new Google user and student profile to Cloud Firestore
-      try {
-        const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-        const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
-        if (uRow) syncRecordToFirestore('users', userId, uRow).catch(() => {});
-        if (spRow) syncRecordToFirestore('student_profiles', userId, spRow).catch(() => {});
-      } catch {}
+        user = {
+          id: userId,
+          email: verifiedEmail,
+          full_name: req.body.profile.fullName || verifiedName,
+          role,
+          status: 'ACTIVE',
+        };
+
+        try {
+          const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+          const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
+          if (uRow) syncRecordToFirestore('users', userId, uRow).catch(() => {});
+          if (spRow) syncRecordToFirestore('student_profiles', userId, spRow).catch(() => {});
+        } catch {}
+      } else {
+        // Return PROFILE_INCOMPLETE to prompt for SRN and profile details
+        const onboardingToken = jwt.sign(
+          { email: verifiedEmail, fullName: verifiedName, isNewUser: true, type: 'GOOGLE_ONBOARDING' },
+          JWT_SECRET,
+          { expiresIn: '30m' }
+        );
+        return res.json({
+          code: 'PROFILE_INCOMPLETE',
+          message: 'Please complete your CA Student profile with your ICAI Student Registration Number.',
+          onboardingToken,
+          tempUser: {
+            email: verifiedEmail,
+            fullName: verifiedName,
+          },
+        });
+      }
     }
 
-    // 2-Device Limit Enforcement for Student Accounts (Permanent-free accounts are exempt)
+    // 2-Device Limit Enforcement for Student Accounts
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
       const deviceId =
@@ -759,7 +948,7 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
       if (limitCheck.exceeded) {
         return res.status(403).json({
           error: `Maximum device limit reached (${limitCheck.activeDeviceCount}/${limitCheck.maxDevicesAllowed}). Your student account is already active on 2 devices. Please log out from one of your existing devices before logging in on a new device.`,
-          code: 'DEVICE_LIMIT_EXCEEDED',
+          code: 'SESSION_LIMIT_REACHED',
           activeDeviceCount: limitCheck.activeDeviceCount,
           maxDevicesAllowed: limitCheck.maxDevicesAllowed,
         });
@@ -774,6 +963,20 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
       sessionId = session.sessionId;
     }
 
+    // Role-Based MFA Evaluation for Google Sign-In
+    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    if (mfaCheck.requireMfa) {
+      return res.json({
+        mfaRequired: true,
+        mfaEnrolled: mfaCheck.mfaEnrolled,
+        mfaSessionToken: mfaCheck.mfaSessionToken,
+        maskedPhone: mfaCheck.maskedPhone,
+        role: mfaCheck.role,
+        message: mfaCheck.message,
+        devOtp: mfaCheck.devOtp,
+      });
+    }
+
     const token = generateToken({
       id: user.id,
       email: user.email,
@@ -782,7 +985,6 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
     }, sessionId);
 
     const isPermanentFree = checkPermanentFreeAccess(user.email);
-
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
     return res.json({
@@ -798,10 +1000,192 @@ router.post('/google_disabled', async (req: Request, res: Response) => {
     });
   } catch (error: unknown) {
     console.error('Google Auth error:', error);
-    return res.status(500).json({ error: 'Google authentication failed. Please try again.' });
+    return res.status(500).json({ error: 'Google authentication failed. Please try again.', code: 'SERVER_ERROR' });
   }
 });
-*/
+
+// Google Onboarding / Complete Profile Endpoint
+router.post('/google/complete-profile', async (req: Request, res: Response) => {
+  try {
+    const { onboardingToken, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
+
+    if (!onboardingToken || typeof onboardingToken !== 'string') {
+      return res.status(401).json({
+        error: 'Onboarding session is missing. Please sign in with Google again.',
+        code: 'GOOGLE_AUTH_FAILED',
+      });
+    }
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(onboardingToken, JWT_SECRET);
+      if (decoded?.type !== 'GOOGLE_ONBOARDING' || !decoded?.email) {
+        return res.status(401).json({
+          error: 'Invalid onboarding session. Please sign in with Google again.',
+          code: 'GOOGLE_AUTH_FAILED',
+        });
+      }
+    } catch {
+      return res.status(401).json({
+        error: 'Onboarding session has expired. Please sign in with Google again.',
+        code: 'GOOGLE_AUTH_FAILED',
+      });
+    }
+
+    if (!icaiRegistrationNumber) {
+      return res.status(400).json({
+        error: 'Student Registration Number is required.',
+        code: 'INVALID_SRN',
+      });
+    }
+
+    const srnValidation = validateSrn(icaiRegistrationNumber);
+    if (!srnValidation.isValid) {
+      return res.status(400).json({
+        error: srnValidation.error,
+        code: 'INVALID_SRN',
+      });
+    }
+
+    const normalizedEmail = decoded.email.toLowerCase().trim();
+
+    let user = db.prepare(`
+      SELECT id, email, full_name, role, status FROM users WHERE lower(email) = ?
+    `).get(normalizedEmail) as any;
+
+    if (user) {
+      // Update name / phone if provided
+      db.prepare(`
+        UPDATE users
+        SET full_name = COALESCE(?, full_name),
+            phone = COALESCE(?, phone),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(fullName?.trim() || null, phone?.trim() || null, user.id);
+
+      // Insert or update student profile
+      const existingProfile = db.prepare('SELECT user_id FROM student_profiles WHERE user_id = ?').get(user.id);
+      if (existingProfile) {
+        db.prepare(`
+          UPDATE student_profiles
+          SET icai_registration_number = ?,
+              ca_level = COALESCE(?, ca_level),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+        `).run(srnValidation.normalized, caLevel || null, user.id);
+      } else {
+        db.prepare(`
+          INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+          VALUES (?, ?, ?, 0, 0)
+        `).run(user.id, srnValidation.normalized, caLevel || 'INTERMEDIATE');
+      }
+
+      user.full_name = fullName?.trim() || user.full_name;
+    } else {
+      // Create new student
+      const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const passwordHash = hashPassword(randomPassword);
+
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, ?, ?, 'STUDENT', 'ACTIVE')
+      `).run(userId, normalizedEmail, passwordHash, fullName?.trim() || decoded.fullName || 'CA Student', phone?.trim() || null);
+
+      db.prepare(`
+        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
+        VALUES (?, ?, ?, 0, 0)
+      `).run(userId, srnValidation.normalized, caLevel || 'INTERMEDIATE');
+
+      syncPendingInstituteEnrollments(userId, normalizedEmail);
+
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your Google account has been linked. You receive 2 free full-paper evaluations!', 'SYSTEM')
+      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'GOOGLE_SIGNUP', 'USER', ?, 'New student account created via Google OAuth')
+      `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, userId);
+
+      user = {
+        id: userId,
+        email: normalizedEmail,
+        full_name: fullName?.trim() || decoded.fullName || 'CA Student',
+        role: 'STUDENT',
+        status: 'ACTIVE',
+      };
+    }
+
+    // 2-Device Limit Check
+    let sessionId: string | undefined;
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+
+    const limitCheck = isDeviceLimitExceeded(user.id, user.email, deviceId);
+    if (limitCheck.exceeded) {
+      return res.status(403).json({
+        error: `Maximum device limit reached (${limitCheck.activeDeviceCount}/${limitCheck.maxDevicesAllowed}). Your student account is already active on 2 devices. Please log out from one of your existing devices before logging in on a new device.`,
+        code: 'SESSION_LIMIT_REACHED',
+        activeDeviceCount: limitCheck.activeDeviceCount,
+        maxDevicesAllowed: limitCheck.maxDevicesAllowed,
+      });
+    }
+
+    const session = createOrRefreshDeviceSession({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      ipAddress,
+    });
+    sessionId = session.sessionId;
+
+    // Role-Based MFA Evaluation for Complete Profile
+    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    if (mfaCheck.requireMfa) {
+      return res.json({
+        mfaRequired: true,
+        mfaEnrolled: mfaCheck.mfaEnrolled,
+        mfaSessionToken: mfaCheck.mfaSessionToken,
+        maskedPhone: mfaCheck.maskedPhone,
+        role: mfaCheck.role,
+        message: mfaCheck.message,
+        devOtp: mfaCheck.devOtp,
+      });
+    }
+
+    const token = generateToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+    }, sessionId);
+
+    const isPermanentFree = checkPermanentFreeAccess(user.email);
+    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role,
+        status: user.status,
+        hasPermanentFreeAccess: isPermanentFree,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Complete Profile error:', error);
+    return res.status(500).json({ error: 'Failed to complete profile. Please try again.', code: 'SERVER_ERROR' });
+  }
+});
+
 
 // SEPARATE INSTITUTE REGISTRATION FLOW
 router.post('/institute/register', (req: Request, res: Response) => {
@@ -968,6 +1352,20 @@ router.post('/institute/login', async (req: Request, res: Response) => {
       });
     }
 
+    // Role-Based MFA Evaluation for Institute Login (MANDATORY)
+    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    if (mfaCheck.requireMfa) {
+      return res.json({
+        mfaRequired: true,
+        mfaEnrolled: mfaCheck.mfaEnrolled,
+        mfaSessionToken: mfaCheck.mfaSessionToken,
+        maskedPhone: mfaCheck.maskedPhone,
+        role: mfaCheck.role,
+        message: mfaCheck.message,
+        devOtp: mfaCheck.devOtp,
+      });
+    }
+
     const token = generateToken({
       id: user.id,
       email: user.email,
@@ -1114,7 +1512,7 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
 
     const userId = req.user.id;
     const user = db.prepare(`
-      SELECT id, email, full_name, phone, role, status, created_at FROM users WHERE id = ?
+      SELECT id, email, full_name, phone, role, status, mfa_enabled, mfa_phone, created_at FROM users WHERE id = ?
     `).get(userId) as {
       id: string;
       email: string;
@@ -1122,6 +1520,8 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
       phone: string | null;
       role: UserRole;
       status: string;
+      mfa_enabled: number;
+      mfa_phone: string | null;
       created_at: string;
     } | undefined;
 
@@ -1200,6 +1600,10 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
         status: user.status,
         createdAt: user.created_at,
         hasPermanentFreeAccess: isPermanentFree,
+        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
+        mfaVerified: req.user.mfaVerified ?? false,
+        mfaMandatory: user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN',
       },
       profile: profileData,
     });

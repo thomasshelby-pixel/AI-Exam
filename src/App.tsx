@@ -258,7 +258,7 @@ const PublicAndStudentLayout: React.FC<{
         onNavigate={handleNavigate}
         onOpenCreditsModal={onOpenCreditsModal}
       />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 w-full min-w-0">{children}</main>
       <Footer onNavigate={handleNavigate} />
     </div>
   );
@@ -632,6 +632,52 @@ const AppRoutes: React.FC = () => {
                 <StudentProfilePage
                   onNavigateDashboard={() => navigate('/student/dashboard')}
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                  initialSection="profile"
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/security"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudentProfilePage
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
+                  onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                  initialSection="security"
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/settings"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudentProfilePage
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
+                  onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                  initialSection="security"
+                />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/account-security"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudentProfilePage
+                  onNavigateDashboard={() => navigate('/student/dashboard')}
+                  onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                  initialSection="security"
                 />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>

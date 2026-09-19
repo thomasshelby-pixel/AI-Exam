@@ -580,7 +580,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   };
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-3 sm:px-4 py-6 text-slate-800 dark:text-slate-100 space-y-6 min-w-0">
+    <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6 min-w-0">
       {/* Title & ICAI Disclaimer Banner */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -823,9 +823,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Paper & Subject Configuration */}
-        <div className="lg:col-span-1 space-y-5">
+        <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-4 space-y-5 min-w-0">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 shadow-sm">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
               <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -1013,14 +1013,14 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 </div>
 
                 {/* Paper Type & Attempt */}
-                <div className={`grid ${materialType === 'MTP' ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-2.5`}>
-                  <div className="min-w-0">
+                <div className="space-y-3">
+                  <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Paper Type</label>
                     <select
                       id="evaluation-paper-type-select"
                       value={materialType}
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 truncate"
+                      className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-medium"
                     >
                       <option value="MTP">MTP (Mock Test Paper)</option>
                       <option value="PYQ">PYQ (Past Year Question Paper)</option>
@@ -1028,38 +1028,41 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     </select>
                   </div>
 
-                  {materialType === 'MTP' && (
+                  <div className={`grid ${materialType === 'MTP' ? 'grid-cols-2' : 'grid-cols-1'} gap-2.5`}>
+                    {materialType === 'MTP' && (
+                      <div className="min-w-0">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                          MTP Series
+                        </label>
+                        <select
+                          id="evaluation-mtp-series-select"
+                          value={mtpSeries}
+                          onChange={(e) => setMtpSeries(Number(e.target.value) as 1 | 2)}
+                          className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 truncate"
+                        >
+                          <option value={1}>Series 1 (Official)</option>
+                          <option value={2}>Series 2 (Official)</option>
+                        </select>
+                      </div>
+                    )}
+
                     <div className="min-w-0">
-                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 flex items-center justify-between">
-                        <span>MTP Series</span>
-                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">Required</span>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                        Target Attempt
                       </label>
                       <select
-                        id="evaluation-mtp-series-select"
-                        value={mtpSeries}
-                        onChange={(e) => setMtpSeries(Number(e.target.value) as 1 | 2)}
-                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-semibold text-blue-600 dark:text-blue-400 truncate"
+                        id="evaluation-target-attempt-select"
+                        value={attempt}
+                        onChange={(e) => setAttempt(e.target.value)}
+                        className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-medium truncate"
                       >
-                        <option value={1}>Series 1 (Official ICAI)</option>
-                        <option value={2}>Series 2 (Official ICAI)</option>
+                        {availableAttempts.map((att) => (
+                          <option key={att.id} value={att.attemptLabel}>
+                            {att.attemptLabel}
+                          </option>
+                        ))}
                       </select>
                     </div>
-                  )}
-
-                  <div className="min-w-0">
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Target Attempt</label>
-                    <select
-                      id="evaluation-target-attempt-select"
-                      value={attempt}
-                      onChange={(e) => setAttempt(e.target.value)}
-                      className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 truncate"
-                    >
-                      {availableAttempts.map((att) => (
-                        <option key={att.id} value={att.attemptLabel}>
-                          {att.attemptLabel}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 </div>
               </>
@@ -1131,26 +1134,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         </div>
 
         {/* Right Column: File Upload Area & Submit */}
-        <div className="lg:col-span-2 space-y-5">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6 shadow-sm">
-            <div className="flex items-center justify-between flex-wrap gap-2 pb-1 border-b border-slate-100 dark:border-slate-800">
+        <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5 min-w-0">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 space-y-4 sm:space-y-5 shadow-sm">
+            <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
                 <UploadCloud className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 2. Upload Handwritten Answer Sheet
               </h3>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  id="pro-tips-btn"
-                  onClick={() => setShowProTipsModal(true)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition cursor-pointer shadow-xs group"
-                  title="View best practices for clear handwriting & page alignment to improve AI evaluation accuracy"
-                >
-                  <Lightbulb className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
-                  <span>Pro Tips</span>
-                </button>
-                <span className="text-xs text-slate-400 dark:text-slate-500 font-medium hidden sm:inline">PDF, JPG, PNG (Max 50MB)</span>
-              </div>
+              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
+                PDF, JPG, PNG (Max 50MB)
+              </span>
             </div>
 
             {/* Drag & Drop Box */}
@@ -1226,17 +1219,17 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
             {/* Quick Pro Tips Banner */}
             <div className="p-3 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 min-w-0">
                 <Lightbulb className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span>
-                  <strong>Tip for High Accuracy:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
+                <span className="leading-snug">
+                  <strong>Pro Tip:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
                 </span>
               </div>
               <button
                 type="button"
-                id="view-pro-tips-link"
+                id="pro-tips-btn"
                 onClick={() => setShowProTipsModal(true)}
-                className="text-amber-700 dark:text-amber-300 font-bold hover:underline shrink-0 cursor-pointer text-xs"
+                className="text-amber-700 dark:text-amber-300 font-bold hover:underline shrink-0 cursor-pointer text-xs whitespace-nowrap"
               >
                 View Pro Tips →
               </button>
@@ -1244,14 +1237,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
             {/* Material Unavailable Alert */}
             {!materialAvailable && !checkingMaterial && (
-              <div className="p-3.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
-                <div>
-                  <p className="font-bold text-rose-900 dark:text-rose-200">Evaluation Material Not Uploaded Yet</p>
-                  <p className="mt-0.5 leading-relaxed">
-                    Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.
-                  </p>
-                </div>
+              <div className="px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600 dark:text-rose-400" />
+                <span className="leading-tight">
+                  <strong className="font-semibold text-rose-900 dark:text-rose-200">Material Pending:</strong> Official evaluation material is not yet available for this attempt.
+                </span>
               </div>
             )}
 

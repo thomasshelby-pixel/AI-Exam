@@ -533,6 +533,64 @@ export async function deleteMaterialCloudFiles(materialId: string): Promise<numb
   return deletedCount;
 }
 
+/**
+ * Deletes all Cloud Storage files associated with a student account.
+ * Purges answer sheets, checked copies, reports, student submissions, and documents.
+ */
+export async function deleteStudentCloudFiles(studentId: string): Promise<number> {
+  const db = getFirestoreDb();
+  let deletedCount = 0;
+
+  if (db) {
+    try {
+      // 1. Query where ownerUserId == studentId
+      const q = query(
+        collection(db, 'file_storage_metadata'),
+        where('ownerUserId', '==', studentId)
+      );
+      const snap = await getDocs(q);
+      console.log(`[PrivilegedStorage] Found ${snap.size} files associated with student ${studentId}`);
+
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data() as CloudFileMetadata;
+        await deleteFileFromCloudStorage(data.fileId || docSnap.id, data.storagePath);
+        await deleteDoc(doc(db, 'file_storage_metadata', docSnap.id)).catch(() => {});
+        deletedCount++;
+      }
+    } catch (err) {
+      console.warn(`[PrivilegedStorage] Error querying student files for ${studentId}:`, err);
+    }
+  }
+
+  // 2. Direct prefix deletion on Google Cloud Storage bucket
+  try {
+    const bucket = getStorageBucket(configuredBucket);
+    const prefixes = [
+      `student_evaluations/${studentId}/`,
+      `evaluation_reports/${studentId}/`,
+      `checked_copies/${studentId}/`,
+      `documents/${studentId}/`,
+      `submissions/${studentId}/`,
+    ];
+    for (const prefix of prefixes) {
+      try {
+        const [files] = await bucket.getFiles({ prefix });
+        for (const f of files) {
+          await f.delete({ ignoreNotFound: true });
+          deletedCount++;
+          console.log(`[PrivilegedStorage] Direct prefix delete purged student GCS object: ${f.name}`);
+        }
+      } catch (pErr) {
+        console.warn(`[PrivilegedStorage] Warning during student prefix cleanup for ${prefix}:`, pErr);
+      }
+    }
+  } catch (bucketErr) {
+    console.warn(`[PrivilegedStorage] Warning during direct bucket prefix deletion for student ${studentId}:`, bucketErr);
+  }
+
+  return deletedCount;
+}
+
 export interface StorageConsistencyReport {
   bucket: string;
   totalGcsFiles: number;

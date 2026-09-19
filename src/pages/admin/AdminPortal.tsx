@@ -61,7 +61,7 @@ import {
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
-  const { user, isAuthenticated, isLoading, logout } = useAuth();
+  const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -1024,6 +1024,30 @@ export const AdminPortal: React.FC = () => {
             className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold text-sm transition"
           >
             Return to Student Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (user?.mfaVerified === false) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 rounded-2xl p-8 max-w-md w-full text-center shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4 border border-amber-200 dark:border-amber-800/60">
+            <ShieldAlert className="w-7 h-7" />
+          </div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+            Administrator MFA Verification Required
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+            Multi-Factor Authentication via SMS is mandatory by security policy for all Super Admin and Administrator accounts. You must verify your mobile phone number before accessing the administrative control suite.
+          </p>
+          <button
+            onClick={() => triggerMfaEnrollment()}
+            className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
+          >
+            Complete Administrator MFA Verification
           </button>
         </div>
       </div>

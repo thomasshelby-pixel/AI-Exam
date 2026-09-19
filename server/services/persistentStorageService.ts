@@ -7,6 +7,7 @@ import {
   deleteFileFromCloudStorage,
   deleteEvaluationCloudFiles,
   deleteMaterialCloudFiles as deleteMaterialCloudFilesFromFirebase,
+  deleteStudentCloudFiles,
   type CloudFileMetadata,
   type UploadOptions
 } from './firebaseCloudStorageService.js';
@@ -206,5 +207,6 @@ export async function deleteMaterialCloudFiles(materialId: string): Promise<numb
 }
 
 export {
-  deleteEvaluationCloudFiles
+  deleteEvaluationCloudFiles,
+  deleteStudentCloudFiles
 };

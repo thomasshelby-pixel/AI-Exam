@@ -4,7 +4,7 @@ import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
+export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -13,13 +13,16 @@ export interface AuthRequest extends Request {
     role: UserRole;
     fullName: string;
     sessionId?: string;
+    mfaVerified?: boolean;
   };
 }
 
 export function generateToken(
   user: { id: string; email: string; role: UserRole; fullName: string },
-  sessionId?: string
+  sessionId?: string,
+  mfaVerified?: boolean
 ): string {
+  const isMfaVerified = mfaVerified !== undefined ? mfaVerified : true;
   return jwt.sign(
     {
       id: user.id,
@@ -27,10 +30,47 @@ export function generateToken(
       role: user.role,
       fullName: user.fullName,
       sessionId,
+      mfaVerified: isMfaVerified,
     },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
+}
+
+export function generateMfaSessionToken(payload: {
+  userId: string;
+  email: string;
+  role: UserRole;
+  fullName: string;
+  type: 'MFA_CHALLENGE' | 'MFA_ENROLLMENT_REQUIRED';
+}): string {
+  return jwt.sign(
+    {
+      ...payload,
+      isMfaSession: true,
+    },
+    JWT_SECRET,
+    { expiresIn: '10m' }
+  );
+}
+
+export function verifyMfaSessionToken(token: string): {
+  userId: string;
+  email: string;
+  role: UserRole;
+  fullName: string;
+  type: 'MFA_CHALLENGE' | 'MFA_ENROLLMENT_REQUIRED';
+  isMfaSession: boolean;
+} | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (!decoded || !decoded.isMfaSession || !decoded.userId) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
 }
 
 function parseCookie(cookieHeader: string | undefined, name: string): string | null {
@@ -63,6 +103,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       role: UserRole;
       fullName: string;
       sessionId?: string;
+      mfaVerified?: boolean;
     };
 
     // Verify user in database
@@ -158,6 +199,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       role: user.role,
       fullName: user.full_name,
       sessionId: decoded.sessionId,
+      mfaVerified: !!decoded.mfaVerified,
     };
 
     next();
@@ -283,6 +325,22 @@ export function requireRole(...allowedRoles: UserRole[]) {
       return res.status(403).json({
         error: `Access denied. Role ${req.user.role} is not authorized for this resource.`,
       });
+    }
+
+    // Server-Side Role-Based MFA Policy Enforcement
+    // INSTITUTE_ADMIN and SUPER_ADMIN must have verified MFA to access privileged routes
+    if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN') {
+      const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
+
+      if (!dbUser?.mfa_enabled || !req.user.mfaVerified) {
+        return res.status(403).json({
+          error: 'SMS Multi-Factor Authentication is mandatory for administrative access. Please complete MFA verification.',
+          code: 'MFA_REQUIRED',
+          mfaRequired: true,
+          mfaEnrolled: Boolean(dbUser?.mfa_enabled),
+          role: req.user.role,
+        });
+      }
     }
 
     next();

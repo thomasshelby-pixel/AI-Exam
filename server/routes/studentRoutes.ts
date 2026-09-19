@@ -30,6 +30,8 @@ import { validateAnswerSheetSubject } from '../services/subjectValidationService
 import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
+import { validateSrn } from '../utils/srnValidator.js';
+import { selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 
 const router = Router();
 
@@ -2098,7 +2100,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
 router.put('/profile', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl } = req.body;
+    const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl, icaiRegistrationNumber } = req.body;
 
     // Field-level validation
     if (fullName !== undefined) {
@@ -2112,6 +2114,15 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
       if (cleanPhone.length < 8 || cleanPhone.length > 15) {
         return res.status(400).json({ error: 'Please enter a valid phone number (8-15 digits).' });
       }
+    }
+
+    let normalizedSrn: string | null = null;
+    if (icaiRegistrationNumber !== undefined && icaiRegistrationNumber !== null && String(icaiRegistrationNumber).trim() !== '') {
+      const srnValidation = validateSrn(String(icaiRegistrationNumber));
+      if (!srnValidation.isValid) {
+        return res.status(400).json({ error: srnValidation.error, code: 'INVALID_SRN' });
+      }
+      normalizedSrn = srnValidation.normalized;
     }
 
     const validCaLevels = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
@@ -2145,11 +2156,12 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
     if (!existingProfile) {
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, ca_level, city, preferred_subjects, avatar_url,
+          user_id, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
           free_evaluations_used, purchased_credits, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         studentId,
+        normalizedSrn || 'REG-PENDING',
         caLevel || 'INTERMEDIATE',
         city !== undefined ? (city ? city.trim() : '') : '',
         preferredSubjectsJson || '[]',
@@ -2158,13 +2170,16 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
     } else {
       db.prepare(`
         UPDATE student_profiles
-        SET city = CASE WHEN ? = 1 THEN ? ELSE city END,
+        SET icai_registration_number = CASE WHEN ? = 1 THEN ? ELSE icai_registration_number END,
+            city = CASE WHEN ? = 1 THEN ? ELSE city END,
             ca_level = COALESCE(?, ca_level),
             preferred_subjects = CASE WHEN ? = 1 THEN ? ELSE preferred_subjects END,
             avatar_url = CASE WHEN ? = 1 THEN ? ELSE avatar_url END,
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).run(
+        normalizedSrn !== null ? 1 : 0,
+        normalizedSrn,
         city !== undefined ? 1 : 0,
         city !== undefined ? (city ? city.trim() : '') : '',
         caLevel || null,
@@ -2175,6 +2190,7 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
         studentId
       );
     }
+
 
     const updatedUser = db.prepare('SELECT id, full_name, email, phone, role FROM users WHERE id = ?').get(studentId) as any;
     const updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
@@ -2269,6 +2285,85 @@ router.post('/change-password', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Change password error:', error);
     return res.status(500).json({ error: 'Failed to change password. Please try again.' });
+  }
+});
+
+// Student Self-Service Account Deletion Endpoint
+router.post('/delete-account', async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { confirmationText, currentPassword, emailConfirmation } = req.body;
+
+    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+
+    const result = await selfDeleteStudentAccount({
+      studentId,
+      confirmationText,
+      currentPassword,
+      emailConfirmation,
+      ipAddress,
+      userAgent,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Your account has been deleted successfully.',
+      status: 'DELETED',
+      cleanupSummary: result.cleanupSummary,
+    });
+  } catch (error: any) {
+    console.error('[StudentRoutes] Delete account error:', {
+      errorName: error?.name,
+      errorMessage: error?.message,
+      statusCode: error?.statusCode,
+    });
+
+    const statusCode = error?.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      error: error?.message || 'Account deletion could not be completed. Please try again or contact support.',
+      supportEmail: 'support@caexamcheckerai.com',
+    });
+  }
+});
+
+router.delete('/account', async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const { confirmationText, currentPassword, emailConfirmation } = req.body;
+
+    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null;
+    const userAgent = (req.headers['user-agent'] as string) || null;
+
+    const result = await selfDeleteStudentAccount({
+      studentId,
+      confirmationText,
+      currentPassword,
+      emailConfirmation,
+      ipAddress,
+      userAgent,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Your account has been deleted successfully.',
+      status: 'DELETED',
+      cleanupSummary: result.cleanupSummary,
+    });
+  } catch (error: any) {
+    console.error('[StudentRoutes] Delete account error:', {
+      errorName: error?.name,
+      errorMessage: error?.message,
+      statusCode: error?.statusCode,
+    });
+
+    const statusCode = error?.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      error: error?.message || 'Account deletion could not be completed. Please try again or contact support.',
+      supportEmail: 'support@caexamcheckerai.com',
+    });
   }
 });
 

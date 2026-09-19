@@ -35,6 +35,10 @@ export interface User {
   status: UserStatus;
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
+  mfaEnabled?: boolean;
+  mfaPhone?: string | null;
+  mfaVerified?: boolean;
+  mfaMandatory?: boolean;
 }
 
 export interface StudentProfile {

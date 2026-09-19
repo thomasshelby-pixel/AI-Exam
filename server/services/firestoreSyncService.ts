@@ -84,12 +84,35 @@ export async function hydrateFromFirestore(): Promise<void> {
     for (const u of users) {
       if (tombstoneSet.has(`users_${u.id}`)) continue;
       try {
+        let normEmail = String(u.email || '').trim().toLowerCase();
+        let targetId = u.id;
+        let targetRole = u.role || 'STUDENT';
+        let targetStatus = u.status || 'ACTIVE';
+
+        // Super Admin migration enforcement:
+        if (normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
+          targetId = 'usr_super_admin_001';
+          normEmail = 'caexamchecker.support@gmail.com';
+          targetRole = 'SUPER_ADMIN';
+          targetStatus = 'ACTIVE';
+
+          // Clean up old support admin document in Firestore if it had a different id
+          if (u.id !== 'usr_super_admin_001') {
+            await deleteFirestoreDoc('users', u.id).catch(() => {});
+          }
+        }
+
+        // Deactivate old superseded admin emails if present in Firestore
+        if (normEmail === 'admin@caexamchecker.ai' || normEmail === 'superadmin@ca-exam-checker.com') {
+          targetStatus = 'DISABLED';
+          targetRole = 'DISABLED';
+        }
+
         const pHash = u.password_hash || u.passwordHash || u.password || 'HASHED_PASS';
-        const normEmail = String(u.email || '').trim().toLowerCase();
         const userClassification = u.account_classification || 'NORMAL';
 
         // Check for any colliding user in SQLite by email with a different ID
-        const collidingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normEmail, u.id) as { id: string } | undefined;
+        const collidingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normEmail, targetId) as { id: string } | undefined;
         if (collidingUser) {
           db.prepare('DELETE FROM users WHERE id = ?').run(collidingUser.id);
         }
@@ -112,8 +135,8 @@ export async function hydrateFromFirestore(): Promise<void> {
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             updated_at = CURRENT_TIMESTAMP
         `).run(
-          u.id, normEmail, pHash, u.full_name || '', u.phone || '',
-          u.role || 'STUDENT', u.status || 'ACTIVE', userClassification, u.created_at || null
+          targetId, normEmail, pHash, u.full_name || '', u.phone || '',
+          targetRole, targetStatus, userClassification, u.created_at || null
         );
         uHydrated++;
       } catch (err) {
@@ -664,8 +687,6 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUserQuery = `
       SELECT * FROM users 
       WHERE email IN (
-        'admin@caexamchecker.ai',
-        'superadmin@ca-exam-checker.com',
         'caexamchecker.support@gmail.com',
         'institute@apexca.edu',
         'student@caexamchecker.ai',
@@ -685,6 +706,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       } else if (bu.role === 'SUPER_ADMIN') {
         // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
         await setFirestoreDoc('users', bu.id, {
+          email: bu.email,
           password_hash: bu.password_hash,
           status: 'ACTIVE',
           role: 'SUPER_ADMIN',
@@ -692,6 +714,25 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
         });
         console.log(`[FirestoreSync] Synchronized SUPER_ADMIN ${bu.email} credentials to Cloud Firestore.`);
       }
+    }
+
+    // Safely deactivate superseded admin emails in Firestore if present
+    for (const oldAdm of existingUsers.filter((u) => u.email === 'admin@caexamchecker.ai' || u.email === 'superadmin@ca-exam-checker.com')) {
+      if (oldAdm.id !== 'usr_super_admin_001') {
+        await setFirestoreDoc('users', oldAdm.id, {
+          status: 'DISABLED',
+          role: 'DISABLED',
+          updated_at: new Date().toISOString()
+        });
+        console.log(`[FirestoreSync] Deactivated superseded admin email in Firestore: ${oldAdm.email}`);
+      }
+    }
+
+    // Clean up old support admin document in Firestore if it had a different id
+    const oldSupportDoc = existingUsers.find((u) => u.email === 'caexamchecker.support@gmail.com' && u.id !== 'usr_super_admin_001');
+    if (oldSupportDoc) {
+      await deleteFirestoreDoc('users', oldSupportDoc.id).catch(() => {});
+      console.log(`[FirestoreSync] Cleaned up legacy support admin doc ${oldSupportDoc.id} in Firestore.`);
     }
 
     const existingLegal = await getAllFirestoreDocs('legal_documents');

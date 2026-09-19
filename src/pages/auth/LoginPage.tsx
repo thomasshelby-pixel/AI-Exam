@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { SuspendedAccountView } from '../../components/auth/SuspendedAccountView.js';
+import { SrnInputField } from '../../components/common/SrnInputField.js';
+import { validateSrn } from '../../utils/srnValidator.js';
+import { signInWithGooglePopup } from '../../lib/firebaseAuth.js';
 import {
   FileCheck2,
   Lock,
@@ -18,6 +21,8 @@ import {
   Tag,
   Eye,
   EyeOff,
+  ShieldCheck,
+  X,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -28,7 +33,9 @@ interface LoginPageProps {
 
 export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onSuccess, onNavigateHome }) => {
   const navigate = useNavigate();
-  const { login, register, suspendedAccount, clearSuspension } = useAuth();
+  const location = useLocation();
+  const { login, register, loginWithGoogle, completeGoogleProfile, suspendedAccount, clearSuspension } = useAuth();
+  const accountDeletedMessage = (location.state as any)?.accountDeletedMessage;
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [accountType, setAccountType] = useState<'STUDENT' | 'INSTITUTE'>('STUDENT');
 
@@ -44,8 +51,102 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const [referralCode, setReferralCode] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
+
+  // Google Profile Completion Modal state
+  const [showGoogleProfileModal, setShowGoogleProfileModal] = useState(false);
+  const [onboardingToken, setOnboardingToken] = useState('');
+  const [googleProfile, setGoogleProfile] = useState<{
+    fullName: string;
+    email: string;
+    phone: string;
+    icaiRegistrationNumber: string;
+    caLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
+  }>({
+    fullName: '',
+    email: '',
+    phone: '',
+    icaiRegistrationNumber: '',
+    caLevel: 'INTERMEDIATE',
+  });
+
+  // Handle Google Sign-In
+  const handleGoogleSignIn = async () => {
+    setErrorMessage('');
+    setIsGoogleLoading(true);
+
+    try {
+      const { idToken } = await signInWithGooglePopup();
+      const res = await loginWithGoogle(idToken);
+
+      if (res.code === 'PROFILE_INCOMPLETE' && res.onboardingToken) {
+        setOnboardingToken(res.onboardingToken);
+        setGoogleProfile({
+          fullName: res.tempUser?.fullName || '',
+          email: res.tempUser?.email || '',
+          phone: '',
+          icaiRegistrationNumber: '',
+          caLevel: 'INTERMEDIATE',
+        });
+        setShowGoogleProfileModal(true);
+        return;
+      }
+
+      if (res.user) {
+        onSuccess(res.user);
+      }
+    } catch (err: any) {
+      if (
+        err?.status === 'SUSPENDED' ||
+        err?.accountStatus === 'SUSPENDED' ||
+        err?.code === 'ACCOUNT_SUSPENDED' ||
+        err?.suspension ||
+        err?.data?.suspension
+      ) {
+        // SuspendedAccountView will be rendered via suspendedAccount context
+        return;
+      }
+      const msg =
+        err?.data?.error ||
+        err?.message ||
+        (err?.code === 'auth/popup-closed-by-user' ? 'Google sign-in popup was closed.' : 'Google sign-in failed. Please try again.');
+      setErrorMessage(msg);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+  // Handle Google Profile Completion Submit
+  const handleCompleteGoogleProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+
+    const srnVal = validateSrn(googleProfile.icaiRegistrationNumber);
+    if (!srnVal.isValid) {
+      setErrorMessage(srnVal.error || 'Please provide a valid ICAI Student Registration Number.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const user = await completeGoogleProfile({
+        onboardingToken,
+        fullName: googleProfile.fullName,
+        phone: googleProfile.phone || undefined,
+        icaiRegistrationNumber: srnVal.normalized,
+        caLevel: googleProfile.caLevel,
+      });
+      setShowGoogleProfileModal(false);
+      onSuccess(user);
+    } catch (err: any) {
+      const msg = err?.data?.error || err?.message || 'Failed to complete profile. Please check your details.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -84,8 +185,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
       return;
     }
 
-    if (!icaiRegNo.trim()) {
-      setErrorMessage('Please provide your ICAI Registration Number (e.g. CRO1234567, NRO, WRO, SRO, ERO).');
+    const srnValidation = validateSrn(icaiRegNo);
+    if (!srnValidation.isValid) {
+      setErrorMessage(srnValidation.error || 'Please provide a valid ICAI Registration Number (e.g. CRO0123456).');
       return;
     }
 
@@ -102,7 +204,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         password,
         fullName,
         phone: phone || undefined,
-        icaiRegistrationNumber: icaiRegNo.trim().toUpperCase(),
+        icaiRegistrationNumber: srnValidation.normalized,
         caLevel,
         referralCode: referralCode.trim() || undefined,
       });
@@ -225,6 +327,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Feedback alerts */}
+        {accountDeletedMessage && (
+          <div
+            id="account-deleted-success-banner"
+            className="mb-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100 text-xs sm:text-sm font-medium flex items-center gap-2.5 shadow-xs"
+          >
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span>{accountDeletedMessage}</span>
+          </div>
+        )}
+
         {errorMessage && (
           <div className="mb-4 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
@@ -273,234 +385,333 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
 
         {/* Login Form */}
         {mode === 'login' && (
-          <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="login-email"
-                  type="email"
-                  required
-                  placeholder="student@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
+          <div className="space-y-4">
+            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="login-email"
+                    type="email"
+                    required
+                    placeholder="student@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Password</label>
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="login-password"
+                    type={showLoginPassword ? 'text' : 'password'}
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                id="btn-login-submit"
+                type="submit"
+                disabled={isLoading || isGoogleLoading}
+                className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Signing In...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Sign In</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+
+            {/* Divider */}
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+              </div>
+              <div className="relative flex justify-center text-[11px] uppercase">
+                <span className="bg-white dark:bg-slate-900 px-3 text-slate-400 font-semibold tracking-wider">
+                  OR
+                </span>
               </div>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Password</label>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
-                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer"
-                >
-                  Forgot password?
-                </button>
-              </div>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="login-password"
-                  type={showLoginPassword ? 'text' : 'password'}
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
-                  aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
+            {/* Continue with Google */}
             <button
-              id="btn-login-submit"
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              type="button"
+              id="btn-google-auth"
+              onClick={handleGoogleSignIn}
+              disabled={isGoogleLoading || isLoading}
+              className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
             >
-              {isLoading ? (
+              {isGoogleLoading ? (
                 <>
-                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Signing In...</span>
+                  <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Connecting with Google...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                    />
+                  </svg>
+                  <span>Continue with Google</span>
                 </>
               )}
             </button>
-          </form>
+          </div>
         )}
 
         {/* Student Registration Form */}
         {mode === 'register' && accountType === 'STUDENT' && (
-          <form onSubmit={handleRegisterSubmit} className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Full Name</label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="register-fullname"
-                  type="text"
-                  required
-                  placeholder="e.g. Rahul Sharma"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="register-email"
-                  type="email"
-                  required
-                  placeholder="student@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">ICAI Reg. Number</label>
-                <input
-                  id="register-icai-no"
-                  type="text"
-                  required
-                  placeholder="CRO1234567"
-                  value={icaiRegNo}
-                  onChange={(e) => setIcaiRegNo(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">CA Level</label>
-                <div className="relative">
-                  <select
-                    id="register-ca-level"
-                    value={caLevel}
-                    onChange={(e) => setCaLevel(e.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL')}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                  >
-                    <option value="FOUNDATION">CA Foundation</option>
-                    <option value="INTERMEDIATE">CA Intermediate</option>
-                    <option value="FINAL">CA Final</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number (Optional)</label>
-              <div className="relative">
-                <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="register-phone"
-                  type="tel"
-                  placeholder="+91 98765 43210"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Password</label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="register-password"
-                  type={showRegisterPassword ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  placeholder="At least 8 characters"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowRegisterPassword(!showRegisterPassword)}
-                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
-                  aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Referral / Promo Code (Optional)
-                </label>
-                <span className="text-[10px] text-slate-400 font-medium">Optional</span>
-              </div>
-              <div className="relative">
-                <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  id="register-referral-code"
-                  type="text"
-                  placeholder="Enter referral / promo code"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
-                />
-              </div>
-            </div>
-
+          <div className="space-y-4">
+            {/* Continue with Google on register as well */}
             <button
-              id="btn-register-submit"
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              type="button"
+              id="btn-google-register"
+              onClick={handleGoogleSignIn}
+              disabled={isGoogleLoading || isLoading}
+              className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
             >
-              {isLoading ? (
+              {isGoogleLoading ? (
                 <>
-                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Creating Account...</span>
+                  <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Connecting with Google...</span>
                 </>
               ) : (
                 <>
-                  <span>Create Student Account</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                    />
+                  </svg>
+                  <span>Sign up with Google</span>
                 </>
               )}
             </button>
 
-            <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 pt-1">
-              By creating an account, you agree to our{' '}
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
-                Terms of Service
-              </a>{' '}
-              and{' '}
-              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
-                Privacy Policy
-              </a>
-              .
-            </p>
-          </form>
+            {/* Divider */}
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+              </div>
+              <div className="relative flex justify-center text-[11px] uppercase">
+                <span className="bg-white dark:bg-slate-900 px-3 text-slate-400 font-semibold tracking-wider">
+                  OR REGISTER WITH EMAIL
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleRegisterSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Full Name</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="register-fullname"
+                    type="text"
+                    required
+                    placeholder="e.g. Rahul Sharma"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="register-email"
+                    type="email"
+                    required
+                    placeholder="student@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Strict ICAI SRN Validation Input Field */}
+              <div className="space-y-1">
+                <SrnInputField
+                  id="register-icai-no"
+                  value={icaiRegNo}
+                  onChange={setIcaiRegNo}
+                  required={true}
+                  label="ICAI Student Registration Number (SRN)"
+                  showHelperText={true}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">CA Exam Level</label>
+                <select
+                  id="register-ca-level"
+                  value={caLevel}
+                  onChange={(e) => setCaLevel(e.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL')}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                >
+                  <option value="FOUNDATION">CA Foundation</option>
+                  <option value="INTERMEDIATE">CA Intermediate</option>
+                  <option value="FINAL">CA Final</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number (Optional)</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="register-phone"
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Password</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="register-password"
+                    type={showRegisterPassword ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    placeholder="At least 8 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-9 pr-10 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                    aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Referral / Promo Code (Optional)
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">Optional</span>
+                </div>
+                <div className="relative">
+                  <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="register-referral-code"
+                    type="text"
+                    placeholder="Enter referral / promo code"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white uppercase font-mono placeholder:normal-case focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                id="btn-register-submit"
+                type="submit"
+                disabled={isLoading || isGoogleLoading}
+                className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Creating Account...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Create Student Account</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 pt-1">
+                By creating an account, you agree to our{' '}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                  Privacy Policy
+                </a>
+                .
+              </p>
+            </form>
+          </div>
         )}
 
         {/* Coaching Institute Portal Gateway Link */}
@@ -535,6 +746,141 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
           and acknowledge our strict adherence to ICAI examination guidelines.
         </p>
       </div>
+
+      {/* Google Sign-In Profile Completion Modal */}
+      {showGoogleProfileModal && (
+        <div
+          id="modal-google-profile-completion"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto"
+        >
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 relative animate-in fade-in zoom-in-95 duration-150 my-8">
+            <button
+              type="button"
+              onClick={() => {
+                setShowGoogleProfileModal(false);
+                setOnboardingToken('');
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer"
+              aria-label="Close profile setup"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Complete Student Profile</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Google account verified: {googleProfile.email}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 mb-4 bg-blue-50/70 dark:bg-blue-950/40 p-3 rounded-lg border border-blue-100 dark:border-blue-900 leading-relaxed">
+              Welcome to <strong>CA Exam Checker AI</strong>! Please enter your official ICAI Student Registration Number so we can calibrate evaluator standards and step-marking schemes for your CA level.
+            </p>
+
+            {errorMessage && (
+              <div className="mb-4 p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCompleteGoogleProfile} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Full Name</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="google-profile-name"
+                    type="text"
+                    required
+                    value={googleProfile.fullName}
+                    onChange={(e) => setGoogleProfile((p) => ({ ...p, fullName: e.target.value }))}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Strict ICAI SRN Validation Component */}
+              <SrnInputField
+                id="google-profile-srn"
+                value={googleProfile.icaiRegistrationNumber}
+                onChange={(val) => setGoogleProfile((p) => ({ ...p, icaiRegistrationNumber: val }))}
+                required={true}
+                label="ICAI Student Registration Number (SRN)"
+                showHelperText={true}
+              />
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">CA Exam Level</label>
+                <select
+                  id="google-profile-ca-level"
+                  value={googleProfile.caLevel}
+                  onChange={(e) =>
+                    setGoogleProfile((p) => ({
+                      ...p,
+                      caLevel: e.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL',
+                    }))
+                  }
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                >
+                  <option value="FOUNDATION">CA Foundation</option>
+                  <option value="INTERMEDIATE">CA Intermediate</option>
+                  <option value="FINAL">CA Final</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number (Optional)</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    id="google-profile-phone"
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    value={googleProfile.phone}
+                    onChange={(e) => setGoogleProfile((p) => ({ ...p, phone: e.target.value }))}
+                    className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGoogleProfileModal(false);
+                    setOnboardingToken('');
+                  }}
+                  className="py-2 px-3 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-submit-google-profile"
+                  type="submit"
+                  disabled={isLoading}
+                  className="py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving Profile...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Complete & Enter Portal</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

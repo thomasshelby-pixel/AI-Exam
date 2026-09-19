@@ -45,7 +45,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
   return (
     <header className="sticky top-0 z-40 h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors duration-150">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
+      <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
         <div className="flex items-center justify-between h-full">
           {/* Logo / Brand Block */}
           <div
@@ -61,8 +61,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
             }}
             className={
               user && isStudent
-                ? 'flex items-center gap-2.5 cursor-pointer select-none group shrink-0 min-w-max'
-                : 'flex items-center gap-2.5 cursor-pointer select-none group'
+                ? 'flex items-center gap-2.5 cursor-pointer select-none group shrink-0'
+                : 'flex items-center gap-2.5 cursor-pointer select-none group shrink-0'
             }
           >
             {user && isStudent ? (
@@ -97,10 +97,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
           </div>
 
           {/* Desktop Nav Items */}
-          <nav className="hidden md:flex items-center gap-3 lg:gap-5">
-            <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700">
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2 2xl:gap-3.5 shrink min-w-0">
+            <div className="hidden 2xl:flex items-center gap-2 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shrink-0">
               <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-tight">System Online</span>
+              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-tight whitespace-nowrap">System Online</span>
             </div>
 
             {!user ? (
@@ -108,7 +108,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 <button
                   id="nav-how-it-works"
                   onClick={() => onNavigate('how-it-works')}
-                  className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                  className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                     currentView === 'how-it-works'
                       ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -119,7 +119,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 <button
                   id="nav-pricing"
                   onClick={() => onNavigate('pricing')}
-                  className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                  className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                     currentView === 'pricing'
                       ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -130,7 +130,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 <button
                   id="nav-support"
                   onClick={() => onNavigate('contact')}
-                  className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                  className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                     currentView === 'contact'
                       ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -146,7 +146,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onClick={toggleTheme}
                   aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
                   title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
-                  className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
+                  className="p-1.5 xl:p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer shrink-0"
                 >
                   {isDark ? (
                     <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
@@ -155,18 +155,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   )}
                 </button>
 
-                <div className="h-4 w-px bg-slate-200 dark:bg-slate-700" />
+                <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
                 <button
                   id="nav-login-btn"
                   onClick={() => onNavigate('login')}
-                  className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white px-3 py-1.5 transition-colors"
+                  className="text-xs xl:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white px-3 py-1.5 transition-colors whitespace-nowrap"
                 >
                   Sign In
                 </button>
                 <button
                   id="nav-register-btn"
                   onClick={() => onNavigate('login', { mode: 'register' })}
-                  className="text-xs sm:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg transition shadow-sm"
+                  className="text-xs xl:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg transition shadow-sm whitespace-nowrap shrink-0"
                 >
                   Get 2 Free Checks
                 </button>
@@ -179,7 +179,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-student-dashboard"
                       onClick={() => onNavigate('student-dashboard')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'student-dashboard'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -190,7 +190,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-student-upload"
                       onClick={() => onNavigate('student-upload')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'student-upload'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -201,7 +201,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-student-evaluations"
                       onClick={() => onNavigate('student-evaluations')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'student-evaluations'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -212,19 +212,19 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-student-examiner-profile"
                       onClick={() => onNavigate('student-examiner-profile')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                      className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                         currentView === 'student-examiner-profile'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
                       }`}
                     >
-                      <Dna className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <Dna className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                       <span>Examiner Profile</span>
                     </button>
                     <button
                       id="nav-student-profile"
                       onClick={() => onNavigate('student-profile')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'student-profile'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -240,7 +240,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-institute-dashboard"
                       onClick={() => onNavigate('institute-dashboard')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'institute-dashboard'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -256,7 +256,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                     <button
                       id="nav-admin-dashboard"
                       onClick={() => onNavigate('admin-dashboard')}
-                      className={`text-xs sm:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+                      className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                         currentView === 'admin-dashboard'
                           ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -269,23 +269,23 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
                 {/* Student Entitlement Pill */}
                 {isStudent && (
-                  <div className="flex items-center gap-2 pl-2">
+                  <div className="flex items-center gap-1 xl:gap-1.5 pl-1 xl:pl-1.5 shrink-0">
                     {user.hasPermanentFreeAccess ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span className="inline-flex items-center gap-1.5 px-2 2xl:px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 whitespace-nowrap">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                         Evaluation Active
                       </span>
                     ) : studentProfile?.institute_name ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                        <Building2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                        {studentProfile.institute_name}
+                      <span className="inline-flex items-center gap-1.5 px-2 2xl:px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
+                        <Building2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                        <span className="max-w-[110px] truncate">{studentProfile.institute_name}</span>
                       </span>
                     ) : freeRemaining > 0 ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                      <span className="inline-flex items-center gap-1 px-2 2xl:px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 whitespace-nowrap">
                         {freeRemaining} Free Left
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                      <span className="inline-flex items-center gap-1 px-2 2xl:px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 whitespace-nowrap">
                         {purchasedCredits} Credits
                       </span>
                     )}
@@ -294,9 +294,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       <button
                         id="nav-buy-credits-btn"
                         onClick={onOpenCreditsModal}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
+                        className="inline-flex items-center gap-1 px-2 2xl:px-2.5 py-1 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm whitespace-nowrap shrink-0"
                       >
-                        <CreditCard className="w-3 h-3" />
+                        <CreditCard className="w-3 h-3 shrink-0" />
                         Add Credits
                       </button>
                     )}
@@ -310,7 +310,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   onClick={toggleTheme}
                   aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
                   title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
-                  className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer"
+                  className="p-1.5 xl:p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer shrink-0"
                 >
                   {isDark ? (
                     <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
@@ -320,13 +320,13 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 </button>
 
                 {/* User Profile Badge & Logout */}
-                <div className="flex items-center gap-3 pl-3 border-l border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-1.5 xl:gap-2 pl-1.5 xl:pl-2 border-l border-slate-200 dark:border-slate-700 shrink-0">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xs font-bold text-slate-700 dark:text-slate-200">
+                    <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xs font-bold text-slate-700 dark:text-slate-200 shrink-0">
                       {user.fullName ? user.fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'CA'}
                     </div>
-                    <div className="text-left hidden lg:block">
-                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight truncate max-w-[140px]">
+                    <div className="text-left hidden xl:block">
+                      <p className="text-xs font-bold text-slate-800 dark:text-slate-100 leading-tight truncate max-w-[90px] 2xl:max-w-[130px]">
                         {user.fullName}
                       </p>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">{user.role}</p>
@@ -340,7 +340,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       onNavigate('landing');
                     }}
                     title="Sign Out"
-                    className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition shrink-0"
                   >
                     <LogOut className="w-4 h-4" />
                   </button>
@@ -350,7 +350,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
           </nav>
 
           {/* Mobile Right Controls: Dark Mode Toggle + Hamburger */}
-          <div className="flex md:hidden items-center gap-2">
+          <div className="flex lg:hidden items-center gap-2">
             {user && isStudent && (
               <button
                 onClick={onOpenCreditsModal}
@@ -389,7 +389,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 pt-2 pb-6 space-y-3 shadow-lg transition-colors">
+        <div className="lg:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 pt-2 pb-6 space-y-3 shadow-lg transition-colors">
           {/* Mobile Theme Preference Selector Banner */}
           <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
             <div className="flex items-center gap-2">

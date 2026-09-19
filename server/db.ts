@@ -97,6 +97,9 @@ export function initDatabase() {
       role TEXT NOT NULL DEFAULT 'STUDENT',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
+      mfa_enabled INTEGER NOT NULL DEFAULT 0,
+      mfa_phone TEXT,
+      mfa_enrolled_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -441,6 +444,19 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
 
+    CREATE TABLE IF NOT EXISTS account_deletion_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      email TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'DELETE_PENDING',
+      reason TEXT,
+      started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      error_message TEXT,
+      details TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_deletion_requests_user ON account_deletion_requests(user_id, status);
+
     CREATE TABLE IF NOT EXISTS mcq_scoring_rules (
       id TEXT PRIMARY KEY,
       course_level TEXT NOT NULL,
@@ -610,6 +626,21 @@ export function initDatabase() {
       FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_examiner_profile_student ON student_examiner_profiles(student_id);
+
+    CREATE TABLE IF NOT EXISTS mfa_verifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      phone_number TEXT NOT NULL,
+      otp_code_hash TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      verified INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_verif_user ON mfa_verifications(user_id, purpose, verified);
   `);
 
   runMigrations();
@@ -641,6 +672,11 @@ function runMigrations() {
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
   addColumnIfNotExists('evaluation_materials', 'institute_id', "TEXT");
+
+  // Role-Based MFA columns on users
+  addColumnIfNotExists('users', 'mfa_enabled', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('users', 'mfa_phone', "TEXT");
+  addColumnIfNotExists('users', 'mfa_enrolled_at', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'admin_approved', "INTEGER NOT NULL DEFAULT 0");
   addColumnIfNotExists('evaluation_materials', 'approved_by', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'approved_at', "TEXT");
@@ -1162,43 +1198,80 @@ function runMigrations() {
 }
 
 function seedInitialData() {
-  // 1. Seed Super Admin & Support Admin with secure server-side ADMIN_PASSWORD
+  // 1. Authoritative Super Admin Migration to Accessible Mailbox: caexamchecker.support@gmail.com
   const adminPassword = process.env.ADMIN_PASSWORD || 'BgMi@2006';
   const superAdminHash = hashPassword(adminPassword);
-  const supportAdminHash = hashPassword('Admin@CA2026!');
 
-  const admins = [
-    { id: 'usr_super_admin_001', email: 'admin@caexamchecker.ai', name: 'Super Administrator', role: 'SUPER_ADMIN', hash: superAdminHash },
-    { id: 'usr_super_admin_002', email: 'superadmin@ca-exam-checker.com', name: 'Super Administrator', role: 'SUPER_ADMIN', hash: superAdminHash },
-    { id: 'usr_admin_support_002', email: 'caexamchecker.support@gmail.com', name: 'CA Exam Checker Support Admin', role: 'ADMIN', hash: supportAdminHash },
-  ];
-
-  for (const adm of admins) {
-    const existingAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(adm.email);
-    if (!existingAdmin) {
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-        VALUES (?, ?, ?, ?, '+919876543210', ?, 'ACTIVE')
-      `).run(adm.id, adm.email, adm.hash, adm.name, adm.role);
-
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'INITIALIZE_SYSTEM', 'USER', ?, ?)
-      `).run(`log_init_${adm.id}`, adm.id, adm.id, `Created ${adm.role} account`);
-    } else if (adm.role === 'SUPER_ADMIN') {
-      const curr = db.prepare('SELECT status FROM users WHERE email = ?').get(adm.email) as { status: string } | undefined;
-      if (curr && curr.status !== 'ACTIVE') {
-        db.prepare(`
-          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-          VALUES (?, ?, 'SUPER_ADMIN_RECOVERY', 'USER', ?, 'Restored primary Super Admin from suspended state to ACTIVE')
-        `).run(`log_rec_${Date.now()}`, adm.id, adm.id);
-      }
-      // Keep super admin password hash synchronized with server ADMIN_PASSWORD & enforce ACTIVE status
-      db.prepare(`
-        UPDATE users SET password_hash = ?, status = 'ACTIVE' WHERE email = ?
-      `).run(adm.hash, adm.email);
+  // Authoritative super admin ID is 'usr_super_admin_001'
+  // First, if a duplicate or support record existed under caexamchecker.support@gmail.com (e.g. usr_admin_support_002),
+  // merge any references and clean up so usr_super_admin_001 holds the email authoritatively:
+  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
+  if (supportAccount && supportAccount.id !== 'usr_super_admin_001') {
+    try {
+      db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
+      db.prepare("UPDATE user_sessions SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
+      db.prepare("UPDATE notifications SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
+      db.prepare("DELETE FROM users WHERE id = ?").run(supportAccount.id);
+    } catch (e) {
+      console.warn('[DB] Error consolidating support account to primary super admin:', e);
     }
   }
+
+  // Now ensure usr_super_admin_001 is updated with the accessible email, preserving its ID, audit history, and password
+  const existingSuperAdmin = db.prepare("SELECT id, email, password_hash FROM users WHERE id = 'usr_super_admin_001'").get() as { id: string; email: string; password_hash: string } | undefined;
+  if (existingSuperAdmin) {
+    db.prepare(`
+      UPDATE users
+      SET email = 'caexamchecker.support@gmail.com',
+          full_name = 'Super Administrator',
+          role = 'SUPER_ADMIN',
+          status = 'ACTIVE',
+          password_hash = ?,
+          phone = COALESCE(phone, '+919876543210'),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'usr_super_admin_001'
+    `).run(existingSuperAdmin.password_hash || superAdminHash);
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to caexamchecker.support@gmail.com while preserving all permissions, history, and credentials')
+    `).run(`log_mig_super_admin_${Date.now()}`);
+  } else {
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+      VALUES ('usr_super_admin_001', 'caexamchecker.support@gmail.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
+    `).run(superAdminHash);
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES ('log_init_super_admin', 'usr_super_admin_001', 'INITIALIZE_SYSTEM', 'USER', 'usr_super_admin_001', 'Created SUPER_ADMIN account')
+    `).run();
+  }
+
+  // Safely deactivate old non-accessible admin logins so they cannot log in as active Super Admin
+  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com'];
+  for (const oldEmail of oldAdminEmails) {
+    const oldRow = db.prepare("SELECT id, status FROM users WHERE lower(email) = ?").get(oldEmail) as { id: string; status: string } | undefined;
+    if (oldRow && oldRow.id !== 'usr_super_admin_001') {
+      db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(oldRow.id);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, 'usr_super_admin_001', 'DEACTIVATE_SUPERSEDED_ADMIN', 'USER', ?, ?)
+      `).run(
+        `log_mig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        oldRow.id,
+        `Deactivated superseded admin email ${oldEmail} following authoritative migration to caexamchecker.support@gmail.com`
+      );
+    }
+  }
+
+  // Also deactivate any lingering unaccessible @caexamchecker.ai admin records
+  try {
+    const lingeringAdmins = db.prepare("SELECT id, email FROM users WHERE (lower(email) LIKE '%admin@caexamchecker.ai' OR lower(email) LIKE '%superadmin@ca-exam-checker%') AND id != 'usr_super_admin_001' AND status != 'DISABLED'").all() as Array<{ id: string; email: string }>;
+    for (const la of lingeringAdmins) {
+      db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(la.id);
+    }
+  } catch {}
 
   // 2. Permanent Free Entitlements
   const permanentEmails = [
