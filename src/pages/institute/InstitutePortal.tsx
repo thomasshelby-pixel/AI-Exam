@@ -767,13 +767,13 @@ export const InstitutePortal: React.FC = () => {
               Mandatory Administrative MFA Setup
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-              Multi-Factor Authentication via SMS is mandatory for all Institute Administrators. You must enroll and verify your mobile phone number before gaining access to institutional student data and mock tests.
+              Two-Factor Authentication via an Authenticator App (TOTP) is mandatory for all Institute Administrators. Please configure Google Authenticator or Microsoft Authenticator to protect institutional student records and test series.
             </p>
             <button
               onClick={() => triggerMfaEnrollment()}
               className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
             >
-              Enroll SMS MFA Factor
+              Set Up Authenticator MFA
             </button>
           </div>
         </div>
@@ -787,16 +787,16 @@ export const InstitutePortal: React.FC = () => {
             <ShieldAlert className="w-7 h-7" />
           </div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
-            SMS MFA Verification Required
+            Two-Factor Authentication Required
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-            Please complete your SMS Two-Factor verification challenge to access institutional controls from this device.
+            Please enter the 6-digit verification code from your authenticator app to access institutional controls from this device.
           </p>
           <button
             onClick={() => triggerMfaChallenge()}
             className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
           >
-            Verify Administrator Identity
+            Verify Authenticator Code
           </button>
         </div>
       </div>

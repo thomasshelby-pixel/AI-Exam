@@ -1,10 +1,23 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import { ErrorBoundary } from './components/common/ErrorBoundary.tsx';
 import './index.css';
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error('Failed to find root element');
+}
+
+const root = createRoot(rootElement, {
+  onRecoverableError(error, errorInfo) {
+    // Gracefully capture and log recoverable errors without triggering window.reportError
+    console.warn('[React Recoverable Error]', error, errorInfo);
+  },
+});
+
+root.render(
+  <ErrorBoundary>
     <App />
-  </StrictMode>,
+  </ErrorBoundary>
 );
+

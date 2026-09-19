@@ -23,8 +23,8 @@ router.use('/mfa', mfaRoutes);
  * Server-Side Role-Based MFA Evaluation Helper
  * Evaluates whether MFA is mandatory or voluntarily enabled for the given user.
  * Role-Based Policy:
- *  - STUDENT: SMS MFA is OPTIONAL. Only required if student voluntarily enabled MFA.
- *  - INSTITUTE_ADMIN & SUPER_ADMIN: SMS MFA is strictly MANDATORY. If not enrolled, force enrollment.
+ *  - STUDENT: TOTP MFA is OPTIONAL. Only required if student voluntarily enabled MFA.
+ *  - INSTITUTE_ADMIN & SUPER_ADMIN: TOTP MFA is strictly MANDATORY. If not enrolled, force enrollment.
  * Trusted Device Policy:
  *  - If the device is verified as trusted (valid non-revoked trust token in trusted_devices), MFA challenge is bypassed.
  */
@@ -50,16 +50,15 @@ export async function evaluateMfaRequirementForLogin(
   deviceTrusted?: boolean;
 }> {
   const mfaRecord = db.prepare(`
-    SELECT mfa_enabled, mfa_phone FROM users WHERE id = ?
-  `).get(user.id) as { mfa_enabled: number; mfa_phone: string | null } | undefined;
+    SELECT mfa_enabled FROM users WHERE id = ?
+  `).get(user.id) as { mfa_enabled: number } | undefined;
 
   const mfaEnabled = Boolean(mfaRecord?.mfa_enabled);
-  const mfaPhone = mfaRecord?.mfa_phone || null;
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
 
   // Role: STUDENT -> MFA is strictly OPTIONAL
   if (user.role === 'STUDENT') {
-    if (!mfaEnabled || !mfaPhone) {
+    if (!mfaEnabled) {
       return { requireMfa: false };
     }
     // Student voluntarily enabled MFA -> Check trusted device status
@@ -70,7 +69,7 @@ export async function evaluateMfaRequirementForLogin(
 
   // Role: INSTITUTE_ADMIN / SUPER_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
-    if (!mfaEnabled || !mfaPhone) {
+    if (!mfaEnabled) {
       const sessionToken = generateMfaSessionToken({
         userId: user.id,
         email: user.email,
@@ -83,7 +82,7 @@ export async function evaluateMfaRequirementForLogin(
         mfaEnrolled: false,
         mfaSessionToken: sessionToken,
         role: user.role,
-        message: 'SMS Multi-Factor Authentication is required for this administrative account.',
+        message: 'Two-Factor Authentication is required for this administrative account.',
       };
     }
 
@@ -102,18 +101,12 @@ export async function evaluateMfaRequirementForLogin(
     type: 'MFA_CHALLENGE',
   });
 
-  const normResult = normalizePhoneToE164(mfaPhone!);
-  const canonicalPhone = normResult.canonicalPhoneE164 || normalizePhoneNumber(mfaPhone!);
-  const masked = maskPhoneNumber(canonicalPhone);
-
   return {
     requireMfa: true,
     mfaEnrolled: true,
     mfaSessionToken: sessionToken,
-    canonicalPhoneE164: canonicalPhone,
-    maskedPhone: masked,
     role: user.role,
-    message: `SMS verification required for ${masked}.`,
+    message: 'Enter the 6-digit verification code from your authenticator app.',
   };
 }
 

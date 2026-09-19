@@ -1109,13 +1109,13 @@ export const AdminPortal: React.FC = () => {
               Mandatory Administrative MFA Setup
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-              Multi-Factor Authentication via SMS is mandatory by security policy for all Super Admin and Administrator accounts. You must enroll and verify your mobile phone number before accessing the administrative control suite.
+              Two-Factor Authentication via an Authenticator App (TOTP) is mandatory by security policy for all Super Admin and Administrator accounts. Please configure Google Authenticator or Microsoft Authenticator before accessing the administrative control suite.
             </p>
             <button
               onClick={() => triggerMfaEnrollment()}
               className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
             >
-              Enroll SMS MFA Factor
+              Set Up Authenticator MFA
             </button>
           </div>
         </div>
@@ -1132,13 +1132,13 @@ export const AdminPortal: React.FC = () => {
             Administrator MFA Verification Required
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-            Please complete your SMS Two-Factor verification challenge to access administrative controls from this device.
+            Please enter the 6-digit verification code from your authenticator app to access administrative controls from this device.
           </p>
           <button
             onClick={() => triggerMfaChallenge()}
             className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition shadow-sm cursor-pointer"
           >
-            Verify Administrator Identity
+            Verify Authenticator Code
           </button>
         </div>
       </div>

@@ -90,7 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMfaChallenge(null);
   };
 
-  const triggerMfaEnrollment = (phone?: string) => {
+  const triggerMfaEnrollment = () => {
     setMfaChallenge({
       isOpen: true,
       mode: 'ENROLL',
@@ -101,15 +101,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const triggerMfaChallenge = async (): Promise<void> => {
     try {
-      const res = await apiRequest<{ canonicalPhoneE164?: string; maskedPhone: string }>('/api/auth/mfa/send-challenge', {
+      await apiRequest<{ success: boolean; message: string }>('/api/auth/mfa/send-challenge', {
         method: 'POST',
       });
       setMfaChallenge({
         isOpen: true,
         mode: 'CHALLENGE',
         mfaSessionToken: '',
-        canonicalPhoneE164: res.canonicalPhoneE164,
-        maskedPhone: res.maskedPhone,
         role: user?.role,
       });
     } catch {
@@ -117,23 +115,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isOpen: true,
         mode: 'CHALLENGE',
         mfaSessionToken: '',
-        canonicalPhoneE164: undefined,
-        maskedPhone: user?.mfaPhone || undefined,
         role: user?.role,
       });
     }
   };
 
   const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
-    if (!mfaChallenge?.mfaSessionToken) {
-      throw new Error('No active MFA verification session found.');
-    }
-
     const deviceId = getOrCreateDeviceId();
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/verify-challenge', {
       method: 'POST',
       body: JSON.stringify({
-        mfaSessionToken: mfaChallenge.mfaSessionToken,
+        mfaSessionToken: mfaChallenge?.mfaSessionToken,
         otpCode,
         deviceId,
       }),
@@ -160,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(verifiedUser);
     setSuspendedAccount(null);
 
-    const onSuccessCb = mfaChallenge.onSuccess;
+    const onSuccessCb = mfaChallenge?.onSuccess;
     setMfaChallenge(null);
 
     try {
@@ -177,42 +169,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resendMfaChallenge = async (): Promise<void> => {
-    if (!mfaChallenge?.mfaSessionToken) {
-      throw new Error('No active MFA session found.');
-    }
-    const res = await apiRequest<{ canonicalPhoneE164?: string; maskedPhone: string }>('/api/auth/mfa/send-challenge', {
+    await apiRequest<{ success: boolean }>('/api/auth/mfa/send-challenge', {
       method: 'POST',
       body: JSON.stringify({
-        mfaSessionToken: mfaChallenge.mfaSessionToken,
-      }),
-    });
-    setMfaChallenge((prev) => (prev ? {
-      ...prev,
-      maskedPhone: res.maskedPhone,
-      canonicalPhoneE164: res.canonicalPhoneE164 || prev.canonicalPhoneE164,
-    } : null));
-  };
-
-  const sendMfaEnrollCode = async (phone: string): Promise<{ maskedPhone: string; canonicalPhoneE164?: string }> => {
-    const res = await apiRequest<{ maskedPhone: string; canonicalPhoneE164?: string }>('/api/auth/mfa/enroll/send-code', {
-      method: 'POST',
-      body: JSON.stringify({
-        phone,
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
       }),
     });
-    return res;
   };
 
-  const verifyMfaEnroll = async (phone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
+  const sendMfaEnrollCode = async (): Promise<{ success: boolean }> => {
+    return { success: true };
+  };
+
+  const verifyMfaEnroll = async (codeOrPhone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
     logMfaDiagnostic('enrollment started');
     const deviceId = getOrCreateDeviceId();
+    const actualOtp = otpCode || (codeOrPhone && codeOrPhone.length === 6 ? codeOrPhone : undefined);
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/enroll/verify', {
       method: 'POST',
       body: JSON.stringify({
-        phone,
-        otpCode,
-        verificationId,
+        otpCode: actualOtp,
         idToken,
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
         deviceId,
@@ -258,21 +234,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return verifiedUser;
   };
 
-  const syncMfaFactor = async (phone?: string): Promise<User> => {
+  const syncMfaFactor = async (): Promise<User> => {
     logMfaDiagnostic('syncing existing MFA factor');
     const deviceId = getOrCreateDeviceId();
     const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/sync-factor', {
       method: 'POST',
       body: JSON.stringify({
-        phone,
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
         deviceId,
       }),
     });
 
+    logMfaDiagnostic('backend MFA factor synchronized');
+
     if (res.trustToken) {
       localStorage.setItem('ca_device_trust_token', res.trustToken);
-      logMfaDiagnostic('trusted device state created');
     }
 
     if (res.token) {
@@ -287,18 +263,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(verifiedUser);
 
-    const onSuccessCb = mfaChallenge?.onSuccess;
-    setMfaChallenge(null);
-
     try {
       await refreshUser();
-      logMfaDiagnostic('auth state refreshed');
     } catch {
       // Keep verifiedUser
-    }
-
-    if (onSuccessCb && verifiedUser) {
-      onSuccessCb(verifiedUser);
     }
 
     return verifiedUser;

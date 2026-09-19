@@ -294,7 +294,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     setMfaActionMessage(null);
     try {
       await disableMfa();
-      setMfaActionMessage({ type: 'success', text: 'SMS Multi-Factor Authentication disabled successfully.' });
+      setMfaActionMessage({ type: 'success', text: 'Two-Factor Authentication disabled successfully.' });
       setShowDisableConfirm(false);
     } catch (err: any) {
       setMfaActionMessage({ type: 'error', text: err?.message || 'Failed to disable MFA. Please try again.' });
@@ -1197,16 +1197,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </button>
           </form>
 
-          {/* MULTI-FACTOR AUTHENTICATION (SMS MFA) CARD */}
+          {/* MULTI-FACTOR AUTHENTICATION (AUTHENTICATOR TOTP) CARD */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                  <Smartphone className="w-4 h-4" />
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Multi-Factor Authentication</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">SMS two-step login verification</p>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Two-Factor Authentication</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Authenticator App (TOTP)</p>
                 </div>
               </div>
 
@@ -1249,13 +1249,13 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <div className="space-y-3">
                 <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Verified Phone Number</span>
-                    <span className="text-xs font-mono font-bold text-slate-900 dark:text-white">
-                      {authUser?.mfaPhone || 'Configured via SMS'}
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Enrolled Factor</span>
+                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      Authenticator App (Active)
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
-                    SMS two-factor verification is active on your student account. You will receive a 6-digit one-time password on sign-in.
+                    Two-factor authentication using Google Authenticator, Microsoft Authenticator, or a compatible TOTP app is active on your student account.
                   </p>
                 </div>
 
@@ -1265,12 +1265,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     onClick={() => setShowDisableConfirm(true)}
                     className="w-full py-2 px-3 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold text-xs rounded-xl transition cursor-pointer"
                   >
-                    Disable SMS MFA
+                    Disable Two-Factor Authentication
                   </button>
                 ) : (
                   <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl space-y-2">
                     <p className="text-xs text-rose-800 dark:text-rose-300 font-semibold">
-                      Are you sure you want to disable SMS MFA?
+                      Are you sure you want to disable Two-Factor Authentication?
                     </p>
                     <p className="text-[11px] text-rose-700 dark:text-rose-400">
                       Your account will revert to single-factor password login.
@@ -1298,7 +1298,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  SMS MFA is optional for students. You can voluntarily enable it to add an extra layer of protection to your evaluations, reports, and purchased credits.
+                  Two-factor authentication is optional for students. You can voluntarily enable it to add an extra layer of protection to your evaluations, reports, and purchased credits using Google Authenticator or Microsoft Authenticator.
                 </p>
                 <button
                   type="button"
@@ -1306,7 +1306,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Enable SMS MFA</span>
+                  <span>Enable Two-Factor Authentication</span>
                 </button>
               </div>
             )}
@@ -1536,7 +1536,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   </button>
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  If you signed in using Google or external auth, confirm your registered email instead:
+                  Or confirm your registered account email address below:
                 </p>
                 <input
                   id="student-delete-account-email-confirm-field"

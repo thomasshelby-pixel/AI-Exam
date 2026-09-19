@@ -10,15 +10,6 @@ import {
   AuthRequest,
 } from '../auth.js';
 import {
-  normalizePhoneNumber,
-  normalizePhoneToE164,
-  maskPhoneNumber,
-  isValidPhoneNumber,
-  generateOtpCode,
-  hashOtpCode,
-  sendSmsOtp,
-} from '../services/smsService.js';
-import {
   markDeviceAsTrusted,
   isDeviceTrusted,
   revokeDeviceTrust,
@@ -40,7 +31,6 @@ function resolveMfaContext(req: Request): {
     role: UserRole;
     full_name: string;
     mfa_enabled: number;
-    mfa_phone: string | null;
   } | null;
   sessionType?: 'MFA_CHALLENGE' | 'MFA_ENROLLMENT_REQUIRED' | 'AUTHENTICATED';
   error?: string;
@@ -53,7 +43,7 @@ function resolveMfaContext(req: Request): {
       return { user: null, error: 'MFA session expired or invalid. Please sign in again.' };
     }
     const dbUser = db.prepare(
-      'SELECT id, email, role, full_name, mfa_enabled, mfa_phone FROM users WHERE id = ?'
+      'SELECT id, email, role, full_name, mfa_enabled FROM users WHERE id = ?'
     ).get(verified.userId) as any;
 
     if (!dbUser) {
@@ -66,7 +56,7 @@ function resolveMfaContext(req: Request): {
   const authReq = req as AuthRequest;
   if (authReq.user) {
     const dbUser = db.prepare(
-      'SELECT id, email, role, full_name, mfa_enabled, mfa_phone FROM users WHERE id = ?'
+      'SELECT id, email, role, full_name, mfa_enabled FROM users WHERE id = ?'
     ).get(authReq.user.id) as any;
     if (!dbUser) {
       return { user: null, error: 'User account not found.' };
@@ -79,7 +69,7 @@ function resolveMfaContext(req: Request): {
 
 /**
  * POST /api/auth/mfa/send-challenge
- * Acknowledges SMS verification challenge for the user's enrolled phone number.
+ * Returns the MFA challenge status for TOTP verification.
  */
 router.post('/send-challenge', async (req: Request, res: Response) => {
   try {
@@ -88,23 +78,17 @@ router.post('/send-challenge', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    if (!user.mfa_enabled || !user.mfa_phone) {
+    if (!user.mfa_enabled) {
       return res.status(400).json({
-        error: 'No verified phone number is enrolled for this account. Please enroll phone first.',
+        error: 'Two-Factor Authentication is not yet enrolled for this account. Please set up your authenticator app first.',
         code: 'ENROLLMENT_REQUIRED',
       });
     }
 
-    const normResult = normalizePhoneToE164(user.mfa_phone);
-    const canonicalPhone = normResult.canonicalPhoneE164 || normalizePhoneNumber(user.mfa_phone);
-    const masked = maskPhoneNumber(canonicalPhone);
-
     return res.json({
       success: true,
-      canonicalPhoneE164: canonicalPhone,
-      maskedPhone: masked,
-      message: `Verification code sent to ${masked}.`,
-      expiresInSeconds: 300,
+      factorType: 'totp',
+      message: 'Enter the 6-digit code from your authenticator app.',
     });
   } catch (err: any) {
     console.error('[MFA send-challenge error]:', err);
@@ -114,24 +98,13 @@ router.post('/send-challenge', async (req: Request, res: Response) => {
 
 /**
  * POST /api/auth/mfa/verify-challenge
- * Issues a complete authenticated session after successful MFA verification.
+ * Issues a complete authenticated session after successful TOTP MFA verification.
  */
 router.post('/verify-challenge', async (req: Request, res: Response) => {
   try {
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
       return res.status(401).json({ error: error || 'Unauthorized' });
-    }
-
-    // Mark any existing challenge records as verified
-    try {
-      db.prepare(`
-        UPDATE mfa_verifications
-        SET verified = 1
-        WHERE user_id = ? AND purpose = 'LOGIN_CHALLENGE'
-      `).run(user.id);
-    } catch {
-      // Non-blocking
     }
 
     // Create authenticated user session
@@ -205,7 +178,6 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
         fullName: user.full_name,
         mfaEnabled: true,
         mfaVerified: true,
-        mfaPhone: maskPhoneNumber(user.mfa_phone || ''),
       },
     });
   } catch (err: any) {
@@ -215,84 +187,24 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/auth/mfa/enroll/send-code
- * Prepares and registers an MFA enrollment attempt.
- */
-router.post('/enroll/send-code', async (req: Request, res: Response) => {
-  try {
-    const { phone } = req.body;
-    if (!phone || typeof phone !== 'string') {
-      return res.status(400).json({ error: 'Please provide a valid mobile phone number.' });
-    }
-
-    const normalizedPhone = normalizePhoneNumber(phone);
-    if (!isValidPhoneNumber(normalizedPhone)) {
-      return res.status(400).json({
-        error: 'Please enter a valid mobile number with country code (e.g., +91 9876543210).',
-      });
-    }
-
-    const { user, error } = resolveMfaContext(req);
-    if (!user || error) {
-      return res.status(401).json({ error: error || 'Unauthorized' });
-    }
-
-    const masked = maskPhoneNumber(normalizedPhone);
-
-    return res.json({
-      success: true,
-      maskedPhone: masked,
-      message: `Verification code request initiated for ${masked}.`,
-      expiresInSeconds: 300,
-    });
-  } catch (err: any) {
-    console.error('[MFA enroll/send-code error]:', err);
-    return res.status(500).json({ error: 'Failed to initiate enrollment. Please try again.' });
-  }
-});
-
-/**
  * POST /api/auth/mfa/enroll/verify
- * Finalizes enrollment and activates MFA for the account once Firebase verification succeeds.
+ * Finalizes enrollment and activates TOTP MFA for the account.
  */
 router.post('/enroll/verify', async (req: Request, res: Response) => {
   try {
-    const { phone } = req.body;
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required.' });
-    }
-
-    const normResult = normalizePhoneToE164(phone);
-    if (!normResult.canonicalPhoneE164) {
-      return res.status(400).json({ error: normResult.error || 'Invalid mobile phone number format.' });
-    }
-    const canonicalPhone = normResult.canonicalPhoneE164;
-
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    // Mark any enrollment verifications as completed
-    try {
-      db.prepare(`
-        UPDATE mfa_verifications
-        SET verified = 1
-        WHERE user_id = ? AND purpose = 'ENROLLMENT'
-      `).run(user.id);
-    } catch {
-      // Non-blocking
-    }
-
-    // Update user record in SQLite: enable MFA with canonical E.164 phone
+    // Update user record in SQLite: enable MFA
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
-          mfa_phone = ?,
           mfa_enrolled_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(canonicalPhone, user.id);
+    `).run(user.id);
 
     // Generate authenticated token with mfaVerified = true
     const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
@@ -342,7 +254,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       trustToken: trust.trustToken,
       deviceId,
       deviceTrusted: true,
-      message: 'SMS MFA enabled successfully.',
+      message: 'Two-Factor Authentication enabled successfully.',
       user: {
         id: user.id,
         email: user.email,
@@ -350,7 +262,6 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
         fullName: user.full_name,
         mfaEnabled: true,
         mfaVerified: true,
-        mfaPhone: maskPhoneNumber(canonicalPhone),
       },
     });
   } catch (err: any) {
@@ -361,8 +272,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
 
 /**
  * POST /api/auth/mfa/sync-factor
- * Synchronizes authoritative account state when a valid phone factor is already enrolled in Firebase.
- * Satisfies existing enrolled factor without initiating a duplicate SMS enrollment flow.
+ * Synchronizes authoritative account state when TOTP factor is enrolled in Firebase.
  */
 router.post('/sync-factor', async (req: Request, res: Response) => {
   try {
@@ -371,23 +281,13 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    const { phone } = req.body;
-    let canonicalPhone = user.mfa_phone;
-    if (phone) {
-      const normResult = normalizePhoneToE164(phone);
-      if (normResult.canonicalPhoneE164) {
-        canonicalPhone = normResult.canonicalPhoneE164;
-      }
-    }
-
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
-          mfa_phone = COALESCE(?, mfa_phone),
           mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(canonicalPhone, user.id);
+    `).run(user.id);
 
     const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
     const token = generateToken(
@@ -435,7 +335,7 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
       trustToken: trust.trustToken,
       deviceId,
       deviceTrusted: true,
-      message: 'MFA factor synchronized successfully.',
+      message: 'Two-Factor Authentication synchronized successfully.',
       user: {
         id: user.id,
         email: user.email,
@@ -443,7 +343,6 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
         fullName: user.full_name,
         mfaEnabled: true,
         mfaVerified: true,
-        mfaPhone: canonicalPhone ? maskPhoneNumber(canonicalPhone) : null,
       },
     });
   } catch (err: any) {
@@ -492,7 +391,7 @@ router.post('/trusted-devices/revoke', authenticateToken, async (req: AuthReques
 
 /**
  * POST /api/auth/mfa/disable
- * Disables SMS MFA.
+ * Disables TOTP MFA.
  * Allowed ONLY for STUDENT accounts.
  * Strictly FORBIDDEN for INSTITUTE_ADMIN and SUPER_ADMIN.
  */
@@ -505,7 +404,7 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
     // Strict Role-Based Enforcement: Admins CANNOT disable MFA
     if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN') {
       return res.status(403).json({
-        error: 'SMS Multi-Factor Authentication is mandatory for administrative accounts and cannot be disabled.',
+        error: 'Two-Factor Authentication is mandatory for administrative accounts and cannot be disabled.',
         code: 'MFA_MANDATORY_ROLE',
       });
     }
@@ -520,7 +419,7 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
 
     return res.json({
       success: true,
-      message: 'Multi-Factor Authentication has been disabled for your student account.',
+      message: 'Two-Factor Authentication has been disabled for your student account.',
       mfaEnabled: false,
     });
   } catch (err: any) {
@@ -540,8 +439,8 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
     }
 
     const dbUser = db.prepare(
-      'SELECT mfa_enabled, mfa_phone, role FROM users WHERE id = ?'
-    ).get(req.user.id) as { mfa_enabled: number; mfa_phone: string | null; role: UserRole } | undefined;
+      'SELECT mfa_enabled, role FROM users WHERE id = ?'
+    ).get(req.user.id) as { mfa_enabled: number; role: UserRole } | undefined;
 
     const isMandatoryRole = req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN';
     const mfaEnabled = Boolean(dbUser?.mfa_enabled);
@@ -564,7 +463,7 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
       mfaMandatory: isMandatoryRole,
       mfaEnabled,
       mfaVerified,
-      maskedPhone: dbUser?.mfa_phone ? maskPhoneNumber(dbUser.mfa_phone) : null,
+      factorType: mfaEnabled ? 'totp' : null,
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to retrieve MFA status.' });
