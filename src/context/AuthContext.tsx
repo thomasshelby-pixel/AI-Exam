@@ -14,6 +14,7 @@ export interface MfaChallengeState {
   isOpen: boolean;
   mode: 'CHALLENGE' | 'ENROLL';
   mfaSessionToken: string;
+  canonicalPhoneE164?: string;
   maskedPhone?: string;
   role?: string;
   onSuccess?: (user: User) => void;
@@ -95,13 +96,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('No active MFA verification session found.');
     }
 
-    const res = await apiRequest<{ token: string; user: User }>('/api/auth/mfa/verify-challenge', {
+    const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/verify-challenge', {
       method: 'POST',
       body: JSON.stringify({
         mfaSessionToken: mfaChallenge.mfaSessionToken,
         otpCode,
       }),
     });
+
+    if (res.trustToken) {
+      localStorage.setItem('ca_device_trust_token', res.trustToken);
+    }
 
     localStorage.setItem('ca_exam_checker_token', res.token);
     setToken(res.token);
@@ -121,17 +126,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!mfaChallenge?.mfaSessionToken) {
       throw new Error('No active MFA session found.');
     }
-    const res = await apiRequest<{ maskedPhone: string }>('/api/auth/mfa/send-challenge', {
+    const res = await apiRequest<{ canonicalPhoneE164?: string; maskedPhone: string }>('/api/auth/mfa/send-challenge', {
       method: 'POST',
       body: JSON.stringify({
         mfaSessionToken: mfaChallenge.mfaSessionToken,
       }),
     });
-    setMfaChallenge((prev) => (prev ? { ...prev, maskedPhone: res.maskedPhone } : null));
+    setMfaChallenge((prev) => (prev ? {
+      ...prev,
+      maskedPhone: res.maskedPhone,
+      canonicalPhoneE164: res.canonicalPhoneE164 || prev.canonicalPhoneE164,
+    } : null));
   };
 
-  const sendMfaEnrollCode = async (phone: string): Promise<{ maskedPhone: string }> => {
-    const res = await apiRequest<{ maskedPhone: string }>('/api/auth/mfa/enroll/send-code', {
+  const sendMfaEnrollCode = async (phone: string): Promise<{ maskedPhone: string; canonicalPhoneE164?: string }> => {
+    const res = await apiRequest<{ maskedPhone: string; canonicalPhoneE164?: string }>('/api/auth/mfa/enroll/send-code', {
       method: 'POST',
       body: JSON.stringify({
         phone,
@@ -142,7 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const verifyMfaEnroll = async (phone: string, otpCode?: string, verificationId?: string, idToken?: string): Promise<User> => {
-    const res = await apiRequest<{ token: string; user: User }>('/api/auth/mfa/enroll/verify', {
+    const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/enroll/verify', {
       method: 'POST',
       body: JSON.stringify({
         phone,
@@ -152,6 +161,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mfaSessionToken: mfaChallenge?.mfaSessionToken,
       }),
     });
+
+    if (res.trustToken) {
+      localStorage.setItem('ca_device_trust_token', res.trustToken);
+    }
 
     if (res.token) {
       localStorage.setItem('ca_exam_checker_token', res.token);
@@ -259,7 +272,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string): Promise<User> => {
     try {
-      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/login', {
+      const res = await apiRequest<{
+        token: string;
+        user: User;
+        mfaRequired?: boolean;
+        mfaEnrolled?: boolean;
+        mfaSessionToken?: string;
+        canonicalPhoneE164?: string;
+        maskedPhone?: string;
+        role?: string;
+      }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
@@ -270,6 +292,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isOpen: true,
             mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
             mfaSessionToken: res.mfaSessionToken!,
+            canonicalPhoneE164: res.canonicalPhoneE164,
             maskedPhone: res.maskedPhone,
             role: res.role,
             onSuccess: (verifiedUser) => resolve(verifiedUser),
@@ -293,7 +316,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const instituteLogin = async (email: string, password: string): Promise<User> => {
     try {
-      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/institute/login', {
+      const res = await apiRequest<{
+        token: string;
+        user: User;
+        mfaRequired?: boolean;
+        mfaEnrolled?: boolean;
+        mfaSessionToken?: string;
+        canonicalPhoneE164?: string;
+        maskedPhone?: string;
+        role?: string;
+      }>('/api/auth/institute/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
@@ -304,6 +336,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isOpen: true,
             mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
             mfaSessionToken: res.mfaSessionToken!,
+            canonicalPhoneE164: res.canonicalPhoneE164,
             maskedPhone: res.maskedPhone,
             role: res.role,
             onSuccess: (verifiedUser) => resolve(verifiedUser),

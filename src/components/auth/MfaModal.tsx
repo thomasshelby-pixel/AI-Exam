@@ -155,6 +155,11 @@ export const MfaModal: React.FC = () => {
       return;
     }
 
+    const e164Phone =
+      cleanPhone.startsWith('91') && cleanPhone.length === 12
+        ? `+${cleanPhone}`
+        : `+91${cleanPhone.slice(-10)}`;
+
     setMfaState('SENDING_SMS');
     setErrorMsg('');
     setSuccessMsg('');
@@ -163,7 +168,7 @@ export const MfaModal: React.FC = () => {
 
     try {
       // Step 7 & 8: PhoneAuthProvider.verifyPhoneNumber(...)
-      const fbResult = await verifyFirebasePhoneNumber(cleanPhone, 'recaptcha-mfa-container');
+      const fbResult = await verifyFirebasePhoneNumber(e164Phone, 'recaptcha-mfa-container');
 
       if (!fbResult || !fbResult.verificationId) {
         throw new Error('Firebase phone verification failed to return a verificationId.');
@@ -181,7 +186,7 @@ export const MfaModal: React.FC = () => {
       setCanResend(false);
 
       // Safely register phone number with application session in background
-      sendMfaEnrollCode(cleanPhone).catch((bgErr) => {
+      sendMfaEnrollCode(e164Phone).catch((bgErr) => {
         console.warn('[MFA] Background session phone registration notice:', bgErr);
       });
 
@@ -204,7 +209,8 @@ export const MfaModal: React.FC = () => {
 
   /**
    * Triggers SMS dispatch for Login Challenge mode.
-   * STRICT GUARANTEE: Never sets success message unless verifyPhoneNumber returns a valid verificationId.
+   * STRICT GUARANTEE: Uses canonicalPhoneE164, NEVER maskedPhone for verification.
+   * Never sets success message unless verifyPhoneNumber returns a valid verificationId.
    */
   const handleSendChallengeCode = async () => {
     if (mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
@@ -218,7 +224,17 @@ export const MfaModal: React.FC = () => {
     logMfaDiagnostic('challenge-send-code-initiated');
 
     try {
-      const targetPhone = mfaChallenge.maskedPhone || phone;
+      // Must use canonicalPhoneE164, never maskedPhone!
+      let targetPhone = mfaChallenge.canonicalPhoneE164;
+      if (!targetPhone) {
+        const challengeDetails = await resendMfaChallenge();
+        targetPhone = challengeDetails?.canonicalPhoneE164;
+      }
+
+      if (!targetPhone || targetPhone.includes('•') || targetPhone.includes('*')) {
+        throw new Error('Unable to resolve registered phone number. Please refresh and try logging in again.');
+      }
+
       const fbResult = await verifyFirebasePhoneNumber(targetPhone, 'recaptcha-mfa-container');
 
       if (!fbResult || !fbResult.verificationId) {
@@ -277,7 +293,25 @@ export const MfaModal: React.FC = () => {
     logMfaDiagnostic('resend occurred: YES');
 
     try {
-      const targetPhone = isEnrollMode ? phone : (mfaChallenge.maskedPhone || phone);
+      let targetPhone: string | undefined;
+      if (isEnrollMode) {
+        const cleanPhone = phone.replace(/\D/g, '');
+        targetPhone =
+          cleanPhone.startsWith('91') && cleanPhone.length === 12
+            ? `+${cleanPhone}`
+            : `+91${cleanPhone.slice(-10)}`;
+      } else {
+        targetPhone = mfaChallenge.canonicalPhoneE164;
+        if (!targetPhone) {
+          const challengeDetails = await resendMfaChallenge();
+          targetPhone = challengeDetails?.canonicalPhoneE164;
+        }
+      }
+
+      if (!targetPhone || targetPhone.includes('•') || targetPhone.includes('*')) {
+        throw new Error('Valid canonical phone number is required for SMS verification.');
+      }
+
       const fbResult = await verifyFirebasePhoneNumber(targetPhone, 'recaptcha-mfa-container');
 
       if (!fbResult || !fbResult.verificationId) {
@@ -295,7 +329,7 @@ export const MfaModal: React.FC = () => {
       setSuccessMsg('New verification code sent. Please use the latest code.');
 
       if (isEnrollMode) {
-        sendMfaEnrollCode(phone).catch(() => {});
+        sendMfaEnrollCode(targetPhone).catch(() => {});
       } else {
         resendMfaChallenge().catch(() => {});
       }
@@ -347,8 +381,13 @@ export const MfaModal: React.FC = () => {
       // Step 10-13: Official Firebase Identity Platform MFA enrollment
       const fbResult = await confirmFirebaseMfaOtp(activeVerificationId, fullOtp, firebaseConfirmation, 'Personal Mobile');
 
-      // Update backend authoritative state
-      await verifyMfaEnroll(phone, fullOtp, activeVerificationId, fbResult?.idToken);
+      // Update backend authoritative state with canonical E.164 phone
+      const cleanPhone = phone.replace(/\D/g, '');
+      const e164Phone =
+        cleanPhone.startsWith('91') && cleanPhone.length === 12
+          ? `+${cleanPhone}`
+          : `+91${cleanPhone.slice(-10)}`;
+      await verifyMfaEnroll(e164Phone, fullOtp, activeVerificationId, fbResult?.idToken);
 
       setMfaState('VERIFIED');
       setSuccessMsg('SMS MFA enabled successfully.');

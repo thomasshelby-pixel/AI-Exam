@@ -54,24 +54,81 @@ function maskPhoneForLogs(phone: string): string {
 }
 
 /**
+ * Normalizes phone numbers to canonical E.164 format (+91XXXXXXXXXX for India by default).
+ * Strictly rejects:
+ * - masked strings (containing bullets • or asterisks *)
+ * - incomplete numbers (<10 digits)
+ * - duplicate country codes (e.g. +9191...)
+ * - arbitrary non-digit characters
+ */
+export function normalizePhoneToE164(input: string): { canonicalPhoneE164: string | null; error?: string } {
+  if (!input || typeof input !== 'string') {
+    return { canonicalPhoneE164: null, error: 'Mobile phone number is required.' };
+  }
+
+  const trimmed = input.trim();
+  // Reject masked strings explicitly
+  if (trimmed.includes('•') || trimmed.includes('*') || trimmed.includes('X') || trimmed.includes('x')) {
+    return { canonicalPhoneE164: null, error: 'Masked phone number cannot be used as a verification value.' };
+  }
+
+  // Remove valid formatting separators (spaces, dashes, parentheses)
+  const cleaned = trimmed.replace(/[\s\-\(\)]/g, '');
+
+  // Check for duplicate country code +9191... or 9191...
+  if (/^\+?9191\d{10}$/.test(cleaned)) {
+    return { canonicalPhoneE164: null, error: 'Duplicate country code detected in phone number.' };
+  }
+
+  // 10-digit Indian mobile: e.g. 9876543210
+  if (/^\d{10}$/.test(cleaned)) {
+    return { canonicalPhoneE164: `+91${cleaned}` };
+  }
+
+  // Already E.164 with +91: +91XXXXXXXXXX (10-digit body)
+  if (/^\+91\d{10}$/.test(cleaned)) {
+    return { canonicalPhoneE164: cleaned };
+  }
+
+  // 91XXXXXXXXXX without plus (12 digits)
+  if (/^91\d{10}$/.test(cleaned)) {
+    return { canonicalPhoneE164: `+${cleaned}` };
+  }
+
+  // General valid E.164 international numbers (+[1-9]\d{9,14})
+  if (/^\+[1-9]\d{9,14}$/.test(cleaned)) {
+    return { canonicalPhoneE164: cleaned };
+  }
+
+  return { canonicalPhoneE164: null, error: 'Invalid phone number format. Please provide a valid 10-digit mobile number with country code (e.g. +91 9876543210).' };
+}
+
+/**
  * Normalizes phone numbers to standard E.164 format (+91XXXXXXXXXX for India by default).
  */
 export function formatToE164(phone: string): string {
-  if (!phone) return '';
-  const cleaned = phone.trim().replace(/[\s\-\(\)]/g, '');
-  if (/^\d{10}$/.test(cleaned)) {
-    return `+91${cleaned}`;
+  const res = normalizePhoneToE164(phone);
+  return res.canonicalPhoneE164 || phone.trim();
+}
+
+/**
+ * Masks a phone number for display (e.g. "+91 •••••• 1513")
+ * NEVER to be used as a verification phone value.
+ */
+export function maskPhoneNumber(phone: string): string {
+  if (!phone) return '••••••••';
+  const trimmed = phone.trim();
+  if (trimmed.includes('•')) {
+    return trimmed;
   }
-  if (/^91\d{10}$/.test(cleaned)) {
-    return `+${cleaned}`;
+  const normResult = normalizePhoneToE164(trimmed);
+  const normalized = normResult.canonicalPhoneE164 || trimmed.replace(/[\s\-\(\)]/g, '');
+  if (normalized.length < 7) {
+    return '••••••••';
   }
-  if (/^\+\d{10,15}$/.test(cleaned)) {
-    return cleaned;
-  }
-  if (/^\d{11,15}$/.test(cleaned)) {
-    return `+${cleaned}`;
-  }
-  return cleaned;
+  const prefix = normalized.slice(0, 3);
+  const suffix = normalized.slice(-4);
+  return `${prefix} •••••• ${suffix}`;
 }
 
 /**
@@ -196,13 +253,30 @@ export async function verifyFirebasePhoneNumber(
     firebaseProjectId: auth.app.options.projectId,
   });
 
-  const e164 = formatToE164(rawPhone);
-  if (!/^\+[1-9]\d{9,14}$/.test(e164)) {
-    const formatErr = new Error('Invalid mobile phone number format. Please enter a valid 10-digit number (e.g., 9876543210).');
+  if (!rawPhone || typeof rawPhone !== 'string') {
+    const emptyErr = new Error('Mobile phone number is required.');
+    (emptyErr as any).code = 'auth/invalid-phone-number';
+    logMfaDiagnostic('phone-number-empty-failed');
+    throw emptyErr;
+  }
+
+  // Reject masked phone numbers explicitly with clear diagnostic
+  if (rawPhone.includes('•') || rawPhone.includes('*')) {
+    const maskErr = new Error('Masked phone number cannot be passed to Firebase. Use the canonical normalized phone.');
+    (maskErr as any).code = 'auth/invalid-phone-number';
+    logMfaDiagnostic('phone-number-masked-string-rejected', { errorCode: 'auth/invalid-phone-number' });
+    throw maskErr;
+  }
+
+  const normResult = normalizePhoneToE164(rawPhone);
+  if (!normResult.canonicalPhoneE164 || !/^\+[1-9]\d{9,14}$/.test(normResult.canonicalPhoneE164)) {
+    const formatErr = new Error(normResult.error || 'Invalid mobile phone number format. Please enter a valid 10-digit number with country code (e.g., +91 9876543210).');
     (formatErr as any).code = 'auth/invalid-phone-number';
     logMfaDiagnostic('phone-number-validation-failed', { errorCode: 'auth/invalid-phone-number' });
     throw formatErr;
   }
+
+  const e164 = normResult.canonicalPhoneE164;
 
   // Await auth state readiness before checking currentUser
   const currentUser = await getCurrentFirebaseUser();

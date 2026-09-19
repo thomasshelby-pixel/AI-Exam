@@ -45,6 +45,7 @@ export async function apiRequest<T = unknown>(
   options: RequestInit = {}
 ): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('ca_exam_checker_token') : null;
+  const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
   const deviceId = getOrCreateDeviceId();
 
   const headers: Record<string, string> = {
@@ -52,6 +53,10 @@ export async function apiRequest<T = unknown>(
     'X-Device-Id': deviceId,
     ...(options.headers as Record<string, string>),
   };
+
+  if (trustToken && !headers['X-Device-Trust-Token']) {
+    headers['X-Device-Trust-Token'] = trustToken;
+  }
 
   if (token && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;

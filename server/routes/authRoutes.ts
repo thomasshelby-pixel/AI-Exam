@@ -10,7 +10,8 @@ import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
-import { normalizePhoneNumber, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
+import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
+import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust } from '../services/trustService.js';
 import mfaRoutes from './mfaRoutes.js';
 
 const router = Router();
@@ -24,13 +25,30 @@ router.use('/mfa', mfaRoutes);
  * Role-Based Policy:
  *  - STUDENT: SMS MFA is OPTIONAL. Only required if student voluntarily enabled MFA.
  *  - INSTITUTE_ADMIN & SUPER_ADMIN: SMS MFA is strictly MANDATORY. If not enrolled, force enrollment.
+ * Trusted Device Policy:
+ *  - If the device is verified as trusted (valid non-revoked trust token in trusted_devices), MFA challenge is bypassed.
  */
-async function evaluateMfaRequirementForLogin(user: {
-  id: string;
-  email: string;
-  role: UserRole;
-  full_name: string;
-}) {
+export async function evaluateMfaRequirementForLogin(
+  user: {
+    id: string;
+    email: string;
+    role: UserRole;
+    full_name: string;
+  },
+  deviceContext?: {
+    deviceId?: string;
+    trustToken?: string;
+  }
+): Promise<{
+  requireMfa: boolean;
+  mfaEnrolled?: boolean;
+  mfaSessionToken?: string;
+  canonicalPhoneE164?: string;
+  maskedPhone?: string;
+  role?: string;
+  message?: string;
+  deviceTrusted?: boolean;
+}> {
   const mfaRecord = db.prepare(`
     SELECT mfa_enabled, mfa_phone FROM users WHERE id = ?
   `).get(user.id) as { mfa_enabled: number; mfa_phone: string | null } | undefined;
@@ -43,6 +61,10 @@ async function evaluateMfaRequirementForLogin(user: {
   if (user.role === 'STUDENT') {
     if (!mfaEnabled || !mfaPhone) {
       return { requireMfa: false };
+    }
+    // Student voluntarily enabled MFA -> Check trusted device status
+    if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
+      return { requireMfa: false, deviceTrusted: true };
     }
   }
 
@@ -64,9 +86,14 @@ async function evaluateMfaRequirementForLogin(user: {
         message: 'SMS Multi-Factor Authentication is required for this administrative account.',
       };
     }
+
+    // Check trusted device status for administrative roles
+    if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
+      return { requireMfa: false, deviceTrusted: true };
+    }
   }
 
-  // Active enrolled MFA verification challenge
+  // Active enrolled MFA verification challenge for untrusted device/session
   const sessionToken = generateMfaSessionToken({
     userId: user.id,
     email: user.email,
@@ -75,15 +102,18 @@ async function evaluateMfaRequirementForLogin(user: {
     type: 'MFA_CHALLENGE',
   });
 
-  const normalizedPhone = normalizePhoneNumber(mfaPhone!);
+  const normResult = normalizePhoneToE164(mfaPhone!);
+  const canonicalPhone = normResult.canonicalPhoneE164 || normalizePhoneNumber(mfaPhone!);
+  const masked = maskPhoneNumber(canonicalPhone);
 
   return {
     requireMfa: true,
     mfaEnrolled: true,
     mfaSessionToken: sessionToken,
-    maskedPhone: maskPhoneNumber(normalizedPhone),
+    canonicalPhoneE164: canonicalPhone,
+    maskedPhone: masked,
     role: user.role,
-    message: `SMS verification required for ${maskPhoneNumber(normalizedPhone)}.`,
+    message: `SMS verification required for ${masked}.`,
   };
 }
 
@@ -590,14 +620,25 @@ router.post('/login', async (req: Request, res: Response) => {
       syncPendingInstituteEnrollments(user.id, user.email);
     }
 
-    // Role-Based MFA Evaluation:
+    // Extract device identity and trust token
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const trustToken =
+      (req.body?.trustToken as string)?.trim() ||
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    // Role-Based MFA Evaluation with Trusted Device Checking:
     // Check if MFA challenge is required or if mandatory enrollment is needed
-    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken });
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
         mfaEnrolled: mfaCheck.mfaEnrolled,
         mfaSessionToken: mfaCheck.mfaSessionToken,
+        canonicalPhoneE164: mfaCheck.canonicalPhoneE164,
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
         message: mfaCheck.message,
@@ -607,10 +648,6 @@ router.post('/login', async (req: Request, res: Response) => {
     // 2-Device Limit Enforcement for Student Accounts (Permanent-free accounts are exempt)
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
-      const deviceId =
-        (req.body?.deviceId as string)?.trim() ||
-        (req.headers['x-device-id'] as string)?.trim() ||
-        `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
       const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
       const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
 
@@ -894,13 +931,23 @@ router.post('/institute/login', async (req: Request, res: Response) => {
       });
     }
 
-    // Role-Based MFA Evaluation for Institute Login (MANDATORY)
-    const mfaCheck = await evaluateMfaRequirementForLogin(user);
+    // Role-Based MFA Evaluation for Institute Login (MANDATORY, but bypasses OTP if device is trusted)
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const trustToken =
+      (req.body?.trustToken as string)?.trim() ||
+      (req.headers['x-device-trust-token'] as string)?.trim() ||
+      (req as any).cookies?.['ca_trust_token'];
+
+    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken });
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
         mfaEnrolled: mfaCheck.mfaEnrolled,
         mfaSessionToken: mfaCheck.mfaSessionToken,
+        canonicalPhoneE164: mfaCheck.canonicalPhoneE164,
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
         message: mfaCheck.message,
@@ -1392,8 +1439,9 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     // Mark token as used
     db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(resetRecord.id);
 
-    // Invalidate all active sessions for security
+    // Invalidate all active sessions and trusted devices for security
     revokeAllSessionsForUser(user.id);
+    revokeAllDeviceTrust(user.id);
 
     // Audit log
     db.prepare(`

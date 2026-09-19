@@ -444,6 +444,23 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
 
+    CREATE TABLE IF NOT EXISTS trusted_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      trust_token_hash TEXT NOT NULL,
+      device_name TEXT,
+      user_agent TEXT,
+      ip_address TEXT,
+      trusted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      revoked_at TEXT,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_user_device ON trusted_devices(user_id, device_id);
+    CREATE INDEX IF NOT EXISTS idx_trusted_devices_lookup ON trusted_devices(user_id, device_id, status);
+
     CREATE TABLE IF NOT EXISTS account_deletion_requests (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,

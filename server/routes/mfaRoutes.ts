@@ -10,12 +10,19 @@ import {
 } from '../auth.js';
 import {
   normalizePhoneNumber,
+  normalizePhoneToE164,
   maskPhoneNumber,
   isValidPhoneNumber,
   generateOtpCode,
   hashOtpCode,
   sendSmsOtp,
 } from '../services/smsService.js';
+import {
+  markDeviceAsTrusted,
+  isDeviceTrusted,
+  revokeDeviceTrust,
+  getTrustedDevicesForUser,
+} from '../services/trustService.js';
 import { UserRole } from '../../src/types/index.js';
 
 const router = Router();
@@ -85,11 +92,13 @@ router.post('/send-challenge', async (req: Request, res: Response) => {
       });
     }
 
-    const normalizedPhone = normalizePhoneNumber(user.mfa_phone);
-    const masked = maskPhoneNumber(normalizedPhone);
+    const normResult = normalizePhoneToE164(user.mfa_phone);
+    const canonicalPhone = normResult.canonicalPhoneE164 || normalizePhoneNumber(user.mfa_phone);
+    const masked = maskPhoneNumber(canonicalPhone);
 
     return res.json({
       success: true,
+      canonicalPhoneE164: canonicalPhone,
       maskedPhone: masked,
       message: `Verification code sent to ${masked}.`,
       expiresInSeconds: 300,
@@ -158,9 +167,34 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
+    // Mark current device as trusted
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
+
+    const trust = markDeviceAsTrusted({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      userAgent: req.headers['user-agent'] as string,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
+    });
+
+    res.cookie('ca_trust_token', trust.trustToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
+
     return res.json({
       success: true,
       token,
+      trustToken: trust.trustToken,
+      deviceId,
+      deviceTrusted: true,
       user: {
         id: user.id,
         email: user.email,
@@ -225,7 +259,12 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Phone number is required.' });
     }
 
-    const normalizedPhone = normalizePhoneNumber(phone);
+    const normResult = normalizePhoneToE164(phone);
+    if (!normResult.canonicalPhoneE164) {
+      return res.status(400).json({ error: normResult.error || 'Invalid mobile phone number format.' });
+    }
+    const canonicalPhone = normResult.canonicalPhoneE164;
+
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
       return res.status(401).json({ error: error || 'Unauthorized' });
@@ -242,7 +281,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       // Non-blocking
     }
 
-    // Update user record in SQLite: enable MFA
+    // Update user record in SQLite: enable MFA with canonical E.164 phone
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
@@ -250,7 +289,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
           mfa_enrolled_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(normalizedPhone, user.id);
+    `).run(canonicalPhone, user.id);
 
     // Generate authenticated token with mfaVerified = true
     const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
@@ -265,6 +304,21 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       true
     );
 
+    // Mark current device/session as trusted
+    const deviceId =
+      (req.body?.deviceId as string)?.trim() ||
+      (req.headers['x-device-id'] as string)?.trim() ||
+      `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
+    const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
+
+    const trust = markDeviceAsTrusted({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      userAgent: req.headers['user-agent'] as string,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
+    });
+
     res.cookie('ca_token', token, {
       httpOnly: false,
       secure: process.env.NODE_ENV === 'production',
@@ -272,9 +326,19 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
+    res.cookie('ca_trust_token', trust.trustToken, {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+    });
+
     return res.json({
       success: true,
       token,
+      trustToken: trust.trustToken,
+      deviceId,
+      deviceTrusted: true,
       message: 'SMS MFA enabled successfully.',
       user: {
         id: user.id,
@@ -283,12 +347,50 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
         fullName: user.full_name,
         mfaEnabled: true,
         mfaVerified: true,
-        mfaPhone: maskPhoneNumber(normalizedPhone),
+        mfaPhone: maskPhoneNumber(canonicalPhone),
       },
     });
   } catch (err: any) {
     console.error('[MFA enroll/verify error]:', err);
     return res.status(500).json({ error: 'Enrollment verification failed. Please try again.' });
+  }
+});
+
+/**
+ * GET /api/auth/mfa/trusted-devices
+ * Lists active trusted devices for the authenticated user.
+ */
+router.get('/trusted-devices', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const devices = getTrustedDevicesForUser(req.user.id);
+    return res.json({ success: true, trustedDevices: devices });
+  } catch (err: any) {
+    console.error('[MFA trusted-devices error]:', err);
+    return res.status(500).json({ error: 'Failed to retrieve trusted devices.' });
+  }
+});
+
+/**
+ * POST /api/auth/mfa/trusted-devices/revoke
+ * Explicitly revokes trust for a specific device.
+ */
+router.post('/trusted-devices/revoke', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const { deviceId } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required to revoke trust.' });
+    }
+    const revoked = revokeDeviceTrust(req.user.id, deviceId);
+    return res.json({ success: revoked, message: 'Device trust revoked successfully.' });
+  } catch (err: any) {
+    console.error('[MFA trusted-devices revoke error]:', err);
+    return res.status(500).json({ error: 'Failed to revoke device trust.' });
   }
 });
 
