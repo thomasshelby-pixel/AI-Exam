@@ -10,18 +10,19 @@
     <meta property="og:description" content="Professional AI-powered examination evaluation platform for CA Foundation, Intermediate, and Final answer sheets with step marking, standards audit compliance, and institute management." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <script>
       (function() {
         try {
+          var root = document.documentElement;
+          if (!root) return;
           var saved = localStorage.getItem('ca_exam_checker_theme') || localStorage.getItem('theme');
           var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
           if (saved === 'dark' || (!saved && prefersDark)) {
-            document.documentElement.classList.add('dark');
-            document.documentElement.style.colorScheme = 'dark';
+            root.classList.add('dark');
+            if (root.style) root.style.colorScheme = 'dark';
           } else {
-            document.documentElement.classList.remove('dark');
-            document.documentElement.style.colorScheme = 'light';
+            root.classList.remove('dark');
+            if (root.style) root.style.colorScheme = 'light';
           }
         } catch (e) {}
       })();
@@ -30,6 +31,7 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script defer src="https://checkout.razorpay.com/v1/checkout.js"></script>
   </body>
 </html>
 

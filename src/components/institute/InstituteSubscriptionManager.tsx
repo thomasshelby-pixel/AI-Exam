@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 import {
   Calendar,
   CheckCircle2,
@@ -148,10 +149,13 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
       }
 
       if (!window.Razorpay) {
-        onNotify?.('Payment gateway script failed to load. Please reload the page.', 'error');
-        setLoading(false);
-        setSubscribingPlanId(null);
-        return;
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) {
+          onNotify?.('Payment gateway script failed to load. Please reload the page.', 'error');
+          setLoading(false);
+          setSubscribingPlanId(null);
+          return;
+        }
       }
 
       const options = {

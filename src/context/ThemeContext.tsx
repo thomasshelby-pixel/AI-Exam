@@ -36,13 +36,15 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     try {
-      const root = document.documentElement;
-      if (theme === 'dark') {
-        root.classList.add('dark');
-        root.style.colorScheme = 'dark';
-      } else {
-        root.classList.remove('dark');
-        root.style.colorScheme = 'light';
+      const root = typeof document !== 'undefined' ? document.documentElement : null;
+      if (root) {
+        if (theme === 'dark') {
+          root.classList.add('dark');
+          if (root.style) root.style.colorScheme = 'dark';
+        } else {
+          root.classList.remove('dark');
+          if (root.style) root.style.colorScheme = 'light';
+        }
       }
       localStorage.setItem(THEME_STORAGE_KEY, theme);
       localStorage.setItem('theme', theme);

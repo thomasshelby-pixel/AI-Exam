@@ -57,15 +57,6 @@ interface AuthContextType {
     caLevel: string;
     referralCode?: string;
   }) => Promise<User>;
-  loginWithGoogle: (idToken: string, profile?: { icaiRegistrationNumber?: string; caLevel?: string; fullName?: string; phone?: string }) => Promise<{ user?: User; code?: string; onboardingToken?: string; tempUser?: { email: string; fullName: string } }>;
-  completeGoogleProfile: (data: {
-    onboardingToken: string;
-    fullName: string;
-    phone?: string;
-    icaiRegistrationNumber: string;
-    caLevel: string;
-    referralCode?: string;
-  }) => Promise<User>;
   submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -378,101 +369,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.user;
   };
 
-  const loginWithGoogle = async (
-    idToken: string,
-    profileData?: { icaiRegistrationNumber?: string; caLevel?: string; fullName?: string; phone?: string }
-  ): Promise<{ user?: User; code?: string; onboardingToken?: string; tempUser?: { email: string; fullName: string } }> => {
-    try {
-      const res = await apiRequest<{
-        token?: string;
-        user?: User;
-        code?: string;
-        message?: string;
-        onboardingToken?: string;
-        tempUser?: { email: string; fullName: string };
-      }>('/api/auth/google', {
-        method: 'POST',
-        body: JSON.stringify({ idToken, profile: profileData }),
-      });
-
-      if (res.code === 'PROFILE_INCOMPLETE' && res.onboardingToken) {
-        return {
-          code: res.code,
-          onboardingToken: res.onboardingToken,
-          tempUser: res.tempUser,
-        };
-      }
-
-      if ((res as any).mfaRequired && (res as any).mfaSessionToken) {
-        return new Promise<{ user?: User }>((resolve, reject) => {
-          setMfaChallenge({
-            isOpen: true,
-            mode: (res as any).mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
-            mfaSessionToken: (res as any).mfaSessionToken!,
-            maskedPhone: (res as any).maskedPhone,
-            role: (res as any).role,
-            onSuccess: (verifiedUser) => resolve({ user: verifiedUser }),
-            onCancel: () => reject(new Error('MFA verification was cancelled.')),
-          });
-        });
-      }
-
-      if (res.token && res.user) {
-        localStorage.setItem('ca_exam_checker_token', res.token);
-        setToken(res.token);
-        setUser(res.user);
-        setSuspendedAccount(null);
-        refreshUser().catch(() => {});
-        return { user: res.user };
-      }
-
-      return res;
-    } catch (err: any) {
-      handleSuspension(err) || handleSuspension(err?.data);
-      throw err;
-    }
-  };
-
-  const completeGoogleProfile = async (data: {
-    onboardingToken: string;
-    fullName: string;
-    phone?: string;
-    icaiRegistrationNumber: string;
-    caLevel: string;
-    referralCode?: string;
-  }): Promise<User> => {
-    try {
-      const res = await apiRequest<{ token: string; user: User; mfaRequired?: boolean; mfaEnrolled?: boolean; mfaSessionToken?: string; maskedPhone?: string; role?: string }>('/api/auth/google/complete-profile', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-
-      if (res.mfaRequired && res.mfaSessionToken) {
-        return new Promise<User>((resolve, reject) => {
-          setMfaChallenge({
-            isOpen: true,
-            mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
-            mfaSessionToken: res.mfaSessionToken!,
-            maskedPhone: res.maskedPhone,
-            role: res.role,
-            onSuccess: (verifiedUser) => resolve(verifiedUser),
-            onCancel: () => reject(new Error('MFA verification was cancelled.')),
-          });
-        });
-      }
-
-      localStorage.setItem('ca_exam_checker_token', res.token);
-      setToken(res.token);
-      setUser(res.user);
-      setSuspendedAccount(null);
-      refreshUser().catch(() => {});
-      return res.user;
-    } catch (err: any) {
-      handleSuspension(err) || handleSuspension(err?.data);
-      throw err;
-    }
-  };
-
   const submitRevocationRequest = async (
     appealReason: string,
     explanation: string,
@@ -528,8 +424,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         instituteLogin,
         instituteRegister,
         register,
-        loginWithGoogle,
-        completeGoogleProfile,
         submitRevocationRequest,
         logout,
         refreshUser,

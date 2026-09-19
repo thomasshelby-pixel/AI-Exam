@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { X, CheckCircle2, CreditCard, ShieldCheck, Zap, AlertCircle } from 'lucide-react';
+import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 
 interface CreditPurchaseModalProps {
   isOpen: boolean;
@@ -76,9 +77,12 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ isOpen
       }
 
       if (!window.Razorpay) {
-        setErrorMsg('Razorpay checkout script failed to load. Please check your internet connection and reload the page.');
-        setIsLoading(false);
-        return;
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) {
+          setErrorMsg('Razorpay checkout script failed to load. Please check your internet connection and reload the page.');
+          setIsLoading(false);
+          return;
+        }
       }
 
       // Open standard Razorpay Checkout

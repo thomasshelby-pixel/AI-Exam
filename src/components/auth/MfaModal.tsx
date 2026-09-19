@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, ShieldAlert, Smartphone, ArrowRight, RefreshCw, X, Lock, AlertCircle } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Smartphone, ArrowRight, RefreshCw, X, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import type { ConfirmationResult } from 'firebase/auth';
 import { useAuth } from '../../context/AuthContext.js';
+import {
+  verifyFirebasePhoneNumber,
+  confirmFirebaseMfaOtp,
+  mapFirebasePhoneAuthError,
+  logMfaDiagnostic,
+  resetRecaptchaVerifier,
+} from '../../lib/firebaseAuth.js';
+
+export type MfaUiState = 'IDLE' | 'SENDING_SMS' | 'SMS_SENT' | 'VERIFYING_OTP' | 'VERIFIED' | 'ERROR';
 
 export const MfaModal: React.FC = () => {
   const {
@@ -17,22 +27,27 @@ export const MfaModal: React.FC = () => {
   const isMandatoryRole =
     mfaChallenge?.role === 'INSTITUTE_ADMIN' || mfaChallenge?.role === 'SUPER_ADMIN';
 
+  // Explicit MFA State Machine: IDLE -> SENDING_SMS -> (SMS_SENT | ERROR) -> VERIFYING_OTP -> (VERIFIED | ERROR)
+  const [mfaState, setMfaState] = useState<MfaUiState>('IDLE');
+
   // Form states
   const [phone, setPhone] = useState('');
   const [enrollStep, setEnrollStep] = useState<'PHONE' | 'OTP'>('PHONE');
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
-  const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [cooldown, setCooldown] = useState(30);
   const [canResend, setCanResend] = useState(false);
+  const [firebaseVerificationId, setFirebaseVerificationId] = useState<string | null>(null);
+  const [firebaseConfirmation, setFirebaseConfirmation] = useState<ConfirmationResult | null>(null);
 
   // Focus ref for OTP input
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Reset states when modal opens
+  // Reset states when modal opens - strictly IDLE with NO pre-emptive success message
   useEffect(() => {
     if (mfaChallenge?.isOpen) {
+      setMfaState('IDLE');
       setOtpDigits(['', '', '', '', '', '']);
       setErrorMsg('');
       setSuccessMsg('');
@@ -40,26 +55,27 @@ export const MfaModal: React.FC = () => {
       setCanResend(false);
       setEnrollStep('PHONE');
       setPhone('');
+      setFirebaseVerificationId(null);
+      setFirebaseConfirmation(null);
+      resetRecaptchaVerifier();
 
-      if (!isEnrollMode) {
-        // Auto focus first OTP digit
-        setTimeout(() => {
-          inputRefs.current[0]?.focus();
-        }, 150);
-      }
+      logMfaDiagnostic('mfa-modal-opened', {
+        mode: mfaChallenge.mode,
+        role: mfaChallenge.role,
+      });
     }
   }, [mfaChallenge?.isOpen, mfaChallenge?.mode]);
 
-  // Cooldown countdown
+  // Cooldown countdown - only runs when SMS has actually been sent
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (cooldown > 0 && (enrollStep === 'OTP' || !isEnrollMode)) {
+    if (cooldown > 0 && mfaState === 'SMS_SENT') {
       timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    } else if (cooldown === 0) {
+    } else if (cooldown === 0 && mfaState === 'SMS_SENT') {
       setCanResend(true);
     }
     return () => clearTimeout(timer);
-  }, [cooldown, enrollStep, isEnrollMode]);
+  }, [cooldown, mfaState]);
 
   if (!mfaChallenge || !mfaChallenge.isOpen) {
     return null;
@@ -120,88 +136,250 @@ export const MfaModal: React.FC = () => {
 
   const fullOtp = otpDigits.join('');
 
-  // Submit Challenge OTP
-  const handleSubmitChallenge = async (e: React.FormEvent) => {
+  /**
+   * Triggers SMS dispatch for Enrollment.
+   * STRICT GUARANTEE: Never sets success message unless verifyPhoneNumber returns a valid verificationId.
+   */
+  const handleSendEnrollCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (fullOtp.length !== 6) {
-      setErrorMsg('Please enter the full 6-digit verification code.');
+    // Guard against duplicate requests & rapid double clicks
+    if (mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
       return;
     }
 
-    setErrorMsg('');
-    setIsLoading(true);
-    try {
-      await verifyMfaChallenge(fullOtp);
-    } catch (err: any) {
-      setErrorMsg(err?.message || err?.data?.error || 'Invalid verification code. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Send Code for Enrollment
-  const handleSendEnrollCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!phone || phone.replace(/\D/g, '').length < 10) {
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
       setErrorMsg('Please enter a valid 10-digit mobile number.');
       return;
     }
 
+    setMfaState('SENDING_SMS');
     setErrorMsg('');
-    setIsLoading(true);
+    setSuccessMsg('');
+
+    logMfaDiagnostic('enroll-send-code-initiated');
+
     try {
-      await sendMfaEnrollCode(phone);
+      // Step 7 & 8: PhoneAuthProvider.verifyPhoneNumber(...)
+      const fbResult = await verifyFirebasePhoneNumber(cleanPhone, 'recaptcha-mfa-container');
+
+      if (!fbResult || !fbResult.verificationId) {
+        throw new Error('Firebase phone verification failed to return a verificationId.');
+      }
+
+      setFirebaseVerificationId(fbResult.verificationId);
+      setFirebaseConfirmation(fbResult.confirmationResult || null);
+
+      // Transition strictly to SMS_SENT only on actual verificationId
+      setMfaState('SMS_SENT');
+      setSuccessMsg('Verification code sent to your mobile phone.');
       setEnrollStep('OTP');
       setCooldown(30);
       setCanResend(false);
-      setSuccessMsg(`Verification code sent to your mobile phone.`);
+
+      // Safely register phone number with application session in background
+      sendMfaEnrollCode(cleanPhone).catch((bgErr) => {
+        console.warn('[MFA] Background session phone registration notice:', bgErr);
+      });
+
       setTimeout(() => {
         inputRefs.current[0]?.focus();
       }, 150);
     } catch (err: any) {
-      setErrorMsg(err?.message || err?.data?.error || 'Failed to dispatch verification code.');
-    } finally {
-      setIsLoading(false);
+      logMfaDiagnostic('enroll-send-code-failed', {
+        errorCode: err?.code,
+        errorMessage: err?.message,
+      });
+
+      setMfaState('ERROR');
+      setSuccessMsg(''); // Absolute requirement: Never show success on failure
+      const userFriendlyErr = mapFirebasePhoneAuthError(err);
+      setErrorMsg(userFriendlyErr);
     }
   };
 
-  // Submit Enrollment OTP
-  const handleSubmitEnroll = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (fullOtp.length !== 6) {
-      setErrorMsg('Please enter the full 6-digit verification code.');
+  /**
+   * Triggers SMS dispatch for Login Challenge mode.
+   * STRICT GUARANTEE: Never sets success message unless verifyPhoneNumber returns a valid verificationId.
+   */
+  const handleSendChallengeCode = async () => {
+    if (mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
       return;
     }
 
+    setMfaState('SENDING_SMS');
     setErrorMsg('');
-    setIsLoading(true);
+    setSuccessMsg('');
+
+    logMfaDiagnostic('challenge-send-code-initiated');
+
     try {
-      await verifyMfaEnroll(phone, fullOtp);
+      const targetPhone = mfaChallenge.maskedPhone || phone;
+      const fbResult = await verifyFirebasePhoneNumber(targetPhone, 'recaptcha-mfa-container');
+
+      if (!fbResult || !fbResult.verificationId) {
+        throw new Error('Firebase phone verification failed to return a verificationId.');
+      }
+
+      setFirebaseVerificationId(fbResult.verificationId);
+      setFirebaseConfirmation(fbResult.confirmationResult || null);
+
+      setMfaState('SMS_SENT');
+      setSuccessMsg('Verification code sent to your registered mobile phone.');
+      setCooldown(30);
+      setCanResend(false);
+
+      // Also trigger backend challenge record
+      resendMfaChallenge().catch((bgErr) => {
+        console.warn('[MFA] Background backend challenge record notice:', bgErr);
+      });
+
+      setTimeout(() => {
+        inputRefs.current[0]?.focus();
+      }, 150);
     } catch (err: any) {
-      setErrorMsg(err?.message || err?.data?.error || 'Invalid verification code. Please try again.');
-    } finally {
-      setIsLoading(false);
+      logMfaDiagnostic('challenge-send-code-failed', {
+        errorCode: err?.code,
+        errorMessage: err?.message,
+      });
+
+      setMfaState('ERROR');
+      setSuccessMsg('');
+      setErrorMsg(mapFirebasePhoneAuthError(err));
     }
   };
 
-  // Resend Handler
+  /**
+   * Resend handler with cooldown enforcement and duplicate request prevention.
+   */
   const handleResend = async () => {
-    if (!canResend) return;
+    if (!canResend || mfaState === 'SENDING_SMS' || mfaState === 'VERIFYING_OTP') {
+      return;
+    }
+
+    setMfaState('SENDING_SMS');
     setErrorMsg('');
+    setSuccessMsg('');
     setCanResend(false);
     setCooldown(30);
+
+    logMfaDiagnostic('resend-sms-initiated');
+
     try {
+      const targetPhone = isEnrollMode ? phone : (mfaChallenge.maskedPhone || phone);
+      const fbResult = await verifyFirebasePhoneNumber(targetPhone, 'recaptcha-mfa-container');
+
+      if (!fbResult || !fbResult.verificationId) {
+        throw new Error('Firebase phone verification failed to return a verificationId on resend.');
+      }
+
+      setFirebaseVerificationId(fbResult.verificationId);
+      setFirebaseConfirmation(fbResult.confirmationResult || null);
+
+      setMfaState('SMS_SENT');
+      setSuccessMsg('A new verification code has been dispatched via SMS.');
+
       if (isEnrollMode) {
-        await sendMfaEnrollCode(phone);
-        setSuccessMsg('A new verification code has been dispatched via SMS.');
+        sendMfaEnrollCode(phone).catch(() => {});
       } else {
-        await resendMfaChallenge();
-        setSuccessMsg('A fresh verification code has been dispatched via SMS.');
+        resendMfaChallenge().catch(() => {});
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Unable to resend code. Please wait and try again.');
+      logMfaDiagnostic('resend-sms-failed', {
+        errorCode: err?.code,
+        errorMessage: err?.message,
+      });
+
+      setMfaState('ERROR');
+      setSuccessMsg('');
+      setErrorMsg(mapFirebasePhoneAuthError(err));
+      // Re-enable resend so user is not locked out on error
+      setCanResend(true);
     }
   };
+
+  /**
+   * Submits Enrollment OTP for verification.
+   */
+  const handleSubmitEnroll = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fullOtp.length !== 6 || mfaState === 'VERIFYING_OTP') {
+      return;
+    }
+
+    setMfaState('VERIFYING_OTP');
+    setErrorMsg('');
+
+    logMfaDiagnostic('submit-enroll-otp-started');
+
+    try {
+      if (firebaseVerificationId) {
+        try {
+          await confirmFirebaseMfaOtp(firebaseVerificationId, fullOtp, firebaseConfirmation);
+        } catch (fbConfirmErr: any) {
+          logMfaDiagnostic('firebase-mfa-confirm-notice', {
+            errorCode: fbConfirmErr?.code,
+            errorMessage: fbConfirmErr?.message,
+          });
+        }
+      }
+
+      await verifyMfaEnroll(phone, fullOtp);
+      setMfaState('VERIFIED');
+      setSuccessMsg('Phone verified and MFA activated successfully.');
+    } catch (err: any) {
+      logMfaDiagnostic('submit-enroll-otp-failed', {
+        errorCode: err?.code,
+        errorMessage: err?.message,
+      });
+
+      setMfaState('ERROR');
+      setErrorMsg(mapFirebasePhoneAuthError(err) || 'Invalid verification code. Please try again.');
+    }
+  };
+
+  /**
+   * Submits Challenge OTP for login verification.
+   */
+  const handleSubmitChallenge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fullOtp.length !== 6 || mfaState === 'VERIFYING_OTP') {
+      return;
+    }
+
+    setMfaState('VERIFYING_OTP');
+    setErrorMsg('');
+
+    logMfaDiagnostic('submit-challenge-otp-started');
+
+    try {
+      if (firebaseVerificationId) {
+        try {
+          await confirmFirebaseMfaOtp(firebaseVerificationId, fullOtp, firebaseConfirmation);
+        } catch (fbConfirmErr: any) {
+          logMfaDiagnostic('firebase-mfa-challenge-confirm-notice', {
+            errorCode: fbConfirmErr?.code,
+            errorMessage: fbConfirmErr?.message,
+          });
+        }
+      }
+
+      await verifyMfaChallenge(fullOtp);
+      setMfaState('VERIFIED');
+      setSuccessMsg('Authentication verified successfully.');
+    } catch (err: any) {
+      logMfaDiagnostic('submit-challenge-otp-failed', {
+        errorCode: err?.code,
+        errorMessage: err?.message,
+      });
+
+      setMfaState('ERROR');
+      setErrorMsg(mapFirebasePhoneAuthError(err) || 'Invalid verification code. Please try again.');
+    }
+  };
+
+  const isSending = mfaState === 'SENDING_SMS';
+  const isVerifying = mfaState === 'VERIFYING_OTP';
 
   return (
     <div
@@ -269,14 +447,18 @@ export const MfaModal: React.FC = () => {
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+              <div className="space-y-1">
+                <span className="font-semibold block">Verification Failed</span>
+                <span className="leading-relaxed block break-words">{errorMsg}</span>
+              </div>
             </div>
           )}
 
+          {/* Success Message - STRICTLY rendered only when SMS has actually been dispatched or MFA is verified */}
           {successMsg && (
             <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <span>{successMsg}</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <span className="font-medium">{successMsg}</span>
             </div>
           )}
 
@@ -303,17 +485,21 @@ export const MfaModal: React.FC = () => {
                     placeholder="9876543210"
                     className="flex-1 px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white tracking-widest font-mono"
                     autoFocus
+                    disabled={isSending}
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={isLoading || phone.length < 10}
-                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSending || phone.length < 10}
+                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                {isLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
+                {isSending ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Requesting SMS Code...</span>
+                  </>
                 ) : (
                   <>
                     <span>Send Verification Code</span>
@@ -326,7 +512,8 @@ export const MfaModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={cancelMfaChallenge}
-                  className="w-full py-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition"
+                  disabled={isSending}
+                  className="w-full py-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition cursor-pointer"
                 >
                   Cancel and Return to Login
                 </button>
@@ -361,7 +548,8 @@ export const MfaModal: React.FC = () => {
                     value={digit}
                     onChange={(e) => handleOtpChange(idx, e.target.value)}
                     onKeyDown={(e) => handleKeyDown(idx, e)}
-                    className="w-11 h-12 text-center text-lg font-bold font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
+                    disabled={isVerifying}
+                    className="w-11 h-12 text-center text-lg font-bold font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white disabled:opacity-60"
                   />
                 ))}
               </div>
@@ -369,8 +557,14 @@ export const MfaModal: React.FC = () => {
               <div className="flex items-center justify-between text-xs pt-1">
                 <button
                   type="button"
-                  onClick={() => setEnrollStep('PHONE')}
-                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  onClick={() => {
+                    setEnrollStep('PHONE');
+                    setMfaState('IDLE');
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  disabled={isVerifying}
+                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
                 >
                   ← Change number
                 </button>
@@ -378,24 +572,31 @@ export const MfaModal: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleResend}
-                  disabled={!canResend}
-                  className={`font-semibold ${
-                    canResend
+                  disabled={!canResend || isSending || isVerifying}
+                  className={`font-semibold transition ${
+                    canResend && !isSending && !isVerifying
                       ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
                       : 'text-slate-400 cursor-not-allowed'
                   }`}
                 >
-                  {canResend ? 'Resend SMS code' : `Resend in ${cooldown}s`}
+                  {isSending
+                    ? 'Dispatching SMS...'
+                    : canResend
+                    ? 'Resend SMS code'
+                    : `Resend in ${cooldown}s`}
                 </button>
               </div>
 
               <button
                 type="submit"
-                disabled={isLoading || fullOtp.length !== 6}
-                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isVerifying || fullOtp.length !== 6}
+                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
-                {isLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
+                {isVerifying ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verifying Code...</span>
+                  </>
                 ) : (
                   <>
                     <span>Verify & Activate MFA</span>
@@ -406,83 +607,126 @@ export const MfaModal: React.FC = () => {
             </form>
           )}
 
-          {/* MODE: CHALLENGE (STANDARD LOGIN OTP VERIFICATION) */}
+          {/* MODE: CHALLENGE (LOGIN OTP VERIFICATION) */}
           {!isEnrollMode && (
-            <form onSubmit={handleSubmitChallenge} className="space-y-4">
+            <div className="space-y-4">
               <div className="text-center space-y-1">
                 <div className="w-12 h-12 mx-auto rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-2">
                   <Smartphone className="w-6 h-6" />
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-300">
-                  Enter the 6-digit verification code sent to
+                  Registered security mobile phone
                 </p>
                 <p className="text-xs font-mono font-bold text-slate-900 dark:text-white">
                   {mfaChallenge.maskedPhone || 'your registered mobile number'}
                 </p>
               </div>
 
-              {/* 6-Digit OTP Input Grid */}
-              <div className="flex justify-center gap-2 my-4" onPaste={handlePaste}>
-                {otpDigits.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={(el) => {
-                      inputRefs.current[idx] = el;
-                    }}
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(idx, e)}
-                    className="w-11 h-12 text-center text-lg font-bold font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white"
-                  />
-                ))}
-              </div>
+              {/* CHALLENGE INITIAL STEP: User triggers SMS request explicitly */}
+              {mfaState === 'IDLE' && (
+                <div className="space-y-3 pt-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 text-center leading-relaxed">
+                    Click below to request an SMS verification code to your registered mobile number.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSendChallengeCode}
+                    disabled={isSending}
+                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                  >
+                    {isSending ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Sending SMS Code...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Send Verification Code via SMS</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
 
-              <div className="flex items-center justify-between text-xs pt-1">
-                <span className="text-slate-500 dark:text-slate-400">Didn&apos;t receive SMS?</span>
-                <button
-                  type="button"
-                  onClick={handleResend}
-                  disabled={!canResend}
-                  className={`font-semibold ${
-                    canResend
-                      ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
-                      : 'text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  {canResend ? 'Resend code' : `Resend in ${cooldown}s`}
-                </button>
-              </div>
+              {/* CHALLENGE OTP STEP: Shown only after verification code is requested or entered */}
+              {(mfaState === 'SMS_SENT' || mfaState === 'VERIFYING_OTP' || mfaState === 'ERROR' || mfaState === 'VERIFIED') && (
+                <form onSubmit={handleSubmitChallenge} className="space-y-4">
+                  {/* 6-Digit OTP Input Grid */}
+                  <div className="flex justify-center gap-2 my-4" onPaste={handlePaste}>
+                    {otpDigits.map((digit, idx) => (
+                      <input
+                        key={idx}
+                        ref={(el) => {
+                          inputRefs.current[idx] = el;
+                        }}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={1}
+                        value={digit}
+                        onChange={(e) => handleOtpChange(idx, e.target.value)}
+                        onKeyDown={(e) => handleKeyDown(idx, e)}
+                        disabled={isVerifying}
+                        className="w-11 h-12 text-center text-lg font-bold font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white disabled:opacity-60"
+                      />
+                    ))}
+                  </div>
 
-              <button
-                type="submit"
-                disabled={isLoading || fullOtp.length !== 6}
-                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <span>Verify & Continue</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
+                  <div className="flex items-center justify-between text-xs pt-1">
+                    <span className="text-slate-500 dark:text-slate-400">Didn&apos;t receive SMS?</span>
+                    <button
+                      type="button"
+                      onClick={handleResend}
+                      disabled={!canResend || isSending || isVerifying}
+                      className={`font-semibold transition ${
+                        canResend && !isSending && !isVerifying
+                          ? 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
+                          : 'text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {isSending
+                        ? 'Dispatching SMS...'
+                        : canResend
+                        ? 'Resend code'
+                        : `Resend in ${cooldown}s`}
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isVerifying || fullOtp.length !== 6}
+                    className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {isVerifying ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Verifying Code...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Verify & Continue</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
 
               <button
                 type="button"
                 onClick={cancelMfaChallenge}
-                className="w-full py-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition"
+                disabled={isSending || isVerifying}
+                className="w-full py-2 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition cursor-pointer"
               >
                 Cancel and return to login
               </button>
-            </form>
+            </div>
           )}
         </div>
       </div>
+      <div id="recaptcha-mfa-container" className="hidden" />
     </div>
   );
 };
+
