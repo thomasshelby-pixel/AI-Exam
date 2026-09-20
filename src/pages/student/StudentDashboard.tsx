@@ -24,6 +24,7 @@ import {
   X,
   Dna,
 } from 'lucide-react';
+import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -983,6 +984,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               )}
             </div>
           </div>
+        </div>
+
+        {/* Student Feedback & Platform Review Card */}
+        <div className="pt-2">
+          <StudentReviewCard />
         </div>
       </div>
 

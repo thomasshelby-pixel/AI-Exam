@@ -248,6 +248,36 @@
         "checksum": { "type": "string" }
       },
       "required": ["fileId", "storagePath", "originalFilename", "mimeType", "size", "ownerUserId", "uploadTimestamp", "status"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Student platform reviews and star ratings with immediate publication and transparent moderation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "student_name": { "type": "string" },
+        "student_email": { "type": "string" },
+        "display_name": { "type": "string" },
+        "ca_level": { "type": "string" },
+        "rating": { "type": "number" },
+        "review_text": { "type": "string" },
+        "experience_tags": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string", "enum": ["PUBLISHED", "HIDDEN", "REMOVED"] },
+        "likes_count": { "type": "number" },
+        "dislikes_count": { "type": "number" },
+        "admin_reply": { "type": "string" },
+        "admin_reply_at": { "type": "string", "format": "date-time" },
+        "admin_reply_by": { "type": "string" },
+        "admin_reply_name": { "type": "string" },
+        "moderation_reason": { "type": "string" },
+        "moderated_at": { "type": "string", "format": "date-time" },
+        "moderated_by": { "type": "string" },
+        "is_verified_evaluation": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "user_id", "display_name", "rating", "review_text", "status"]
     }
   },
   "firestore": {
@@ -298,6 +328,10 @@
     "/file_storage_metadata/{fileId}": {
       "schema": { "$ref": "#/entities/FileStorageMetadata" },
       "description": "Structured metadata and Cloud Storage references for stored PDF and document files."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Student ratings and feedback with server-governed moderation status."
     }
   }
 }

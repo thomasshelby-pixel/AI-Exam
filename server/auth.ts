@@ -368,7 +368,7 @@ export function requireRole(...allowedRoles: UserRole[]) {
 
       if (!dbUser?.mfa_enabled || !isMfaVerified) {
         return res.status(403).json({
-          error: 'SMS Multi-Factor Authentication is mandatory for administrative access. Please complete MFA verification.',
+          error: 'Multi-Factor Authentication (TOTP Authenticator) is mandatory for administrative access. Please complete MFA verification.',
           code: 'MFA_REQUIRED',
           mfaRequired: true,
           mfaEnrolled: Boolean(dbUser?.mfa_enabled),

@@ -24,9 +24,11 @@ import {
   ShieldCheck,
   CheckSquare,
   History,
+  Star,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo.js';
 import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
+import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
 
 interface EvaluationReportViewProps {
   evaluationResult: EvaluationResult;
@@ -52,6 +54,14 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   );
   const [recheckTargetQuestion, setRecheckTargetQuestion] = useState<string | null>(null);
   const [showOriginalSnapshot, setShowOriginalSnapshot] = useState<boolean>(false);
+  const [showReviewPrompt, setShowReviewPrompt] = useState<boolean>(false);
+  const [isReviewDismissed, setIsReviewDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('dismiss_eval_review_prompt') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const handleDownload = async (type: 'report' | 'checked-copy' | 'original', version?: 'v1' | 'v2') => {
     try {
@@ -997,6 +1007,57 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           <span>Request Rechecking</span>
         </button>
       </div>
+
+      {/* Subtle Review & Feedback Prompt for Completed Evaluation */}
+      {!isReviewDismissed && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs print:hidden space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Star className="w-5 h-5 fill-amber-400 text-amber-500" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  How was your evaluation experience?
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Help fellow CA students with your transparent feedback on step-marking accuracy, working notes remarks, and checked copy quality.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setShowReviewPrompt(!showReviewPrompt)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Star className="w-3.5 h-3.5 fill-current" />
+                <span>{showReviewPrompt ? 'Hide Review Form' : 'Share Experience'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsReviewDismissed(true);
+                  try {
+                    sessionStorage.setItem('dismiss_eval_review_prompt', 'true');
+                  } catch {}
+                }}
+                className="px-2.5 py-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs transition cursor-pointer"
+                title="Dismiss prompt for this session"
+              >
+                Not Now
+              </button>
+            </div>
+          </div>
+
+          {showReviewPrompt && (
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <StudentReviewCard />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Advisory & Compliance Disclaimer */}
       <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed print:bg-white print:border-gray-200 print:text-gray-500">

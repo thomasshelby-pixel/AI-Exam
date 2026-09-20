@@ -593,7 +593,42 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch {}
     }
 
-    // 14. Auto-heal any orphaned student references in evaluations so foreign keys stay 100% intact
+    // 14. Hydrate Student Reviews & Star Ratings
+    const reviews = await getAllFirestoreDocs<any>('reviews');
+    for (const rev of reviews) {
+      if (tombstoneSet.has(`reviews_${rev.id}`)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, status, moderation_note, approved_at, approved_by,
+            rejected_at, rejected_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            status = excluded.status,
+            moderation_note = excluded.moderation_note,
+            approved_at = excluded.approved_at,
+            approved_by = excluded.approved_by,
+            rejected_at = excluded.rejected_at,
+            rejected_by = excluded.rejected_by,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', rev.status || 'PENDING', rev.moderation_note || null,
+          rev.approved_at || null, rev.approved_by || null, rev.rejected_at || null,
+          rev.rejected_by || null, rev.created_at || null
+        );
+      } catch (rErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate review ${rev.id}:`, rErr);
+      }
+    }
+
+    // 15. Auto-heal any orphaned student references in evaluations so foreign keys stay 100% intact
     const orphanStudents = db.prepare(`
       SELECT DISTINCT e.student_id FROM evaluations e
       LEFT JOIN users u ON u.id = e.student_id

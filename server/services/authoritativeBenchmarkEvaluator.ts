@@ -1,4 +1,4 @@
-import { EvaluateAnswerSheetParams } from '../gemini.js';
+import type { EvaluateAnswerSheetParams } from '../gemini.js';
 import { ModelExecutionResult } from '../models/modelRegistry.js';
 import { MarkingComponent, MarkingComponentType } from '../../src/types/index.js';
 

@@ -159,5 +159,11 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // Student Reviews & Feedback
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

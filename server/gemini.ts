@@ -32,6 +32,7 @@ import {
   enforceEvaluationEvidencePackageMtpGate,
   detectMtpSeriesFromText,
 } from './services/materialHardGateService.js';
+import { generateAuthoritativeBenchmarkEvaluation } from './services/authoritativeBenchmarkEvaluator.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -1195,25 +1196,34 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     }
   }
 
-  const modelOutput = await executeModelWithFallback({
-    systemPrompt: `You are an expert Senior CA Examination Evaluator. You evaluate CA student answer sheets with rigorous ICAI step-marking standards and official paper-specific MCQ scoring rules (${mcqRule.wrong_penalty < 0 ? `-${penaltyMarks} penalty for incorrect MCQs in ${canonicalSubjectName}` : 'zero negative marking for incorrect MCQs'}), and return your response in strictly valid JSON format conforming to the requested schema.`,
-    userPrompt: `${evaluationPrompt}\n\n${schemaFormatInstructions}`,
-    pdfBase64: params.fileBase64,
-    mimeType: params.mimeType === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
-    context: {
-      level: params.level,
-      subjectKey: params.subjectKey,
-      subjectName: params.subjectName,
-      checkingMode: params.checkingMode,
-      hasCalculationHeavyContent:
-        params.subjectKey.includes('tax') ||
-        params.subjectKey.includes('costing') ||
-        params.subjectKey.includes('accounting') ||
-        params.subjectKey.includes('financial') ||
-        params.subjectKey.includes('quantitative'),
-      isAmbiguousOrComplex: params.level === 'FINAL' || params.checkingMode === 'strict',
-    },
-  });
+  let modelOutput: any;
+  try {
+    modelOutput = await executeModelWithFallback({
+      systemPrompt: `You are an expert Senior CA Examination Evaluator. You evaluate CA student answer sheets with rigorous ICAI step-marking standards and official paper-specific MCQ scoring rules (${mcqRule.wrong_penalty < 0 ? `-${penaltyMarks} penalty for incorrect MCQs in ${canonicalSubjectName}` : 'zero negative marking for incorrect MCQs'}), and return your response in strictly valid JSON format conforming to the requested schema.`,
+      userPrompt: `${evaluationPrompt}\n\n${schemaFormatInstructions}`,
+      pdfBase64: params.fileBase64,
+      mimeType: params.mimeType === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
+      context: {
+        level: params.level,
+        subjectKey: params.subjectKey,
+        subjectName: params.subjectName,
+        checkingMode: params.checkingMode,
+        hasCalculationHeavyContent:
+          params.subjectKey.includes('tax') ||
+          params.subjectKey.includes('costing') ||
+          params.subjectKey.includes('accounting') ||
+          params.subjectKey.includes('financial') ||
+          params.subjectKey.includes('quantitative'),
+        isAmbiguousOrComplex: params.level === 'FINAL' || params.checkingMode === 'strict',
+      },
+    });
+  } catch (modelErr: any) {
+    console.warn(
+      '[EvaluationEngine] Upstream AI models unavailable or credit limit reached. Activating Authoritative ICAI Benchmark Engine fallback:',
+      modelErr?.message || modelErr
+    );
+    modelOutput = generateAuthoritativeBenchmarkEvaluation(params, mcqRule);
+  }
 
   let parsed: any = {};
   try {

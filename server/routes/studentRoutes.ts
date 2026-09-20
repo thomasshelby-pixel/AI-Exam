@@ -3307,4 +3307,285 @@ router.get('/credit-lots', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Student Review & Star Rating Management (Transparent, Immediate Publication)
+router.get('/review/eligibility', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM evaluations 
+      WHERE student_id = ? AND status = 'COMPLETED'
+    `).get(studentId) as { count: number };
+
+    const completedEvaluationsCount = countRow?.count || 0;
+    const eligible = completedEvaluationsCount >= 1;
+
+    return res.json({
+      eligible,
+      completedEvaluationsCount,
+      message: eligible 
+        ? 'Eligible to post a student review.' 
+        : 'Complete an evaluation to share your experience.',
+    });
+  } catch (error: unknown) {
+    console.error('Fetch review eligibility error:', error);
+    return res.status(500).json({ error: 'Failed to verify review eligibility.' });
+  }
+});
+
+router.get('/review', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const row = db.prepare(`
+      SELECT id, user_id, display_name, ca_level, rating, review_text,
+             experience_tags, status, likes_count, dislikes_count,
+             admin_reply, admin_reply_at, admin_reply_name,
+             moderation_reason, moderation_note, created_at, updated_at
+      FROM reviews
+      WHERE user_id = ?
+    `).get(studentId) as any;
+
+    if (!row) {
+      return res.json({ review: null });
+    }
+
+    let parsedTags: string[] = [];
+    if (row.experience_tags) {
+      try {
+        parsedTags = typeof row.experience_tags === 'string' ? JSON.parse(row.experience_tags) : row.experience_tags;
+      } catch {
+        parsedTags = [];
+      }
+    }
+
+    return res.json({
+      review: {
+        id: row.id,
+        userId: row.user_id,
+        displayName: row.display_name,
+        caLevel: row.ca_level,
+        rating: row.rating,
+        reviewText: row.review_text,
+        experienceTags: parsedTags,
+        status: row.status,
+        likesCount: row.likes_count || 0,
+        dislikesCount: row.dislikes_count || 0,
+        adminReply: row.admin_reply,
+        adminReplyAt: row.admin_reply_at,
+        adminReplyName: row.admin_reply_name,
+        moderationReason: row.moderation_reason || row.moderation_note,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Fetch student review error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve review.' });
+  }
+});
+
+router.post('/review', async (req: AuthRequest, res: Response) => {
+  try {
+    // 1. Mandatory server-side ownership: user_id strictly derived from auth session
+    const studentId = req.user!.id;
+
+    // 2. Strict eligibility enforcement: student MUST have at least 1 completed evaluation
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as count 
+      FROM evaluations 
+      WHERE student_id = ? AND status = 'COMPLETED'
+    `).get(studentId) as { count: number };
+
+    const completedEvaluationsCount = countRow?.count || 0;
+    if (completedEvaluationsCount < 1) {
+      return res.status(403).json({
+        error: 'Complete an evaluation to share your experience.',
+      });
+    }
+
+    const { rating, reviewText, experienceTags } = req.body;
+
+    // 3. Strict input validation
+    const numRating = Number(rating);
+    if (!Number.isInteger(numRating) || numRating < 1 || numRating > 5) {
+      return res.status(400).json({ error: 'Rating must be an integer between 1 and 5 stars.' });
+    }
+
+    if (typeof reviewText !== 'string' || reviewText.trim().length < 20) {
+      return res.status(400).json({ error: 'Review text must be at least 20 characters long.' });
+    }
+
+    if (reviewText.trim().length > 500) {
+      return res.status(400).json({ error: 'Review text cannot exceed 500 characters.' });
+    }
+
+    // Sanitize review text (strip HTML tags and control characters)
+    const sanitizedText = reviewText
+      .replace(/<[^>]*>/g, '')
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F]/g, '')
+      .trim();
+
+    // Validate experience tags (optional array)
+    const allowedTags = [
+      'Evaluation Accuracy',
+      'Report Quality',
+      'Checked Copy',
+      'Upload Experience',
+      'Ease of Use',
+      'Overall Experience',
+    ];
+    let sanitizedTags: string[] = [];
+    if (Array.isArray(experienceTags)) {
+      sanitizedTags = experienceTags
+        .filter((tag) => typeof tag === 'string' && allowedTags.includes(tag.trim()))
+        .map((tag) => tag.trim())
+        .slice(0, 4); // Max 4 tags
+    }
+
+    // 4. Anti-spam throttle: Prevent rapid submissions within 15 seconds
+    const existing = db.prepare(`
+      SELECT id, status, likes_count, dislikes_count, admin_reply, admin_reply_at, admin_reply_name, updated_at, created_at 
+      FROM reviews 
+      WHERE user_id = ?
+    `).get(studentId) as any;
+
+    if (existing) {
+      const lastActionTime = new Date(existing.updated_at || existing.created_at).getTime();
+      if (Date.now() - lastActionTime < 15000) {
+        return res.status(429).json({ error: 'Please wait at least 15 seconds before updating your review.' });
+      }
+    }
+
+    // 5. Determine user & profile metadata
+    const userRow = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(studentId) as { full_name?: string; email?: string } | undefined;
+    const profileRow = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(studentId) as { ca_level?: string } | undefined;
+
+    const rawName = userRow?.full_name?.trim() || 'CA Student';
+    const email = userRow?.email || '';
+    const caLevel = profileRow?.ca_level || 'INTERMEDIATE';
+
+    // Format privacy-safe display name: "First Name + Last Initial" (e.g. "Aditya T.")
+    const nameParts = rawName.split(/\s+/).filter(Boolean);
+    let displayName = 'CA Student';
+    if (nameParts.length === 1) {
+      displayName = nameParts[0];
+    } else if (nameParts.length > 1) {
+      const first = nameParts[0];
+      const lastInitial = nameParts[nameParts.length - 1][0].toUpperCase();
+      displayName = `${first} ${lastInitial}.`;
+    }
+
+    let reviewId: string;
+    let isUpdate = false;
+    // Transparent model: Student reviews are PUBLISHED immediately upon submission
+    let targetStatus = 'PUBLISHED';
+
+    if (existing) {
+      reviewId = existing.id;
+      isUpdate = true;
+      // If the review was previously HIDDEN or REMOVED by moderation, preserve or re-publish:
+      targetStatus = existing.status === 'REMOVED' ? 'HIDDEN' : 'PUBLISHED';
+
+      db.prepare(`
+        UPDATE reviews
+        SET rating = ?,
+            review_text = ?,
+            experience_tags = ?,
+            display_name = ?,
+            ca_level = ?,
+            status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).run(
+        numRating,
+        sanitizedText,
+        JSON.stringify(sanitizedTags),
+        displayName,
+        caLevel,
+        targetStatus,
+        reviewId,
+        studentId
+      );
+    } else {
+      reviewId = `rev_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO reviews (
+          id, user_id, student_name, student_email, display_name, ca_level,
+          rating, review_text, experience_tags, status, likes_count, dislikes_count,
+          is_verified_evaluation, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', 0, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        reviewId,
+        studentId,
+        rawName,
+        email,
+        displayName,
+        caLevel,
+        numRating,
+        sanitizedText,
+        JSON.stringify(sanitizedTags)
+      );
+    }
+
+    // 6. Security audit log
+    const auditId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address)
+      VALUES (?, ?, ?, 'REVIEW', ?, ?, ?)
+    `).run(
+      auditId,
+      studentId,
+      isUpdate ? 'STUDENT_REVIEW_UPDATED' : 'STUDENT_REVIEW_PUBLISHED',
+      reviewId,
+      JSON.stringify({ rating: numRating, status: targetStatus, caLevel, tags: sanitizedTags }),
+      req.ip || '0.0.0.0'
+    );
+
+    // 7. Durable Cloud sync to Firestore
+    syncRecordToFirestore('reviews', reviewId, {
+      id: reviewId,
+      user_id: studentId,
+      student_name: rawName,
+      student_email: email,
+      display_name: displayName,
+      ca_level: caLevel,
+      rating: numRating,
+      review_text: sanitizedText,
+      experience_tags: sanitizedTags,
+      status: targetStatus,
+      likes_count: existing?.likes_count || 0,
+      dislikes_count: existing?.dislikes_count || 0,
+      is_verified_evaluation: 1,
+      admin_reply: existing?.admin_reply || null,
+      admin_reply_at: existing?.admin_reply_at || null,
+      admin_reply_name: existing?.admin_reply_name || null,
+      updated_at: new Date().toISOString(),
+    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing review to Firestore:', syncErr));
+
+    return res.status(isUpdate ? 200 : 201).json({
+      success: true,
+      message: isUpdate
+        ? 'Your review was updated and is live on the platform.'
+        : 'Thank you! Your review has been published immediately to the community.',
+      review: {
+        id: reviewId,
+        rating: numRating,
+        reviewText: sanitizedText,
+        experienceTags: sanitizedTags,
+        displayName,
+        caLevel,
+        status: targetStatus,
+        likesCount: existing?.likes_count || 0,
+        dislikesCount: existing?.dislikes_count || 0,
+        adminReply: existing?.admin_reply || null,
+        adminReplyAt: existing?.admin_reply_at || null,
+        adminReplyName: existing?.admin_reply_name || null,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Submit student review error:', error);
+    return res.status(500).json({ error: 'Failed to submit review. Please try again.' });
+  }
+});
+
 export default router;

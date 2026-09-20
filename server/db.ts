@@ -474,6 +474,65 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_deletion_requests_user ON account_deletion_requests(user_id, status);
 
+    CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      student_name TEXT NOT NULL,
+      student_email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
+      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      review_text TEXT NOT NULL,
+      experience_tags TEXT,
+      status TEXT NOT NULL DEFAULT 'PUBLISHED' CHECK (status IN ('PUBLISHED', 'HIDDEN', 'REMOVED', 'PENDING', 'APPROVED', 'REJECTED')),
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      dislikes_count INTEGER NOT NULL DEFAULT 0,
+      admin_reply TEXT,
+      admin_reply_at TEXT,
+      admin_reply_by TEXT,
+      admin_reply_name TEXT,
+      moderation_reason TEXT,
+      moderated_at TEXT,
+      moderated_by TEXT,
+      is_verified_evaluation INTEGER NOT NULL DEFAULT 1,
+      moderation_note TEXT,
+      approved_at TEXT,
+      approved_by TEXT,
+      rejected_at TEXT,
+      rejected_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_reviews_user_id ON reviews(user_id);
+    CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);
+
+    CREATE TABLE IF NOT EXISTS review_votes (
+      id TEXT PRIMARY KEY,
+      review_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      vote_type TEXT NOT NULL CHECK (vote_type IN ('LIKE', 'DISLIKE')),
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(review_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_votes_rev_user ON review_votes(review_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS review_moderation_audits (
+      id TEXT PRIMARY KEY,
+      review_id TEXT NOT NULL,
+      admin_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT,
+      details TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE,
+      FOREIGN KEY (admin_id) REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_mod_audit ON review_moderation_audits(review_id);
+
     CREATE TABLE IF NOT EXISTS mcq_scoring_rules (
       id TEXT PRIMARY KEY,
       course_level TEXT NOT NULL,
@@ -1211,6 +1270,142 @@ function runMigrations() {
     `);
   } catch (err) {
     console.warn('Index creation warning:', err);
+  }
+
+  // Student Reviews & Community Feedback System (Transparent, Immediate Publication)
+  addColumnIfNotExists('reviews', 'experience_tags', 'TEXT');
+  addColumnIfNotExists('reviews', 'likes_count', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('reviews', 'dislikes_count', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('reviews', 'admin_reply', 'TEXT');
+  addColumnIfNotExists('reviews', 'admin_reply_at', 'TEXT');
+  addColumnIfNotExists('reviews', 'admin_reply_by', 'TEXT');
+  addColumnIfNotExists('reviews', 'admin_reply_name', 'TEXT');
+  addColumnIfNotExists('reviews', 'moderation_reason', 'TEXT');
+  addColumnIfNotExists('reviews', 'moderated_at', 'TEXT');
+  addColumnIfNotExists('reviews', 'moderated_by', 'TEXT');
+  addColumnIfNotExists('reviews', 'is_verified_evaluation', 'INTEGER NOT NULL DEFAULT 1');
+
+  // Ensure reviews table status CHECK constraint supports 'PUBLISHED', 'HIDDEN', 'REMOVED', 'PENDING', 'APPROVED', 'REJECTED'
+  try {
+    const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").get() as { sql: string } | undefined;
+    if (tableSqlRow && !tableSqlRow.sql.includes('PUBLISHED')) {
+      console.log('[Migration] Migrating reviews table to updated status CHECK constraint...');
+      db.exec('PRAGMA foreign_keys = OFF;');
+      db.exec(`
+        CREATE TABLE reviews_migrated (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          student_name TEXT NOT NULL,
+          student_email TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
+          rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+          review_text TEXT NOT NULL,
+          experience_tags TEXT,
+          status TEXT NOT NULL DEFAULT 'PUBLISHED' CHECK (status IN ('PUBLISHED', 'HIDDEN', 'REMOVED', 'PENDING', 'APPROVED', 'REJECTED')),
+          likes_count INTEGER NOT NULL DEFAULT 0,
+          dislikes_count INTEGER NOT NULL DEFAULT 0,
+          admin_reply TEXT,
+          admin_reply_at TEXT,
+          admin_reply_by TEXT,
+          admin_reply_name TEXT,
+          moderation_reason TEXT,
+          moderated_at TEXT,
+          moderated_by TEXT,
+          is_verified_evaluation INTEGER NOT NULL DEFAULT 1,
+          moderation_note TEXT,
+          approved_at TEXT,
+          approved_by TEXT,
+          rejected_at TEXT,
+          rejected_by TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+      `);
+
+      const existingCols = (db.prepare('PRAGMA table_info(reviews)').all() as Array<{ name: string }>).map(c => c.name);
+      const colsToCopy = [
+        'id', 'user_id', 'student_name', 'student_email', 'display_name', 'ca_level',
+        'rating', 'review_text', 'status', 'moderation_note', 'approved_at', 'approved_by',
+        'rejected_at', 'rejected_by', 'created_at', 'updated_at',
+        'experience_tags', 'likes_count', 'dislikes_count', 'admin_reply',
+        'admin_reply_at', 'admin_reply_by', 'admin_reply_name', 'moderation_reason',
+        'moderated_at', 'moderated_by', 'is_verified_evaluation'
+      ].filter(col => existingCols.includes(col));
+
+      const colsList = colsToCopy.join(', ');
+
+      db.exec(`
+        INSERT INTO reviews_migrated (${colsList})
+        SELECT ${colsList} FROM reviews;
+      `);
+
+      db.exec(`
+        UPDATE reviews_migrated 
+        SET status = CASE 
+          WHEN status = 'APPROVED' THEN 'PUBLISHED' 
+          WHEN status = 'REJECTED' THEN 'REMOVED' 
+          ELSE status 
+        END;
+      `);
+
+      db.exec('DROP TABLE reviews;');
+      db.exec('ALTER TABLE reviews_migrated RENAME TO reviews;');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_user_id ON reviews(user_id);');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews(status);');
+      db.exec('PRAGMA foreign_keys = ON;');
+      console.log('[Migration] Successfully updated reviews table schema and CHECK constraints.');
+    }
+  } catch (migErr) {
+    console.warn('[Migration] Warning migrating reviews table:', migErr);
+    try { db.exec('PRAGMA foreign_keys = ON;'); } catch {}
+  }
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS review_votes (
+        id TEXT PRIMARY KEY,
+        review_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        vote_type TEXT NOT NULL CHECK (vote_type IN ('LIKE', 'DISLIKE')),
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(review_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_review_votes_rev_user ON review_votes(review_id, user_id);
+
+      CREATE TABLE IF NOT EXISTS review_moderation_audits (
+        id TEXT PRIMARY KEY,
+        review_id TEXT NOT NULL,
+        admin_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason TEXT,
+        details TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE,
+        FOREIGN KEY (admin_id) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_review_mod_audit ON review_moderation_audits(review_id);
+    `);
+
+    // Migrate any existing reviews to the transparent model:
+    // Statuses: PUBLISHED, HIDDEN, REMOVED
+    db.prepare(`
+      UPDATE reviews 
+      SET status = 'PUBLISHED' 
+      WHERE status IN ('APPROVED', 'PENDING') OR status IS NULL OR status = ''
+    `).run();
+
+    db.prepare(`
+      UPDATE reviews 
+      SET status = 'HIDDEN' 
+      WHERE status = 'REJECTED'
+    `).run();
+  } catch (revMigErr) {
+    console.warn('[DB Migration] Error migrating review tables/statuses:', revMigErr);
   }
 }
 

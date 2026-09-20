@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
-import { logMfaDiagnostic, getFirebaseEnrolledPhoneFactors } from '../../lib/firebaseAuth.js';
+import { logMfaDiagnostic, getFirebaseEnrolledTotpFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { MaterialManagement } from '../../components/admin/MaterialManagement.js';
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
@@ -9,6 +9,7 @@ import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
 import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
 import { AdminLegalSection } from '../../components/admin/AdminLegalSection.js';
+import { AdminReviewsSection } from '../../components/admin/AdminReviewsSection.js';
 import { AdminPricingSection } from './AdminPricingSection.js';
 import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
@@ -46,6 +47,8 @@ import {
   Lock,
   ExternalLink,
   ChevronRight,
+  ChevronLeft,
+  Star,
   ArrowUpRight,
   UserX,
   UserCheck,
@@ -59,12 +62,76 @@ import {
   Power,
   Filter,
   X,
+  Menu,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
   const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge, syncMfaFactor, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Mobile navigation drawer state
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
+
+  // Desktop sidebar collapsed state (persisted across sessions via localStorage)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ca_admin_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebarCollapse = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('ca_admin_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Pending reviews count for admin sidebar badge
+  const [pendingReviewsCount, setPendingReviewsCount] = useState<number>(0);
+
+  const fetchPendingReviewsCount = async () => {
+    try {
+      const res = await apiRequest<{ pendingCount: number }>('/api/admin/reviews/pending-count');
+      setPendingReviewsCount(res.pendingCount || 0);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Close mobile drawer upon navigating to a new subroute
+  useEffect(() => {
+    setMobileDrawerOpen(false);
+  }, [location.pathname]);
+
+  // Keep pending review badge updated when subroutes change
+  useEffect(() => {
+    fetchPendingReviewsCount();
+  }, [location.pathname]);
+
+  // Handle escape key and body scroll lock for mobile drawer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && mobileDrawerOpen) {
+        setMobileDrawerOpen(false);
+      }
+    };
+    if (mobileDrawerOpen) {
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', handleKeyDown);
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [mobileDrawerOpen]);
 
   // Determine current active subroute from pathname
   const pathParts = location.pathname.split('/').filter(Boolean);
@@ -261,6 +328,7 @@ export const AdminPortal: React.FC = () => {
       setErrorMsg('');
 
       switch (activeSection) {
+        case 'reviews':
         case 'materials':
         case 'rules':
         case 'promo-codes':
@@ -1045,10 +1113,10 @@ export const AdminPortal: React.FC = () => {
     if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
       factorCheckAttemptedRef.current = true;
       setIsCheckingEnrolledFactor(true);
-      getFirebaseEnrolledPhoneFactors()
-        .then(async ({ hasPhoneFactor }) => {
-          if (hasPhoneFactor) {
-            logMfaDiagnostic('phone factor present BEFORE enrollment: YES', {
+      getFirebaseEnrolledTotpFactors()
+        .then(async ({ hasTotpFactor }) => {
+          if (hasTotpFactor) {
+            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
               source: 'admin-portal-gate',
             });
             await syncMfaFactor();
@@ -1148,6 +1216,7 @@ export const AdminPortal: React.FC = () => {
   // Navigation Items for Admin Sidebar
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'reviews', label: 'Student Reviews', icon: Star, badge: pendingReviewsCount },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
     { id: 'ai-models', label: 'AI Models & Fallbacks', icon: Brain },
@@ -1178,18 +1247,53 @@ export const AdminPortal: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex">
-      {/* Admin Sidebar */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-800">
-        <div className="p-4 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold">
-            <ShieldCheck className="w-5 h-5" />
+      {/* Desktop Admin Sidebar (Hidden on mobile/tablet, visible on lg screens with collapse/slide toggle) */}
+      <aside
+        className={`hidden lg:flex ${
+          sidebarCollapsed ? 'w-16' : 'w-64'
+        } bg-slate-900 text-slate-300 flex-col shrink-0 border-r border-slate-800 transition-all duration-200 ease-in-out relative`}
+      >
+        {/* Sidebar Header with Collapse Toggle */}
+        <div
+          className={`p-3.5 border-b border-slate-800 flex items-center ${
+            sidebarCollapsed ? 'flex-col gap-2 justify-center' : 'justify-between'
+          }`}
+        >
+          <div
+            className={`flex items-center gap-2.5 min-w-0 ${
+              sidebarCollapsed ? 'justify-center' : ''
+            }`}
+          >
+            <div
+              className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold shrink-0 shadow-xs"
+              title="Super Admin — CA Exam Checker AI"
+            >
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            {!sidebarCollapsed && (
+              <div className="truncate">
+                <h1 className="text-sm font-bold text-white tracking-wide truncate">Super Admin</h1>
+                <p className="text-[10px] text-blue-400 font-medium truncate">CA Exam Checker AI</p>
+              </div>
+            )}
           </div>
-          <div>
-            <h1 className="text-sm font-bold text-white tracking-wide">Super Admin</h1>
-            <p className="text-[10px] text-blue-400 font-medium">CA Exam Checker AI</p>
-          </div>
+
+          <button
+            type="button"
+            onClick={toggleSidebarCollapse}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {sidebarCollapsed ? (
+              <ChevronRight className="w-4 h-4" />
+            ) : (
+              <ChevronLeft className="w-4 h-4" />
+            )}
+          </button>
         </div>
 
+        {/* Navigation Rail / Menu */}
         <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -1200,64 +1304,270 @@ export const AdminPortal: React.FC = () => {
               <button
                 key={item.id}
                 onClick={() => navigate(`/admin/${item.id}`)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                title={item.label}
+                aria-label={item.label}
+                className={`w-full flex items-center ${
+                  sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2'
+                } rounded-lg text-xs font-semibold transition cursor-pointer relative group focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   isActive
                     ? 'bg-blue-600 text-white shadow-sm'
                     : 'text-slate-400 hover:text-white hover:bg-slate-800'
                 }`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                <span>{item.label}</span>
+                {!sidebarCollapsed && (
+                  <span className="truncate flex-1 text-left">{item.label}</span>
+                )}
+                {!sidebarCollapsed && item.badge !== undefined && item.badge > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {item.badge}
+                  </span>
+                )}
+                {sidebarCollapsed && item.badge !== undefined && item.badge > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-slate-900" />
+                )}
+
+                {/* Accessible Tooltip on hover when collapsed */}
+                {sidebarCollapsed && (
+                  <div className="absolute left-full ml-2 px-2.5 py-1 bg-slate-800 text-white text-[11px] font-medium rounded-md whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 group-focus:opacity-100 transition shadow-lg z-50 border border-slate-700">
+                    {item.label}
+                    {item.badge ? ` (${item.badge} pending)` : ''}
+                  </div>
+                )}
               </button>
             );
           })}
         </nav>
 
-        <div className="p-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="truncate pr-2">
-              <p className="text-white font-bold truncate">{user?.fullName}</p>
-              <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
-            </div>
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
-              {user?.role}
-            </span>
-          </div>
+        {/* Sidebar Footer with Collapse/Expand Action & Logout */}
+        <div className="p-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-2">
+          {!sidebarCollapsed ? (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="truncate pr-2">
+                  <p className="text-white font-bold truncate">{user?.fullName}</p>
+                  <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
+                </div>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                  {user?.role}
+                </span>
+              </div>
 
-          <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
-            <button
-              onClick={() => navigate('/')}
-              className="flex-1 py-1.5 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-semibold transition text-center cursor-pointer"
-            >
-              Public Site
-            </button>
-            <button
-              onClick={async () => {
-                await logout();
-                navigate('/login');
-              }}
-              className="py-1.5 px-2.5 rounded bg-rose-900/30 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 hover:text-white text-[10px] font-semibold transition flex items-center gap-1 cursor-pointer"
-              title="Sign Out"
-            >
-              <LogOut className="w-3 h-3" />
-              <span>Logout</span>
-            </button>
-          </div>
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="flex-1 py-1.5 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-semibold transition text-center cursor-pointer"
+                >
+                  Public Site
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await logout();
+                    navigate('/login');
+                  }}
+                  className="py-1.5 px-2.5 rounded bg-rose-900/30 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 hover:text-white text-[10px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>Logout</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={toggleSidebarCollapse}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-[11px] font-medium transition cursor-pointer border border-slate-800"
+                title="Collapse sidebar (Alt+S)"
+              >
+                <span className="flex items-center gap-1.5">
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Collapse sidebar</span>
+                </span>
+                <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-700/60 text-slate-300">
+                  Alt+S
+                </span>
+              </button>
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleSidebarCollapse}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer border border-slate-700/60"
+                title="Expand sidebar (Alt+S)"
+                aria-label="Expand sidebar"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                title="Public Site"
+                aria-label="Public Site"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await logout();
+                  navigate('/login');
+                }}
+                className="p-2 rounded-lg bg-rose-900/30 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 hover:text-white transition cursor-pointer"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
-      {/* Main Admin Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      {/* Mobile Slide-Out Navigation Drawer (Small Screens & Tablets) */}
+      {mobileDrawerOpen && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Admin Navigation Menu"
+        >
+          {/* Backdrop Overlay */}
+          <div
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs transition-opacity animate-fadeIn"
+            onClick={() => setMobileDrawerOpen(false)}
+            aria-hidden="true"
+          />
+
+          {/* Drawer Panel */}
+          <div className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-slate-900 text-slate-300 flex flex-col shadow-2xl z-50 animate-slideIn border-r border-slate-800">
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-sm font-bold text-white tracking-wide">Super Admin</h1>
+                  <p className="text-[10px] text-blue-400 font-medium">CA Exam Checker AI</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileDrawerOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                aria-label="Close navigation menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Navigation Items in Mobile Drawer */}
+            <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive =
+                  activeSection === item.id ||
+                  (item.id === 'promo-codes' && activeSection === 'referrals');
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      navigate(`/admin/${item.id}`);
+                      setMobileDrawerOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="flex-1 text-left">{item.label}</span>
+                    {item.badge !== undefined && item.badge > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Mobile Drawer Footer with User Credentials and Actions */}
+            <div className="p-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-2.5 bg-slate-900/90">
+              <div className="flex items-center justify-between">
+                <div className="truncate pr-2">
+                  <p className="text-white font-bold truncate">{user?.fullName}</p>
+                  <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
+                </div>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                  {user?.role}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileDrawerOpen(false);
+                    navigate('/');
+                  }}
+                  className="flex-1 py-1.5 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-semibold transition text-center cursor-pointer"
+                >
+                  Public Site
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setMobileDrawerOpen(false);
+                    await logout();
+                    navigate('/login');
+                  }}
+                  className="py-1.5 px-2.5 rounded bg-rose-900/30 hover:bg-rose-900/60 border border-rose-800/50 text-rose-300 hover:text-white text-[10px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>Logout</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Admin Content Area (Uses Full Viewport on Mobile) */}
+      <div className="flex-1 flex flex-col min-w-0 w-full overflow-hidden">
         {/* Admin Header Bar */}
-        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <h2 className="text-sm font-bold text-slate-900 capitalize tracking-tight">
-              {navItems.find((n) => n.id === activeSection)?.label || 'Overview'}
-            </h2>
-            <span className="text-xs text-slate-400">/admin/{activeSection}</span>
+        <header className="h-14 bg-white border-b border-slate-200 px-3.5 sm:px-6 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            {/* Mobile Hamburger Menu Toggle Button */}
+            <button
+              id="admin-mobile-nav-toggle"
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="lg:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer shrink-0"
+              aria-label="Open Admin Navigation Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="lg:hidden text-xs font-bold text-blue-600 tracking-tight shrink-0">Super Admin</span>
+                <span className="lg:hidden text-slate-300">/</span>
+                <h2 className="text-sm font-bold text-slate-900 capitalize tracking-tight truncate">
+                  {navItems.find((n) => n.id === activeSection)?.label || 'Overview'}
+                </h2>
+              </div>
+              <span className="hidden lg:inline text-xs text-slate-400">/admin/{activeSection}</span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {/* Real-time Indicator */}
             <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium border border-emerald-200">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -1265,19 +1575,32 @@ export const AdminPortal: React.FC = () => {
             </div>
 
             <button
+              type="button"
               onClick={loadActiveSectionData}
               disabled={loadingData}
-              className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition"
+              className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer"
               title="Refresh Data"
+              aria-label="Refresh Data"
             >
               <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin text-blue-600' : ''}`} />
+            </button>
+
+            {/* Mobile Quick Profile Trigger to Settings */}
+            <button
+              type="button"
+              onClick={() => navigate('/admin/settings')}
+              className="lg:hidden w-8 h-8 rounded-lg bg-slate-900 text-white font-bold text-xs flex items-center justify-center cursor-pointer hover:bg-slate-800 transition"
+              title={`${user?.fullName || 'Admin'} (${user?.role})`}
+              aria-label="Admin Settings & Profile"
+            >
+              {(user?.fullName || 'A').charAt(0).toUpperCase()}
             </button>
           </div>
         </header>
 
         {/* Status Alerts */}
         {errorMsg && (
-          <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between">
+          <div className="mx-3.5 sm:mx-6 mt-3 sm:mt-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{errorMsg}</span>
@@ -1287,7 +1610,7 @@ export const AdminPortal: React.FC = () => {
         )}
 
         {successMsg && (
-          <div className="mx-6 mt-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between">
+          <div className="mx-3.5 sm:mx-6 mt-3 sm:mt-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
               <span>{successMsg}</span>
@@ -1297,7 +1620,7 @@ export const AdminPortal: React.FC = () => {
         )}
 
         {/* Dynamic Section Content */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 lg:p-8">
           {loadingData && (
             <div className="py-12 flex flex-col items-center justify-center gap-3">
               <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
@@ -1307,6 +1630,17 @@ export const AdminPortal: React.FC = () => {
 
           {!loadingData && (
             <>
+              {/* STUDENT REVIEWS & FEEDBACK MODERATION */}
+              {activeSection === 'reviews' && (
+                <AdminReviewsSection
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                  onRefreshPendingCount={fetchPendingReviewsCount}
+                />
+              )}
+
               {/* MATERIAL MANAGEMENT */}
               {activeSection === 'materials' && (
                 <MaterialManagement
@@ -1346,7 +1680,7 @@ export const AdminPortal: React.FC = () => {
               {activeSection === 'dashboard' && dashboardData && (
                 <div className="space-y-6">
                   {/* Top Stats Metrics */}
-                  <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
                       <p className="text-xs text-slate-500 font-medium">Total Users</p>
                       <p className="text-xl font-bold text-slate-900 mt-1">{dashboardData.metrics?.totalUsers || 0}</p>
@@ -1380,25 +1714,25 @@ export const AdminPortal: React.FC = () => {
                   </div>
 
                   {/* Recent Activity & Recent Evaluations */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                    <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-xs">
                       <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center justify-between">
                         <span>Recent Completed Evaluations</span>
-                        <Link to="/admin/evaluations" className="text-blue-600 hover:underline text-[11px] normal-case font-normal">View all</Link>
+                        <Link to="/admin/evaluations" className="text-blue-600 hover:underline text-[11px] normal-case font-medium">View all</Link>
                       </h3>
                       <div className="space-y-3">
                         {dashboardData.recentEvaluations?.length === 0 && (
                           <p className="text-xs text-slate-400 italic">No evaluations recorded yet.</p>
                         )}
                         {dashboardData.recentEvaluations?.map((ev: any) => (
-                          <div key={ev.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
-                            <div>
-                              <p className="font-bold text-slate-800">{ev.subject_name}</p>
-                              <p className="text-[10px] text-slate-500">{ev.student_name} ({ev.level})</p>
+                          <div key={ev.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between gap-3 text-xs">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-slate-800 truncate">{ev.subject_name}</p>
+                              <p className="text-[10px] text-slate-500 truncate">{ev.student_name} ({ev.level})</p>
                             </div>
-                            <div className="text-right">
-                              <span className="font-mono font-bold text-blue-600 text-sm">{ev.total_marks}/{ev.maximum_marks}</span>
-                              <p className="text-[10px] text-slate-400">{ev.percentage}%</p>
+                            <div className="text-right shrink-0 whitespace-nowrap">
+                              <span className="font-mono font-bold text-blue-600 text-sm tracking-tight">{ev.total_marks}/{ev.maximum_marks}</span>
+                              <p className="text-[10px] text-slate-400 font-medium">{ev.percentage}%</p>
                             </div>
                           </div>
                         ))}

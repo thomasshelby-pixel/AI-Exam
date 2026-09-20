@@ -128,6 +128,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   Pricing
                 </button>
                 <button
+                  id="nav-reviews"
+                  onClick={() => onNavigate('reviews')}
+                  className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+                    currentView === 'reviews'
+                      ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  Reviews
+                </button>
+                <button
                   id="nav-support"
                   onClick={() => onNavigate('contact')}
                   className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
@@ -436,6 +447,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
               >
                 Pricing
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('reviews');
+                  setMobileMenuOpen(false);
+                }}
+                className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
+              >
+                Reviews
               </button>
               <button
                 onClick={() => {

@@ -55,6 +55,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                 </button>
               </li>
               <li>
+                <button onClick={() => onNavigate('reviews')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
+                  Student Reviews & Feedback
+                </button>
+              </li>
+              <li>
                 <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   ICAI MCQ Scoring Rules
                 </button>

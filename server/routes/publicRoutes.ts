@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
+import jwt from 'jsonwebtoken';
 import { db } from '../db.js';
 import { getValidAttemptsForLevel } from '../services/attemptService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
+import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 
 const router = Router();
 
@@ -301,5 +303,263 @@ router.post('/contact', (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Failed to submit inquiry' });
   }
 });
+
+// Public Reviews & Statistics (Transparent Community Showcase, Privacy-Safe)
+export const getPublicReviewsHandler = (req: Request, res: Response) => {
+  try {
+    const { caLevel } = req.query;
+    const sortBy = (req.query.sortBy || req.query.sort) as string | undefined;
+    const limitParam = req.query.limit ? Math.min(Math.max(1, parseInt(String(req.query.limit), 10) || 100), 100) : 100;
+
+    // Optional user identification from auth header to attach personal vote states
+    let currentUserId: string | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        currentUserId = decoded?.id || null;
+      } catch {
+        currentUserId = null;
+      }
+    }
+
+    // Level filter matching both "FOUNDATION" / "CA Foundation", etc.
+    let levelCondition = '';
+    const queryParams: any[] = [];
+
+    if (caLevel && caLevel !== 'ALL') {
+      const clean = String(caLevel).trim().toUpperCase();
+      if (clean.includes('FOUNDATION')) {
+        levelCondition = "AND (UPPER(ca_level) LIKE '%FOUNDATION%')";
+      } else if (clean.includes('INTERMEDIATE')) {
+        levelCondition = "AND (UPPER(ca_level) LIKE '%INTERMEDIATE%')";
+      } else if (clean.includes('FINAL')) {
+        levelCondition = "AND (UPPER(ca_level) LIKE '%FINAL%')";
+      }
+    }
+
+    // Determine sorting
+    let orderByClause = 'ORDER BY created_at DESC';
+    if (sortBy === 'most_liked') {
+      orderByClause = 'ORDER BY likes_count DESC, created_at DESC';
+    }
+
+    // Fetch published reviews
+    const rows = db.prepare(`
+      SELECT id, user_id, display_name, ca_level, rating, review_text,
+             experience_tags, likes_count, dislikes_count,
+             admin_reply, admin_reply_at, admin_reply_name,
+             is_verified_evaluation, created_at
+      FROM reviews
+      WHERE status = 'PUBLISHED' ${levelCondition}
+      ${orderByClause}
+      LIMIT ${limitParam}
+    `).all(...queryParams) as Array<{
+      id: string;
+      user_id: string;
+      display_name: string;
+      ca_level: string;
+      rating: number;
+      review_text: string;
+      experience_tags: string | null;
+      likes_count: number;
+      dislikes_count: number;
+      admin_reply: string | null;
+      admin_reply_at: string | null;
+      admin_reply_name: string | null;
+      is_verified_evaluation: number;
+      created_at: string;
+    }>;
+
+    // Load overall published statistics (across all published reviews for transparency)
+    const allPublished = db.prepare(`
+      SELECT rating FROM reviews WHERE status = 'PUBLISHED'
+    `).all() as Array<{ rating: number }>;
+
+    const totalReviews = allPublished.length;
+    let sumRating = 0;
+    const ratingBreakdown: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+
+    for (const r of allPublished) {
+      sumRating += r.rating;
+      if (ratingBreakdown[r.rating] !== undefined) {
+        ratingBreakdown[r.rating]++;
+      }
+    }
+
+    const averageRating = totalReviews > 0 ? Number((sumRating / totalReviews).toFixed(1)) : 0;
+
+    // If user is authenticated, retrieve user's votes
+    const userVotesMap = new Map<string, 'LIKE' | 'DISLIKE'>();
+    if (currentUserId && rows.length > 0) {
+      const reviewIds = rows.map((r) => r.id);
+      const placeholders = reviewIds.map(() => '?').join(',');
+      const userVotes = db.prepare(`
+        SELECT review_id, vote_type 
+        FROM review_votes 
+        WHERE user_id = ? AND review_id IN (${placeholders})
+      `).all(currentUserId, ...reviewIds) as Array<{ review_id: string; vote_type: 'LIKE' | 'DISLIKE' }>;
+
+      for (const uv of userVotes) {
+        userVotesMap.set(uv.review_id, uv.vote_type);
+      }
+    }
+
+    const reviews = rows.map((r) => {
+      let tags: string[] = [];
+      if (r.experience_tags) {
+        try {
+          tags = typeof r.experience_tags === 'string' ? JSON.parse(r.experience_tags) : r.experience_tags;
+        } catch {
+          tags = [];
+        }
+      }
+
+      return {
+        id: r.id,
+        displayName: r.display_name,
+        caLevel: r.ca_level,
+        rating: r.rating,
+        reviewText: r.review_text,
+        experienceTags: tags,
+        likesCount: r.likes_count || 0,
+        dislikesCount: r.dislikes_count || 0,
+        userVote: userVotesMap.get(r.id) || null,
+        isVerifiedEvaluation: true,
+        adminReply: r.admin_reply || null,
+        adminReplyAt: r.admin_reply_at || null,
+        adminReplyName: r.admin_reply_name || null,
+        isOwnReview: currentUserId ? r.user_id === currentUserId : false,
+        date: r.created_at,
+      };
+    });
+
+    return res.json({
+      reviews,
+      stats: {
+        totalReviews,
+        averageRating,
+        ratingBreakdown,
+      },
+    });
+  } catch (err: unknown) {
+    console.error('Fetch public reviews error:', err);
+    return res.status(500).json({ error: 'Failed to fetch public reviews' });
+  }
+};
+
+router.get('/reviews', getPublicReviewsHandler);
+
+// Upvote / Downvote Review Interaction
+export const votePublicReviewHandler = (req: AuthRequest, res: Response) => {
+  try {
+    const reviewId = req.params.id;
+    const userId = req.user!.id;
+    const { voteType } = req.body;
+
+    if (voteType !== 'LIKE' && voteType !== 'DISLIKE') {
+      return res.status(400).json({ error: 'Invalid voteType. Must be LIKE or DISLIKE.' });
+    }
+
+    // 1. Verify review existence & active published status
+    const review = db.prepare(`
+      SELECT id, user_id, likes_count, dislikes_count, status 
+      FROM reviews 
+      WHERE id = ?
+    `).get(reviewId) as { id: string; user_id: string; likes_count: number; dislikes_count: number; status: string } | undefined;
+
+    if (!review || review.status !== 'PUBLISHED') {
+      return res.status(404).json({ error: 'Review not found or not currently published.' });
+    }
+
+    // 2. Prevent self-voting
+    if (review.user_id === userId) {
+      return res.status(400).json({ error: 'You cannot vote on your own review.' });
+    }
+
+    // 3. Atomic vote state calculation
+    const existingVote = db.prepare(`
+      SELECT id, vote_type FROM review_votes WHERE review_id = ? AND user_id = ?
+    `).get(reviewId, userId) as { id: string; vote_type: 'LIKE' | 'DISLIKE' } | undefined;
+
+    let newUserVote: 'LIKE' | 'DISLIKE' | null = null;
+    let likesDelta = 0;
+    let dislikesDelta = 0;
+
+    if (existingVote) {
+      if (existingVote.vote_type === voteType) {
+        // Toggle OFF (remove vote)
+        db.prepare('DELETE FROM review_votes WHERE id = ?').run(existingVote.id);
+        if (voteType === 'LIKE') likesDelta = -1;
+        else dislikesDelta = -1;
+        newUserVote = null;
+      } else {
+        // Switch vote type
+        db.prepare('UPDATE review_votes SET vote_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(voteType, existingVote.id);
+        if (voteType === 'LIKE') {
+          likesDelta = 1;
+          dislikesDelta = -1;
+        } else {
+          likesDelta = -1;
+          dislikesDelta = 1;
+        }
+        newUserVote = voteType;
+      }
+    } else {
+      // New vote
+      const voteId = `rv_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO review_votes (id, review_id, user_id, vote_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(voteId, reviewId, userId, voteType);
+
+      if (voteType === 'LIKE') likesDelta = 1;
+      else dislikesDelta = 1;
+      newUserVote = voteType;
+    }
+
+    // 4. Update cached counts on reviews table safely
+    db.prepare(`
+      UPDATE reviews 
+      SET likes_count = MAX(0, likes_count + ?),
+          dislikes_count = MAX(0, dislikes_count + ?),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(likesDelta, dislikesDelta, reviewId);
+
+    const updatedCounts = db.prepare(`
+      SELECT likes_count, dislikes_count FROM reviews WHERE id = ?
+    `).get(reviewId) as { likes_count: number; dislikes_count: number };
+
+    // 5. Trigger notification on LIKE (with anti-spam throttling)
+    if (newUserVote === 'LIKE' && review.user_id !== userId) {
+      const recentNotif = db.prepare(`
+        SELECT id FROM notifications 
+        WHERE user_id = ? AND type = 'REVIEW_LIKE' AND created_at > datetime('now', '-5 minute')
+      `).get(review.user_id);
+
+      if (!recentNotif) {
+        const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, title, message, type, read, created_at)
+          VALUES (?, ?, ?, ?, 'REVIEW_LIKE', 0, CURRENT_TIMESTAMP)
+        `).run(notifId, review.user_id, 'Review Liked', 'A fellow CA student liked your review on CA Exam Checker AI.');
+      }
+    }
+
+    return res.json({
+      success: true,
+      userVote: newUserVote,
+      likesCount: updatedCounts.likes_count,
+      dislikesCount: updatedCounts.dislikes_count,
+    });
+  } catch (err: unknown) {
+    console.error('Review vote error:', err);
+    return res.status(500).json({ error: 'Failed to record vote' });
+  }
+};
+
+router.post('/reviews/:id/vote', authenticateToken, votePublicReviewHandler);
 
 export default router;

@@ -11,9 +11,10 @@ import studentRoutes from './server/routes/studentRoutes.js';
 import instituteRoutes from './server/routes/instituteRoutes.js';
 import adminRoutes from './server/routes/adminRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
-import publicRoutes from './server/routes/publicRoutes.js';
+import publicRoutes, { getPublicReviewsHandler, votePublicReviewHandler } from './server/routes/publicRoutes.js';
 import pricingRoutes from './server/routes/pricingRoutes.js';
 import legalRoutes from './server/routes/legalRoutes.js';
+import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
 
 async function startServer() {
@@ -126,6 +127,9 @@ async function startServer() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/payments', paymentRoutes);
   app.use('/api/public', publicRoutes);
+  // Transparent Public Reviews API (supports both /api/reviews and /api/public/reviews)
+  app.get('/api/reviews', getPublicReviewsHandler);
+  app.post('/api/reviews/:id/vote', authenticateToken, votePublicReviewHandler);
   app.use('/api/pricing', pricingRoutes);
   app.use('/api/legal', legalRoutes);
 

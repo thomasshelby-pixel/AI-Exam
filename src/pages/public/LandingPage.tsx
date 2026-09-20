@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2,
   Scale,
@@ -8,23 +8,56 @@ import {
   Zap,
   BookOpen,
   Lock,
+  Star,
+  MessageSquare,
+  ThumbsUp,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
+import { VerifiedStudentBadge } from '../../components/common/VerifiedBadges.js';
+import { apiRequest } from '../../api/client.js';
+import { StudentReview } from '../../types/index.js';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
   onNavigateLogin: () => void;
   onNavigatePricing: () => void;
   onNavigateHowItWorks: () => void;
+  onNavigateReviews?: () => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateRegister,
   onNavigatePricing,
   onNavigateHowItWorks,
+  onNavigateReviews,
 }) => {
   const [modalExam, setModalExam] = useState<ComingSoonExamType | null>(null);
+  const [sampleReviews, setSampleReviews] = useState<StudentReview[]>([]);
+  const [reviewStats, setReviewStats] = useState<{
+    totalReviews: number;
+    averageRating: number;
+  }>({ totalReviews: 0, averageRating: 0 });
+
+  useEffect(() => {
+    const fetchLandingReviews = async () => {
+      try {
+        const res = await apiRequest<{
+          reviews: StudentReview[];
+          stats: { totalReviews: number; averageRating: number };
+        }>('/api/reviews?limit=3&sort=most_liked');
+        if (res.reviews) {
+          setSampleReviews(res.reviews.slice(0, 3));
+        }
+        if (res.stats) {
+          setReviewStats(res.stats);
+        }
+      } catch {
+        // Fallback silently if unauthenticated or error
+      }
+    };
+    fetchLandingReviews();
+  }, []);
 
   return (
     <div className="text-slate-800 dark:text-slate-100 space-y-12 py-6">
@@ -150,6 +183,94 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Full compliance with ICAI examination guidelines: 0 negative marking for Intermediate and Final MCQs, with precise -0.25 negative marking applied specifically for Foundation Quantitative Aptitude and Business Economics.
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* Transparent Student Feedback & Reviews Section */}
+      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 space-y-6 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Transparent &amp; Verified Feedback</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                What CA Students Are Saying
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-xl">
+                Only students with verified real evaluations can post reviews. Unfiltered feedback from Foundation, Intermediate, and Final aspirants.
+              </p>
+            </div>
+
+            {onNavigateReviews && (
+              <button
+                type="button"
+                onClick={onNavigateReviews}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 font-bold text-xs transition self-start sm:self-auto cursor-pointer"
+              >
+                <span>Read All Reviews</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {sampleReviews.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {sampleReviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex flex-col justify-between space-y-3"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center text-amber-400">
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <Star
+                            key={s}
+                            className={`w-3.5 h-3.5 ${
+                              s <= rev.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-300 dark:text-slate-600'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                        CA {rev.caLevel}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-700 dark:text-slate-200 italic line-clamp-4 leading-relaxed">
+                      "{rev.reviewText}"
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {rev.displayName}
+                      </span>
+                      <VerifiedStudentBadge showText={false} />
+                    </div>
+
+                    <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                      <ThumbsUp className="w-3 h-3 text-slate-400" />
+                      {rev.likesCount || 0}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center space-y-2">
+              <MessageSquare className="w-8 h-8 text-blue-500 mx-auto opacity-70" />
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Join our community of Chartered Accountancy aspirants.
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Complete your first evaluation and share your authentic feedback with fellow CA students.
+              </p>
+            </div>
+          )}
         </div>
       </section>
 

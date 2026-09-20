@@ -302,21 +302,21 @@ export const MfaModal: React.FC = () => {
   return (
     <div
       id="mfa-modal-overlay"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn"
       role="dialog"
       aria-modal="true"
       aria-labelledby="mfa-modal-title"
     >
       <div className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
-        <div className="relative px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="relative px-4 sm:px-6 pt-5 sm:pt-6 pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0">
                 {isEnrollMode ? <KeyRound className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
               </div>
-              <div>
-                <h3 id="mfa-modal-title" className="text-base font-bold text-slate-900 dark:text-white">
+              <div className="min-w-0">
+                <h3 id="mfa-modal-title" className="text-base font-bold text-slate-900 dark:text-white truncate">
                   {isEnrollMode ? 'Set Up Authenticator App' : 'Two-Factor Authentication'}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -352,7 +352,7 @@ export const MfaModal: React.FC = () => {
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5 max-h-[calc(100vh-180px)] overflow-y-auto">
+        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 max-h-[calc(100vh-140px)] overflow-y-auto">
           {/* Success Banner */}
           {successMsg && (
             <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center gap-2.5">
@@ -493,7 +493,7 @@ export const MfaModal: React.FC = () => {
               </div>
 
               {/* 6 Digit Input Boxes */}
-              <div className="flex items-center justify-between gap-2 sm:gap-2.5" onPaste={handlePaste}>
+              <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 overflow-x-hidden" onPaste={handlePaste}>
                 {otpDigits.map((digit, idx) => (
                   <input
                     key={idx}
@@ -507,7 +507,7 @@ export const MfaModal: React.FC = () => {
                     onChange={(e) => handleOtpChange(idx, e.target.value)}
                     onKeyDown={(e) => handleKeyDown(idx, e)}
                     disabled={mfaState === 'VERIFYING' || mfaState === 'VERIFIED'}
-                    className="w-12 h-14 text-center text-xl font-bold font-mono text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-xl focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 focus:outline-none transition disabled:opacity-50"
+                    className="w-10 sm:w-12 h-12 sm:h-14 text-center text-lg sm:text-xl font-bold font-mono text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-xl focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 focus:outline-none transition disabled:opacity-50 shrink-0"
                   />
                 ))}
               </div>

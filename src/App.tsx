@@ -22,6 +22,7 @@ import { TermsPage } from './pages/public/TermsPage.js';
 import { PrivacyPolicyPage } from './pages/public/PrivacyPolicyPage.js';
 import { RefundPolicyPage } from './pages/public/RefundPolicyPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
+import { ReviewsPage } from './pages/public/ReviewsPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
@@ -191,6 +192,7 @@ const PublicAndStudentLayout: React.FC<{
   let currentView = 'home';
   if (pathname === '/how-it-works') currentView = 'how-it-works';
   else if (pathname === '/pricing') currentView = 'pricing';
+  else if (pathname === '/reviews') currentView = 'reviews';
   else if (pathname === '/legal') currentView = 'legal';
   else if (pathname === '/contact') currentView = 'contact';
   else if (pathname === '/login') currentView = 'login';
@@ -211,6 +213,9 @@ const PublicAndStudentLayout: React.FC<{
         break;
       case 'pricing':
         navigate('/pricing');
+        break;
+      case 'reviews':
+        navigate('/reviews');
         break;
       case 'legal':
         navigate('/legal');
@@ -338,7 +343,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 const AppRoutes: React.FC = () => {
   const navigate = useNavigate();
-  const { isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, logout } = useAuth();
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState<boolean>(false);
   const [sessionTimedOut, setSessionTimedOut] = useState<boolean>(false);
 
@@ -421,6 +426,7 @@ const AppRoutes: React.FC = () => {
                 onNavigateLogin={() => navigate('/login')}
                 onNavigatePricing={() => navigate('/pricing')}
                 onNavigateHowItWorks={() => navigate('/how-it-works')}
+                onNavigateReviews={() => navigate('/reviews')}
               />
             </PublicAndStudentLayout>
           }
@@ -504,6 +510,20 @@ const AppRoutes: React.FC = () => {
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
               <ContactPage />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/reviews"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <ReviewsPage
+                user={user}
+                onNavigateLogin={() => navigate('/login')}
+                onNavigateRegister={() => navigate('/register')}
+                onNavigateStudentPortal={() => navigate('/student/dashboard')}
+              />
             </PublicAndStudentLayout>
           }
         />

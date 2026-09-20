@@ -789,3 +789,70 @@ export function formatQuestionDisplayCode(q: any): string {
   return `Q${qNum}`;
 }
 
+export type ReviewStatus = 'PUBLISHED' | 'HIDDEN' | 'REMOVED' | 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export type ReviewVoteType = 'LIKE' | 'DISLIKE';
+
+export interface StudentReview {
+  id: string;
+  userId: string;
+  studentName?: string;
+  studentEmail?: string;
+  displayName: string;
+  caLevel: CALevel | string;
+  rating: number;
+  reviewText: string;
+  experienceTags?: string[];
+  status: ReviewStatus;
+  likesCount?: number;
+  dislikesCount?: number;
+  userVote?: ReviewVoteType | null;
+  adminReply?: string | null;
+  adminReplyAt?: string | null;
+  adminReplyBy?: string | null;
+  adminReplyName?: string | null;
+  moderationReason?: string | null;
+  moderatedAt?: string | null;
+  moderatedBy?: string | null;
+  isVerifiedEvaluation?: boolean;
+  moderationNote?: string | null;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicReview {
+  id: string;
+  displayName: string;
+  caLevel: string;
+  rating: number;
+  reviewText: string;
+  experienceTags?: string[];
+  likesCount: number;
+  dislikesCount: number;
+  userVote?: ReviewVoteType | null;
+  isVerifiedEvaluation: boolean;
+  adminReply?: string | null;
+  adminReplyAt?: string | null;
+  adminReplyName?: string | null;
+  date: string;
+}
+
+export interface PublicReviewsResponse {
+  reviews: PublicReview[];
+  stats: {
+    totalReviews: number;
+    averageRating: number;
+    ratingBreakdown: Record<number, number>;
+  };
+}
+
+export interface ReviewEligibilityResponse {
+  eligible: boolean;
+  completedEvaluationsCount: number;
+  message?: string;
+}
+

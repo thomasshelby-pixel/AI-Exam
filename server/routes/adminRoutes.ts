@@ -5376,4 +5376,351 @@ router.get('/email-audit-logs', (req: AuthRequest, res: Response) => {
   }
 });
 
+// ============================================================================
+// STUDENT REVIEWS MODERATION QUEUE & MANAGEMENT (TRANSPARENT SYSTEM)
+// ============================================================================
+
+// Get counts for badge display
+router.get('/reviews/pending-count', (req: AuthRequest, res: Response) => {
+  try {
+    const counts = db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'PUBLISHED' THEN 1 ELSE 0 END) as published,
+        SUM(CASE WHEN status = 'HIDDEN' THEN 1 ELSE 0 END) as hidden,
+        SUM(CASE WHEN status = 'REMOVED' THEN 1 ELSE 0 END) as removed
+      FROM reviews
+    `).get() as { total: number; published: number; hidden: number; removed: number };
+
+    return res.json({
+      pendingCount: counts?.hidden || 0, // Hidden reviews requiring review
+      totalCount: counts?.total || 0,
+      publishedCount: counts?.published || 0,
+      hiddenCount: counts?.hidden || 0,
+      removedCount: counts?.removed || 0,
+    });
+  } catch (error: unknown) {
+    console.error('Get reviews count error:', error);
+    return res.status(500).json({ error: 'Failed to fetch reviews count' });
+  }
+});
+
+// List all reviews with filters, pagination, and status breakdown
+router.get('/reviews', (req: AuthRequest, res: Response) => {
+  try {
+    const { status = 'ALL', search = '' } = req.query;
+
+    let query = `
+      SELECT r.*, u.email as user_email_current
+      FROM reviews r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    if (status && status !== 'ALL') {
+      query += ` AND r.status = ?`;
+      params.push(status);
+    }
+
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = `%${search.trim().toLowerCase()}%`;
+      query += ` AND (LOWER(r.student_name) LIKE ? OR LOWER(r.student_email) LIKE ? OR LOWER(r.review_text) LIKE ? OR LOWER(r.display_name) LIKE ?)`;
+      params.push(term, term, term, term);
+    }
+
+    query += ` ORDER BY r.created_at DESC`;
+
+    const rows = db.prepare(query).all(...params) as any[];
+
+    // Calculate status counts
+    const counts = db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'PUBLISHED' THEN 1 ELSE 0 END) as published,
+        SUM(CASE WHEN status = 'HIDDEN' THEN 1 ELSE 0 END) as hidden,
+        SUM(CASE WHEN status = 'REMOVED' THEN 1 ELSE 0 END) as removed
+      FROM reviews
+    `).get() as { total: number; published: number; hidden: number; removed: number };
+
+    const reviews = rows.map((r) => {
+      let tags: string[] = [];
+      if (r.experience_tags) {
+        try {
+          tags = typeof r.experience_tags === 'string' ? JSON.parse(r.experience_tags) : r.experience_tags;
+        } catch {
+          tags = [];
+        }
+      }
+
+      return {
+        id: r.id,
+        userId: r.user_id,
+        studentName: r.student_name,
+        studentEmail: r.student_email || r.user_email_current,
+        displayName: r.display_name,
+        caLevel: r.ca_level,
+        rating: r.rating,
+        reviewText: r.review_text,
+        experienceTags: tags,
+        status: r.status,
+        likesCount: r.likes_count || 0,
+        dislikesCount: r.dislikes_count || 0,
+        adminReply: r.admin_reply,
+        adminReplyAt: r.admin_reply_at,
+        adminReplyName: r.admin_reply_name,
+        moderationReason: r.moderation_reason || r.moderation_note,
+        moderatedAt: r.moderated_at,
+        moderatedBy: r.moderated_by,
+        isVerifiedEvaluation: r.is_verified_evaluation === 1,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    });
+
+    return res.json({
+      reviews,
+      counts: {
+        total: counts?.total || 0,
+        published: counts?.published || 0,
+        hidden: counts?.hidden || 0,
+        removed: counts?.removed || 0,
+        // Backward compatibility:
+        pending: counts?.hidden || 0,
+        approved: counts?.published || 0,
+        rejected: counts?.removed || 0,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('List admin reviews error:', error);
+    return res.status(500).json({ error: 'Failed to fetch reviews' });
+  }
+});
+
+// Update review moderation status (PUBLISHED / HIDDEN / REMOVED)
+router.patch('/reviews/:id/status', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, reason, moderationNote } = req.body;
+    const adminId = req.user!.id;
+
+    // Normalizing status inputs
+    let targetStatus = status;
+    if (status === 'APPROVED') targetStatus = 'PUBLISHED';
+    if (status === 'REJECTED') targetStatus = 'HIDDEN';
+
+    if (!['PUBLISHED', 'HIDDEN', 'REMOVED'].includes(targetStatus)) {
+      return res.status(400).json({ error: 'Invalid review status. Must be PUBLISHED, HIDDEN, or REMOVED.' });
+    }
+
+    const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (!review) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    const modReason = typeof reason === 'string' && reason.trim() ? reason.trim() : (typeof moderationNote === 'string' ? moderationNote.trim() : null);
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      UPDATE reviews
+      SET status = ?,
+          moderation_reason = ?,
+          moderated_at = CURRENT_TIMESTAMP,
+          moderated_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(targetStatus, modReason, adminId, id);
+
+    // Audit log
+    const auditId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address)
+      VALUES (?, ?, ?, 'REVIEW', ?, ?, ?)
+    `).run(
+      auditId,
+      adminId,
+      `REVIEW_MODERATED_${targetStatus}`,
+      id,
+      JSON.stringify({ oldStatus: review.status, newStatus: targetStatus, studentId: review.user_id, reason: modReason }),
+      req.ip || '0.0.0.0'
+    );
+
+    // Review moderation audit table
+    try {
+      const rmaId = `rma_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO review_moderation_audits (id, review_id, admin_id, action, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(rmaId, id, adminId, targetStatus, modReason);
+    } catch (auditErr) {
+      console.warn('Moderation audit insert warning:', auditErr);
+    }
+
+    // Sync updated review to Firestore
+    syncRecordToFirestore('reviews', id, {
+      id,
+      user_id: review.user_id,
+      student_name: review.student_name,
+      student_email: review.student_email,
+      display_name: review.display_name,
+      ca_level: review.ca_level,
+      rating: review.rating,
+      review_text: review.review_text,
+      status: targetStatus,
+      moderation_reason: modReason,
+      moderated_at: now,
+      moderated_by: adminId,
+      updated_at: now,
+    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing review update to Firestore:', syncErr));
+
+    return res.json({
+      success: true,
+      message: `Review marked as ${targetStatus}.`,
+      review: {
+        id,
+        status: targetStatus,
+        moderationReason: modReason,
+        moderatedAt: now,
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Update review status error:', error);
+    return res.status(500).json({ error: 'Failed to update review status' });
+  }
+});
+
+// Official Admin Reply (Add or Update)
+router.post('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const rawReply = req.body.replyText ?? req.body.reply;
+    const replyText = typeof rawReply === 'string' ? rawReply : '';
+    const adminId = req.user!.id;
+
+    if (typeof replyText !== 'string' || replyText.trim().length === 0) {
+      return res.status(400).json({ error: 'Official response text is required.' });
+    }
+
+    if (replyText.trim().length > 1000) {
+      return res.status(400).json({ error: 'Official response cannot exceed 1000 characters.' });
+    }
+
+    const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (!review) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    const cleanReply = replyText.trim();
+    const replyName = 'CA Exam Checker AI';
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      UPDATE reviews
+      SET admin_reply = ?,
+          admin_reply_at = CURRENT_TIMESTAMP,
+          admin_reply_by = ?,
+          admin_reply_name = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(cleanReply, adminId, replyName, id);
+
+    // Notify author
+    const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type, read, created_at)
+      VALUES (?, ?, 'Official Response Received', 'CA Exam Checker AI posted an official response to your review.', 'ADMIN_REPLY', 0, CURRENT_TIMESTAMP)
+    `).run(notifId, review.user_id);
+
+    // Sync to Firestore
+    syncRecordToFirestore('reviews', id, {
+      id,
+      admin_reply: cleanReply,
+      admin_reply_at: now,
+      admin_reply_by: adminId,
+      admin_reply_name: replyName,
+      updated_at: now,
+    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing admin reply to Firestore:', syncErr));
+
+    return res.json({
+      success: true,
+      message: 'Official response published successfully.',
+      adminReply: cleanReply,
+      adminReplyAt: now,
+      adminReplyName: replyName,
+    });
+  } catch (error: unknown) {
+    console.error('Post admin reply error:', error);
+    return res.status(500).json({ error: 'Failed to post official response' });
+  }
+});
+
+// Remove Official Admin Reply
+router.delete('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    const review = db.prepare('SELECT id, user_id FROM reviews WHERE id = ?').get(id) as any;
+    if (!review) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    db.prepare(`
+      UPDATE reviews
+      SET admin_reply = NULL,
+          admin_reply_at = NULL,
+          admin_reply_by = NULL,
+          admin_reply_name = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+
+    return res.json({
+      success: true,
+      message: 'Official response removed.',
+    });
+  } catch (error: unknown) {
+    console.error('Delete admin reply error:', error);
+    return res.status(500).json({ error: 'Failed to delete official response' });
+  }
+});
+
+// Delete review permanently
+router.delete('/reviews/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (!review) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    db.prepare('DELETE FROM reviews WHERE id = ?').run(id);
+
+    // Audit log
+    const auditId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address)
+      VALUES (?, ?, 'REVIEW_DELETED', 'REVIEW', ?, ?, ?)
+    `).run(
+      auditId,
+      adminId,
+      id,
+      JSON.stringify({ studentId: review.user_id, studentName: review.student_name, rating: review.rating }),
+      req.ip || '0.0.0.0'
+    );
+
+    // Tombstone and delete from Firestore
+    permanentlyDeleteFromFirestore('reviews', id).catch((delErr) =>
+      console.warn('[ReviewSync] Warning deleting review from Firestore:', delErr)
+    );
+
+    return res.json({ success: true, message: 'Review has been permanently removed.' });
+  } catch (error: unknown) {
+    console.error('Delete review error:', error);
+    return res.status(500).json({ error: 'Failed to delete review' });
+  }
+});
+
 export default router;
