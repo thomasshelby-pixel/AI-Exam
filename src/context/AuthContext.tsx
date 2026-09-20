@@ -13,7 +13,7 @@ export interface SuspendedAccountInfo {
 
 export interface MfaChallengeState {
   isOpen: boolean;
-  mode: 'CHALLENGE' | 'ENROLL';
+  mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY';
   mfaSessionToken: string;
   canonicalPhoneE164?: string;
   maskedPhone?: string;
@@ -34,9 +34,17 @@ interface AuthContextType {
   mfaChallenge: MfaChallengeState | null;
   triggerMfaEnrollment: (phone?: string) => void;
   triggerMfaChallenge: () => Promise<void>;
+  switchMfaMode: (mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY') => void;
   cancelMfaChallenge: () => void;
   closeMfaModal: () => void;
   verifyMfaChallenge: (otpCode: string) => Promise<User>;
+  verifyMfaRecoveryCode: (recoveryCode: string) => Promise<{ user: User; remainingCodes: number; warning?: string }>;
+  generateRecoveryCodes: () => Promise<{ recoveryCodes: string[]; total: number }>;
+  getRecoveryCodeStatus: () => Promise<{ total: number; remaining: number; hasCodes: boolean; generatedAt: string | null }>;
+  getAuthenticators: () => Promise<Array<{ id: string; factorType: string; label: string; createdAt: string; lastUsedAt?: string | null }>>;
+  enrollBackupAuthenticator: (label: string, firebaseFactorUid?: string) => Promise<any>;
+  removeAuthenticator: (authenticatorId: string) => Promise<void>;
+  submitManualRecoveryRequest: (data: { email: string; phone?: string; srnRegNo?: string; reason: string }) => Promise<{ success: boolean; requestId?: string; message?: string }>;
   resendMfaChallenge: () => Promise<void>;
   sendMfaEnrollCode: (phone: string) => Promise<{ maskedPhone: string }>;
   verifyMfaEnroll: (phone: string, otpCode?: string, verificationId?: string, idToken?: string) => Promise<User>;
@@ -270,6 +278,136 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return verifiedUser;
+  };
+
+  const switchMfaMode = (mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY') => {
+    if (mfaChallenge) {
+      setMfaChallenge({
+        ...mfaChallenge,
+        mode,
+      });
+    } else {
+      setMfaChallenge({
+        isOpen: true,
+        mode,
+        mfaSessionToken: '',
+        role: user?.role,
+      });
+    }
+  };
+
+  const verifyMfaRecoveryCode = async (
+    recoveryCode: string
+  ): Promise<{ user: User; remainingCodes: number; warning?: string }> => {
+    const deviceId = getOrCreateDeviceId();
+    const res = await apiRequest<{
+      token: string;
+      user: User;
+      trustToken?: string;
+      remainingCodes: number;
+      warning?: string;
+    }>('/api/auth/mfa/recovery-codes/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        mfaSessionToken: mfaChallenge?.mfaSessionToken,
+        recoveryCode,
+        deviceId,
+      }),
+    });
+
+    logMfaDiagnostic('recovery code verified successfully', {
+      remainingCodes: res.remainingCodes,
+    });
+
+    if (res.trustToken) {
+      localStorage.setItem('ca_device_trust_token', res.trustToken);
+    }
+
+    if (res.token) {
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+    }
+
+    const verifiedUser: User = {
+      ...res.user,
+      mfaEnabled: true,
+      mfaVerified: true,
+    };
+    setUser(verifiedUser);
+    setSuspendedAccount(null);
+
+    const onSuccessCb = mfaChallenge?.onSuccess;
+    setMfaChallenge(null);
+
+    try {
+      await refreshUser();
+    } catch {
+      // Keep verifiedUser
+    }
+
+    if (onSuccessCb) {
+      onSuccessCb(verifiedUser);
+    }
+
+    return { user: verifiedUser, remainingCodes: res.remainingCodes, warning: res.warning };
+  };
+
+  const generateRecoveryCodes = async (): Promise<{ recoveryCodes: string[]; total: number }> => {
+    return await apiRequest<{ success: boolean; recoveryCodes: string[]; total: number }>(
+      '/api/auth/mfa/recovery-codes/generate',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mfaSessionToken: mfaChallenge?.mfaSessionToken,
+        }),
+      }
+    );
+  };
+
+  const getRecoveryCodeStatus = async (): Promise<{
+    total: number;
+    remaining: number;
+    hasCodes: boolean;
+    generatedAt: string | null;
+  }> => {
+    return await apiRequest('/api/auth/mfa/recovery-codes/status');
+  };
+
+  const getAuthenticators = async () => {
+    const res = await apiRequest<{ success: boolean; authenticators: any[] }>(
+      '/api/auth/mfa/authenticators'
+    );
+    return res.authenticators || [];
+  };
+
+  const enrollBackupAuthenticator = async (label: string, firebaseFactorUid?: string) => {
+    return await apiRequest('/api/auth/mfa/backup-authenticator/enroll', {
+      method: 'POST',
+      body: JSON.stringify({ label, firebaseFactorUid }),
+    });
+  };
+
+  const removeAuthenticator = async (authenticatorId: string): Promise<void> => {
+    await apiRequest('/api/auth/mfa/authenticators/remove', {
+      method: 'POST',
+      body: JSON.stringify({ authenticatorId }),
+    });
+    await refreshUser();
+  };
+
+  const submitManualRecoveryRequest = async (data: {
+    email: string;
+    phone?: string;
+    srnRegNo?: string;
+    reason: string;
+  }) => {
+    return await apiRequest<{ success: boolean; requestId?: string; message?: string }>(
+      '/api/auth/mfa/recovery-request',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
   };
 
   const disableMfa = async (): Promise<void> => {
@@ -544,9 +682,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mfaChallenge,
         triggerMfaEnrollment,
         triggerMfaChallenge,
+        switchMfaMode,
         cancelMfaChallenge,
         closeMfaModal,
         verifyMfaChallenge,
+        verifyMfaRecoveryCode,
+        generateRecoveryCodes,
+        getRecoveryCodeStatus,
+        getAuthenticators,
+        enrollBackupAuthenticator,
+        removeAuthenticator,
+        submitManualRecoveryRequest,
         resendMfaChallenge,
         sendMfaEnrollCode,
         verifyMfaEnroll,

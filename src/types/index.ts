@@ -41,6 +41,47 @@ export interface User {
   mfaMandatory?: boolean;
 }
 
+export interface MfaRecoveryCodeStatus {
+  total: number;
+  remaining: number;
+  hasCodes: boolean;
+  generatedAt: string | null;
+}
+
+export interface MfaAuthenticatorItem {
+  id: string;
+  userId: string;
+  factorType: 'PRIMARY_TOTP' | 'BACKUP_TOTP';
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string | null;
+}
+
+export interface MfaAuditLogItem {
+  id: string;
+  userId: string;
+  eventType: string;
+  ipAddress?: string;
+  userAgent?: string;
+  status: 'SUCCESS' | 'FAILURE';
+  details?: string;
+  createdAt: string;
+}
+
+export interface MfaRecoveryRequest {
+  id: string;
+  userId?: string;
+  email: string;
+  phone?: string;
+  srnRegNo?: string;
+  reason: string;
+  status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+  adminNotes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}
+
 export interface StudentProfile {
   userId: string;
   icaiRegistrationNumber: string;

@@ -4124,15 +4124,13 @@ router.get('/models', (req: AuthRequest, res: Response) => {
 
     const fallbackHierarchy = [
       { order: 0, modelId: 'gemini-3.8-flash', provider: 'gemini', role: 'Primary CA Evaluation' },
-      { order: 1, modelId: 'gemini-3.7-flash', provider: 'gemini', role: 'Fast Multimodal' },
-      { order: 2, modelId: 'gemini-3.6-flash', provider: 'gemini', role: 'Standard Fallback' },
-      { order: 3, modelId: 'gemini-3.5-flash', provider: 'gemini', role: 'High-Volume Backup' },
-      { order: 4, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Ultra-Fast Fallback' },
-      { order: 5, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Reasoning (Legal/Tax/Audit)' },
-      { order: 6, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
-      { order: 7, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
-      { order: 8, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
-      { order: 9, modelId: 'gemini-3.1-pro-preview', provider: 'gemini', role: 'Deep Reasoning Preview' },
+      { order: 1, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Fast Multimodal & High-Volume Fallback' },
+      { order: 2, modelId: 'gemini-flash-latest', provider: 'gemini', role: 'Production Flash Fallback' },
+      { order: 3, modelId: 'gemini-3.1-pro-preview', provider: 'gemini', role: 'Deep Reasoning Preview' },
+      { order: 4, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Reasoning (Legal/Tax/Audit)' },
+      { order: 5, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
+      { order: 6, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
+      { order: 7, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
     ];
 
     return res.json({

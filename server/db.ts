@@ -1521,7 +1521,7 @@ function seedInitialData() {
     { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'PAPER_SPECIFIC_CONFIGURED', description: 'Paper-specific MCQ negative marking rules configured in mcq_scoring_rules table' },
     { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
     { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
-    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-3.6-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
+    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-flash-latest', description: 'Secondary fallback AI model for high-demand 503 conditions' },
     { key: 'EVAL_MAX_RETRIES', value: '3', description: 'Maximum retry attempts with exponential backoff for transient Gemini API errors' },
     { key: 'EVAL_TIMEOUT_SECONDS', value: '90', description: 'Maximum request timeout in seconds for AI evaluation call' },
     { key: 'REFERRAL_AI30_MAX_USERS', value: '20', description: 'Maximum eligible referred users cap for promo code AI30' },
@@ -2447,8 +2447,8 @@ function seedModelConfigs() {
 
   db.prepare(`
     UPDATE pricing_settings
-    SET value = 'claude-opus-5'
-    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}))
+    SET value = 'gemini-flash-latest'
+    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}) OR value = 'claude-opus-5' OR value LIKE '%3.6%')
   `).run(...approvedIds);
 
   db.prepare(`

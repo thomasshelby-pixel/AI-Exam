@@ -297,10 +297,16 @@ export function extractRetryDelayMs(errMsg: string, defaultMs = 30000): number {
 export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string) {
   const existing = providerCreditExhaustedUntil.get(provider);
   const now = Date.now();
-  providerCreditExhaustedUntil.set(provider, now + 5 * 60 * 1000);
+  // Keep provider marked credit-exhausted for 24 hours so we do not repeatedly retry depleted accounts
+  providerCreditExhaustedUntil.set(provider, now + 24 * 60 * 60 * 1000);
   if (!existing || now > existing) {
-    console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS for 5 minutes: ${reason || 'credit balance too low'}`);
+    console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${reason || 'credit balance too low'}`);
   }
+  try {
+    db.prepare(
+      "UPDATE model_configs SET status = 'INSUFFICIENT_CREDITS', health_details = ?, last_tested_at = CURRENT_TIMESTAMP WHERE provider = ?"
+    ).run(reason ? reason.slice(0, 250) : 'Credit balance depleted', provider);
+  } catch {}
 }
 
 export function clearProviderCreditExhausted(provider: ModelProviderType) {
@@ -309,12 +315,20 @@ export function clearProviderCreditExhausted(provider: ModelProviderType) {
 
 export function isProviderCreditExhausted(provider: ModelProviderType): boolean {
   const until = providerCreditExhaustedUntil.get(provider);
-  if (!until) return false;
-  if (Date.now() > until) {
-    providerCreditExhaustedUntil.delete(provider);
-    return false;
+  if (until && Date.now() < until) {
+    return true;
   }
-  return true;
+  if (until && Date.now() >= until) {
+    providerCreditExhaustedUntil.delete(provider);
+  }
+  // Check if active models for this provider are recorded with INSUFFICIENT_CREDITS in DB
+  try {
+    const rows = db.prepare("SELECT status FROM model_configs WHERE provider = ?").all(provider) as { status: string }[];
+    if (rows.length > 0 && rows.every((r) => r.status === 'INSUFFICIENT_CREDITS')) {
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 /**
@@ -343,11 +357,17 @@ export function isModelCoolingDown(modelId: string): boolean {
   return true;
 }
 
-// Check database for any previously rate-limited models on startup and cool them down
+// Check database for any previously rate-limited or credit-exhausted models on startup
 try {
   const rateLimitedRows = db.prepare("SELECT id FROM model_configs WHERE status = 'RATE_LIMITED' OR status = 'TEMPORARILY_UNAVAILABLE'").all() as { id: string }[];
   for (const r of rateLimitedRows) {
     markModelTemporarilyUnavailable(r.id, 5 * 60 * 1000, 'Restored unavailable state from DB');
+  }
+
+  const creditExhaustedRows = db.prepare("SELECT id, provider, health_details FROM model_configs WHERE status = 'INSUFFICIENT_CREDITS'").all() as { id: string; provider: ModelProviderType; health_details?: string }[];
+  for (const r of creditExhaustedRows) {
+    markProviderCreditExhausted(r.provider, r.health_details || 'Restored credit exhaustion state from DB');
+    markModelTemporarilyUnavailable(r.id, 24 * 60 * 60 * 1000, 'Provider account credit balance depleted');
   }
 } catch {
   // Ignore if DB not ready yet
@@ -783,39 +803,47 @@ export function determineModelRouting(context?: {
 
   const isFast = context?.checkingMode === 'fast' || context?.isRoutineOrHighVolume || pageCount > 25;
 
+  const isModelUsable = (mId: string): boolean => {
+    const p = getProviderForModel(mId);
+    if (!isProviderConfigured(p) || isProviderCreditExhausted(p) || isModelCoolingDown(mId)) return false;
+    try {
+      const row = db.prepare('SELECT status, is_enabled FROM model_configs WHERE id = ?').get(mId) as any;
+      return Boolean(row && row.is_enabled === 1 && row.status !== 'INSUFFICIENT_CREDITS' && row.status !== 'FAILED' && row.status !== 'NOT_CONFIGURED');
+    } catch {
+      return true;
+    }
+  };
+
   let defaultGemini = 'gemini-3.8-flash';
   if (isModelCoolingDown(defaultGemini)) {
     defaultGemini = 'gemini-3.1-flash-lite';
   }
   if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-3.6-flash';
+    defaultGemini = 'gemini-flash-latest';
   }
   if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-3.7-flash';
-  }
-  if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-3.5-flash';
+    defaultGemini = 'gemini-3.1-pro-preview';
   }
 
   let selectedModel = defaultGemini;
   let thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = defaultGemini === 'gemini-3.1-flash-lite' ? 'LOW' : 'MEDIUM';
   let routingReason = `Primary CA Evaluation: ${defaultGemini} for step-marking and ICAI compliance`;
 
-  // 1. Honor explicit admin selection if configured and active
-  if (adminModel && APPROVED_MODELS.some((m) => m.id === adminModel) && !isModelCoolingDown(adminModel)) {
+  // 1. Honor explicit admin selection if configured, active, and usable
+  if (adminModel && APPROVED_MODELS.some((m) => m.id === adminModel) && isModelUsable(adminModel)) {
     selectedModel = adminModel;
     const desc = APPROVED_MODELS.find((m) => m.id === adminModel);
     thinkingLevel = desc?.defaultThinkingLevel || 'HIGH';
     routingReason = `Admin Designated: ${desc?.displayName || adminModel} (${desc?.role}) with ${thinkingLevel} thinking`;
-  } else if (isFast && isProviderConfigured('openai') && !isProviderCreditExhausted('openai') && !isModelCoolingDown('gpt-5.6-terra')) {
+  } else if (isFast && isModelUsable('gpt-5.6-terra')) {
     selectedModel = 'gpt-5.6-terra';
     thinkingLevel = 'LOW';
     routingReason = 'Fast High-Volume Routing: OpenAI GPT-5.6 Terra for low-latency multimodal processing';
-  } else if (isLegalAudit && isProviderConfigured('anthropic') && !isProviderCreditExhausted('anthropic') && isFinal && !isModelCoolingDown('claude-opus-5')) {
+  } else if (isLegalAudit && isModelUsable('claude-opus-5') && isFinal) {
     selectedModel = 'claude-opus-5';
     thinkingLevel = 'HIGH';
     routingReason = 'Deep Legal/Audit Routing: Claude Opus 5 for complex statutory interpretation and auditing standards';
-  } else if (isCalcHeavy && isProviderConfigured('openai') && !isProviderCreditExhausted('openai') && isFinal && !isModelCoolingDown('gpt-5.6-sol')) {
+  } else if (isCalcHeavy && isModelUsable('gpt-5.6-sol') && isFinal) {
     selectedModel = 'gpt-5.6-sol';
     thinkingLevel = 'XHIGH';
     routingReason = 'Calculation Heavy Routing: OpenAI GPT-5.6 Sol with extra-high reasoning for complex numerical verification';
@@ -830,14 +858,6 @@ export function determineModelRouting(context?: {
   }
 
   // 2. Build deterministic multi-provider fallback hierarchy:
-  // Preserves primary Gemini hierarchy while seamlessly incorporating Claude and GPT:
-  // - If selectedModel is Gemini (or default):
-  //   Immediate fallbacks: gemini-3.1-flash-lite, gemini-3.6-flash, gemini-3.7-flash, gemini-3.5-flash
-  //   Secondary multi-provider fallbacks: claude-opus-5, gpt-5.6-sol, claude-sonnet-5, gpt-5.6-terra, gemini-3.1-pro-preview
-  // - If selectedModel is external (e.g. admin selected Claude/OpenAI):
-  //   Fallback to other models of that provider, then to Gemini 3.8 Flash and Gemini Flash sister models
-  const isSelectedGemini = selectedModel.startsWith('gemini');
-
   const canonicalFallbackOrder = [
     'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
@@ -857,26 +877,19 @@ export function determineModelRouting(context?: {
     return aCool - bCool;
   });
 
+  // Filter out models that are credit-exhausted, disabled, or unconfigured
+  const usableFallbacks = remaining.filter((m) => isModelUsable(m));
+  const finalFallbackChain = usableFallbacks.length > 0 ? usableFallbacks : remaining.filter((m) => m.startsWith('gemini'));
+
   // Determine cross-check model
   let crossCheckModel: string | undefined;
   if (context?.crossCheckEnabled || (isFinal && isStrict)) {
-    const isModelHealthy = (mId: string) => {
-      const p = getProviderForModel(mId);
-      if (!isProviderConfigured(p) || isProviderCreditExhausted(p)) return false;
-      try {
-        const row = db.prepare('SELECT status, is_enabled FROM model_configs WHERE id = ?').get(mId) as any;
-        return Boolean(row && row.is_enabled === 1 && row.status !== 'INSUFFICIENT_CREDITS' && row.status !== 'FAILED' && row.status !== 'NOT_CONFIGURED');
-      } catch {
-        return true;
-      }
-    };
-
-    if (selectedModel !== 'gpt-5.6-sol' && isModelHealthy('gpt-5.6-sol')) {
+    if (selectedModel !== 'gpt-5.6-sol' && isModelUsable('gpt-5.6-sol')) {
       crossCheckModel = 'gpt-5.6-sol';
-    } else if (selectedModel !== 'claude-opus-5' && isModelHealthy('claude-opus-5')) {
+    } else if (selectedModel !== 'claude-opus-5' && isModelUsable('claude-opus-5')) {
       crossCheckModel = 'claude-opus-5';
-    } else if (selectedModel !== 'gemini-3.7-flash' && isModelHealthy('gemini-3.7-flash')) {
-      crossCheckModel = 'gemini-3.7-flash';
+    } else if (selectedModel !== 'gemini-flash-latest' && isModelUsable('gemini-flash-latest')) {
+      crossCheckModel = 'gemini-flash-latest';
     }
   }
 
@@ -884,7 +897,7 @@ export function determineModelRouting(context?: {
     primaryModel: selectedModel,
     thinkingLevel,
     routingReason,
-    fallbackChain: remaining,
+    fallbackChain: finalFallbackChain,
     crossCheckModel,
   };
 }
@@ -975,6 +988,17 @@ export async function executeModelWithFallback(
       console.info(`[Model Registry] Skipping ${candidateModel} because provider ${provider.toUpperCase()} has exhausted credits.`);
       continue;
     }
+
+    // Skip if model itself is marked INSUFFICIENT_CREDITS or disabled
+    try {
+      const row = db.prepare('SELECT status, is_enabled FROM model_configs WHERE id = ?').get(candidateModel) as any;
+      if (row && (row.is_enabled === 0 || row.status === 'INSUFFICIENT_CREDITS' || row.status === 'NOT_CONFIGURED')) {
+        if (candidateSequence.some((m) => m !== candidateModel)) {
+          console.info(`[Model Registry] Skipping ${candidateModel} because status is ${row.status}.`);
+          continue;
+        }
+      }
+    } catch {}
 
     // If model is cooling down from a recent rate limit or 503 spike, skip if there are later candidates
     if (isModelCoolingDown(candidateModel) && i < candidateSequence.length - 1) {
@@ -1298,6 +1322,7 @@ export async function testModelHealth(
 
   if (targetStage === 'INFERENCE') {
     const totalLatency = Date.now() - overallStart;
+    clearProviderCreditExhausted(provider);
     try {
       db.prepare(
         "UPDATE model_configs SET status = 'INFERENCE_READY', health_stage = 'INFERENCE', health_details = 'Inference verified successfully', last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
@@ -1426,6 +1451,7 @@ TASK: Return strictly a valid JSON object matching this schema:
     };
 
     const totalLatency = Date.now() - overallStart;
+    clearProviderCreditExhausted(provider);
     try {
       db.prepare(
         "UPDATE model_configs SET status = 'EVALUATION_READY', health_stage = 'EVALUATION_READINESS', health_details = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"

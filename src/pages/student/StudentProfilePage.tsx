@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import {
   User,
   Mail,
@@ -1197,120 +1198,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </button>
           </form>
 
-          {/* MULTI-FACTOR AUTHENTICATION (AUTHENTICATOR TOTP) CARD */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Two-Factor Authentication</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Authenticator App (TOTP)</p>
-                </div>
-              </div>
-
-              <span
-                className={`text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${
-                  authUser?.mfaEnabled
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60'
-                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
-                }`}
-              >
-                {authUser?.mfaEnabled ? (
-                  <>
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                    Enabled
-                  </>
-                ) : (
-                  'Disabled (Optional)'
-                )}
-              </span>
-            </div>
-
-            {mfaActionMessage && (
-              <div
-                className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                  mfaActionMessage.type === 'success'
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-                    : 'bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
-                }`}
-              >
-                {mfaActionMessage.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                )}
-                <span>{mfaActionMessage.text}</span>
-              </div>
-            )}
-
-            {authUser?.mfaEnabled ? (
-              <div className="space-y-3">
-                <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Enrolled Factor</span>
-                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                      Authenticator App (Active)
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
-                    Two-factor authentication using Google Authenticator, Microsoft Authenticator, or a compatible TOTP app is active on your student account.
-                  </p>
-                </div>
-
-                {!showDisableConfirm ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowDisableConfirm(true)}
-                    className="w-full py-2 px-3 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold text-xs rounded-xl transition cursor-pointer"
-                  >
-                    Disable Two-Factor Authentication
-                  </button>
-                ) : (
-                  <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl space-y-2">
-                    <p className="text-xs text-rose-800 dark:text-rose-300 font-semibold">
-                      Are you sure you want to disable Two-Factor Authentication?
-                    </p>
-                    <p className="text-[11px] text-rose-700 dark:text-rose-400">
-                      Your account will revert to single-factor password login.
-                    </p>
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={isDisablingMfa}
-                        onClick={handleDisableMfa}
-                        className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition disabled:opacity-50 cursor-pointer"
-                      >
-                        {isDisablingMfa ? 'Disabling...' : 'Confirm Disable'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowDisableConfirm(false)}
-                        className="flex-1 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-lg transition cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Two-factor authentication is optional for students. You can voluntarily enable it to add an extra layer of protection to your evaluations, reports, and purchased credits using Google Authenticator or Microsoft Authenticator.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => triggerMfaEnrollment()}
-                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                >
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Enable Two-Factor Authentication</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* MULTI-FACTOR AUTHENTICATION & RECOVERY ARCHITECTURE CARD */}
+          <MfaSecuritySettingsCard />
 
           {/* 3. EVALUATION CREDITS OVERVIEW CARD */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">

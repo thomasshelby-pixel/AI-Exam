@@ -13,9 +13,11 @@ import { AdminReviewsSection } from '../../components/admin/AdminReviewsSection.
 import { AdminPricingSection } from './AdminPricingSection.js';
 import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
+import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
+  KeyRound,
   Users,
   GraduationCap,
   Building2,
@@ -1238,6 +1240,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'support', label: 'Support', icon: Headphones },
     { id: 'free-access', label: 'Permanent Free', icon: Gift },
     { id: 'promo-codes', label: 'Promo Codes', icon: Sparkles },
+    { id: 'mfa-recovery', label: 'MFA Recovery Requests', icon: KeyRound },
     { id: 'revocation-requests', label: 'Revocation Requests', icon: ShieldAlert },
     { id: 'data-cleanup', label: 'Test Data Cleanup', icon: Trash2 },
     { id: 'legal', label: 'Legal & Policies', icon: Scale },
@@ -3503,6 +3506,11 @@ export const AdminPortal: React.FC = () => {
                     </table>
                   </div>
                 </div>
+              )}
+
+              {/* 19.5 MFA RECOVERY REQUESTS */}
+              {activeSection === 'mfa-recovery' && (
+                <AdminMfaRecoveryRequestsSection />
               )}
 
               {/* 20. REVOCATION REQUESTS */}

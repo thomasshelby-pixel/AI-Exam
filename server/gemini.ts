@@ -56,21 +56,15 @@ export function getAISettings() {
     const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
     let primaryModel = map.EVAL_MODEL_PROVIDER || 'gemini-3.8-flash';
     if (isModelCoolingDown(primaryModel)) {
-      primaryModel = 'gemini-3.7-flash';
-    }
-    if (isModelCoolingDown(primaryModel)) {
-      primaryModel = 'gemini-3.6-flash';
-    }
-    if (isModelCoolingDown(primaryModel)) {
-      primaryModel = 'gemini-3.5-flash';
-    }
-    if (isModelCoolingDown(primaryModel)) {
       primaryModel = 'gemini-3.1-flash-lite';
+    }
+    if (isModelCoolingDown(primaryModel)) {
+      primaryModel = 'gemini-flash-latest';
     }
 
     return {
       primaryModel,
-      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-3.7-flash',
+      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-flash-latest',
       maxRetries: parseInt(map.EVAL_MAX_RETRIES || '3', 10),
       timeoutSeconds: parseInt(map.EVAL_TIMEOUT_SECONDS || '90', 10),
       confidenceThreshold: parseFloat(map.EVAL_CONFIDENCE_THRESHOLD || '75'),
@@ -81,13 +75,11 @@ export function getAISettings() {
     };
   } catch {
     let primaryModel = 'gemini-3.8-flash';
-    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.7-flash';
-    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.6-flash';
-    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.5-flash';
     if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.1-flash-lite';
+    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-flash-latest';
     return {
       primaryModel,
-      fallbackModel: 'gemini-3.7-flash',
+      fallbackModel: 'gemini-flash-latest',
       maxRetries: 3,
       timeoutSeconds: 90,
       confidenceThreshold: 75,

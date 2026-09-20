@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { logMfaDiagnostic, getFirebaseEnrolledPhoneFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
+import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   Building2,
@@ -1870,9 +1871,13 @@ export const InstitutePortal: React.FC = () => {
 
               {/* 12. SETTINGS */}
               {activeSection === 'settings' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl">
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Institute Preferences</h3>
-                  <p className="text-xs text-slate-500 mb-4">Configure evaluation criteria thresholds</p>
+                <div className="space-y-6 max-w-2xl">
+                  {/* Two-Factor Authentication Security Settings */}
+                  <MfaSecuritySettingsCard />
+
+                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+                    <h3 className="text-sm font-bold text-slate-900 mb-1">Institute Preferences</h3>
+                    <p className="text-xs text-slate-500 mb-4">Configure evaluation criteria thresholds</p>
 
                   <div className="space-y-4 text-xs">
                     <div>
@@ -1900,7 +1905,8 @@ export const InstitutePortal: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
             </>
           )}
         </main>
