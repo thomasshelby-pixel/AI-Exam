@@ -121,11 +121,11 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           )}
         </div>
         {showSubtitle ? (
-          <span className="text-[10px] tracking-wider uppercase font-extrabold text-blue-700 dark:text-blue-400 mt-1">
-            Checked Like An Examiner
+          <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 mt-0.5">
+            Checked Like an Examiner
           </span>
         ) : (
-          <span className="text-[9px] tracking-widest uppercase font-semibold text-slate-400 dark:text-slate-400 mt-0.5 hidden sm:inline-block">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5 hidden sm:inline-block">
             Examiner-Style AI Evaluation
           </span>
         )}

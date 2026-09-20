@@ -10,7 +10,7 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   return (
     <footer className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs sm:text-sm transition-colors duration-150">
-      <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-8 mb-8">
           {/* Brand & Mission */}
           <div className="md:col-span-2 space-y-3">
@@ -42,25 +42,25 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
           {/* Quick Links */}
           <div className="space-y-2.5">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">Platform</h4>
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white">Platform</h3>
             <ul className="space-y-1.5 text-xs">
               <li>
-                <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   How AI Evaluation Works
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('pricing')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('pricing')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   Credit Pricing (₹10/Paper)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   ICAI MCQ Scoring Rules
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('contact')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('contact')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   Academic Helpdesk
                 </button>
               </li>
@@ -69,25 +69,25 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
           {/* Student Access */}
           <div className="space-y-2.5">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">Account & Access</h4>
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white">Account & Access</h3>
             <ul className="space-y-1.5 text-xs">
               <li>
-                <button onClick={() => onNavigate('login')} className="hover:text-blue-600 dark:hover:text-blue-400 transition font-medium">
+                <button onClick={() => onNavigate('login')} className="hover:text-blue-600 dark:hover:text-blue-400 transition font-medium cursor-pointer">
                   Student Sign In
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('login', { mode: 'register' } as unknown as string)} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('login', { mode: 'register' } as unknown as string)} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   Create Account (2 Free Checks)
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('pricing')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('pricing')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   Buy Evaluation Credits
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('contact')} className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                <button onClick={() => onNavigate('contact')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   Student Support Desk
                 </button>
               </li>
@@ -96,7 +96,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
           {/* Legal & Compliance */}
           <div className="space-y-2.5">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">Legal & Policies</h4>
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white">Legal & Policies</h3>
             <ul className="space-y-1.5 text-xs">
               <li>
                 <Link to="/terms" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
@@ -124,7 +124,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
 
         {/* Regulatory Disclaimer */}
         <div className="pt-6 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-3">
-          <div className="flex items-start gap-2 bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700/80 text-[11px]">
+          <div className="flex items-start gap-2.5 bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700/80 text-xs">
             <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
             <p className="leading-relaxed text-slate-600 dark:text-slate-300">
               <strong className="text-slate-800 dark:text-white font-bold">ICAI Disclaimer:</strong> CA Exam Checker AI is an independent academic software technology

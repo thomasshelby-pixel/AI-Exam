@@ -254,14 +254,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   return (
     <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">
       {/* Student Welcome Header Banner */}
-      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
               CA {studentProfile?.ca_level || 'INTERMEDIATE'}
             </span>
-            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-              ICAI: {studentProfile?.icai_registration_number || 'REG-PENDING'}
+            <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
+              <span className="font-sans font-medium text-slate-500 dark:text-slate-400">ICAI Reg:</span> {studentProfile?.icai_registration_number || 'CRO0802987'}
             </span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome back, {user?.fullName}</h1>
@@ -275,7 +275,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <button
             id="dashboard-start-check-btn"
             onClick={onNavigateUpload}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm shadow-sm flex items-center gap-2 transition"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm shadow-sm flex items-center gap-2 transition cursor-pointer"
           >
             <FileCheck2 className="w-4 h-4" />
             <span>New Answer Sheet</span>
@@ -286,7 +286,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <button
               id="dashboard-edit-profile-btn"
               onClick={onNavigateProfile}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer"
               title="Edit Profile and Settings"
             >
               <User className="w-4 h-4 text-slate-600 dark:text-slate-400" />
@@ -297,7 +297,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && (
             <button
               onClick={onOpenCreditsModal}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer"
             >
               <CreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <span>Buy Credits</span>
@@ -384,10 +384,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <button
               type="submit"
               disabled={isRedeeming || !dashboardPromoCode.trim()}
-              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-3.5 py-2 rounded-lg text-xs transition shadow-sm disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+              className="bg-white/20 hover:bg-white/30 text-white font-semibold border border-white/30 px-3.5 py-2 rounded-lg text-xs transition shadow-2xs disabled:opacity-50 flex items-center gap-1.5 shrink-0 cursor-pointer focus:ring-2 focus:ring-white/40"
             >
               {isRedeeming ? (
-                <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <Sparkles className="w-3.5 h-3.5" />
               )}
@@ -548,10 +548,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {onNavigateExaminerProfile && (
               <button
                 onClick={onNavigateExaminerProfile}
-                className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm inline-flex items-center gap-2 cursor-pointer"
+                className="px-4 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 font-semibold text-xs transition shadow-2xs inline-flex items-center gap-2 cursor-pointer"
               >
                 <span>View My Examiner Profile</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <ArrowRight className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
               </button>
             )}
           </div>
@@ -857,7 +857,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </tbody>
               </table>
             ) : (
-              <div className="text-center py-12 px-4 space-y-3">
+              <div className="text-center py-6 sm:py-8 px-4 space-y-2.5">
                 <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
                   <FileCheck2 className="w-6 h-6" />
                 </div>
@@ -867,9 +867,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </p>
                 <button
                   onClick={onNavigateUpload}
-                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm"
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-sm inline-flex items-center gap-2 cursor-pointer"
                 >
-                  Start First Evaluation (Free)
+                  <span>Start First Evaluation (Free)</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
@@ -880,8 +881,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         <div className="flex flex-col gap-6">
           {/* AI Performance Summary Card (Directly matching High Density design snippet) */}
           <div className="bg-[#1e293b] rounded-xl p-6 text-white shadow-sm border border-slate-700/50">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4">
-              AI PERFORMANCE SUMMARY
+            <h3 className="text-xs font-bold text-slate-300 mb-4">
+              AI Performance Summary
             </h3>
             <div className="space-y-4">
               <div>
@@ -929,7 +930,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
             </div>
-            <p className="text-[11px] text-slate-400 mt-4 leading-relaxed border-t border-slate-700/60 pt-3">
+            <p className="text-xs text-slate-400 mt-4 leading-relaxed border-t border-slate-700/60 pt-3">
               Calibrated against ICAI suggested answers, accounting standards (AS/Ind AS), and step-marking guidelines.
             </p>
           </div>
@@ -937,7 +938,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* Topics Breakdown */}
           <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 space-y-4">
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 mb-2">
+              <h4 className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 mb-2">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Demonstrated Strengths
               </h4>
@@ -946,7 +947,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {data.strongTopics.map((topic, i) => (
                     <span
                       key={i}
-                      className="px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[11px] font-medium"
+                      className="px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-medium"
                     >
                       {topic}
                     </span>
@@ -960,7 +961,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400 flex items-center gap-1.5 mb-2">
+              <h4 className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5 mb-2">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 Revision Priority (Marks Lost)
               </h4>
@@ -969,7 +970,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {data.weakTopics.map((topic, i) => (
                     <span
                       key={i}
-                      className="px-2.5 py-1 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[11px] font-medium"
+                      className="px-2.5 py-1 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs font-medium"
                     >
                       {topic}
                     </span>
@@ -1029,7 +1030,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Handwritten Answer Content / Extracted Text
                 </label>
-                <p className="text-[11px] text-slate-400 dark:text-slate-400 mb-2">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed">
                   Paste your handwritten answer sheet transcript or draft solution for this test. Our AI will evaluate step-by-step using ICAI evaluation standards and your institute's marking scheme.
                 </p>
                 <textarea

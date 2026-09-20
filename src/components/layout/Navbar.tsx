@@ -86,8 +86,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       AI
                     </span>
                   </div>
-                  <span className="text-[10px] tracking-wider uppercase font-extrabold text-blue-700 dark:text-blue-400 mt-1 whitespace-nowrap">
-                    CHECKED LIKE AN EXAMINER
+                  <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 mt-0.5 whitespace-nowrap">
+                    Checked Like an Examiner
                   </span>
                 </div>
               </div>
@@ -97,10 +97,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
           </div>
 
           {/* Desktop Nav Items */}
-          <nav className="hidden lg:flex items-center gap-1 xl:gap-2 2xl:gap-3.5 shrink min-w-0">
+          <nav className="hidden lg:flex items-center gap-1.5 xl:gap-2.5 2xl:gap-3.5 shrink min-w-0">
             <div className="hidden 2xl:flex items-center gap-2 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shrink-0">
               <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-tight whitespace-nowrap">System Online</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">System Online</span>
             </div>
 
             {!user ? (
@@ -139,37 +139,42 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   Support
                 </button>
 
-                {/* Dark Mode Toggle for Unauthenticated Users */}
-                <button
-                  id="nav-theme-toggle-btn"
-                  type="button"
-                  onClick={toggleTheme}
-                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-                  title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
-                  className="p-1.5 xl:p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer shrink-0"
-                >
-                  {isDark ? (
-                    <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
-                  ) : (
-                    <Moon className="w-4 h-4 text-slate-600 dark:text-slate-400 transition-transform duration-200 hover:-rotate-12" />
-                  )}
-                </button>
+                {/* Right-Side Authentication & Theme Controls with Comfortable Spacing */}
+                <div className="flex items-center gap-2.5 xl:gap-3.5 ml-1.5 shrink-0">
+                  {/* Dark Mode Toggle for Unauthenticated Users */}
+                  <button
+                    id="nav-theme-toggle-btn"
+                    type="button"
+                    onClick={toggleTheme}
+                    aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                    title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode for Evaluators"}
+                    className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/30 cursor-pointer shrink-0"
+                  >
+                    {isDark ? (
+                      <Sun className="w-4 h-4 text-amber-400 transition-transform duration-200 hover:rotate-45" />
+                    ) : (
+                      <Moon className="w-4 h-4 text-slate-600 dark:text-slate-400 transition-transform duration-200 hover:-rotate-12" />
+                    )}
+                  </button>
 
-                <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
-                <button
-                  id="nav-login-btn"
-                  onClick={() => onNavigate('login')}
-                  className="text-xs xl:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white px-3 py-1.5 transition-colors whitespace-nowrap"
-                >
-                  Sign In
-                </button>
-                <button
-                  id="nav-register-btn"
-                  onClick={() => onNavigate('login', { mode: 'register' })}
-                  className="text-xs xl:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg transition shadow-sm whitespace-nowrap shrink-0"
-                >
-                  Get 2 Free Checks
-                </button>
+                  <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
+
+                  <button
+                    id="nav-login-btn"
+                    onClick={() => onNavigate('login')}
+                    className="text-xs xl:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white px-2.5 py-1.5 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+
+                  <button
+                    id="nav-register-btn"
+                    onClick={() => onNavigate('login', { mode: 'register' })}
+                    className="text-xs xl:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition shadow-xs whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Get 2 Free Checks
+                  </button>
+                </div>
               </>
             ) : (
               <>

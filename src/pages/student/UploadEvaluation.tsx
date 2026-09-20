@@ -596,26 +596,26 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         </div>
 
         {/* Entitlement Counter Box */}
-        <div className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg px-3.5 py-2 flex items-center gap-3">
-          <div className="w-7 h-7 rounded-md bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-200/50 dark:border-blue-700/50">
-            <Zap className="w-3.5 h-3.5" />
+        <div className="bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 rounded-xl px-4 py-2.5 flex items-center gap-3.5 shadow-2xs">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <Zap className="w-4 h-4" />
           </div>
           <div>
-            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Evaluation Balance</p>
-            <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
+            <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold">Evaluation Balance</p>
+            <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
               {isInstituteEnrolled ? (
-                <span className="text-blue-600 dark:text-blue-400">Sponsored ({activeInstitute?.institute_name || 'Institute'})</span>
+                <span className="text-blue-700 dark:text-blue-300">Sponsored ({activeInstitute?.institute_name || 'Institute'})</span>
               ) : user?.hasPermanentFreeAccess ? (
-                <span className="text-blue-600 dark:text-blue-400">Active Access</span>
+                <span className="text-blue-700 dark:text-blue-300">Active Access</span>
               ) : studentProfile?.institute_name ? (
-                <span className="text-blue-600 dark:text-blue-400">Institute Sponsored</span>
+                <span className="text-blue-700 dark:text-blue-300">Institute Sponsored</span>
               ) : (
                 <span className="flex flex-wrap items-center gap-1.5">
-                  <span className={freeRemaining > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}>
+                  <span className={freeRemaining > 0 ? 'text-emerald-700 dark:text-emerald-300 font-bold' : 'text-slate-500'}>
                     Free: {freeRemaining}/{freeLimit} remaining this month
                   </span>
                   {purchasedCredits > 0 && (
-                    <span className="text-blue-600 dark:text-blue-400 text-xs">
+                    <span className="text-blue-700 dark:text-blue-300 text-xs font-semibold">
                       • {purchasedCredits} paid credits
                     </span>
                   )}
@@ -626,7 +626,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           {!isInstituteEnrolled && !user?.hasPermanentFreeAccess && !studentProfile?.institute_name && freeRemaining === 0 && purchasedCredits === 0 && (
             <button
               onClick={onOpenCreditsModal}
-              className="ml-1 px-2.5 py-1 text-xs font-bold rounded bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
+              className="ml-1 px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
             >
               Buy Credits
             </button>
@@ -736,12 +736,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
       {/* Dual Evaluation Mode Selector Card */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
             <Scale className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
             Evaluation Benchmark Mode
-          </h3>
-          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+          </h2>
+          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
             {evaluationSource === 'INSTITUTE' ? 'Sponsored by Coaching Academy' : 'Standard ICAI Public Model'}
           </span>
         </div>
@@ -751,32 +751,40 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           <button
             type="button"
             onClick={() => setEvaluationSource('PUBLIC')}
-            className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
+            className={`p-4 rounded-xl border-2 text-left transition relative cursor-pointer flex flex-col justify-between ${
               evaluationSource === 'PUBLIC'
-                ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-500 shadow-xs ring-1 ring-blue-500/20'
+                ? 'bg-blue-50/70 dark:bg-blue-950/40 border-blue-600 dark:border-blue-500 shadow-xs ring-2 ring-blue-500/20'
                 : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
             }`}
           >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                Public AI Evaluation
-              </span>
-              {evaluationSource === 'PUBLIC' && (
-                <span className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400" />
-              )}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  Public AI Evaluation
+                </span>
+                {evaluationSource === 'PUBLIC' ? (
+                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </span>
+                ) : (
+                  <span className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 shrink-0" />
+                )}
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                Checked against official ICAI MTP, RTP &amp; Suggested Answers. {isInstituteEnrolled ? 'Fully covered by institute evaluation allocation.' : 'Uses personal evaluation credits.'}
+              </p>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              Checked against official ICAI MTP, RTP & Suggested Answers. {isInstituteEnrolled ? 'Fully covered by institute evaluation allocation.' : 'Uses personal evaluation credits.'}
-            </p>
-            <div className="mt-2 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 rounded px-2 py-0.5 inline-block">
-              {isInstituteEnrolled
-                ? `Sponsored by ${activeInstitute?.institute_name || 'Institute'} (0 Personal Credits)`
-                : user?.hasPermanentFreeAccess
-                ? 'Unlimited Access'
-                : freeRemaining > 0
-                ? `${freeRemaining} Free Left`
-                : `${purchasedCredits} Credits Available`}
+            <div className="mt-3">
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-900/50 rounded-md px-2.5 py-1 inline-block">
+                {isInstituteEnrolled
+                  ? `Sponsored by ${activeInstitute?.institute_name || 'Institute'} (0 Personal Credits)`
+                  : user?.hasPermanentFreeAccess
+                  ? 'Unlimited Access'
+                  : freeRemaining > 0
+                  ? `${freeRemaining} Free Left`
+                  : `${purchasedCredits} Credits Available`}
+              </span>
             </div>
           </button>
 
@@ -792,32 +800,40 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               }
             }}
             disabled={enrolledInstitutes.length === 0}
-            className={`p-3.5 rounded-xl border text-left transition relative cursor-pointer ${
+            className={`p-4 rounded-xl border-2 text-left transition relative flex flex-col justify-between ${
               evaluationSource === 'INSTITUTE'
-                ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 shadow-xs ring-1 ring-indigo-500/20'
+                ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-600 dark:border-indigo-500 shadow-xs ring-2 ring-indigo-500/20 cursor-pointer'
                 : enrolledInstitutes.length === 0
                 ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed'
-                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer'
             }`}
           >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                Institute Evaluation
-              </span>
-              {evaluationSource === 'INSTITUTE' && (
-                <span className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400" />
-              )}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  Institute Evaluation
+                </span>
+                {evaluationSource === 'INSTITUTE' ? (
+                  <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </span>
+                ) : (
+                  <span className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 shrink-0" />
+                )}
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                Checked against your enrolled coaching academy's custom test papers &amp; approved marking schemes.
+              </p>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-              Checked against your enrolled coaching academy's custom test papers & approved marking schemes.
-            </p>
-            <div className="mt-2 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100/60 dark:bg-indigo-900/40 rounded px-2 py-0.5 inline-block">
-              {enrolledInstitutes.length > 0
-                ? `100% Institute Sponsored (${enrolledInstitutes.length} ${
-                    enrolledInstitutes.length === 1 ? 'Academy' : 'Academies'
-                  })`
-                : 'Not Enrolled in any Academy'}
+            <div className="mt-3">
+              <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100/70 dark:bg-indigo-900/50 rounded-md px-2.5 py-1 inline-block">
+                {enrolledInstitutes.length > 0
+                  ? `100% Institute Sponsored (${enrolledInstitutes.length} ${
+                      enrolledInstitutes.length === 1 ? 'Academy' : 'Academies'
+                    })`
+                  : 'Not Enrolled in any Academy'}
+              </span>
             </div>
           </button>
         </div>
@@ -827,10 +843,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         {/* Left Column: Paper & Subject Configuration */}
         <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-4 space-y-5 min-w-0">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
               <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               {evaluationSource === 'INSTITUTE' ? '1. Institute Paper Selection' : '1. Paper Specification'}
-            </h3>
+            </h2>
 
             {evaluationSource === 'INSTITUTE' ? (
               <div className="space-y-3.5">
@@ -1115,32 +1131,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               )}
             </div>
           </div>
-
-          {/* ICAI Exam Rules Highlights */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 text-xs space-y-2 text-slate-600 dark:text-slate-300 shadow-sm">
-            <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
-              <Scale className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              ICAI Rule Adherence
-            </h4>
-            <ul className="space-y-1.5 list-disc list-inside text-slate-500 dark:text-slate-400 text-[11px]">
-              <li>Step-by-step marking awarded for correct intermediate calculations.</li>
-              <li>
-                <strong className="text-slate-800 dark:text-slate-200 font-bold">Paper-Specific MCQ Rules:</strong> 0 negative marking for Inter/Final; -0.25 on Foundation QA &amp; Eco.
-              </li>
-              <li>Working Notes evaluated alongside Main Financial Statements.</li>
-              <li>Alternative correct methods and interpretations accepted.</li>
-            </ul>
-          </div>
         </div>
 
         {/* Right Column: File Upload Area & Submit */}
         <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5 min-w-0">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 space-y-4 sm:space-y-5 shadow-sm">
             <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
                 <UploadCloud className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 2. Upload Handwritten Answer Sheet
-              </h3>
+              </h2>
               <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
                 PDF, JPG, PNG (Max 50MB)
               </span>
@@ -1195,7 +1195,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     }}
                     className="text-xs text-rose-600 dark:text-rose-400 hover:underline inline-block mt-2 font-semibold cursor-pointer"
                   >
-                    Remove & choose another file
+                    Remove &amp; choose another file
                   </button>
                 </div>
               ) : (
@@ -1205,53 +1205,43 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                      Drag & drop your handwritten CA answer sheet here
+                      Drag &amp; drop your handwritten CA answer sheet here
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">or click to browse from your computer or phone</p>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 font-medium">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span>Admit cards, certificates & blank documents are rejected automatically</span>
+                    <span>Admit cards, certificates &amp; blank documents are rejected automatically</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Quick Pro Tips Banner */}
-            <div className="p-3 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300 min-w-0">
-                <Lightbulb className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span className="leading-snug">
-                  <strong>Pro Tip:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
+            {/* Pro Tips Subtle Helper */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
+              <div className="flex items-center gap-2 min-w-0">
+                <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
+                <span className="leading-snug text-xs">
+                  <strong className="text-slate-800 dark:text-slate-200">Pro Tip:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
                 </span>
               </div>
               <button
                 type="button"
                 id="pro-tips-btn"
                 onClick={() => setShowProTipsModal(true)}
-                className="text-amber-700 dark:text-amber-300 font-bold hover:underline shrink-0 cursor-pointer text-xs whitespace-nowrap"
+                className="text-blue-600 dark:text-blue-400 font-bold hover:underline shrink-0 cursor-pointer text-xs whitespace-nowrap"
               >
-                View Pro Tips →
+                View Guidelines →
               </button>
             </div>
 
-            {/* Material Unavailable Alert */}
-            {!materialAvailable && !checkingMaterial && (
-              <div className="px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-600 dark:text-rose-400" />
-                <span className="leading-tight">
-                  <strong className="font-semibold text-rose-900 dark:text-rose-200">Material Pending:</strong> Official evaluation material is not yet available for this attempt.
-                </span>
-              </div>
-            )}
-
             {/* Action CTA Button */}
-            <div className="pt-2">
+            <div className="pt-1">
               <button
                 id="start-evaluation-btn"
                 onClick={handleStartEvaluation}
                 disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
-                className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                   evaluationSource === 'INSTITUTE'
                     ? 'bg-indigo-600 hover:bg-indigo-700'
                     : 'bg-blue-600 hover:bg-blue-700'
@@ -1262,6 +1252,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     <RefreshCw className="w-4 h-4 animate-spin" />
                     <span>Evaluating Answer Sheet...</span>
                   </>
+                ) : !materialAvailable && !checkingMaterial ? (
+                  <span>Evaluation Material Pending for this Attempt</span>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
@@ -1275,6 +1267,32 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ICAI Exam Rules Highlights - Full-Width Balanced Grid */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
+        <h3 className="text-sm font-bold text-slate-800 dark:text-white flex items-center gap-2">
+          <Scale className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+          ICAI Examination Rule Adherence
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs text-slate-600 dark:text-slate-300">
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
+            <p className="font-semibold text-slate-900 dark:text-slate-100 mb-1">Step-by-Step Marking</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Awarded for correct intermediate calculations and formulas.</p>
+          </div>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
+            <p className="font-semibold text-slate-900 dark:text-slate-100 mb-1">MCQ Rules</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">0 negative marking for Inter/Final; -0.25 on Foundation QA &amp; Eco.</p>
+          </div>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
+            <p className="font-semibold text-slate-900 dark:text-slate-100 mb-1">Working Notes</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Evaluated alongside main financial statements and legal opinions.</p>
+          </div>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
+            <p className="font-semibold text-slate-900 dark:text-slate-100 mb-1">Alternative Methods</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Alternative correct interpretations and standard methods accepted.</p>
           </div>
         </div>
       </div>
