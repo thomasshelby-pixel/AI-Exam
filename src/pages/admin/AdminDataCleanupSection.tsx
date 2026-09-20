@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import {
   Trash2,
   AlertTriangle,
@@ -508,7 +509,7 @@ export const AdminDataCleanupSection: React.FC<{ onDataChanged?: () => void }> =
                       </td>
                       <td className="py-2.5 px-4 font-mono text-slate-600">{s.email}</td>
                       <td className="py-2.5 px-4 font-mono text-slate-400 text-[11px]">{s.id}</td>
-                      <td className="py-2.5 px-4 text-slate-500">{new Date(s.createdAt).toLocaleDateString()}</td>
+                      <td className="py-2.5 px-4 text-slate-500">{formatDateIST(s.createdAt)}</td>
                       <td className="py-2.5 px-4 text-right">
                         <button
                           onClick={() =>
@@ -560,7 +561,7 @@ export const AdminDataCleanupSection: React.FC<{ onDataChanged?: () => void }> =
                       </td>
                       <td className="py-2.5 px-4 font-mono font-bold text-purple-700">{i.code}</td>
                       <td className="py-2.5 px-4 font-mono text-slate-600">{i.email}</td>
-                      <td className="py-2.5 px-4 text-slate-500">{new Date(i.createdAt).toLocaleDateString()}</td>
+                      <td className="py-2.5 px-4 text-slate-500">{formatDateIST(i.createdAt)}</td>
                       <td className="py-2.5 px-4 text-right">
                         <button
                           onClick={() =>
@@ -618,7 +619,7 @@ export const AdminDataCleanupSection: React.FC<{ onDataChanged?: () => void }> =
                           {o.status}
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</td>
+                      <td className="py-2.5 px-4 text-slate-400">{formatDateIST(o.createdAt)}</td>
                       <td className="py-2.5 px-4 text-right">
                         <button
                           onClick={() =>
@@ -726,7 +727,7 @@ export const AdminDataCleanupSection: React.FC<{ onDataChanged?: () => void }> =
                       <td className="py-2.5 px-4 font-mono font-bold text-indigo-600">{r.referralCode}</td>
                       <td className="py-2.5 px-4 font-mono text-slate-700">{r.userEmail}</td>
                       <td className="py-2.5 px-4 font-mono text-slate-400 text-[11px]">{r.id}</td>
-                      <td className="py-2.5 px-4 text-slate-500">{new Date(r.redeemedAt).toLocaleString()}</td>
+                      <td className="py-2.5 px-4 text-slate-500">{formatDateTimeIST(r.redeemedAt)}</td>
                       <td className="py-2.5 px-4 text-right">
                         <button
                           onClick={() =>

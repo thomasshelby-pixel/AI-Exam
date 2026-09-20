@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { logMfaDiagnostic, getFirebaseEnrolledPhoneFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
 import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
@@ -1250,7 +1251,7 @@ export const InstitutePortal: React.FC = () => {
                           ICAI Reg: {selectedStudentDetail.student?.icai_registration_number || 'N/A'} • CA Level: {selectedStudentDetail.student?.ca_level || 'N/A'}
                         </p>
                         <p className="text-[11px] text-slate-400 mt-1">
-                          Enrolled on: {new Date(selectedStudentDetail.membership?.joined_at || selectedStudentDetail.student?.created_at).toLocaleDateString()}
+                          Enrolled on: {formatDateIST(selectedStudentDetail.membership?.joined_at || selectedStudentDetail.student?.created_at)}
                         </p>
                       </div>
                       <div className="text-right flex flex-col items-end gap-2">
@@ -1327,7 +1328,7 @@ export const InstitutePortal: React.FC = () => {
                           <div key={ev.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between text-xs">
                             <div>
                               <p className="font-bold text-slate-800">{ev.subject_name}</p>
-                              <p className="text-[10px] text-slate-400">{new Date(ev.created_at).toLocaleDateString()}</p>
+                              <p className="text-[10px] text-slate-400">{formatDateIST(ev.created_at)}</p>
                             </div>
                             <div className="text-right">
                               <span className="font-mono font-bold text-indigo-600">{ev.total_marks}/{ev.maximum_marks} ({ev.percentage}%)</span>
@@ -1455,7 +1456,7 @@ export const InstitutePortal: React.FC = () => {
                                   </span>
                                 </td>
                                 <td className="py-3.5 px-4 text-slate-500">
-                                  {st.joined_at ? new Date(st.joined_at).toLocaleDateString() : 'N/A'}
+                                  {st.joined_at ? formatDateIST(st.joined_at) : 'N/A'}
                                 </td>
                                 <td className="py-3.5 px-4 font-bold text-slate-800">
                                   {st.evaluations_count || 0}
@@ -1611,7 +1612,7 @@ export const InstitutePortal: React.FC = () => {
                         <div>
                           <p className="font-bold text-slate-900 text-sm">{a.title}</p>
                           <p className="text-slate-500">{a.subject_name} • Max Marks: {a.maximum_marks}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">Due: {new Date(a.deadline).toLocaleDateString()}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">Due: {formatDateIST(a.deadline)}</p>
                         </div>
                         <span className="font-mono font-bold text-indigo-600 text-sm">{a.submissions_count || 0} Submissions</span>
                       </div>
@@ -1646,7 +1647,7 @@ export const InstitutePortal: React.FC = () => {
                         <div>
                           <p className="font-bold text-slate-900 text-sm">{t.title}</p>
                           <p className="text-slate-500">{t.subject_name} • Duration: {t.time_limit_minutes || 180} mins</p>
-                          <p className="text-[10px] text-slate-400 mt-1">Exam Date: {new Date(t.deadline).toLocaleString()}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">Exam Date: {formatDateTimeIST(t.deadline)}</p>
                         </div>
                         <span className="font-mono font-bold text-indigo-600 text-sm">{t.submissions_count || 0} Evaluated</span>
                       </div>
@@ -1713,7 +1714,7 @@ export const InstitutePortal: React.FC = () => {
                             <span>QP Length: <strong className="text-slate-700">{mat.qp_len || 0} chars</strong></span>
                             <span>Model Answer: <strong className="text-slate-700">{mat.sa_len || 0} chars</strong></span>
                             <span className="ml-auto text-[10px] text-slate-400">
-                              {new Date(mat.created_at).toLocaleDateString()}
+                              {formatDateIST(mat.created_at)}
                             </span>
                           </div>
                         </div>
@@ -1762,7 +1763,7 @@ export const InstitutePortal: React.FC = () => {
                                 {ev.status}
                               </span>
                             </td>
-                            <td className="py-2.5 px-3 text-slate-400">{new Date(ev.created_at).toLocaleDateString()}</td>
+                            <td className="py-2.5 px-3 text-slate-400">{formatDateIST(ev.created_at)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1860,7 +1861,7 @@ export const InstitutePortal: React.FC = () => {
                       <div key={n.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-800">{n.title}</span>
-                          <span className="text-[10px] text-slate-400">{new Date(n.created_at).toLocaleDateString()}</span>
+                          <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
                         </div>
                         <p className="text-slate-600 mt-1">{n.message}</p>
                       </div>

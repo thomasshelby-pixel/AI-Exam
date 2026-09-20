@@ -18,6 +18,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateTimeIST } from '../../utils/timezone.js';
 
 interface RecoveryRequest {
   id: string;
@@ -223,7 +224,7 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
                     )}
                     <div className="flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{new Date(req.created_at).toLocaleString()}</span>
+                      <span>{formatDateTimeIST(req.created_at)}</span>
                     </div>
                   </div>
 

@@ -11,6 +11,7 @@ import {
   FileCheck2,
 } from 'lucide-react';
 import { EvaluationResult } from '../../types/index.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 
 interface RecheckRequestModalProps {
   isOpen: boolean;
@@ -208,11 +209,7 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
   const totalMarks = evaluationResult.totalMarks ?? 0;
   const maxMarks = evaluationResult.officialPaperMaxMarks ?? evaluationResult.maximumMarks ?? 100;
   const evalDate = evaluationResult.createdAt
-    ? new Date(evaluationResult.createdAt).toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      })
+    ? formatDateIST(evaluationResult.createdAt)
     : 'Recently Evaluated';
 
   return (
@@ -352,9 +349,9 @@ export const RecheckRequestModal: React.FC<RecheckRequestModalProps> = ({
                     )}
 
                     <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
-                      <span>Submitted on {new Date(req.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                      <span>Submitted on {formatDateTimeIST(req.created_at)}</span>
                       {req.resolved_at && (
-                        <span>Resolved on {new Date(req.resolved_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
+                        <span>Resolved on {formatDateIST(req.resolved_at)}</span>
                       )}
                     </div>
                   </div>

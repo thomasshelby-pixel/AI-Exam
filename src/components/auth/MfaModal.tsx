@@ -28,6 +28,7 @@ import {
   getFirebaseEnrolledTotpFactors,
   type TotpSetupData,
 } from '../../lib/firebaseAuth.js';
+import { formatDateTimeIST } from '../../utils/timezone.js';
 
 export type MfaUiState = 'INITIALIZING' | 'READY' | 'VERIFYING' | 'VERIFIED' | 'SHOWING_RECOVERY_CODES' | 'ERROR';
 
@@ -394,7 +395,7 @@ export const MfaModal: React.FC = () => {
     if (newlyGeneratedCodes.length === 0) return;
     const text = [
       'CA EXAM CHECKER AI - ONE-TIME RECOVERY CODES',
-      'Generated: ' + new Date().toLocaleString(),
+      'Generated: ' + formatDateTimeIST(new Date(), true),
       'Keep these codes strictly private and offline. Each code can only be used once.',
       '------------------------------------------------',
       ...newlyGeneratedCodes.map((c, i) => `${i + 1}. ${c}`),
@@ -410,7 +411,7 @@ export const MfaModal: React.FC = () => {
     if (newlyGeneratedCodes.length === 0) return;
     const text = [
       'CA EXAM CHECKER AI - ONE-TIME RECOVERY CODES',
-      'Generated: ' + new Date().toLocaleString(),
+      'Generated: ' + formatDateTimeIST(new Date(), true),
       'Keep these codes strictly private and offline. Each code can only be used once.',
       '------------------------------------------------',
       ...newlyGeneratedCodes.map((c, i) => `${i + 1}. ${c}`),

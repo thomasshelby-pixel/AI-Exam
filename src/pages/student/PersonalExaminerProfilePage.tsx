@@ -18,6 +18,7 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 
 export interface EvidenceItem {
   evaluationId: string;
@@ -493,7 +494,7 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
 
                                 <div className="text-[11px] text-slate-400 dark:text-slate-500 flex flex-wrap gap-4 pt-1">
                                   <span>Eval ID: <code className="font-mono">{ev.evaluationId}</code> ({ev.evaluationVersionId})</span>
-                                  <span>Date: {new Date(ev.date).toLocaleDateString()}</span>
+                                  <span>Date: {formatDateIST(ev.date)}</span>
                                   <span>Ref: {ev.evidenceReference}</span>
                                 </div>
                               </div>

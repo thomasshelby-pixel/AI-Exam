@@ -13,6 +13,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { PublicReview, PublicReviewsResponse, User } from '../../types/index.js';
 import { VerifiedStudentBadge, OfficialAdminBadge } from '../../components/common/VerifiedBadges.js';
 
@@ -319,11 +320,7 @@ export const ReviewsPage: React.FC<ReviewsPageProps> = ({
                         {r.caLevel}
                       </span>
                       <span className="text-slate-400 text-[11px]">
-                        {new Date(r.date).toLocaleDateString(undefined, {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                        })}
+                        {formatDateIST(r.date)}
                       </span>
                     </div>
                   </div>
@@ -372,10 +369,7 @@ export const ReviewsPage: React.FC<ReviewsPageProps> = ({
                       </div>
                       {r.adminReplyAt && (
                         <span className="text-[10px] text-amber-700/80 dark:text-amber-400">
-                          {new Date(r.adminReplyAt).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                          })}
+                          {formatDateIST(r.adminReplyAt)}
                         </span>
                       )}
                     </div>

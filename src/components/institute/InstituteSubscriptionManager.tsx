@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 import {
   Calendar,
@@ -233,7 +234,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
             <p className="text-xs text-slate-500 mt-1">
               Active license expires on:{' '}
               <span className="font-semibold text-slate-700">
-                {data.expiresAt ? new Date(data.expiresAt).toLocaleDateString() : 'Annual Continuous Partner'}
+                {data.expiresAt ? formatDateIST(data.expiresAt) : 'Annual Continuous Partner'}
               </span>
             </p>
           </div>

@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { logMfaDiagnostic, getFirebaseEnrolledTotpFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST, formatTimeIST } from '../../utils/timezone.js';
 import { MaterialManagement } from '../../components/admin/MaterialManagement.js';
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
@@ -1752,7 +1753,7 @@ export const AdminPortal: React.FC = () => {
                           <div key={log.id} className="p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-slate-700">{log.action}</span>
-                              <span className="text-[10px] text-slate-400">{new Date(log.created_at).toLocaleTimeString()}</span>
+                              <span className="text-[10px] text-slate-400">{formatTimeIST(log.created_at)}</span>
                             </div>
                             <p className="text-[11px] text-slate-500 mt-0.5">{log.details || 'System operation executed'}</p>
                           </div>
@@ -1834,7 +1835,7 @@ export const AdminPortal: React.FC = () => {
                             </td>
                             <td className="py-2.5 px-3 font-mono">{u.icai_registration_number || '—'}</td>
                             <td className="py-2.5 px-3 font-mono font-bold text-blue-600">{u.purchased_credits || 0}</td>
-                            <td className="py-2.5 px-3 text-slate-400">{new Date(u.created_at).toLocaleDateString()}</td>
+                            <td className="py-2.5 px-3 text-slate-400">{formatDateIST(u.created_at)}</td>
                             <td className="py-2.5 px-3 text-right">
                               <button
                                 onClick={() => handleToggleUserStatus(u)}
@@ -2205,7 +2206,7 @@ export const AdminPortal: React.FC = () => {
                               <td className="py-2.5 px-3 font-mono">{inst.max_students || 500}</td>
                               <td className="py-2.5 px-3 text-slate-400">
                                 {inst.subscription_expires_at
-                                  ? new Date(inst.subscription_expires_at).toLocaleDateString()
+                                  ? formatDateIST(inst.subscription_expires_at)
                                   : 'Lifetime'}
                               </td>
                               <td className="py-2.5 px-3 text-right">
@@ -2792,7 +2793,7 @@ export const AdminPortal: React.FC = () => {
 
                                   {/* Date */}
                                   <td className="py-2.5 px-3 text-slate-400 text-[11px] whitespace-nowrap">
-                                    {new Date(ev.created_at).toLocaleDateString()}
+                                    {formatDateIST(ev.created_at)}
                                   </td>
 
                                   {/* Actions: Review, View & Delete */}
@@ -3125,7 +3126,7 @@ export const AdminPortal: React.FC = () => {
                                     {p.razorpay_payment_id || '—'}
                                   </td>
                                   <td className="py-2.5 px-3 text-slate-400">
-                                    {new Date(p.created_at).toLocaleDateString()}
+                                    {formatDateIST(p.created_at)}
                                   </td>
                                   <td className="py-2.5 px-3 text-right">
                                     <div className="flex items-center justify-end gap-1.5">
@@ -3201,7 +3202,7 @@ export const AdminPortal: React.FC = () => {
                             <td className="py-2.5 px-3 font-mono font-bold">{sub.active_students || 0}</td>
                             <td className="py-2.5 px-3 font-mono">{sub.max_students || 500}</td>
                             <td className="py-2.5 px-3 text-slate-500">
-                              {sub.subscription_expires_at ? new Date(sub.subscription_expires_at).toLocaleDateString() : 'Active Ongoing'}
+                              {sub.subscription_expires_at ? formatDateIST(sub.subscription_expires_at) : 'Active Ongoing'}
                             </td>
                           </tr>
                         ))}
@@ -3300,7 +3301,7 @@ export const AdminPortal: React.FC = () => {
                         <div key={n.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-slate-800">{n.title}</span>
-                            <span className="text-[10px] text-slate-400">{new Date(n.created_at).toLocaleDateString()}</span>
+                            <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
                           </div>
                           <p className="text-slate-600 mt-1">{n.message}</p>
                           <p className="text-[10px] text-slate-400 mt-1">Recipient: {n.user_email || 'Broadcast'}</p>
@@ -3403,7 +3404,7 @@ export const AdminPortal: React.FC = () => {
                           <div>
                             <p className="font-bold text-slate-900">{item.email}</p>
                             <p className="text-[11px] text-slate-500">{item.reason}</p>
-                            <p className="text-[10px] text-slate-400">Granted by {item.granted_by} on {new Date(item.created_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] text-slate-400">Granted by {item.granted_by} on {formatDateIST(item.created_at)}</p>
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">
@@ -3499,7 +3500,7 @@ export const AdminPortal: React.FC = () => {
                             <td className="py-2.5 px-3 text-slate-700">{log.user_email || log.user_id || 'SYSTEM'}</td>
                             <td className="py-2.5 px-3 text-slate-500">{log.entity_type} ({log.entity_id || '—'})</td>
                             <td className="py-2.5 px-3 text-slate-600">{log.details}</td>
-                            <td className="py-2.5 px-3 text-slate-400">{new Date(log.created_at).toLocaleString()}</td>
+                            <td className="py-2.5 px-3 text-slate-400">{formatDateTimeIST(log.created_at)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -3586,7 +3587,7 @@ export const AdminPortal: React.FC = () => {
                                 </p>
                                 {req.suspended_at && (
                                   <p className="text-[10px] text-slate-400 mt-0.5">
-                                    {new Date(req.suspended_at).toLocaleDateString()}
+                                    {formatDateIST(req.suspended_at)}
                                   </p>
                                 )}
                               </td>
@@ -3615,7 +3616,7 @@ export const AdminPortal: React.FC = () => {
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-slate-400">
-                                {new Date(req.created_at).toLocaleDateString()}
+                                {formatDateIST(req.created_at)}
                               </td>
                               <td className="py-2.5 px-3 text-right">
                                 {req.status === 'PENDING' ? (
@@ -3963,7 +3964,7 @@ export const AdminPortal: React.FC = () => {
                 <span className="text-slate-400 text-[10px] block">Joined On</span>
                 <span className="text-slate-800">
                   {viewStudentModal.student.created_at
-                    ? new Date(viewStudentModal.student.created_at).toLocaleDateString()
+                    ? formatDateIST(viewStudentModal.student.created_at)
                     : '—'}
                 </span>
               </div>
@@ -4007,7 +4008,7 @@ export const AdminPortal: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-2 px-3 text-right text-slate-400">
-                            {ev.created_at ? new Date(ev.created_at).toLocaleDateString() : '—'}
+                            {viewEvaluationModal?.evaluation?.created_at ? formatDateIST(viewEvaluationModal.evaluation.created_at) : ev.created_at ? formatDateIST(ev.created_at) : '—'}
                           </td>
                         </tr>
                       ))}
@@ -4304,7 +4305,7 @@ export const AdminPortal: React.FC = () => {
                 <span className="text-[11px] text-slate-400 block font-medium">Subscription Expires</span>
                 <span className="text-xs font-semibold text-slate-800 mt-0.5 block">
                   {viewInstituteModal.institute.subscription_expires_at
-                    ? new Date(viewInstituteModal.institute.subscription_expires_at).toLocaleDateString()
+                    ? formatDateIST(viewInstituteModal.institute.subscription_expires_at)
                     : 'Lifetime Plan'}
                 </span>
               </div>
@@ -4416,7 +4417,7 @@ export const AdminPortal: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="text-slate-500 font-medium">Created Date:</span>
                 <span className="text-slate-700">
-                  {new Date(deletePaymentModal.order.created_at).toLocaleString()}
+                  {formatDateTimeIST(deletePaymentModal.order.created_at)}
                 </span>
               </div>
             </div>
@@ -4798,14 +4799,14 @@ export const AdminPortal: React.FC = () => {
                   <div>
                     <span className="text-slate-400 block text-[10px]">Created At:</span>
                     <span className="text-slate-700">
-                      {new Date(viewPaymentOrderModal.created_at).toLocaleString()}
+                      {formatDateTimeIST(viewPaymentOrderModal.created_at)}
                     </span>
                   </div>
                   {viewPaymentOrderModal.paid_at && (
                     <div>
                       <span className="text-slate-400 block text-[10px]">Paid At:</span>
                       <span className="text-slate-700">
-                        {new Date(viewPaymentOrderModal.paid_at).toLocaleString()}
+                        {formatDateTimeIST(viewPaymentOrderModal.paid_at)}
                       </span>
                     </div>
                   )}
@@ -5282,13 +5283,13 @@ export const AdminPortal: React.FC = () => {
                   <div>
                     <span className="text-slate-400 block text-[10px]">Created At:</span>
                     <span className="text-slate-700">
-                      {viewEvaluationModal.evaluation?.created_at ? new Date(viewEvaluationModal.evaluation.created_at).toLocaleString() : '—'}
+                      {viewEvaluationModal.evaluation?.created_at ? formatDateTimeIST(viewEvaluationModal.evaluation.created_at) : '—'}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Completed At:</span>
                     <span className="text-slate-700">
-                      {viewEvaluationModal.evaluation?.completed_at ? new Date(viewEvaluationModal.evaluation.completed_at).toLocaleString() : '—'}
+                      {viewEvaluationModal.evaluation?.completed_at ? formatDateTimeIST(viewEvaluationModal.evaluation.completed_at) : '—'}
                     </span>
                   </div>
                 </div>

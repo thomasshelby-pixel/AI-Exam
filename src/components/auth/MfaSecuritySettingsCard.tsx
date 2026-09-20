@@ -26,6 +26,7 @@ import {
   type TotpSetupData,
 } from '../../lib/firebaseAuth.js';
 import { MfaAuthenticatorItem } from '../../types/index.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 
 interface MfaSecuritySettingsCardProps {
   className?: string;
@@ -226,7 +227,7 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
   const copyCodes = () => {
     const text = [
       'CA EXAM CHECKER AI - ONE-TIME RECOVERY CODES',
-      'Generated: ' + new Date().toLocaleString(),
+      'Generated: ' + formatDateTimeIST(new Date(), true),
       'Keep these codes offline and private. Each code can be used once.',
       '------------------------------------------------',
       ...newCodes.map((c, i) => `${i + 1}. ${c}`),
@@ -241,7 +242,7 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
   const downloadCodes = () => {
     const text = [
       'CA EXAM CHECKER AI - ONE-TIME RECOVERY CODES',
-      'Generated: ' + new Date().toLocaleString(),
+      'Generated: ' + formatDateTimeIST(new Date(), true),
       'Keep these codes offline and private. Each code can be used once.',
       '------------------------------------------------',
       ...newCodes.map((c, i) => `${i + 1}. ${c}`),
@@ -382,8 +383,8 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                          Enrolled: {new Date(auth.createdAt).toLocaleDateString()}
-                          {auth.lastUsedAt && ` • Last used: ${new Date(auth.lastUsedAt).toLocaleDateString()}`}
+                          Enrolled: {formatDateIST(auth.createdAt)}
+                          {auth.lastUsedAt && ` • Last used: ${formatDateIST(auth.lastUsedAt)}`}
                         </p>
                       </div>
                     </div>
@@ -450,7 +451,7 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
 
               {recoveryStatus?.generatedAt && (
                 <span className="text-[11px] text-slate-400">
-                  Last updated: {new Date(recoveryStatus.generatedAt).toLocaleDateString()}
+                  Last updated: {formatDateIST(recoveryStatus.generatedAt)}
                 </span>
               )}
             </div>

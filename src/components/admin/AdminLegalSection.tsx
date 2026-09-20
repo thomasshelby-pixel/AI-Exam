@@ -17,6 +17,7 @@ import {
   Info,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { LegalDocument, LegalSettings, LegalDocType } from '../../types/index.js';
 
 export const AdminLegalSection: React.FC = () => {
@@ -314,7 +315,7 @@ export const AdminLegalSection: React.FC = () => {
                       Effective: {d.effective_date}
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Published: {d.published_at ? new Date(d.published_at).toLocaleDateString() : 'Baseline'}
+                      Published: {d.published_at ? formatDateIST(d.published_at) : 'Baseline'}
                     </p>
                   </div>
                 ) : (
@@ -495,7 +496,7 @@ export const AdminLegalSection: React.FC = () => {
                     <td className="px-4 py-3 text-slate-500">
                       {v.published_at ? (
                         <div>
-                          <p className="font-medium text-slate-700">{new Date(v.published_at).toLocaleDateString()}</p>
+                          <p className="font-medium text-slate-700">{formatDateIST(v.published_at)}</p>
                           <p className="text-[10px] text-slate-400">{v.published_by || 'system'}</p>
                         </div>
                       ) : (

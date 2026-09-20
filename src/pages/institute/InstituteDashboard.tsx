@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import {
   Building2,
   Users,
@@ -525,7 +526,7 @@ export const InstituteDashboard: React.FC = () => {
                 <div className="text-right text-xs">
                   <span className="font-mono text-blue-600 font-semibold">{asgn.submissions_count} Submissions</span>
                   <p className="text-[11px] text-slate-500">
-                    Deadline: {new Date(asgn.deadline).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                    Deadline: {formatDateIST(asgn.deadline)}
                   </p>
                 </div>
               </div>

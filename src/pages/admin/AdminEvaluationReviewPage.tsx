@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateTimeIST } from '../../utils/timezone.js';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -450,7 +451,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  Created: {new Date(ver.created_at).toLocaleString()} {ver.admin_email ? `by ${ver.admin_email}` : '(AI System)'}
+                  Created: {formatDateTimeIST(ver.created_at)} {ver.admin_email ? `by ${ver.admin_email}` : '(AI System)'}
                 </p>
                 {ver.amendment_reason && (
                   <p className="text-[11px] text-slate-600 italic bg-white p-2 rounded border border-slate-100">

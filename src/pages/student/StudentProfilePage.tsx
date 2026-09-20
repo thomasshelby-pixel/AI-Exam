@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import {
   User,
@@ -489,9 +490,9 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
       setPromoMessage({
         type: 'success',
-        text: `${res.message} (${res.maxEvaluations} evaluations unlocked, valid until ${new Date(
+        text: `${res.message} (${res.maxEvaluations} evaluations unlocked, valid until ${formatDateIST(
           res.expiryDate
-        ).toLocaleDateString('en-IN')})`,
+        )})`,
       });
 
       // Refetch profile to update entitlement and badges
@@ -1026,11 +1027,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   <div className="flex items-center justify-between text-[11px] text-blue-200/80 pt-1 border-t border-white/10">
                     <span>Valid Until:</span>
                     <span className="font-medium text-white">
-                      {new Date(activePromoState.expiryDate).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
+                      {formatDateIST(activePromoState.expiryDate)}
                     </span>
                   </div>
                 </div>

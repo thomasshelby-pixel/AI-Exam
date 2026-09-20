@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   ShieldCheck,
@@ -384,7 +385,7 @@ export const AdminDashboard: React.FC = () => {
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-slate-500">
-                      {new Date(u.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {formatDateIST(u.created_at)}
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <button
@@ -465,7 +466,7 @@ export const AdminDashboard: React.FC = () => {
                   <span className="text-slate-700">{log.details || 'System event'}</span>
                 </div>
                 <div className="text-right text-slate-500 font-mono text-[10px]">
-                  {new Date(log.created_at).toLocaleString('en-IN')}
+                  {formatDateTimeIST(log.created_at)}
                 </div>
               </div>
             ))}

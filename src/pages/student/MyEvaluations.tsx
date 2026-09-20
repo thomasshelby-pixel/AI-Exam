@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { FileCheck2, Search, Filter, ArrowRight, RefreshCw, Layers, Globe, Building2, RotateCcw } from 'lucide-react';
 import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
 import { EvaluationResult } from '../../types/index.js';
@@ -251,11 +252,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                         </span>
                       </td>
                       <td className="py-3 px-4 text-slate-500 dark:text-slate-400">
-                        {new Date(ev.created_at).toLocaleDateString('en-IN', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
+                        {formatDateIST(ev.created_at)}
                       </td>
                       <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-white">
                         {ev.total_marks} / {ev.maximum_marks}

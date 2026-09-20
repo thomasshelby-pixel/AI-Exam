@@ -660,22 +660,43 @@ router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: Aut
       id,
       req.user.id,
       decision,
-      reviewNotes,
+      reviewNotes || '',
       { ip: req.ip, userAgent: req.headers['user-agent'] as string }
     );
 
     if (!result.success) {
-      return res.status(400).json({ error: result.error || 'Failed to resolve recovery request.' });
+      return res.status(result.statusCode || 400).json({
+        error: result.error || 'Failed to resolve recovery request.',
+        statusCode: result.statusCode || 400,
+      });
     }
 
     return res.json({
       success: true,
-      message: `Recovery request ${decision.toLowerCase()} successfully.`,
+      action: result.action,
+      requestId: result.requestId,
+      targetUser: result.targetUser,
+      message: result.message || `Recovery request ${decision.toLowerCase()} successfully.`,
     });
   } catch (err: any) {
     console.error('[MFA resolve recovery request error]:', err);
-    return res.status(500).json({ error: 'Internal error resolving recovery request.' });
+    return res.status(500).json({ error: 'Internal error resolving recovery request: ' + (err?.message || '') });
   }
+});
+
+/**
+ * Convenience aliases:
+ * POST /api/auth/mfa/recovery-requests/:id/approve
+ * POST /api/auth/mfa/recovery-requests/:id/reject
+ */
+router.post('/recovery-requests/:id/approve', authenticateToken, async (req: AuthRequest, res: Response) => {
+  req.body = { ...req.body, decision: 'APPROVED' };
+  return (router as any).handle(req, res);
+});
+
+router.post('/recovery-requests/:id/reject', authenticateToken, async (req: AuthRequest, res: Response) => {
+  req.body = { ...req.body, decision: 'REJECTED' };
+  return (router as any).handle(req, res);
 });
 
 // ==========================================================

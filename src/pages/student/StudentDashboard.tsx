@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import {
   FileCheck2,
   TrendingUp,
@@ -326,11 +327,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <p className="text-xs text-blue-100 mt-0.5">
                 Full ICAI step-marking evaluations active. Valid until{' '}
                 <span className="font-semibold text-white">
-                  {new Date(referralStatus.activePromo.expiryDate).toLocaleDateString('en-IN', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}
+                  {formatDateIST(referralStatus.activePromo.expiryDate)}
                 </span>.
               </p>
             </div>
@@ -610,7 +607,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <tr key={lot.id} className={lot.isExpired ? 'bg-slate-50/60 dark:bg-slate-800/30 text-slate-400 dark:text-slate-500' : 'hover:bg-slate-50/40 dark:hover:bg-slate-800/40'}>
                     <td className="px-5 py-3 font-medium">
                       <div className="text-slate-800 dark:text-slate-200 font-semibold">
-                        {new Date(lot.purchaseDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {formatDateIST(lot.purchaseDate)}
                       </div>
                       <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono truncate max-w-[140px]">
                         {lot.paymentId || lot.orderId || lot.id}
@@ -625,11 +622,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                      {new Date(lot.validFrom).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {formatDateIST(lot.validFrom)}
                     </td>
                     <td className="px-4 py-3">
                       <div className={`font-semibold ${lot.isExpiringSoon ? 'text-amber-600 dark:text-amber-400 font-bold' : lot.isExpired ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                        {new Date(lot.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {formatDateIST(lot.expiresAt)}
                       </div>
                       {!lot.isExpired && lot.creditsRemaining > 0 && (
                         <div className={`text-[10px] font-medium ${lot.isExpiringSoon ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'}`}>
@@ -826,7 +823,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-normal">CA {ev.level}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {new Date(ev.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                        {formatDateIST(ev.created_at)}
                       </td>
                       <td className="px-4 py-3 font-mono font-bold text-blue-700 dark:text-blue-400">
                         {ev.total_marks} / {ev.maximum_marks}

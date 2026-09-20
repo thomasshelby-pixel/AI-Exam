@@ -19,6 +19,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 
 interface RecheckRequest {
   id: string;
@@ -367,11 +368,7 @@ export const AdminRecheckRequestsSection: React.FC = () => {
                     <tr key={r.id} className="hover:bg-slate-50/80 transition">
                       <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
                         <div className="font-medium text-slate-800">
-                          {new Date(r.created_at).toLocaleDateString('en-IN', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
+                          {formatDateIST(r.created_at)}
                         </div>
                         <div className="text-[11px] text-slate-400">{r.id.slice(0, 10)}...</div>
                       </td>
@@ -871,12 +868,7 @@ export const AdminRecheckRequestsSection: React.FC = () => {
                       </div>
                     </div>
                     <div className="text-[11px] text-slate-400 text-right whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {formatDateTimeIST(log.created_at)}
                     </div>
                   </div>
                 ))

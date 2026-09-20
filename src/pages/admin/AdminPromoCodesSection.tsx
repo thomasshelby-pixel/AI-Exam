@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import {
   Sparkles,
   Plus,
@@ -553,10 +554,10 @@ export function AdminPromoCodesSection() {
                         {camp.start_date || camp.startDate || camp.end_date || camp.endDate ? (
                           <div className="text-[10px] text-slate-600 space-y-0.5">
                             <div>
-                              From: {camp.startDate || camp.start_date ? new Date(camp.startDate || camp.start_date!).toLocaleDateString('en-IN') : 'Immediate'}
+                              From: {camp.startDate || camp.start_date ? formatDateIST(camp.startDate || camp.start_date!) : 'Immediate'}
                             </div>
                             <div>
-                              To: {camp.endDate || camp.end_date ? new Date(camp.endDate || camp.end_date!).toLocaleDateString('en-IN') : 'No expiry'}
+                              To: {camp.endDate || camp.end_date ? formatDateIST(camp.endDate || camp.end_date!) : 'No expiry'}
                             </div>
                           </div>
                         ) : (
@@ -723,13 +724,10 @@ export function AdminPromoCodesSection() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-slate-500 text-[11px]">
-                      {new Date(red.redeemed_at).toLocaleString('en-IN', {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
+                      {formatDateTimeIST(red.redeemed_at)}
                     </td>
                     <td className="py-2.5 px-3 text-slate-500 text-[11px]">
-                      {red.expiry_date ? new Date(red.expiry_date).toLocaleDateString('en-IN') : 'N/A'}
+                      {red.expiry_date ? formatDateIST(red.expiry_date) : 'N/A'}
                     </td>
                     <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-[220px] truncate" title={red.audit_note}>
                       {red.audit_note || 'Redeemed successfully'}

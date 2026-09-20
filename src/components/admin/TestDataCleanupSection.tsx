@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateTimeIST } from '../../utils/timezone.js';
 import {
   Database,
   Trash2,
@@ -316,7 +317,7 @@ export function TestDataCleanupSection({ onDataCleaned }: TestDataCleanupSection
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-slate-500">
-                      {new Date(st.created_at).toLocaleString()}
+                      {formatDateTimeIST(st.created_at)}
                     </td>
                   </tr>
                 ))}

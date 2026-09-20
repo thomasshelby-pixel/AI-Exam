@@ -19,6 +19,7 @@ import {
   ThumbsDown,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { StudentReview } from '../../types/index.js';
 import { VerifiedStudentBadge, OfficialAdminBadge } from '../common/VerifiedBadges.js';
 
@@ -385,11 +386,7 @@ export const AdminReviewsSection: React.FC<AdminReviewsSectionProps> = ({
                       <span className="text-slate-300">•</span>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        {new Date(rev.createdAt).toLocaleDateString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
+                        {formatDateIST(rev.createdAt)}
                       </span>
 
                       {/* Likes / Dislikes badges */}
@@ -435,10 +432,7 @@ export const AdminReviewsSection: React.FC<AdminReviewsSectionProps> = ({
                           </div>
                           {rev.adminReplyAt && (
                             <span className="text-[10px] text-amber-700">
-                              {new Date(rev.adminReplyAt).toLocaleDateString(undefined, {
-                                month: 'short',
-                                day: 'numeric',
-                              })}
+                              {formatDateIST(rev.adminReplyAt)}
                             </span>
                           )}
                         </div>

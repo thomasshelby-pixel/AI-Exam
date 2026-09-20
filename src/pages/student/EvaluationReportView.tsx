@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo.js';
 import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
+import { formatDateIST } from '../../utils/timezone.js';
 import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
 
 interface EvaluationReportViewProps {
@@ -266,7 +267,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   </span>
                   {evaluationResult.recheckResolutionDate && (
                     <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
-                      Resolved on {new Date(evaluationResult.recheckResolutionDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                      Resolved on {formatDateIST(evaluationResult.recheckResolutionDate)}
                     </span>
                   )}
                 </div>
@@ -414,7 +415,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               Roll / Reg: {!icaiRegistrationNumber || icaiRegistrationNumber === '000' || icaiRegistrationNumber === 'N/A' || icaiRegistrationNumber === 'NA' || icaiRegistrationNumber === 'WRO0987654' ? 'Not provided' : icaiRegistrationNumber}
             </p>
             <p className="mt-0.5">
-              Evaluated on {new Date(evaluationDate).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+              Evaluated on {formatDateIST(evaluationDate)}
             </p>
           </div>
         </div>

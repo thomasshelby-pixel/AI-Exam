@@ -196,6 +196,43 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'High-concurrency batch evaluation',
     ],
   },
+  {
+    id: 'gemini-3.7-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.7 Flash',
+    description: 'Advanced CA evaluation, multimodal answer-sheet understanding, long/complex descriptive evaluation, step marking, and high-volume production evaluation.',
+    contextWindow: 1048576,
+    recommended: true,
+    role: 'Advanced CA Evaluation / Multimodal / High-Volume',
+    defaultThinkingLevel: 'HIGH',
+    fallbackOrder: 8,
+    recommendedReasoning: 'HIGH',
+    useCases: [
+      'Advanced CA answer-sheet evaluation',
+      'Multimodal answer-sheet understanding',
+      'Long/complex descriptive evaluation',
+      'Step-marking and sub-part analysis',
+      'High-volume production evaluation',
+    ],
+  },
+  {
+    id: 'gpt-6-astra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-6 Astra',
+    description: 'Deep reasoning, calculation verification, cross-checking, and difficult CA accounting, tax, law, and audit evaluation.',
+    contextWindow: 200000,
+    recommended: false,
+    role: 'Deep Reasoning / Calculation Verification / Cross-Check',
+    defaultThinkingLevel: 'HIGH',
+    fallbackOrder: 9,
+    recommendedReasoning: 'HIGH',
+    useCases: [
+      'Deep reasoning and calculation verification',
+      'Cross-checking difficult accounting, tax, law, and audit answers',
+      'Complex multi-step numerical audits',
+      'High-precision quality review and arbitration',
+    ],
+  },
 ];
 
 export const REGISTERED_MODELS = APPROVED_MODELS;
@@ -705,9 +742,9 @@ async function executeSingleModel(
   // For text-only pings/prompts, keep timeouts fast (45s)
   const hasAttachment = Boolean(params.pdfBase64);
   let defaultTimeoutMs = hasAttachment ? 210000 : 45000;
-  if (modelId.includes('sol') || modelId.includes('opus') || modelId.includes('pro')) {
+  if (modelId.includes('sol') || modelId.includes('opus') || modelId.includes('pro') || modelId.includes('astra')) {
     defaultTimeoutMs = hasAttachment ? 240000 : 60000;
-  } else if (modelId.includes('lite') || modelId.includes('terra')) {
+  } else if (modelId.includes('lite') || modelId.includes('terra') || modelId.includes('3.7-flash')) {
     defaultTimeoutMs = hasAttachment ? 120000 : 35000;
   }
   const timeoutMs = overrideTimeoutMs ?? defaultTimeoutMs;
@@ -867,6 +904,8 @@ export function determineModelRouting(context?: {
     'gpt-5.6-sol',
     'claude-sonnet-5',
     'gpt-5.6-terra',
+    'gemini-3.7-flash',
+    'gpt-6-astra',
   ];
 
   const remaining = canonicalFallbackOrder.filter((m) => m !== selectedModel);
@@ -1279,39 +1318,92 @@ export async function testModelHealth(
     const errMsg = err?.message || String(err);
     const errMsgLower = errMsg.toLowerCase();
 
+    const isTimeout =
+      errMsgLower.includes('timeout') ||
+      errMsgLower.includes('timed out') ||
+      errMsgLower.includes('deadline');
+
+    const isInvalidModel =
+      errMsgLower.includes('model_not_found') ||
+      errMsgLower.includes('does not exist') ||
+      errMsgLower.includes('is not found for api version') ||
+      errMsgLower.includes('not found') ||
+      errMsgLower.includes('unsupported model') ||
+      errMsgLower.includes('invalid model');
+
     const isCreditIssue =
       errMsgLower.includes('credit balance is too low') ||
       errMsgLower.includes('no credits remaining') ||
       errMsgLower.includes('insufficient_quota') ||
       errMsgLower.includes('quota exceeded for metric') ||
+      errMsgLower.includes('plans & billing') ||
       errMsgLower.includes('billing');
 
     if (isCreditIssue && provider !== 'gemini') {
       markProviderCreditExhausted(provider, errMsg);
     }
 
-    const isRateLimit = errMsgLower.includes('429') || errMsgLower.includes('quota') || errMsgLower.includes('resource_exhausted') || errMsgLower.includes('rate_limit');
-    const isTemp = errMsgLower.includes('503') || errMsgLower.includes('502') || errMsgLower.includes('unavailable') || errMsgLower.includes('high demand') || errMsgLower.includes('overloaded');
-    const isAuth = errMsgLower.includes('401') || errMsgLower.includes('api key not valid') || errMsgLower.includes('unauthorized') || errMsgLower.includes('forbidden');
+    const isRateLimit =
+      !isCreditIssue &&
+      (errMsgLower.includes('429') ||
+        errMsgLower.includes('resource_exhausted') ||
+        errMsgLower.includes('rate_limit') ||
+        errMsgLower.includes('too many requests'));
 
-    const status = isCreditIssue && provider !== 'gemini' ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isAuth ? 'AUTH_ERROR' : isTemp ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED_HEALTH_CHECK';
+    const isAuth =
+      errMsgLower.includes('401') ||
+      errMsgLower.includes('api key not valid') ||
+      errMsgLower.includes('invalid_api_key') ||
+      errMsgLower.includes('unauthorized') ||
+      errMsgLower.includes('forbidden') ||
+      errMsgLower.includes('authentication');
+
+    const isTemp =
+      errMsgLower.includes('503') ||
+      errMsgLower.includes('502') ||
+      errMsgLower.includes('500') ||
+      errMsgLower.includes('unavailable') ||
+      errMsgLower.includes('high demand') ||
+      errMsgLower.includes('overloaded');
+
+    let status = 'FAILED_HEALTH_CHECK';
+    if (isInvalidModel) {
+      status = 'INVALID_MODEL';
+    } else if (isAuth) {
+      status = 'AUTH_ERROR';
+    } else if (isCreditIssue) {
+      status = 'INSUFFICIENT_CREDITS';
+    } else if (isRateLimit) {
+      status = 'RATE_LIMITED';
+    } else if (isTimeout) {
+      status = 'TIMEOUT';
+    } else if (isTemp) {
+      status = 'TEMPORARILY_UNAVAILABLE';
+    }
+
+    const userFacingMsg =
+      status === 'INSUFFICIENT_CREDITS'
+        ? `Provider ${provider.toUpperCase()} has insufficient credits/quota: ${errMsg.slice(0, 180)}. Model is registered but billing refill is required.`
+        : status === 'INVALID_MODEL'
+        ? `Model ID ${modelId} was rejected by ${provider.toUpperCase()} API (invalid or unavailable model).`
+        : errMsg.slice(0, 200);
 
     try {
       db.prepare(
         "UPDATE model_configs SET status = ?, health_stage = 'INFERENCE', health_details = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(status, errMsg.slice(0, 250), latencyMs, modelId);
+      ).run(status, userFacingMsg.slice(0, 250), latencyMs, modelId);
     } catch {}
 
     resultDetails.inference = {
       passed: false,
       latencyMs,
-      message: errMsg.slice(0, 200),
+      message: userFacingMsg.slice(0, 200),
     };
 
     return {
       success: false,
       latencyMs,
-      message: errMsg.slice(0, 200),
+      message: userFacingMsg.slice(0, 200),
       model: modelId,
       provider,
       status,

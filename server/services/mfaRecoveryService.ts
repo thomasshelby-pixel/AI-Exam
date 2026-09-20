@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { UserRole } from '../../src/types/index.js';
+import { revokeAllDeviceTrust } from './trustService.js';
+import { revokeAllSessionsForUser } from './sessionService.js';
+import { formatDateTimeIST } from '../utils/timezone.js';
 
 export interface RecoveryCodeStatus {
   total: number;
@@ -22,9 +25,18 @@ export interface AuditLogRecord {
   id: string;
   userId?: string;
   eventType: string;
+  action?: string;
+  requestId?: string;
+  targetUserUid?: string;
+  targetUserEmail?: string;
+  targetUserRole?: string;
+  adminUid?: string;
+  adminEmail?: string;
   ipAddress?: string;
   userAgent?: string;
   status: 'SUCCESS' | 'FAILURE';
+  istTimestamp?: string;
+  correlationId?: string;
   details?: string;
   createdAt: string;
 }
@@ -92,6 +104,30 @@ export function initMfaRecoveryTables(): void {
       last_attempt_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  const addCol = (tbl: string, col: string, typ: string) => {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${tbl})`).all() as any[];
+      if (!cols.some((c) => c.name === col)) {
+        db.prepare(`ALTER TABLE ${tbl} ADD COLUMN ${col} ${typ}`).run();
+      }
+    } catch {}
+  };
+
+  addCol('mfa_recovery_requests', 'review_notes', 'TEXT');
+  addCol('mfa_recovery_requests', 'resolution_notes', 'TEXT');
+  addCol('mfa_recovery_requests', 'resolved_at', 'TEXT');
+  addCol('mfa_recovery_requests', 'resolved_by', 'TEXT');
+
+  addCol('mfa_audit_logs', 'action', 'TEXT');
+  addCol('mfa_audit_logs', 'request_id', 'TEXT');
+  addCol('mfa_audit_logs', 'target_user_uid', 'TEXT');
+  addCol('mfa_audit_logs', 'target_user_email', 'TEXT');
+  addCol('mfa_audit_logs', 'target_user_role', 'TEXT');
+  addCol('mfa_audit_logs', 'admin_uid', 'TEXT');
+  addCol('mfa_audit_logs', 'admin_email', 'TEXT');
+  addCol('mfa_audit_logs', 'ist_timestamp', 'TEXT');
+  addCol('mfa_audit_logs', 'correlation_id', 'TEXT');
 }
 
 // Auto-run table setup on service load
@@ -413,9 +449,12 @@ export function logMfaAudit(params: {
  */
 export function getMfaAuditLogs(userId?: string, limit: number = 25): AuditLogRecord[] {
   try {
+    initMfaRecoveryTables();
     if (userId) {
       const rows = db.prepare(`
-        SELECT id, user_id, event_type, ip_address, user_agent, status, details, created_at
+        SELECT id, user_id, event_type, action, request_id, target_user_uid, target_user_email,
+               target_user_role, admin_uid, admin_email, ist_timestamp, correlation_id,
+               ip_address, user_agent, status, details, created_at
         FROM mfa_audit_logs
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -426,6 +465,15 @@ export function getMfaAuditLogs(userId?: string, limit: number = 25): AuditLogRe
         id: r.id,
         userId: r.user_id,
         eventType: r.event_type,
+        action: r.action,
+        requestId: r.request_id,
+        targetUserUid: r.target_user_uid,
+        targetUserEmail: r.target_user_email,
+        targetUserRole: r.target_user_role,
+        adminUid: r.admin_uid,
+        adminEmail: r.admin_email,
+        istTimestamp: r.ist_timestamp,
+        correlationId: r.correlation_id,
         ipAddress: r.ip_address,
         userAgent: r.user_agent,
         status: r.status,
@@ -435,7 +483,9 @@ export function getMfaAuditLogs(userId?: string, limit: number = 25): AuditLogRe
     }
 
     const rows = db.prepare(`
-      SELECT id, user_id, event_type, ip_address, user_agent, status, details, created_at
+      SELECT id, user_id, event_type, action, request_id, target_user_uid, target_user_email,
+             target_user_role, admin_uid, admin_email, ist_timestamp, correlation_id,
+             ip_address, user_agent, status, details, created_at
       FROM mfa_audit_logs
       ORDER BY created_at DESC
       LIMIT ?
@@ -445,6 +495,15 @@ export function getMfaAuditLogs(userId?: string, limit: number = 25): AuditLogRe
       id: r.id,
       userId: r.user_id,
       eventType: r.event_type,
+      action: r.action,
+      requestId: r.request_id,
+      targetUserUid: r.target_user_uid,
+      targetUserEmail: r.target_user_email,
+      targetUserRole: r.target_user_role,
+      adminUid: r.admin_uid,
+      adminEmail: r.admin_email,
+      istTimestamp: r.ist_timestamp,
+      correlationId: r.correlation_id,
       ipAddress: r.ip_address,
       userAgent: r.user_agent,
       status: r.status,
@@ -694,45 +753,224 @@ export function getPendingRecoveryRequests(limit: number = 50) {
 /**
  * Resolves a manual recovery request (APPROVED or REJECTED) by a Super Admin.
  */
+export interface ResolveRecoveryResult {
+  success: boolean;
+  action?: 'APPROVED' | 'REJECTED';
+  requestId?: string;
+  targetUser?: {
+    id: string;
+    email: string;
+    role: string;
+    mfaReset: boolean;
+  };
+  error?: string;
+  statusCode?: number;
+  message?: string;
+}
+
+/**
+ * Resolves a manual recovery request (APPROVED or REJECTED) by a Super Admin.
+ * Enforces:
+ * - Atomic database transaction (BEGIN / COMMIT / ROLLBACK)
+ * - Strict status check (idempotency, PENDING_REVIEW only)
+ * - Administrative authorization & self-approval prohibition
+ * - Zero authority to touch student academic or commercial records
+ * - Complete factor invalidation & device/session revocation on approval
+ * - Immutable audit logging with canonical IST timestamp
+ */
 export function resolveRecoveryRequest(
   requestId: string,
   reviewerId: string,
   decision: 'APPROVED' | 'REJECTED',
   reviewNotes: string,
   context?: { ip?: string; userAgent?: string }
-): { success: boolean; error?: string } {
+): ResolveRecoveryResult {
+  initMfaRecoveryTables();
+
+  // 1. Fetch recovery request
   const req = db.prepare('SELECT * FROM mfa_recovery_requests WHERE id = ?').get(requestId) as any;
   if (!req) {
-    return { success: false, error: 'Recovery request not found.' };
+    return {
+      success: false,
+      error: 'Recovery request not found.',
+      statusCode: 404,
+    };
   }
 
-  const newStatus = decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
-  db.prepare(`
-    UPDATE mfa_recovery_requests
-    SET status = ?, reviewed_by = ?, review_notes = ?, resolved_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(newStatus, reviewerId, reviewNotes || '', requestId);
+  // 2. Status checks & Idempotency: only allow resolving requests with status PENDING_REVIEW
+  if (req.status !== 'PENDING_REVIEW') {
+    return {
+      success: false,
+      error: `Recovery request has already been resolved with status: ${req.status}. Duplicate resolution rejected.`,
+      statusCode: 409,
+    };
+  }
 
-  if (decision === 'APPROVED') {
-    // Invalidate old recovery codes and authenticators
-    db.prepare('UPDATE mfa_recovery_codes SET used = 1 WHERE user_id = ?').run(req.user_id);
-    db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(req.user_id);
-    // Reset MFA status so user can log in with credentials and be prompted to re-enroll
+  // 3. Admin authorization & self-approval restriction
+  // Super Admin cannot approve or resolve their own request!
+  if (req.user_id && req.user_id === reviewerId) {
+    return {
+      success: false,
+      error: 'Administrators are strictly prohibited from approving or resolving their own MFA recovery requests.',
+      statusCode: 403,
+    };
+  }
+
+  // 4. Target user verification
+  let targetUser = req.user_id
+    ? (db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE id = ?').get(req.user_id) as any)
+    : null;
+
+  if (!targetUser && req.email) {
+    targetUser = db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE email = ? COLLATE NOCASE').get(req.email) as any;
+  }
+
+  if (!targetUser) {
+    return {
+      success: false,
+      error: 'Target user account associated with recovery request not found.',
+      statusCode: 404,
+    };
+  }
+
+  // Self-approval restriction by email
+  const reviewer = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(reviewerId) as any;
+  if (reviewer && reviewer.email && targetUser.email && reviewer.email.toLowerCase() === targetUser.email.toLowerCase()) {
+    return {
+      success: false,
+      error: 'Administrators cannot resolve their own account recovery requests.',
+      statusCode: 403,
+    };
+  }
+
+  const cleanNotes = (reviewNotes || '').trim();
+  const correlationId = `mfa_rec_res_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const istNow = formatDateTimeIST(new Date(), true);
+
+  // 5. Atomic transaction execution
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const newStatus = decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+
+    // Update recovery request status across all legacy & canonical column names
     db.prepare(`
-      UPDATE users
-      SET mfa_enabled = 0, mfa_enrolled_at = NULL, updated_at = CURRENT_TIMESTAMP
+      UPDATE mfa_recovery_requests
+      SET status = ?,
+          reviewed_by = ?,
+          resolved_by = ?,
+          admin_notes = ?,
+          review_notes = ?,
+          resolution_notes = ?,
+          reviewed_at = CURRENT_TIMESTAMP,
+          resolved_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(req.user_id);
+    `).run(
+      newStatus,
+      reviewerId,
+      reviewerId,
+      cleanNotes,
+      cleanNotes,
+      cleanNotes,
+      requestId
+    );
+
+    if (decision === 'APPROVED') {
+      // Invalidate recovery codes
+      db.prepare('UPDATE mfa_recovery_codes SET used = 1, used_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(targetUser.id);
+
+      // Invalidate authenticators
+      db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(targetUser.id);
+
+      // Reset MFA status on user record
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 0, mfa_enrolled_at = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(targetUser.id);
+
+      // Revoke all trusted devices
+      revokeAllDeviceTrust(targetUser.id);
+
+      // Revoke all active sessions
+      revokeAllSessionsForUser(targetUser.id);
+    }
+
+    // 6. Immutable Audit Event Log
+    const auditId = `mfa_audit_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+    const eventType = decision === 'APPROVED' ? 'MFA_RECOVERY_APPROVED' : 'MFA_RECOVERY_REJECTED';
+    const auditDetails = JSON.stringify({
+      eventType,
+      action: decision,
+      requestId,
+      targetUserUid: targetUser.id,
+      targetUserEmail: targetUser.email,
+      targetUserRole: targetUser.role,
+      adminUid: reviewerId,
+      adminEmail: reviewer?.email || reviewerId,
+      status: 'SUCCESS',
+      resolutionNotes: cleanNotes,
+      correlationId,
+      timestampIST: istNow,
+      timestampUTC: new Date().toISOString(),
+      academicDataImpact: 'NONE_ZERO_AUTHORITY',
+      commercialDataImpact: 'NONE_ZERO_AUTHORITY',
+    });
+
+    db.prepare(`
+      INSERT INTO mfa_audit_logs (
+        id, user_id, event_type, action, request_id, target_user_uid,
+        target_user_email, target_user_role, admin_uid, admin_email,
+        status, ist_timestamp, correlation_id, ip_address, user_agent,
+        details
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      auditId,
+      targetUser.id,
+      eventType,
+      decision,
+      requestId,
+      targetUser.id,
+      targetUser.email,
+      targetUser.role,
+      reviewerId,
+      reviewer?.email || reviewerId,
+      'SUCCESS',
+      istNow,
+      correlationId,
+      context?.ip || null,
+      context?.userAgent || null,
+      auditDetails
+    );
+
+    db.exec('COMMIT');
+  } catch (err: any) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // ignore rollback errors
+    }
+    console.error('[MFA Recovery Resolution Transaction Error]:', err);
+    return {
+      success: false,
+      error: `Failed to resolve recovery request: ${err?.message || 'Database transaction failed'}`,
+      statusCode: 500,
+    };
   }
 
-  logMfaAudit({
-    userId: req.user_id,
-    eventType: decision === 'APPROVED' ? 'RECOVERY_REQUEST_APPROVED' : 'RECOVERY_REQUEST_REJECTED',
-    ipAddress: context?.ip,
-    userAgent: context?.userAgent,
-    status: 'SUCCESS',
-    details: `Recovery request ${requestId} ${newStatus} by admin ${reviewerId}. Notes: ${reviewNotes || 'None'}`,
-  });
-
-  return { success: true };
+  return {
+    success: true,
+    action: decision,
+    requestId,
+    targetUser: {
+      id: targetUser.id,
+      email: targetUser.email,
+      role: targetUser.role,
+      mfaReset: decision === 'APPROVED',
+    },
+    message:
+      decision === 'APPROVED'
+        ? `Recovery request approved successfully. MFA factors have been reset and active sessions terminated for ${targetUser.email}.`
+        : `Recovery request rejected. Existing MFA configuration remains active for ${targetUser.email}.`,
+  };
 }

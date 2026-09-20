@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth, SuspendedAccountInfo } from '../../context/AuthContext.js';
 import { AlertOctagon, Send, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { formatDateTimeIST } from '../../utils/timezone.js';
 
 interface SuspendedAccountViewProps {
   suspension: SuspendedAccountInfo;
@@ -36,13 +37,7 @@ export const SuspendedAccountView: React.FC<SuspendedAccountViewProps> = ({ susp
     }
   };
 
-  const formattedDate = new Date(suspension.suspendedAt).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const formattedDate = formatDateTimeIST(suspension.suspendedAt);
 
   return (
     <div className="w-full max-w-lg bg-white border border-rose-200 rounded-xl p-6 sm:p-7 shadow-lg text-slate-800">
