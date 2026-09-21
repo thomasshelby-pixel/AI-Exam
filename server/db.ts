@@ -876,6 +876,16 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'checksum', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'download_url', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'unique_identity_key', 'TEXT');
+
+  try {
+    db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_eval_materials_unique_identity
+      ON evaluation_materials(unique_identity_key)
+    `).run();
+  } catch (idxErr) {
+    console.warn('[DB] Warning creating idx_eval_materials_unique_identity:', idxErr);
+  }
 
   // Ensure evaluations has all enhanced columns
   addColumnIfNotExists('evaluations', 'evaluation_source', "TEXT DEFAULT 'PUBLIC'");

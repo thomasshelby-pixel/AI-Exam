@@ -237,6 +237,14 @@ export const MATERIAL_TYPE_CONFIG: Record<MaterialType, {
     label: 'Previous Year Question Paper (PYQ)',
     description: 'Actual past ICAI exam question papers with suggested guideline solutions.',
   },
+  QUESTION_PAPER: {
+    label: 'Question Paper',
+    description: 'Standalone authentic exam question paper for student assessment and step testing.',
+  },
+  SUGGESTED_ANSWER: {
+    label: 'Suggested Answer',
+    description: 'Official suggested answer guideline and step-by-step marking rubrics.',
+  },
 };
 
 export const MODEL_GROUP_OPTIONS: Record<ModelGroup, string> = {

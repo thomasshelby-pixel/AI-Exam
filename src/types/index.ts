@@ -4,7 +4,7 @@ export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'BLOCKED' | 'REMOVED';
 
 export type CALevel = 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
 
-export type MaterialType = 'MODEL' | 'MTP' | 'RTP' | 'PYQ' | 'MODEL_TEST_PAPER';
+export type MaterialType = 'MODEL' | 'MTP' | 'RTP' | 'PYQ' | 'MODEL_TEST_PAPER' | 'QUESTION_PAPER' | 'SUGGESTED_ANSWER';
 
 export type ModelGroup = 'GROUP_1' | 'GROUP_2' | 'OTHER';
 

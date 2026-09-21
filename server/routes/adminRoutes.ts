@@ -49,6 +49,11 @@ import { generateDetailedReportPdf } from '../services/detailedReportPdfService.
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
+import {
+  checkMaterialDuplicate,
+  computeMaterialUniqueKey,
+  normalizeMtpSeriesNumber,
+} from '../services/materialDuplicateProtectionService.js';
 
 const router = Router();
 
@@ -614,6 +619,43 @@ router.get('/materials/:id/file', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Check Duplicate Material pre-validation endpoint (supports GET query and POST body)
+router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
+  try {
+    const params = req.method === 'POST' ? req.body : req.query;
+    const {
+      level,
+      subjectKey,
+      subjectName,
+      attempt,
+      materialType,
+      mtpSeries,
+      mtp_series,
+      paper,
+      excludeId,
+    } = params;
+
+    const series = mtpSeries !== undefined ? mtpSeries : mtp_series;
+    const result = checkMaterialDuplicate(
+      {
+        level: String(level || ''),
+        subjectKey: String(subjectKey || ''),
+        subjectName: subjectName ? String(subjectName) : undefined,
+        attempt: String(attempt || ''),
+        materialType: String(materialType || ''),
+        mtpSeries: series,
+        paper: paper ? String(paper) : undefined,
+      },
+      excludeId ? String(excludeId) : undefined
+    );
+
+    return res.json(result);
+  } catch (err: unknown) {
+    console.error('[AdminRoutes] Error checking duplicate material:', err);
+    return res.status(500).json({ error: 'Failed to perform duplicate check' });
+  }
+});
+
 router.post('/materials', async (req: AuthRequest, res: Response) => {
   try {
     const {
@@ -642,12 +684,38 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       attachedFile,
     } = req.body;
 
-    const parsedMtpSeries = normalizeMtpSeries(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
+    const parsedMtpSeries = normalizeMtpSeriesNumber(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
 
     if (materialType === 'MTP') {
       if (!parsedMtpSeries) {
-        return res.status(400).json({ error: 'Please select an MTP Series (Series 1 or Series 2) to continue.' });
+        return res.status(400).json({
+          error: 'SERIES_REQUIRED',
+          message: 'Please select an MTP Series (e.g. Series 1, Series 2) to continue.'
+        });
       }
+    }
+
+    // =========================================================================
+    // STRICT DUPLICATE-UPLOAD PROTECTION (Pre-upload blocking gate)
+    // =========================================================================
+    const duplicateCheck = checkMaterialDuplicate({
+      level,
+      subjectKey,
+      subjectName,
+      attempt,
+      materialType,
+      mtpSeries: parsedMtpSeries,
+      paper,
+    });
+
+    if (duplicateCheck.isDuplicate) {
+      console.warn(`[AdminRoutes] BLOCKED DUPLICATE MATERIAL UPLOAD: ${duplicateCheck.duplicateKey}`, duplicateCheck.details);
+      return res.status(409).json({
+        error: 'DUPLICATE_MATERIAL',
+        message: duplicateCheck.message,
+        duplicateDetails: duplicateCheck.details,
+        existingMaterial: duplicateCheck.existingMaterial,
+      });
     }
 
     const { sourceFormat, source_format } = req.body;
@@ -767,6 +835,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       level,
       material_type: materialType,
       mtp_series: parsedMtpSeries || null,
+      unique_identity_key: duplicateCheck.duplicateKey,
       source_format: normSourceFormat,
       combined_source_material_id: combinedSourceMaterialId,
       question_material_id: questionMaterialId,
@@ -808,33 +877,48 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       console.warn('[AdminRoutes] Warning persisting material to Firestore:', fsErr);
     }
 
-    // 2. Insert into SQLite
-    db.prepare(`
-      INSERT INTO evaluation_materials (
-        id, level, material_type, mtp_series, source_format, combined_source_material_id,
-        question_material_id, suggested_answer_material_id, marking_scheme_material_id,
-        model_group, subject_key, subject_name,
-        paper, attempt, syllabus_version, chapter_topic,
-        question_paper_title, question_paper_text, suggested_answers_text,
-        marking_scheme_text, reference_guidance_text, amendments_provisions_text,
-        effective_date, version, status, source_type, admin_approved,
-        file_id, storage_path, file_name, file_size, checksum, download_url,
-        uploaded_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
-      materialRecord.source_format, materialRecord.combined_source_material_id,
-      materialRecord.question_material_id, materialRecord.suggested_answer_material_id, materialRecord.marking_scheme_material_id,
-      materialRecord.modelGroup,
-      materialRecord.subject_key, materialRecord.subject_name, materialRecord.paper, materialRecord.attempt,
-      materialRecord.syllabus_version, materialRecord.chapter_topic, materialRecord.question_paper_title,
-      materialRecord.question_paper_text, materialRecord.suggested_answers_text, materialRecord.marking_scheme_text,
-      materialRecord.reference_guidance_text, materialRecord.amendments_provisions_text, materialRecord.effective_date,
-      materialRecord.version, materialRecord.status, materialRecord.source_type, materialRecord.admin_approved,
-      materialRecord.file_id, materialRecord.storage_path, materialRecord.file_name, materialRecord.file_size,
-      materialRecord.checksum, materialRecord.download_url, materialRecord.uploaded_by, materialRecord.created_at,
-      materialRecord.updated_at
-    );
+    // 2. Insert into SQLite with atomic unique constraint protection
+    try {
+      db.prepare(`
+        INSERT INTO evaluation_materials (
+          id, level, material_type, mtp_series, unique_identity_key, source_format, combined_source_material_id,
+          question_material_id, suggested_answer_material_id, marking_scheme_material_id,
+          model_group, subject_key, subject_name,
+          paper, attempt, syllabus_version, chapter_topic,
+          question_paper_title, question_paper_text, suggested_answers_text,
+          marking_scheme_text, reference_guidance_text, amendments_provisions_text,
+          effective_date, version, status, source_type, admin_approved,
+          file_id, storage_path, file_name, file_size, checksum, download_url,
+          uploaded_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
+        materialRecord.unique_identity_key,
+        materialRecord.source_format, materialRecord.combined_source_material_id,
+        materialRecord.question_material_id, materialRecord.suggested_answer_material_id, materialRecord.marking_scheme_material_id,
+        materialRecord.modelGroup,
+        materialRecord.subject_key, materialRecord.subject_name, materialRecord.paper, materialRecord.attempt,
+        materialRecord.syllabus_version, materialRecord.chapter_topic, materialRecord.question_paper_title,
+        materialRecord.question_paper_text, materialRecord.suggested_answers_text, materialRecord.marking_scheme_text,
+        materialRecord.reference_guidance_text, materialRecord.amendments_provisions_text, materialRecord.effective_date,
+        materialRecord.version, materialRecord.status, materialRecord.source_type, materialRecord.admin_approved,
+        materialRecord.file_id, materialRecord.storage_path, materialRecord.file_name, materialRecord.file_size,
+        materialRecord.checksum, materialRecord.download_url, materialRecord.uploaded_by, materialRecord.created_at,
+        materialRecord.updated_at
+      );
+    } catch (insertErr: unknown) {
+      const errStr = String(insertErr);
+      if (errStr.includes('UNIQUE constraint failed') || errStr.includes('idx_eval_materials_unique_identity')) {
+        console.warn(`[AdminRoutes] Atomic unique constraint caught duplicate material: ${duplicateCheck.duplicateKey}`);
+        return res.status(409).json({
+          error: 'DUPLICATE_MATERIAL',
+          message: duplicateCheck.message,
+          duplicateDetails: duplicateCheck.details,
+          existingMaterial: duplicateCheck.existingMaterial,
+        });
+      }
+      throw insertErr;
+    }
 
     // 3. Audit log in SQLite and Firestore
     const logId = `log_${crypto.randomBytes(8).toString('hex')}`;
@@ -903,8 +987,36 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     } = req.body;
 
     const parsedMtpSeries = (mtpSeries !== undefined || mtp_series !== undefined)
-      ? normalizeMtpSeries(mtpSeries !== undefined ? mtpSeries : mtp_series)
+      ? normalizeMtpSeriesNumber(mtpSeries !== undefined ? mtpSeries : mtp_series)
       : undefined;
+
+    const effLevel = level || existing.level;
+    const effMatType = materialType || existing.material_type;
+    const effSubjectKey = subjectKey || existing.subject_key;
+    const effSubjectName = subjectName || existing.subject_name;
+    const effAttempt = attempt || existing.attempt;
+    const effPaper = paper || existing.paper;
+    const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
+
+    // Check if updated attributes collide with another existing material
+    const dupCheck = checkMaterialDuplicate({
+      level: effLevel,
+      subjectKey: effSubjectKey,
+      subjectName: effSubjectName,
+      attempt: effAttempt,
+      materialType: effMatType,
+      mtpSeries: effSeries,
+      paper: effPaper,
+    }, req.params.id);
+
+    if (dupCheck.isDuplicate) {
+      return res.status(409).json({
+        error: 'DUPLICATE_MATERIAL',
+        message: dupCheck.message,
+        duplicateDetails: dupCheck.details,
+        existingMaterial: dupCheck.existingMaterial,
+      });
+    }
 
     let fileId = existing.file_id;
     let storagePath = existing.storage_path;
@@ -1014,6 +1126,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
           file_size = COALESCE(?, file_size),
           checksum = COALESCE(?, checksum),
           download_url = COALESCE(?, download_url),
+          unique_identity_key = COALESCE(?, unique_identity_key),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
@@ -1043,6 +1156,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       fileSize || null,
       checksum || null,
       downloadUrl || null,
+      dupCheck.duplicateKey,
       req.params.id
     );
 

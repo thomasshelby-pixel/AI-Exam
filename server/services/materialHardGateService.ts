@@ -31,7 +31,7 @@ export interface MaterialSourceManifest {
   attempt: string;
   syllabusVersion: string;
   materialType: string;
-  mtpSeries?: 1 | 2;
+  mtpSeries?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
   combinedSourceMaterialId?: string;
   questionMaterialId?: string;
@@ -53,10 +53,10 @@ export interface EvaluationEvidenceComponentMetadata {
   version: string;
   checksum: string;
   textLength: number;
-  mtpSeries?: 1 | 2 | null;
+  mtpSeries?: number | null;
   componentType: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'REFERENCE_GUIDANCE' | 'AMENDMENTS_PROVISIONS';
   title?: string;
-  detectedSeries?: 1 | 2 | null;
+  detectedSeries?: number | null;
 }
 
 export interface EvaluationEvidenceComponent {
@@ -92,7 +92,7 @@ export interface VerifiedReferencePackage {
   paper: string;
   syllabusVersion: string;
   officialPaperMaxMarks: number;
-  mtpSeries?: 1 | 2;
+  mtpSeries?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
   combinedSourceMaterialId?: string;
   questionMaterialId?: string;
@@ -140,11 +140,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const isMtp = request.materialType === 'MTP';
   const isPyq = request.materialType === 'PYQ';
 
-  let normalizedSeries: 1 | 2 | undefined = undefined;
+  let normalizedSeries: number | undefined = undefined;
   if (isMtp) {
     const norm = normalizeMtpSeries(request.mtpSeries);
     if (!norm) {
-      throw new Error('Please select an MTP Series (Series 1 or Series 2) to continue.');
+      throw new Error('Please select an MTP Series (e.g. Series 1, Series 2) to continue.');
     }
     normalizedSeries = norm;
   }

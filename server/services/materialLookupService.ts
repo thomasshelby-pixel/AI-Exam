@@ -2,20 +2,18 @@ import { db } from '../db.js';
 import { getAllFirestoreDocs, setFirestoreDoc } from './firestoreDbService.js';
 
 /**
- * Normalizes MTP Series input to canonical integer 1 or 2, or null.
- * Handles "1.0", "1", 1, "Series 1", "Series-1" -> 1
- * Handles "2.0", "2", 2, "Series 2", "Series-2" -> 2
+ * Normalizes MTP Series input to canonical integer 1, 2, 3... or null.
+ * Handles "1.0", "1", 1, "Series 1", "Series-1", "series 1", "s1" -> 1
+ * Handles "2.0", "2", 2, "Series 2", "Series-2", "series 2", "s2" -> 2
+ * Handles "Series 3", 3 -> 3
  */
-export function normalizeMtpSeries(rawSeries: any): 1 | 2 | null {
+export function normalizeMtpSeries(rawSeries: any): number | null {
   if (rawSeries === null || rawSeries === undefined || rawSeries === '') return null;
   const str = String(rawSeries).trim().toLowerCase();
-  if (str === '1' || str === '1.0' || str === 'series 1' || str === 'series-1' || str === 'series 1.0') return 1;
-  if (str === '2' || str === '2.0' || str === 'series 2' || str === 'series-2' || str === 'series 2.0') return 2;
-  const num = Number(str);
-  if (!isNaN(num)) {
-    const rounded = Math.round(num);
-    if (rounded === 1) return 1;
-    if (rounded === 2) return 2;
+  const match = str.match(/(\d+)/);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    if (!isNaN(num) && num > 0) return num;
   }
   return null;
 }

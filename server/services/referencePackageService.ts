@@ -45,7 +45,7 @@ export interface ReferencePackage {
   attempt: string;
   syllabusVersion: string;
   materialType: string;
-  mtpSeries?: 1 | 2;
+  mtpSeries?: number;
   effectiveDate: string;
   materialSource: 'GLOBAL' | 'INSTITUTE';
   officialPaperMaxMarks: number;
@@ -90,11 +90,11 @@ export function buildAuthoritativeReferencePackage(
   const isMtp = request.materialType === 'MTP';
   const isPyq = request.materialType === 'PYQ';
 
-  let normalizedSeries: 1 | 2 | undefined = undefined;
+  let normalizedSeries: number | undefined = undefined;
   if (isMtp) {
     const norm = normalizeMtpSeries(request.mtpSeries);
     if (!norm) {
-      throw new Error('Please select an MTP Series (Series 1 or Series 2) to continue.');
+      throw new Error('Please select an MTP Series (e.g. Series 1, Series 2) to continue.');
     }
     normalizedSeries = norm;
   }
