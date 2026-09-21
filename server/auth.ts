@@ -74,6 +74,25 @@ export function verifyMfaSessionToken(token: string): {
   }
 }
 
+export function verifyAuthToken(token: string): {
+  id: string;
+  email: string;
+  role: UserRole;
+  fullName: string;
+  sessionId?: string;
+  mfaVerified?: boolean;
+} | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (!decoded || !decoded.id) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 function parseCookie(cookieHeader: string | undefined, name: string): string | null {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));

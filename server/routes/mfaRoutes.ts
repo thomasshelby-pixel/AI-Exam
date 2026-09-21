@@ -7,8 +7,10 @@ import {
   generateToken,
   generateMfaSessionToken,
   verifyMfaSessionToken,
+  verifyAuthToken,
   AuthRequest,
 } from '../auth.js';
+import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import {
   markDeviceAsTrusted,
   isDeviceTrusted,
@@ -81,6 +83,21 @@ function resolveMfaContext(req: Request): {
       return { user: null, error: 'User account not found.' };
     }
     return { user: dbUser, sessionType: 'AUTHENTICATED' };
+  }
+
+  // Also check Authorization: Bearer token header if authReq.user not populated by middleware
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearerToken = authHeader.split(' ')[1];
+    const decoded = verifyAuthToken(bearerToken);
+    if (decoded && decoded.id) {
+      const dbUser = db.prepare(
+        'SELECT id, email, role, full_name, mfa_enabled FROM users WHERE id = ?'
+      ).get(decoded.id) as any;
+      if (dbUser) {
+        return { user: dbUser, sessionType: 'AUTHENTICATED' };
+      }
+    }
   }
 
   return { user: null, error: 'Authentication or MFA session token required.' };
@@ -282,27 +299,110 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    // Update user record in SQLite: enable MFA
+    const secretKey = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || null;
+
+    // Check if user is ALREADY enrolled to guarantee persistent recovery codes
+    const existingAuth = db.prepare(`
+      SELECT id FROM mfa_authenticators WHERE user_id = ?
+    `).get(user.id);
+    const existingRecovery = db.prepare(`
+      SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ?
+    `).get(user.id) as { count: number } | undefined;
+
+    const hasAlreadyEnrolled = Boolean(existingAuth || (existingRecovery && existingRecovery.count > 0));
+
+    if (hasAlreadyEnrolled) {
+      // READ-ONLY: Do NOT generate new recovery codes or overwrite authenticator!
+      const existingStatus = getRecoveryCodeStatus(user.id);
+      const session = issueAuthenticatedSession(req, res, user);
+
+      // Self-heal SQLite & Firestore mfa_enabled = 1
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 1,
+            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+            totp_secret = COALESCE(?, totp_secret),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(secretKey, user.id);
+
+      if (secretKey) {
+        db.prepare(`
+          UPDATE mfa_authenticators
+          SET totp_secret = COALESCE(totp_secret, ?),
+              last_used_at = CURRENT_TIMESTAMP
+          WHERE user_id = ? AND factor_type = 'PRIMARY_TOTP'
+        `).run(secretKey, user.id);
+      }
+
+      syncRecordToFirestore('users', user.id, {
+        id: user.id,
+        mfa_enabled: 1,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
+      logMfaAudit({
+        userId: user.id,
+        eventType: 'MFA_VERIFIED',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        status: 'SUCCESS',
+        details: 'Two-Factor Authentication verified on already-enrolled account. Existing codes and secret preserved.',
+      });
+
+      return res.json({
+        success: true,
+        token: session.token,
+        trustToken: session.trustToken,
+        deviceId: session.deviceId,
+        deviceTrusted: true,
+        message: 'Two-Factor Authentication is already active.',
+        remainingCodes: existingStatus.remaining,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          fullName: user.full_name,
+          mfaEnabled: true,
+          mfaVerified: true,
+        },
+      });
+    }
+
+    // Update user record in SQLite: enable MFA and store persistent TOTP secret
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
           mfa_enrolled_at = CURRENT_TIMESTAMP,
+          totp_secret = COALESCE(?, totp_secret),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(user.id);
+    `).run(secretKey, user.id);
 
-    // Ensure primary authenticator record exists
+    // Ensure primary authenticator record exists with persistent secret
     const primaryId = `auth_prim_${user.id}`;
     db.prepare(`
-      INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, created_at, last_used_at)
-      VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(primaryId, user.id);
+      INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+      VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        totp_secret = COALESCE(excluded.totp_secret, mfa_authenticators.totp_secret),
+        last_used_at = CURRENT_TIMESTAMP
+    `).run(primaryId, user.id, secretKey);
 
-    // Generate initial one-time recovery codes upon enrollment
+    // Generate initial one-time recovery codes upon INITIAL enrollment ONLY
     const recoveryResult = generateRecoveryCodes(user.id, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
+
+    // Mirror to Firestore
+    syncRecordToFirestore('users', user.id, {
+      id: user.id,
+      mfa_enabled: 1,
+      mfa_enrolled_at: new Date().toISOString(),
+      totp_secret: secretKey || null,
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
 
     logMfaAudit({
       userId: user.id,
@@ -419,6 +519,35 @@ router.post('/recovery-codes/generate', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[MFA recovery-codes generate error]:', err);
     return res.status(500).json({ error: 'Failed to generate recovery codes.' });
+  }
+});
+
+/**
+ * POST /api/auth/mfa/recovery-codes/regenerate
+ * Alias for /recovery-codes/generate
+ */
+router.post('/recovery-codes/regenerate', async (req: Request, res: Response) => {
+  try {
+    const { user, error } = resolveMfaContext(req);
+    if (!user || error) {
+      return res.status(401).json({ error: error || 'Unauthorized' });
+    }
+
+    const result = generateRecoveryCodes(user.id, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.json({
+      success: true,
+      recoveryCodes: result.plaintextCodes,
+      total: result.total,
+      remaining: result.total,
+      message: 'New recovery codes generated successfully. Store these safely offline.',
+    });
+  } catch (err: any) {
+    console.error('[MFA recovery-codes regenerate error]:', err);
+    return res.status(500).json({ error: 'Failed to regenerate recovery codes.' });
   }
 });
 

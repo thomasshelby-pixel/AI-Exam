@@ -165,5 +165,21 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // MFA Authenticators, Recovery Codes, and Trusted Devices
+    match /mfa_authenticators/{authId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mfa_recovery_codes/{codeId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /trusted_devices/{deviceId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

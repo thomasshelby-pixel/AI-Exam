@@ -286,6 +286,7 @@ export const MfaModal: React.FC = () => {
           body: JSON.stringify({
             otpCode: code,
             mfaSessionToken: mfaChallenge?.mfaSessionToken,
+            secretKey: totpSetup?.secretKey || (totpSetup?.secret as any)?.secretKey,
           }),
         });
         const data = await res.json();

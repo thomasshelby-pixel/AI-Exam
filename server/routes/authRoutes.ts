@@ -49,16 +49,54 @@ export async function evaluateMfaRequirementForLogin(
   message?: string;
   deviceTrusted?: boolean;
 }> {
-  const mfaRecord = db.prepare(`
-    SELECT mfa_enabled FROM users WHERE id = ?
-  `).get(user.id) as { mfa_enabled: number } | undefined;
+  // Comprehensive enrollment evaluation across SQLite and Firestore
+  const userRow = db.prepare(`
+    SELECT mfa_enabled, mfa_enrolled_at, totp_secret FROM users WHERE id = ?
+  `).get(user.id) as { mfa_enabled?: number; mfa_enrolled_at?: string | null; totp_secret?: string | null } | undefined;
 
-  const mfaEnabled = Boolean(mfaRecord?.mfa_enabled);
+  const authCountRow = db.prepare(`
+    SELECT COUNT(*) as count FROM mfa_authenticators WHERE user_id = ?
+  `).get(user.id) as { count: number } | undefined;
+
+  const recoveryRow = db.prepare(`
+    SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ?
+  `).get(user.id) as { count: number } | undefined;
+
+  const hasAuthenticators = Boolean(authCountRow && authCountRow.count > 0);
+  const hasRecoveryCodes = Boolean(recoveryRow && recoveryRow.count > 0);
+  const hasEnrolledTimestamp = Boolean(userRow?.mfa_enrolled_at);
+  const explicitMfaEnabled = Boolean(userRow?.mfa_enabled);
+
+  // An account is permanently ENROLLED if mfa_enabled is 1 OR it already has authenticators/recovery codes/timestamp
+  const isEnrolled = explicitMfaEnabled || hasAuthenticators || hasRecoveryCodes || hasEnrolledTimestamp;
+
+  // Self-heal SQLite & Firestore if authenticators or recovery codes exist but users.mfa_enabled is 0 or null
+  if (isEnrolled && !explicitMfaEnabled) {
+    try {
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 1,
+            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(user.id);
+
+      syncRecordToFirestore('users', user.id, {
+        id: user.id,
+        mfa_enabled: 1,
+        mfa_enrolled_at: userRow?.mfa_enrolled_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+    } catch (healErr) {
+      console.warn('[MFA] Warning auto-healing user mfa_enabled state:', healErr);
+    }
+  }
+
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
 
   // Role: STUDENT -> MFA is strictly OPTIONAL
   if (user.role === 'STUDENT') {
-    if (!mfaEnabled) {
+    if (!isEnrolled) {
       return { requireMfa: false };
     }
     // Student voluntarily enabled MFA -> Check trusted device status
@@ -69,7 +107,8 @@ export async function evaluateMfaRequirementForLogin(
 
   // Role: INSTITUTE_ADMIN / SUPER_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
-    if (!mfaEnabled) {
+    if (!isEnrolled) {
+      // First-time setup / enrollment flow ONLY for brand-new admin accounts
       const sessionToken = generateMfaSessionToken({
         userId: user.id,
         email: user.email,
@@ -93,6 +132,7 @@ export async function evaluateMfaRequirementForLogin(
   }
 
   // Active enrolled MFA verification challenge for untrusted device/session
+  // Returning enrolled admins and students always receive CHALLENGE mode (read-only)
   const sessionToken = generateMfaSessionToken({
     userId: user.id,
     email: user.email,
@@ -126,6 +166,10 @@ async function authenticateWithFirestoreFallback(
   full_name: string;
   role: UserRole;
   status: string;
+  mfa_enabled?: number;
+  mfa_phone?: string | null;
+  mfa_enrolled_at?: string | null;
+  totp_secret?: string | null;
 } | null> {
   const fdb = getFirestoreDb();
   if (!fdb) return null;
@@ -160,6 +204,9 @@ async function authenticateWithFirestoreFallback(
     const uPhone = fUserDoc.phone || null;
     const uStatus = fUserDoc.status || 'ACTIVE';
     const uClassification = fUserDoc.account_classification || 'NORMAL';
+    const uMfaEnabled = fUserDoc.mfa_enabled ? 1 : 0;
+    const uMfaEnrolledAt = fUserDoc.mfa_enrolled_at || null;
+    const uTotpSecret = fUserDoc.totp_secret || null;
 
     try {
       const colliding = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normalizedEmail, uId) as { id: string } | undefined;
@@ -168,18 +215,21 @@ async function authenticateWithFirestoreFallback(
       }
 
       db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           email = excluded.email,
           password_hash = excluded.password_hash,
           full_name = excluded.full_name,
-          phone = excluded.phone,
+          phone = COALESCE(excluded.phone, users.phone),
           role = excluded.role,
           status = excluded.status,
           account_classification = excluded.account_classification,
+          mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
+          mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
+          totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
           updated_at = CURRENT_TIMESTAMP
-      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, fUserDoc.created_at || null);
+      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, fUserDoc.created_at || null);
 
       if (uRole === 'STUDENT') {
         const spDoc = await getFirestoreDoc<any>('student_profiles', uId);
@@ -216,6 +266,10 @@ async function authenticateWithFirestoreFallback(
       full_name: uFullName,
       role: uRole,
       status: uStatus,
+      mfa_enabled: uMfaEnabled,
+      mfa_phone: uPhone,
+      mfa_enrolled_at: uMfaEnrolledAt,
+      totp_secret: uTotpSecret,
     };
   } catch (err) {
     console.warn('[Auth] Firestore fallback auth error:', err);

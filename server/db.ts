@@ -309,6 +309,7 @@ export function initDatabase() {
       message TEXT NOT NULL,
       type TEXT NOT NULL DEFAULT 'SYSTEM',
       read INTEGER NOT NULL DEFAULT 0,
+      is_read INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -717,6 +718,38 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_mfa_verif_user ON mfa_verifications(user_id, purpose, verified);
+
+    CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      used_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON mfa_recovery_codes(user_id, used);
+
+    CREATE TABLE IF NOT EXISTS mfa_factors (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      factor_type TEXT NOT NULL DEFAULT 'totp',
+      is_backup INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON mfa_factors(user_id);
+
+    CREATE TABLE IF NOT EXISTS mfa_recovery_attempts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      ip_address TEXT,
+      attempt_time TEXT DEFAULT CURRENT_TIMESTAMP,
+      success INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_recov_attempts ON mfa_recovery_attempts(user_id, attempt_time);
   `);
 
   runMigrations();
@@ -753,6 +786,71 @@ function runMigrations() {
   addColumnIfNotExists('users', 'mfa_enabled', "INTEGER NOT NULL DEFAULT 0");
   addColumnIfNotExists('users', 'mfa_phone', "TEXT");
   addColumnIfNotExists('users', 'mfa_enrolled_at', "TEXT");
+  addColumnIfNotExists('users', 'mfa_recovery_codes_generated_at', "TEXT");
+  addColumnIfNotExists('users', 'mfa_last_recovered_at', "TEXT");
+  addColumnIfNotExists('users', 'totp_secret', "TEXT");
+
+  // Notifications column compatibility
+  addColumnIfNotExists('notifications', 'is_read', "INTEGER NOT NULL DEFAULT 0");
+  try {
+    db.prepare('UPDATE notifications SET is_read = read WHERE is_read IS NULL OR is_read = 0').run();
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trg_sync_notif_read AFTER UPDATE OF read ON notifications
+      BEGIN
+        UPDATE notifications SET is_read = NEW.read WHERE id = NEW.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_sync_notif_is_read AFTER UPDATE OF is_read ON notifications
+      BEGIN
+        UPDATE notifications SET read = NEW.is_read WHERE id = NEW.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_sync_notif_insert AFTER INSERT ON notifications
+      BEGIN
+        UPDATE notifications SET is_read = NEW.read WHERE id = NEW.id AND NEW.read != NEW.is_read;
+      END;
+    `);
+  } catch {}
+
+  // Ensure recovery and factor tables exist in migrated databases
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      used_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON mfa_recovery_codes(user_id, used);
+
+    CREATE TABLE IF NOT EXISTS mfa_factors (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      factor_type TEXT NOT NULL DEFAULT 'totp',
+      is_backup INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_factors_user ON mfa_factors(user_id);
+
+    CREATE TABLE IF NOT EXISTS mfa_recovery_attempts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      ip_address TEXT,
+      attempt_time TEXT DEFAULT CURRENT_TIMESTAMP,
+      success INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_recov_attempts ON mfa_recovery_attempts(user_id, attempt_time);
+  `);
+
+  addColumnIfNotExists('mfa_recovery_codes', 'used', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('mfa_recovery_codes', 'status', "TEXT NOT NULL DEFAULT 'UNUSED'");
+  addColumnIfNotExists('mfa_recovery_codes', 'salt', "TEXT");
+  addColumnIfNotExists('mfa_recovery_codes', 'revoked_at', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'totp_secret', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'secret_key', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'admin_approved', "INTEGER NOT NULL DEFAULT 0");
   addColumnIfNotExists('evaluation_materials', 'approved_by', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'approved_at', "TEXT");

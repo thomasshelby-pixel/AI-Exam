@@ -4,6 +4,7 @@ import { UserRole } from '../../src/types/index.js';
 import { revokeAllDeviceTrust } from './trustService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
 import { formatDateTimeIST } from '../utils/timezone.js';
+import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export interface RecoveryCodeStatus {
   total: number;
@@ -185,6 +186,13 @@ export function generateRecoveryCodes(userId: string, context?: { ip?: string; u
     `);
     for (const row of hashedRows) {
       insertStmt.run(row.id, row.user_id, row.code_hash);
+      syncRecordToFirestore('mfa_recovery_codes', row.id, {
+        id: row.id,
+        user_id: row.user_id,
+        code_hash: row.code_hash,
+        used: 0,
+        created_at: new Date().toISOString(),
+      }).catch(() => {});
     }
     db.exec('COMMIT');
   } catch (err) {
@@ -388,6 +396,13 @@ export function verifyAndConsumeRecoveryCode(
     SET used = 1, used_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(matched.id);
+
+  syncRecordToFirestore('mfa_recovery_codes', matched.id, {
+    id: matched.id,
+    user_id: userId,
+    used: 1,
+    used_at: new Date().toISOString(),
+  }).catch(() => {});
 
   clearMfaRateLimit(rateLimitKey);
 

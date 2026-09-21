@@ -117,9 +117,13 @@ export async function hydrateFromFirestore(): Promise<void> {
           db.prepare('DELETE FROM users WHERE id = ?').run(collidingUser.id);
         }
 
+        const uMfaEnabled = u.mfa_enabled ? 1 : 0;
+        const uMfaEnrolledAt = u.mfa_enrolled_at || null;
+        const uTotpSecret = u.totp_secret || null;
+
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -130,13 +134,19 @@ export async function hydrateFromFirestore(): Promise<void> {
               ELSE users.password_hash
             END,
             full_name = excluded.full_name,
+            phone = COALESCE(excluded.phone, users.phone),
             role = excluded.role,
             status = excluded.status,
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
+            mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
+            mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
+            totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
             updated_at = CURRENT_TIMESTAMP
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
-          targetRole, targetStatus, userClassification, u.created_at || null
+          targetRole, targetStatus, userClassification,
+          uMfaEnabled, uMfaEnrolledAt, uTotpSecret,
+          u.created_at || null
         );
         uHydrated++;
       } catch (err) {
@@ -661,6 +671,40 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch (err) {
         console.warn(`[FirestoreSync] Auto-heal notice for student ${orphan.student_id}:`, err);
       }
+    }
+
+    // 16. Hydrate MFA Authenticators & Recovery Codes
+    const mfaAuthenticators = await getAllFirestoreDocs<any>('mfa_authenticators');
+    for (const auth of mfaAuthenticators) {
+      try {
+        db.prepare(`
+          INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, phone_number, is_backup, created_at, last_used_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            totp_secret = COALESCE(excluded.totp_secret, mfa_authenticators.totp_secret),
+            label = excluded.label,
+            last_used_at = excluded.last_used_at
+        `).run(
+          auth.id, auth.user_id, auth.factor_type || 'PRIMARY_TOTP', auth.label || 'Authenticator App',
+          auth.totp_secret || null, auth.phone_number || null, auth.is_backup ? 1 : 0,
+          auth.created_at || null, auth.last_used_at || null
+        );
+      } catch {}
+    }
+
+    const mfaRecoveryCodes = await getAllFirestoreDocs<any>('mfa_recovery_codes');
+    for (const rc of mfaRecoveryCodes) {
+      try {
+        db.prepare(`
+          INSERT INTO mfa_recovery_codes (id, user_id, code_hash, used, used_at, created_at)
+          VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            used = excluded.used,
+            used_at = excluded.used_at
+        `).run(
+          rc.id, rc.user_id, rc.code_hash, rc.used ? 1 : 0, rc.used_at || null, rc.created_at || null
+        );
+      } catch {}
     }
 
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
