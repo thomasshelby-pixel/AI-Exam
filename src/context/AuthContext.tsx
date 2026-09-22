@@ -414,6 +414,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await apiRequest('/api/auth/mfa/disable', {
       method: 'POST',
     });
+    localStorage.removeItem('ca_totp_enrolled');
     if (user) {
       setUser({ ...user, mfaEnabled: false, mfaPhone: null });
     }
@@ -468,6 +469,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response && response.user) {
         setUser(response.user);
         setProfile(response.profile || null);
+        if (response.user.mfaEnabled) {
+          localStorage.setItem('ca_totp_enrolled', 'true');
+        }
         if (storedToken) {
           setToken(storedToken);
         } else {

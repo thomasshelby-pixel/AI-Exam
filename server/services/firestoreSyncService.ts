@@ -707,6 +707,38 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch {}
     }
 
+    // 17. Reconcile and permanently heal MFA status for all enrolled accounts across SQLite and Firestore
+    try {
+      const healResult = db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 1,
+            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE mfa_enabled != 1 AND (
+          id IN (SELECT DISTINCT user_id FROM mfa_authenticators)
+          OR id IN (SELECT DISTINCT user_id FROM mfa_recovery_codes)
+          OR mfa_enrolled_at IS NOT NULL
+          OR totp_secret IS NOT NULL
+        )
+      `).run();
+      if (healResult.changes > 0) {
+        console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${healResult.changes} user account(s).`);
+      }
+
+      // Ensure Firestore users collection has mfa_enabled = 1 for all locally enrolled accounts
+      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1').all() as any[];
+      for (const mfu of allMfaUsers) {
+        setFirestoreDoc('users', mfu.id, {
+          mfa_enabled: 1,
+          mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
+          totp_secret: mfu.totp_secret || null,
+          updated_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    } catch (healMfaErr) {
+      console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
+    }
+
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
@@ -784,13 +816,19 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
         console.log(`[FirestoreSync] Seeded baseline user ${bu.email} (${bu.id}) to Cloud Firestore.`);
       } else if (bu.role === 'SUPER_ADMIN') {
         // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
-        await setFirestoreDoc('users', bu.id, {
+        // while preserving existing MFA enrollment state
+        const superAdminData: Record<string, any> = {
           email: bu.email,
           password_hash: bu.password_hash,
           status: 'ACTIVE',
           role: 'SUPER_ADMIN',
-          updated_at: new Date().toISOString()
-        });
+          updated_at: new Date().toISOString(),
+        };
+        if (bu.mfa_enabled === 1) {
+          superAdminData.mfa_enabled = 1;
+          superAdminData.mfa_enrolled_at = bu.mfa_enrolled_at || new Date().toISOString();
+        }
+        await setFirestoreDoc('users', bu.id, superAdminData);
         console.log(`[FirestoreSync] Synchronized SUPER_ADMIN ${bu.email} credentials to Cloud Firestore.`);
       }
     }

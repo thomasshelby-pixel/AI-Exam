@@ -29,6 +29,7 @@ import {
   submitManualRecoveryRequest,
   getPendingRecoveryRequests,
   resolveRecoveryRequest,
+  getAuthoritativeUserMfaStatus,
   checkMfaRateLimit,
   recordMfaFailedAttempt,
   clearMfaRateLimit,
@@ -463,6 +464,22 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
       INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, created_at)
       VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', CURRENT_TIMESTAMP)
     `).run(primaryId, user.id);
+
+    // Durable Firestore synchronization
+    syncRecordToFirestore('users', user.id, {
+      id: user.id,
+      mfa_enabled: 1,
+      mfa_enrolled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
+
+    syncRecordToFirestore('mfa_authenticators', primaryId, {
+      id: primaryId,
+      user_id: user.id,
+      factor_type: 'PRIMARY_TOTP',
+      label: 'Primary Authenticator App',
+      created_at: new Date().toISOString(),
+    }).catch(() => {});
 
     const session = issueAuthenticatedSession(req, res, user);
 
@@ -931,9 +948,16 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
       WHERE id = ?
     `).run(req.user.id);
 
-    // Clean up authenticators and recovery codes
+    // Clean up authenticators and recovery codes locally and in Firestore
     db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(req.user.id);
     db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(req.user.id);
+
+    syncRecordToFirestore('users', req.user.id, {
+      id: req.user.id,
+      mfa_enabled: 0,
+      mfa_enrolled_at: null,
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
 
     logMfaAudit({
       userId: req.user.id,
@@ -957,7 +981,7 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
 
 /**
  * GET /api/auth/mfa/status
- * Returns current user's MFA status, authenticators count, and recovery code status
+ * Returns current user's authoritative MFA status, authenticators count, and recovery code status
  */
 router.get('/status', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -965,12 +989,16 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
       return res.status(401).json({ error: 'Authentication required.' });
     }
 
-    const dbUser = db.prepare(
-      'SELECT mfa_enabled, role FROM users WHERE id = ?'
-    ).get(req.user.id) as { mfa_enabled: number; role: UserRole } | undefined;
+    const clientClaimsFirebaseTotp =
+      req.headers['x-firebase-totp-enrolled'] === 'true' ||
+      (req.query.firebaseTotpEnrolled as string) === 'true';
+
+    const authMfaStatus = await getAuthoritativeUserMfaStatus(req.user.id, {
+      clientClaimsFirebaseTotp,
+    });
 
     const isMandatoryRole = req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN';
-    const mfaEnabled = Boolean(dbUser?.mfa_enabled);
+    const mfaEnabled = authMfaStatus.mfaEnabled;
 
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
@@ -994,9 +1022,9 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
       mfaEnabled,
       mfaVerified,
       factorType: mfaEnabled ? 'totp' : null,
-      authenticatorsCount: authenticators.length,
-      recoveryCodesRemaining: recoveryStatus?.remaining ?? 0,
-      recoveryCodesTotal: recoveryStatus?.total ?? 0,
+      authenticatorsCount: Math.max(authenticators.length, authMfaStatus.authenticatorsCount),
+      recoveryCodesRemaining: recoveryStatus?.remaining ?? authMfaStatus.recoveryCodesRemaining,
+      recoveryCodesTotal: recoveryStatus?.total ?? (authMfaStatus.recoveryCodesRemaining > 0 ? 10 : 0),
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to retrieve MFA status.' });

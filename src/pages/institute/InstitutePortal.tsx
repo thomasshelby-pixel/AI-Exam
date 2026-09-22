@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
-import { logMfaDiagnostic, getFirebaseEnrolledPhoneFactors } from '../../lib/firebaseAuth.js';
+import { logMfaDiagnostic, getFirebaseEnrolledTotpFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
@@ -705,10 +705,10 @@ export const InstitutePortal: React.FC = () => {
     if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
       factorCheckAttemptedRef.current = true;
       setIsCheckingEnrolledFactor(true);
-      getFirebaseEnrolledPhoneFactors()
-        .then(async ({ hasPhoneFactor }) => {
-          if (hasPhoneFactor) {
-            logMfaDiagnostic('phone factor present BEFORE enrollment: YES', {
+      getFirebaseEnrolledTotpFactors()
+        .then(async ({ hasTotpFactor }) => {
+          if (hasTotpFactor) {
+            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
               source: 'institute-portal-gate',
             });
             await syncMfaFactor();

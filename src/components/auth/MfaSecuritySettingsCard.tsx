@@ -23,6 +23,7 @@ import {
   generateTotpSetup,
   enrollFirebaseTotpFactor,
   mapFirebaseTotpAuthError,
+  getFirebaseEnrolledTotpFactors,
   type TotpSetupData,
 } from '../../lib/firebaseAuth.js';
 import { MfaAuthenticatorItem } from '../../types/index.js';
@@ -35,6 +36,7 @@ interface MfaSecuritySettingsCardProps {
 export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = ({ className = '' }) => {
   const {
     user,
+    isLoading: isAuthLoading,
     triggerMfaEnrollment,
     disableMfa,
     getRecoveryCodeStatus,
@@ -42,6 +44,8 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
     getAuthenticators,
     enrollBackupAuthenticator,
     removeAuthenticator,
+    syncMfaFactor,
+    refreshUser,
   } = useAuth();
 
   const isMandatoryRole = user?.role === 'INSTITUTE_ADMIN' || user?.role === 'SUPER_ADMIN';
@@ -56,6 +60,7 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
   } | null>(null);
 
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
+  const [isVerifyingFactor, setIsVerifyingFactor] = useState<boolean>(true);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Disable MFA state
@@ -101,10 +106,39 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
   };
 
   useEffect(() => {
-    if (user?.mfaEnabled) {
-      loadSecurityDetails();
-    }
-  }, [user?.mfaEnabled]);
+    let isCancelled = false;
+
+    const verifyAndLoad = async () => {
+      if (isAuthLoading) return;
+      setIsVerifyingFactor(true);
+      try {
+        if (user?.mfaEnabled) {
+          await loadSecurityDetails();
+        } else if (user) {
+          try {
+            const { hasTotpFactor } = await getFirebaseEnrolledTotpFactors();
+            if (hasTotpFactor && !isCancelled) {
+              await syncMfaFactor();
+              await refreshUser();
+              await loadSecurityDetails();
+            }
+          } catch {
+            // non-fatal
+          }
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsVerifyingFactor(false);
+        }
+      }
+    };
+
+    verifyAndLoad();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.id, user?.mfaEnabled, isAuthLoading]);
 
   const handleDisableMfa = async () => {
     setIsDisabling(true);
@@ -256,6 +290,20 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  if (isAuthLoading || (isVerifyingFactor && !user?.mfaEnabled)) {
+    return (
+      <div className={`bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm text-center ${className}`}>
+        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          Loading Security Configuration
+        </h4>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          Verifying Multi-Factor Authentication enrollment state with identity platform...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-6 ${className}`}>

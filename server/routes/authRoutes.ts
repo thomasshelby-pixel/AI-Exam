@@ -12,6 +12,7 @@ import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../service
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust } from '../services/trustService.js';
+import { getAuthoritativeUserMfaStatus } from '../services/mfaRecoveryService.js';
 import mfaRoutes from './mfaRoutes.js';
 
 const router = Router();
@@ -49,48 +50,9 @@ export async function evaluateMfaRequirementForLogin(
   message?: string;
   deviceTrusted?: boolean;
 }> {
-  // Comprehensive enrollment evaluation across SQLite and Firestore
-  const userRow = db.prepare(`
-    SELECT mfa_enabled, mfa_enrolled_at, totp_secret FROM users WHERE id = ?
-  `).get(user.id) as { mfa_enabled?: number; mfa_enrolled_at?: string | null; totp_secret?: string | null } | undefined;
-
-  const authCountRow = db.prepare(`
-    SELECT COUNT(*) as count FROM mfa_authenticators WHERE user_id = ?
-  `).get(user.id) as { count: number } | undefined;
-
-  const recoveryRow = db.prepare(`
-    SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ?
-  `).get(user.id) as { count: number } | undefined;
-
-  const hasAuthenticators = Boolean(authCountRow && authCountRow.count > 0);
-  const hasRecoveryCodes = Boolean(recoveryRow && recoveryRow.count > 0);
-  const hasEnrolledTimestamp = Boolean(userRow?.mfa_enrolled_at);
-  const explicitMfaEnabled = Boolean(userRow?.mfa_enabled);
-
-  // An account is permanently ENROLLED if mfa_enabled is 1 OR it already has authenticators/recovery codes/timestamp
-  const isEnrolled = explicitMfaEnabled || hasAuthenticators || hasRecoveryCodes || hasEnrolledTimestamp;
-
-  // Self-heal SQLite & Firestore if authenticators or recovery codes exist but users.mfa_enabled is 0 or null
-  if (isEnrolled && !explicitMfaEnabled) {
-    try {
-      db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 1,
-            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(user.id);
-
-      syncRecordToFirestore('users', user.id, {
-        id: user.id,
-        mfa_enabled: 1,
-        mfa_enrolled_at: userRow?.mfa_enrolled_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
-    } catch (healErr) {
-      console.warn('[MFA] Warning auto-healing user mfa_enabled state:', healErr);
-    }
-  }
+  // Comprehensive enrollment evaluation across SQLite, Firestore, authenticators, and recovery codes
+  const authStatus = await getAuthoritativeUserMfaStatus(user.id);
+  const isEnrolled = authStatus.mfaEnabled;
 
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
 
@@ -737,6 +699,7 @@ router.post('/login', async (req: Request, res: Response) => {
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+    const authMfa = await getAuthoritativeUserMfaStatus(user.id);
 
     return res.json({
       token,
@@ -747,7 +710,7 @@ router.post('/login', async (req: Request, res: Response) => {
         role: user.role,
         status: user.status,
         hasPermanentFreeAccess: isPermanentFree,
-        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaEnabled: authMfa.mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
         mfaMandatory: isMandatoryRole,
@@ -1020,6 +983,8 @@ router.post('/institute/login', async (req: Request, res: Response) => {
 
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
 
+    const authMfa = await getAuthoritativeUserMfaStatus(user.id);
+
     return res.json({
       token,
       user: {
@@ -1028,7 +993,7 @@ router.post('/institute/login', async (req: Request, res: Response) => {
         fullName: user.full_name,
         role: user.role,
         status: user.status,
-        mfaEnabled: Boolean(user.mfa_enabled),
+        mfaEnabled: authMfa.mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
         mfaMandatory: true,
@@ -1153,7 +1118,7 @@ router.post('/revocation-request', authenticateRevocationToken, (req: AuthReques
 });
 
 // Get Current User Profile & Entitlements (Returns { user: null } gracefully if unauthenticated)
-router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) => {
+router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.json({ user: null, profile: null });
@@ -1240,7 +1205,16 @@ router.get('/me', optionalAuthenticateToken, (req: AuthRequest, res: Response) =
     }
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
-    const mfaEnabled = Boolean(user.mfa_enabled);
+
+    // Authoritative MFA status check across SQLite, Firestore, authenticators, recovery codes, and client header
+    const clientClaimsFirebaseTotp =
+      req.headers['x-firebase-totp-enrolled'] === 'true' ||
+      (req.query.firebaseTotpEnrolled as string) === 'true';
+
+    const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id, {
+      clientClaimsFirebaseTotp,
+    });
+    const mfaEnabled = authMfaStatus.mfaEnabled;
 
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
@@ -1569,7 +1543,10 @@ router.post('/logout', (req: Request, res: Response) => {
   } catch (err) {
     console.error('Logout session cleanup error:', err);
   }
-  res.setHeader('Set-Cookie', 'ca_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  res.setHeader('Set-Cookie', [
+    'ca_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
+    'ca_trust_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
+  ]);
   return res.json({ success: true, message: 'Logged out successfully' });
 });
 

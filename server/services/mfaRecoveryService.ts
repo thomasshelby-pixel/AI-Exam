@@ -5,6 +5,7 @@ import { revokeAllDeviceTrust } from './trustService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
 import { formatDateTimeIST } from '../utils/timezone.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
+import { deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from './firestoreDbService.js';
 
 export interface RecoveryCodeStatus {
   total: number;
@@ -588,6 +589,32 @@ export function registerBackupAuthenticator(
     VALUES (?, ?, 'BACKUP_TOTP', ?, ?, CURRENT_TIMESTAMP)
   `).run(id, userId, cleanLabel, firebaseFactorUid || null);
 
+  // Durable Cloud Firestore synchronization
+  syncRecordToFirestore('mfa_authenticators', id, {
+    id,
+    user_id: userId,
+    factor_type: 'BACKUP_TOTP',
+    label: cleanLabel,
+    firebase_factor_uid: firebaseFactorUid || null,
+    created_at: new Date().toISOString(),
+    last_used_at: null,
+  }).catch(() => {});
+
+  // Ensure user profile retains mfa_enabled = 1
+  db.prepare(`
+    UPDATE users
+    SET mfa_enabled = 1,
+        mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(userId);
+
+  syncRecordToFirestore('users', userId, {
+    id: userId,
+    mfa_enabled: 1,
+    updated_at: new Date().toISOString(),
+  }).catch(() => {});
+
   logMfaAudit({
     userId,
     eventType: 'BACKUP_AUTHENTICATOR_ENROLLED',
@@ -643,6 +670,7 @@ export function removeAuthenticator(
   }
 
   db.prepare('DELETE FROM mfa_authenticators WHERE id = ? AND user_id = ?').run(authenticatorId, userId);
+  deleteFirestoreDoc('mfa_authenticators', authenticatorId).catch(() => {});
 
   const remaining = listAuthenticators(userId);
   if (remaining.length === 0 && !isMandatoryRole) {
@@ -652,6 +680,12 @@ export function removeAuthenticator(
       SET mfa_enabled = 0, mfa_enrolled_at = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(userId);
+    syncRecordToFirestore('users', userId, {
+      id: userId,
+      mfa_enabled: 0,
+      mfa_enrolled_at: null,
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   logMfaAudit({
@@ -989,3 +1023,161 @@ export function resolveRecoveryRequest(
         : `Recovery request rejected. Existing MFA configuration remains active for ${targetUser.email}.`,
   };
 }
+
+/**
+ * Evaluates the authoritative MFA enrollment state across local SQLite tables (users, mfa_authenticators,
+ * mfa_recovery_codes), client-side reported Firebase TOTP factors, and Cloud Firestore metadata.
+ *
+ * If any authoritative source confirms MFA enrollment:
+ * 1. Self-heals local SQLite users table (mfa_enabled = 1, mfa_enrolled_at, and default authenticator)
+ * 2. Self-heals Cloud Firestore users document (mfa_enabled = 1, mfa_enrolled_at)
+ * 3. Never reports MFA as disabled due to server restart, deployment, or cache eviction.
+ */
+export async function getAuthoritativeUserMfaStatus(
+  userId: string,
+  options?: {
+    clientClaimsFirebaseTotp?: boolean;
+    checkFirestoreFallback?: boolean;
+  }
+): Promise<{
+  mfaEnabled: boolean;
+  mfaEnrolledAt: string | null;
+  authenticatorsCount: number;
+  recoveryCodesRemaining: number;
+}> {
+  if (!userId) {
+    return {
+      mfaEnabled: false,
+      mfaEnrolledAt: null,
+      authenticatorsCount: 0,
+      recoveryCodesRemaining: 0,
+    };
+  }
+
+  try {
+    // 1. Check local SQLite user record
+    const userRow = db.prepare(`
+      SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret
+      FROM users WHERE id = ?
+    `).get(userId) as {
+      id: string;
+      email: string;
+      role: string;
+      mfa_enabled: number;
+      mfa_enrolled_at: string | null;
+      totp_secret: string | null;
+    } | undefined;
+
+    // 2. Check local authenticators
+    const authCountRow = db.prepare(`
+      SELECT COUNT(*) as count FROM mfa_authenticators WHERE user_id = ?
+    `).get(userId) as { count: number } | undefined;
+    const localAuthCount = authCountRow?.count || 0;
+
+    // 3. Check local recovery codes
+    const recoveryCountRow = db.prepare(`
+      SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ? AND used = 0
+    `).get(userId) as { count: number } | undefined;
+    const recoveryRemaining = recoveryCountRow?.count || 0;
+
+    let isEnrolled = Boolean(userRow?.mfa_enabled) || localAuthCount > 0 || recoveryRemaining > 0 || Boolean(userRow?.mfa_enrolled_at) || Boolean(userRow?.totp_secret);
+
+    // 4. Check client-reported Firebase TOTP factor (Header: x-firebase-totp-enrolled: true)
+    if (options?.clientClaimsFirebaseTotp) {
+      isEnrolled = true;
+    }
+
+    // 5. Cloud Firestore fallback verification if not yet confirmed
+    if (!isEnrolled && options?.checkFirestoreFallback !== false) {
+      try {
+        const firestoreUser = await getFirestoreDoc<any>('users', userId);
+        if (
+          firestoreUser &&
+          (firestoreUser.mfa_enabled === 1 ||
+            firestoreUser.mfa_enabled === true ||
+            Boolean(firestoreUser.mfa_enrolled_at) ||
+            Boolean(firestoreUser.totp_secret))
+        ) {
+          isEnrolled = true;
+        }
+
+        if (!isEnrolled) {
+          const firestoreAuths = await getAllFirestoreDocs<any>('mfa_authenticators');
+          const hasFirestoreAuth = firestoreAuths.some(
+            (a) => a.user_id === userId || a.userId === userId
+          );
+          if (hasFirestoreAuth) {
+            isEnrolled = true;
+          }
+        }
+      } catch (firestoreErr) {
+        // Non-blocking firestore check
+      }
+    }
+
+    // 6. Automatic Self-Healing: If enrolled anywhere, ensure all local & cloud stores are synchronized
+    if (isEnrolled && userRow) {
+      const enrolledAt = userRow.mfa_enrolled_at || new Date().toISOString();
+
+      if (userRow.mfa_enabled !== 1) {
+        db.prepare(`
+          UPDATE users
+          SET mfa_enabled = 1,
+              mfa_enrolled_at = COALESCE(mfa_enrolled_at, ?),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(enrolledAt, userId);
+      }
+
+      // Ensure at least one primary authenticator record exists if count is 0
+      let finalAuthCount = localAuthCount;
+      if (finalAuthCount === 0) {
+        const primaryId = `auth_prim_${userId}`;
+        db.prepare(`
+          INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, created_at)
+          VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', CURRENT_TIMESTAMP)
+        `).run(primaryId, userId);
+        finalAuthCount = 1;
+
+        syncRecordToFirestore('mfa_authenticators', primaryId, {
+          id: primaryId,
+          user_id: userId,
+          factor_type: 'PRIMARY_TOTP',
+          label: 'Primary Authenticator App',
+          created_at: enrolledAt,
+        }).catch(() => {});
+      }
+
+      // Sync user profile to Firestore
+      syncRecordToFirestore('users', userId, {
+        id: userId,
+        mfa_enabled: 1,
+        mfa_enrolled_at: enrolledAt,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
+      return {
+        mfaEnabled: true,
+        mfaEnrolledAt: enrolledAt,
+        authenticatorsCount: finalAuthCount,
+        recoveryCodesRemaining: recoveryRemaining,
+      };
+    }
+
+    return {
+      mfaEnabled: false,
+      mfaEnrolledAt: null,
+      authenticatorsCount: localAuthCount,
+      recoveryCodesRemaining: recoveryRemaining,
+    };
+  } catch (err) {
+    console.error(`[MFA Authoritative Status Error for ${userId}]:`, err);
+    return {
+      mfaEnabled: false,
+      mfaEnrolledAt: null,
+      authenticatorsCount: 0,
+      recoveryCodesRemaining: 0,
+    };
+  }
+}
+
