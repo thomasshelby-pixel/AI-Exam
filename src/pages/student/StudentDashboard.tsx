@@ -24,7 +24,9 @@ import {
   Upload,
   X,
   Dna,
+  Loader2,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
 import { ProgressDashboard, EvaluationTrendPoint } from '../../components/student/ProgressDashboard.js';
 
@@ -137,7 +139,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [referralStatus, setReferralStatus] = useState<{
     hasActivePromo: boolean;
+    hasRedeemed?: boolean;
     activePromo: any;
+    latestRedemption?: any;
     ai30Campaign: any;
   } | null>(null);
   const [dashboardPromoCode, setDashboardPromoCode] = useState<string>('AI30');
@@ -362,103 +366,192 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       </header>
 
-      {/* AI30 Promotional Banner / Active Promo Notification */}
-      {referralStatus?.hasActivePromo && referralStatus.activePromo ? (
-        <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-4 rounded-xl shadow-sm border border-blue-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shrink-0 shadow-sm">
-              <Sparkles className="w-5 h-5 fill-current" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                  {referralStatus.activePromo.referralCode} Promotional Offer Active
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-medium">
-                  {referralStatus.activePromo.evaluationsRemaining} / {referralStatus.activePromo.maxEvaluations} Left
-                </span>
+      {/* PROMO CODE SECTION: STATE A (UNREDEEMED), STATE B (ACTIVE BENEFIT), STATE C (EXPIRED) */}
+      <AnimatePresence mode="wait">
+        {referralStatus?.hasActivePromo && referralStatus.activePromo ? (
+          /* STATE B — Student HAS redeemed a promo: Completely hide promotional banner, show clean Active Benefit */
+          <motion.div
+            key="promo-active-benefit"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
+            transition={{ duration: 0.25 }}
+            className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
-              <p className="text-xs text-blue-100 mt-0.5">
-                Full ICAI step-marking evaluations active. Valid until{' '}
-                <span className="font-semibold text-white">
-                  {formatDateIST(referralStatus.activePromo.expiryDate)}
-                </span>.
-              </p>
-            </div>
-          </div>
-          {onNavigateProfile && (
-            <button
-              onClick={onNavigateProfile}
-              className="text-xs text-blue-200 hover:text-white underline underline-offset-2 shrink-0 font-medium self-start sm:self-center"
-            >
-              View Promo Details &rarr;
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 rounded-xl shadow-sm border border-indigo-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shrink-0 mt-0.5 shadow-sm">
-              <Gift className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                  Limited Opportunity: Code AI30
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-200 border border-blue-400/30">
-                  First 20 Students
-                </span>
-              </div>
-              <p className="text-xs sm:text-sm text-slate-200 mt-0.5 font-medium">
-                Get <strong>1 Month Free Access</strong> with <strong>15 ICAI Step-by-Step Evaluations</strong> included.
-              </p>
-              {promoMessage && (
-                <p
-                  className={`text-xs mt-1.5 font-semibold ${
-                    promoMessage.type === 'success' ? 'text-emerald-300' : 'text-rose-300'
-                  }`}
-                >
-                  {promoMessage.text}
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                    Promo Benefit Active
+                  </span>
+                  <span className="text-xs font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                    {referralStatus.activePromo.referralCode}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                  Valid until{' '}
+                  <strong className="text-slate-900 dark:text-white">
+                    {formatDateIST(referralStatus.activePromo.expiryDate)}
+                  </strong>
                 </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between sm:justify-end gap-5 border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-100 dark:border-slate-800">
+              <div className="text-left sm:text-right">
+                <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Evaluations Remaining</div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-mono text-base">
+                    {referralStatus.activePromo.evaluationsRemaining}
+                  </span>{' '}
+                  <span className="text-slate-400 text-xs">/ {referralStatus.activePromo.maxEvaluations}</span>
+                </div>
+              </div>
+              {onNavigateProfile && (
+                <button
+                  type="button"
+                  onClick={onNavigateProfile}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold shrink-0 cursor-pointer"
+                >
+                  Manage Benefits &rarr;
+                </button>
               )}
             </div>
-          </div>
-
-          <form onSubmit={handleQuickRedeem} className="flex items-center gap-2 self-start md:self-center">
-            <input
-              type="text"
-              value={dashboardPromoCode}
-              onChange={(e) => setDashboardPromoCode(e.target.value.toUpperCase())}
-              placeholder="ENTER PROMO"
-              className="w-32 sm:w-36 px-3 py-2 text-xs uppercase font-mono font-bold bg-white/10 border border-white/20 text-white placeholder-blue-300/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
-            <button
-              type="submit"
-              disabled={isRedeeming || !dashboardPromoCode.trim()}
-              className="bg-white/20 hover:bg-white/30 text-white font-semibold border border-white/30 px-3.5 py-2 rounded-lg text-xs transition shadow-2xs disabled:opacity-50 flex items-center gap-1.5 shrink-0 cursor-pointer focus:ring-2 focus:ring-white/40"
-            >
-              {isRedeeming ? (
-                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
+          </motion.div>
+        ) : referralStatus?.hasRedeemed ? (
+          /* STATE C — Promo expired / revoked: Do NOT show promotional banner or claim CTA */
+          referralStatus.latestRedemption?.status === 'EXPIRED' ||
+          (referralStatus.latestRedemption && new Date(referralStatus.latestRedemption.expiryDate) <= new Date()) ? (
+            <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 px-4 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-slate-400" />
+                <span>
+                  Promotional offer (<strong className="text-slate-700 dark:text-slate-300">{referralStatus.latestRedemption.referralCode}</strong>) expired on {formatDateIST(referralStatus.latestRedemption.expiryDate)}.
+                </span>
+              </div>
+              {onOpenCreditsModal && (
+                <button
+                  type="button"
+                  onClick={onOpenCreditsModal}
+                  className="text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer shrink-0"
+                >
+                  Get Credits &rarr;
+                </button>
               )}
-              <span>Claim</span>
-            </button>
-          </form>
-        </div>
-      )}
+            </div>
+          ) : null
+        ) : (
+          /* STATE A — Student has NOT redeemed a promo: Show polished promotional banner */
+          <motion.div
+            key="promo-unredeemed-banner"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
+            transition={{ duration: 0.25 }}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 shadow-xs"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shrink-0 shadow-2xs">
+                  <Gift className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                      LIMITED OPPORTUNITY
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 font-medium mt-0.5">
+                    Get <strong className="font-bold text-slate-900 dark:text-white">1 Month Free Access</strong> with{' '}
+                    <strong className="font-bold text-slate-900 dark:text-white">15 ICAI Step-by-Step Evaluations</strong> included.
+                  </p>
+                  {promoMessage && (
+                    <p
+                      className={`text-xs mt-1.5 font-semibold ${
+                        promoMessage.type === 'success'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {promoMessage.text}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-col items-start lg:items-end gap-1.5 shrink-0">
+                <form onSubmit={handleQuickRedeem} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                  <input
+                    type="text"
+                    value={dashboardPromoCode}
+                    onChange={(e) => setDashboardPromoCode(e.target.value.toUpperCase())}
+                    disabled={isRedeeming || (referralStatus?.ai30Campaign?.isFullyClaimed ?? false)}
+                    placeholder="Enter Promo Code"
+                    className="px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm font-mono font-bold uppercase text-slate-900 dark:text-slate-100 placeholder:text-slate-400 placeholder:normal-case placeholder:font-sans focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800 focus:ring-2 focus:ring-blue-500/20 w-full sm:w-44 disabled:opacity-60 transition"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isRedeeming || !dashboardPromoCode.trim() || (referralStatus?.ai30Campaign?.isFullyClaimed ?? false)}
+                    className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-4 py-2 rounded-lg text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    {isRedeeming ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Claiming...</span>
+                      </>
+                    ) : (
+                      <span>Claim</span>
+                    )}
+                  </button>
+                </form>
+
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                  {referralStatus?.ai30Campaign ? (
+                    referralStatus.ai30Campaign.isFullyClaimed ? (
+                      <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                        Promotion fully claimed ({referralStatus.ai30Campaign.maxRedemptions} of {referralStatus.ai30Campaign.maxRedemptions} spots taken)
+                      </span>
+                    ) : (
+                      <span>
+                        <strong className="text-slate-700 dark:text-slate-300 font-semibold">
+                          {referralStatus.ai30Campaign.remainingSlots} of {referralStatus.ai30Campaign.maxRedemptions} spots remaining
+                        </strong>
+                      </span>
+                    )
+                  ) : (
+                    <span>19 of 20 spots remaining</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Entitlement Card */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
-            <span>Free Evaluations</span>
+            <span>
+              {referralStatus?.hasActivePromo && referralStatus.activePromo
+                ? `Promo (${referralStatus.activePromo.referralCode})`
+                : 'Free Evaluations'}
+            </span>
             <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           </div>
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {user?.hasPermanentFreeAccess ? (
+            {referralStatus?.hasActivePromo && referralStatus.activePromo ? (
+              <span>
+                {referralStatus.activePromo.evaluationsRemaining}{' '}
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  / {referralStatus.activePromo.maxEvaluations} left
+                </span>
+              </span>
+            ) : user?.hasPermanentFreeAccess ? (
               <span className="text-blue-600 dark:text-blue-400">Active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Sponsored</span>
@@ -469,7 +562,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             )}
           </div>
           <div className="text-xs font-medium mt-1">
-            {user?.hasPermanentFreeAccess ? (
+            {referralStatus?.hasActivePromo && referralStatus.activePromo ? (
+              <div className="space-y-0.5">
+                <div className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                  Promotional access active
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Valid until {formatDateIST(referralStatus.activePromo.expiryDate)}
+                </div>
+              </div>
+            ) : user?.hasPermanentFreeAccess ? (
               <span className="text-blue-600 dark:text-blue-400">Full evaluation access active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Via {metrics.instituteName || 'Institute'}</span>

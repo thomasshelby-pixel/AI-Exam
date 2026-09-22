@@ -23,6 +23,8 @@ import {
   ChevronRight,
   X,
   Check,
+  ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 
 interface PromoCampaign {
@@ -84,6 +86,7 @@ export function AdminPromoCodesSection() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [redemptionCodeFilter, setRedemptionCodeFilter] = useState<string>('ALL');
+  const [redemptionStatusFilter, setRedemptionStatusFilter] = useState<string>('ALL');
   const [redemptionSearch, setRedemptionSearch] = useState<string>('');
 
   // Modals
@@ -91,6 +94,9 @@ export function AdminPromoCodesSection() {
   const [editingCampaign, setEditingCampaign] = useState<PromoCampaign | null>(null);
   const [deletingCampaign, setDeletingCampaign] = useState<PromoCampaign | null>(null);
   const [viewingRedemptionsForCode, setViewingRedemptionsForCode] = useState<string | null>(null);
+  const [revokingRedemption, setRevokingRedemption] = useState<PromoRedemption | null>(null);
+  const [revocationReason, setRevocationReason] = useState<string>('');
+  const [isRevoking, setIsRevoking] = useState<boolean>(false);
 
   // Create Form State
   const [createForm, setCreateForm] = useState({
@@ -264,6 +270,30 @@ export function AdminPromoCodesSection() {
     }
   };
 
+  const handleConfirmRevoke = async () => {
+    if (!revokingRedemption) return;
+    try {
+      setIsRevoking(true);
+      setErrorMsg('');
+      const res = await apiRequest<{ success: boolean; message: string }>(
+        `/api/admin/promo-codes/redemptions/${revokingRedemption.id}/revoke`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason: revocationReason.trim() || undefined }),
+        }
+      );
+      setSuccessMsg(res.message || 'Promo redemption successfully revoked.');
+      setRevokingRedemption(null);
+      setRevocationReason('');
+      await loadData();
+    } catch (err: any) {
+      console.error('Revocation failed:', err);
+      setErrorMsg(err.message || 'Failed to revoke promo redemption.');
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
   // Filtered campaigns
   const filteredCampaigns = campaigns.filter((camp) => {
     const matchesSearch =
@@ -284,12 +314,15 @@ export function AdminPromoCodesSection() {
   const activeRedemptionFilter = viewingRedemptionsForCode || (redemptionCodeFilter === 'ALL' ? '' : redemptionCodeFilter);
   const filteredRedemptions = redemptions.filter((red) => {
     const matchesCode = !activeRedemptionFilter || red.referral_code.toUpperCase() === activeRedemptionFilter.toUpperCase();
+    const matchesStatus =
+      redemptionStatusFilter === 'ALL' ||
+      (red.status || '').toUpperCase() === redemptionStatusFilter.toUpperCase();
     const matchesSearch =
       !redemptionSearch ||
       (red.user_name && red.user_name.toLowerCase().includes(redemptionSearch.toLowerCase())) ||
       (red.user_email && red.user_email.toLowerCase().includes(redemptionSearch.toLowerCase())) ||
       red.referral_code.toLowerCase().includes(redemptionSearch.toLowerCase());
-    return matchesCode && matchesSearch;
+    return matchesCode && matchesStatus && matchesSearch;
   });
 
   // Summary Metrics
@@ -668,6 +701,18 @@ export function AdminPromoCodesSection() {
               ))}
             </select>
 
+            <select
+              value={redemptionStatusFilter}
+              onChange={(e) => setRedemptionStatusFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium focus:outline-none"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="REVOKED">Revoked</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="EXHAUSTED">Exhausted</option>
+            </select>
+
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               <input
@@ -693,11 +738,13 @@ export function AdminPromoCodesSection() {
                   <th className="py-2.5 px-3 font-bold">Code</th>
                   <th className="py-2.5 px-3 font-bold">Student Name</th>
                   <th className="py-2.5 px-3 font-bold">Student Email</th>
+                  <th className="py-2.5 px-3 font-bold text-center">Status</th>
                   <th className="py-2.5 px-3 font-bold text-center">Used</th>
                   <th className="py-2.5 px-3 font-bold text-center">Remaining</th>
                   <th className="py-2.5 px-3 font-bold">Claimed Date</th>
                   <th className="py-2.5 px-3 font-bold">Entitlement Expiry</th>
                   <th className="py-2.5 px-3 font-bold">Audit Note</th>
+                  <th className="py-2.5 px-3 font-bold text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -712,16 +759,37 @@ export function AdminPromoCodesSection() {
                     <td className="py-2.5 px-3 font-mono text-slate-600 text-[11px]">
                       {red.user_email || red.user_id}
                     </td>
+                    <td className="py-2.5 px-3 text-center">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border ${
+                          red.status === 'ACTIVE'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : red.status === 'REVOKED'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : red.status === 'EXPIRED'
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {red.status || 'ACTIVE'}
+                      </span>
+                    </td>
                     <td className="py-2.5 px-3 text-center font-bold text-slate-700">
                       {red.evaluations_used ?? 0}
                     </td>
                     <td className="py-2.5 px-3 text-center">
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-                        {red.evaluations_remaining !== undefined
-                          ? red.evaluations_remaining
-                          : (red.max_evaluations || 15) - (red.evaluations_used || 0)}{' '}
-                        / {red.max_evaluations || 15}
-                      </span>
+                      {red.status === 'REVOKED' ? (
+                        <span className="font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 line-through">
+                          0 / {red.max_evaluations || 15}
+                        </span>
+                      ) : (
+                        <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                          {red.evaluations_remaining !== undefined
+                            ? red.evaluations_remaining
+                            : (red.max_evaluations || 15) - (red.evaluations_used || 0)}{' '}
+                          / {red.max_evaluations || 15}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3 text-slate-500 text-[11px]">
                       {formatDateTimeIST(red.redeemed_at)}
@@ -731,6 +799,26 @@ export function AdminPromoCodesSection() {
                     </td>
                     <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-[220px] truncate" title={red.audit_note}>
                       {red.audit_note || 'Redeemed successfully'}
+                    </td>
+                    <td className="py-2.5 px-3 text-center">
+                      {red.status === 'ACTIVE' ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRevokingRedemption(red);
+                            setRevocationReason('');
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:text-white hover:bg-rose-600 rounded-lg border border-rose-200 hover:border-rose-600 transition inline-flex items-center gap-1 cursor-pointer"
+                          title="Revoke active promo benefits for this student"
+                        >
+                          <ShieldAlert className="w-3 h-3" />
+                          <span>Revoke</span>
+                        </button>
+                      ) : red.status === 'REVOKED' ? (
+                        <span className="text-[11px] text-rose-500 font-medium italic">Revoked</span>
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1137,6 +1225,86 @@ export function AdminPromoCodesSection() {
                 {(deletingCampaign.successfulRedemptions ?? deletingCampaign.used_redemptions ?? 0) > 0
                   ? 'Confirm Archive'
                   : 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REVOKE PROMO REDEMPTION CONFIRMATION MODAL */}
+      {revokingRedemption && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 text-slate-800 shadow-2xl">
+            <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900">
+                Revoke Promo Access
+              </h3>
+              <p className="text-xs text-slate-500">
+                Are you sure you want to revoke promotional benefits for{' '}
+                <strong className="text-slate-800">
+                  {revokingRedemption.user_name || revokingRedemption.user_email || 'this student'}
+                </strong>?
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Promo Code:</span>
+                <span className="font-mono font-bold text-blue-700">{revokingRedemption.referral_code}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Remaining Evaluations to Revoke:</span>
+                <span className="font-bold text-rose-600">
+                  {revokingRedemption.evaluations_remaining} evaluation{revokingRedemption.evaluations_remaining !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Evaluations Consumed:</span>
+                <span className="font-medium text-slate-700">{revokingRedemption.evaluations_used} (preserved in audit logs)</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
+              <strong>Audit Safety:</strong> Revoking will immediately set remaining promotional evaluations to 0 for this student. Consumed evaluations and evaluation history remain intact in system records.
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                Revocation Reason (Optional):
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Terms violation, multiple accounts, student requested"
+                value={revocationReason}
+                onChange={(e) => setRevocationReason(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isRevoking}
+                onClick={() => {
+                  setRevokingRedemption(null);
+                  setRevocationReason('');
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-lg border border-slate-200 bg-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isRevoking}
+                onClick={handleConfirmRevoke}
+                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isRevoking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+                <span>Confirm Revoke Promo</span>
               </button>
             </div>
           </div>

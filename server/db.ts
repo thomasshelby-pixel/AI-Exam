@@ -1369,6 +1369,9 @@ function runMigrations() {
   addColumnIfNotExists('referral_redemptions', 'audit_note', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'revoked_at', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'revoked_by', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'revocation_reason', 'TEXT');
 
   // Unique constraint to prevent duplicate redemptions per user per code
   try {

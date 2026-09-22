@@ -2433,12 +2433,13 @@ router.post('/referral/redeem', (req: AuthRequest, res: Response) => {
       });
     }
 
-    // 3. Verify global successful redemption count is strictly below maximum quota (excluding test accounts)
+    // 3. Verify global successful redemption count is strictly below maximum quota (excluding test and revoked accounts)
     const countRow = db.prepare(`
       SELECT COUNT(*) as total
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       WHERE UPPER(r.referral_code) = UPPER(?)
+        AND r.status != 'REVOKED'
         AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
     `).get(cleanCode) as { total: number };
 
@@ -2547,23 +2548,33 @@ router.get('/referral/status', (req: AuthRequest, res: Response) => {
       ORDER BY r.redeemed_at DESC
     `).all(userId) as any[];
 
-    // Overall campaign info for AI30
+    // Overall campaign info for AI30 (excluding revoked accounts and test accounts)
     const ai30Campaign = db.prepare("SELECT * FROM referral_campaigns WHERE code = 'AI30'").get() as any;
     const ai30RedemptionsCount = (db.prepare(`
       SELECT COUNT(*) as cnt
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       WHERE r.referral_code = 'AI30'
+        AND r.status != 'REVOKED'
         AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
     `).get() as any)?.cnt || 0;
 
     // Check if current user has an active promo
+    const now = new Date();
     const activeRedemption = redemptions.find(
-      r => r.status === 'ACTIVE' && new Date(r.expiry_date) > new Date() && (r.evaluations_remaining ?? 15) > 0
+      r => r.status === 'ACTIVE' && new Date(r.expiry_date) > now && (r.evaluations_remaining ?? 15) > 0
     );
+
+    const hasRedeemed = redemptions.length > 0;
+    const latest = redemptions[0] || null;
+
+    const maxRedemptions = ai30Campaign?.max_redemptions || 20;
+    const remainingSlots = Math.max(0, maxRedemptions - ai30RedemptionsCount);
+    const isFullyClaimed = remainingSlots <= 0;
 
     return res.json({
       hasActivePromo: !!activeRedemption,
+      hasRedeemed,
       activePromo: activeRedemption ? {
         id: activeRedemption.id,
         referralCode: activeRedemption.referral_code,
@@ -2572,16 +2583,31 @@ router.get('/referral/status', (req: AuthRequest, res: Response) => {
         evaluationsUsed: activeRedemption.evaluations_used ?? 0,
         evaluationsRemaining: activeRedemption.evaluations_remaining ?? 15,
         expiryDate: activeRedemption.expiry_date,
+        redeemedAt: activeRedemption.redeemed_at,
         status: activeRedemption.status,
+      } : null,
+      latestRedemption: latest ? {
+        id: latest.id,
+        referralCode: latest.referral_code,
+        status: latest.status,
+        maxEvaluations: latest.max_evaluations ?? 15,
+        evaluationsUsed: latest.evaluations_used ?? 0,
+        evaluationsRemaining: latest.evaluations_remaining ?? 0,
+        expiryDate: latest.expiry_date,
+        redeemedAt: latest.redeemed_at,
+        revokedAt: latest.revoked_at,
+        revokedBy: latest.revoked_by,
+        revocationReason: latest.revocation_reason,
       } : null,
       redemptions,
       ai30Campaign: ai30Campaign ? {
         code: ai30Campaign.code,
         campaignName: ai30Campaign.campaign_name,
-        maxRedemptions: ai30Campaign.max_redemptions || 20,
+        maxRedemptions,
         usedRedemptions: ai30RedemptionsCount,
-        remainingSlots: Math.max(0, (ai30Campaign.max_redemptions || 20) - ai30RedemptionsCount),
-        isActive: Boolean(ai30Campaign.is_active),
+        remainingSlots,
+        isFullyClaimed,
+        isActive: Boolean(ai30Campaign.is_active && ai30Campaign.status === 'ACTIVE' && !isFullyClaimed),
         maxEvaluations: ai30Campaign.max_evaluations || 15,
         validityDays: ai30Campaign.benefit_duration_days || 30,
       } : null,

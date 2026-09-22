@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   X,
   ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 
 interface StudentProfilePageProps {
@@ -111,6 +112,7 @@ interface ProfileApiResponse {
 
 interface ReferralStatusResponse {
   hasActivePromo: boolean;
+  hasRedeemed?: boolean;
   activePromo: {
     id: string;
     referralCode: string;
@@ -121,6 +123,18 @@ interface ReferralStatusResponse {
     expiryDate: string;
     status: string;
   } | null;
+  latestRedemption?: {
+    id: string;
+    referralCode: string;
+    maxEvaluations: number;
+    evaluationsUsed: number;
+    evaluationsRemaining: number;
+    expiryDate: string;
+    status: string;
+    redeemedAt: string;
+    revokedAt?: string;
+    revocationReason?: string;
+  } | null;
   ai30Campaign: {
     code: string;
     campaignName: string;
@@ -128,6 +142,7 @@ interface ReferralStatusResponse {
     usedRedemptions: number;
     remainingSlots: number;
     isActive: boolean;
+    isFullyClaimed?: boolean;
     maxEvaluations: number;
     validityDays: number;
   } | null;
@@ -311,6 +326,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [promoMessage, setPromoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [campaignInfo, setCampaignInfo] = useState<ReferralStatusResponse['ai30Campaign'] | null>(null);
   const [activePromoState, setActivePromoState] = useState<ProfileApiResponse['activePromo'] | null>(null);
+  const [referralStatus, setReferralStatus] = useState<ReferralStatusResponse | null>(null);
 
   const fetchProfileAndReferrals = async () => {
     try {
@@ -328,6 +344,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setPreferredSubjects(profRes.profile.preferredSubjects || []);
       setAvatarUrl(profRes.profile.avatarUrl || '');
 
+      setReferralStatus(refRes);
       setCampaignInfo(refRes.ai30Campaign);
       setActivePromoState(profRes.activePromo || refRes.activePromo);
     } catch (err: any) {
@@ -962,126 +979,151 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         {/* RIGHT COLUMN: PROMO (AI30) & SECURITY (5 cols) */}
         {/* ============================================================ */}
         <div className="lg:col-span-5 space-y-6">
-          {/* 1. AI30 PROMO CODE CARD */}
-          <div className="bg-gradient-to-br from-indigo-900 via-blue-900 to-slate-900 text-white rounded-2xl p-6 shadow-md border border-blue-800/50 relative overflow-hidden">
-            {/* Background ambient lighting */}
-            <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
-
-            <div className="relative z-10 space-y-4">
+          {/* 1. PROMOTIONAL BENEFIT / SPECIAL PROMOTION CARD */}
+          {activePromoState ? (
+            /* STATE B: PROMO BENEFIT ACTIVE (Native Card Style) */
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-emerald-200 dark:border-emerald-800/60 p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-400 text-slate-950 shadow-sm">
-                  <Sparkles className="w-3.5 h-3.5 fill-current" />
-                  Special Promotion
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-200 dark:border-emerald-800/60">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">
+                      Promo Benefit Active
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Promotional Evaluation Entitlement
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700">
+                  {activePromoState.referralCode}
                 </span>
+              </div>
 
+              <div className="space-y-1.5 pt-1">
+                <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-medium">Evaluations Remaining:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    <span className="text-emerald-600 dark:text-emerald-400 font-mono">{activePromoState.evaluationsRemaining}</span> / {activePromoState.maxEvaluations}
+                  </span>
+                </div>
+                {/* Visual Progress Bar */}
+                <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-200 dark:border-slate-700">
+                  <div
+                    className="bg-emerald-500 h-full transition-all duration-500 rounded-full"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (activePromoState.evaluationsRemaining / (activePromoState.maxEvaluations || 15)) * 100
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span>Valid Until:</span>
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {formatDateIST(activePromoState.expiryDate)}
+                </span>
+              </div>
+            </div>
+          ) : referralStatus?.hasRedeemed && referralStatus.latestRedemption ? (
+            /* STATE C: Expired or Revoked Promo Card */
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                    {referralStatus.latestRedemption.status === 'REVOKED'
+                      ? 'Promo Benefit Revoked'
+                      : 'Promo Benefit Expired'}
+                  </span>
+                </div>
+                <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                  {referralStatus.latestRedemption.referralCode}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                {referralStatus.latestRedemption.status === 'REVOKED'
+                  ? 'This promotional access was revoked by an administrator.'
+                  : `Your promotional access expired on ${formatDateIST(referralStatus.latestRedemption.expiryDate)}.`}
+              </p>
+            </div>
+          ) : (
+            /* STATE A: Student has NOT redeemed a promo (Native Card Style) */
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-200 dark:border-blue-800/60">
+                    <Gift className="w-4 h-4" />
+                  </div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                    LIMITED OPPORTUNITY
+                  </span>
+                </div>
                 {campaignInfo && (
-                  <span className="text-xs font-mono text-blue-200 bg-blue-950/60 px-2.5 py-1 rounded-md border border-blue-800">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                     {campaignInfo.remainingSlots} of {campaignInfo.maxRedemptions} spots remaining
                   </span>
                 )}
               </div>
 
               <div>
-                <h2 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-                  <span>AI30 Promo Code</span>
-                </h2>
-                <p className="text-xs text-blue-200 mt-1 leading-relaxed">
-                  1-Month Free Access including <strong>15 comprehensive evaluations</strong> with line-by-line ICAI step marking. Limited strictly to the <strong>first 20 students</strong>.
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Get 1 Month Free Access with 15 Evaluations
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Unlock 15 ICAI step-marking evaluations. Limited to eligible student accounts.
                 </p>
               </div>
 
-              {/* Promo Status Display if already active */}
-              {activePromoState ? (
-                <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/15 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      Promo Benefit Active
-                    </span>
-                    <span className="text-xs font-mono font-bold text-white bg-blue-600/60 px-2 py-0.5 rounded">
-                      {activePromoState.referralCode}
-                    </span>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-blue-100">
-                      <span>Evaluations Remaining:</span>
-                      <span className="font-bold text-white">
-                        {activePromoState.evaluationsRemaining} of {activePromoState.maxEvaluations}
-                      </span>
-                    </div>
-                    {/* Visual Progress Bar */}
-                    <div className="w-full bg-blue-950/80 rounded-full h-2 overflow-hidden border border-blue-800/60">
-                      <div
-                        className="bg-emerald-400 h-full transition-all duration-500 rounded-full"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (activePromoState.evaluationsRemaining / (activePromoState.maxEvaluations || 15)) * 100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-blue-200/80 pt-1 border-t border-white/10">
-                    <span>Valid Until:</span>
-                    <span className="font-medium text-white">
-                      {formatDateIST(activePromoState.expiryDate)}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                /* Redemption Form */
-                <form onSubmit={handleRedeemPromo} className="space-y-3 pt-1">
-                  {promoMessage && (
-                    <div
-                      className={`p-3 rounded-xl text-xs flex items-start gap-2.5 ${
-                        promoMessage.type === 'success'
-                          ? 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-200'
-                          : 'bg-rose-500/20 border border-rose-400/40 text-rose-200'
-                      }`}
-                    >
-                      {promoMessage.type === 'success' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                      )}
-                      <span>{promoMessage.text}</span>
-                    </div>
+              {promoMessage && (
+                <div
+                  className={`p-3 rounded-lg text-xs flex items-start gap-2 ${
+                    promoMessage.type === 'success'
+                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-800/60 dark:text-emerald-300'
+                      : 'bg-rose-50 border border-rose-200 text-rose-800 dark:bg-rose-950/40 dark:border-rose-800/60 dark:text-rose-300'
+                  }`}
+                >
+                  {promoMessage.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   )}
-
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Gift className="w-4 h-4 text-blue-300 absolute left-3 top-3" />
-                      <input
-                        type="text"
-                        value={promoCodeInput}
-                        onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
-                        placeholder="ENTER PROMO CODE"
-                        className="w-full pl-9 pr-3 py-2 text-sm uppercase font-mono font-bold bg-white/10 border border-white/20 text-white placeholder-blue-300/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={isRedeemingPromo || !promoCodeInput.trim()}
-                      className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition shadow-sm disabled:opacity-50 flex items-center gap-1.5 shrink-0"
-                    >
-                      {isRedeemingPromo ? (
-                        <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Sparkles className="w-3.5 h-3.5" />
-                      )}
-                      <span>Apply Offer</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-blue-300/70">
-                    * Limited to one redemption per student account. Valid for 30 days once redeemed.
-                  </p>
-                </form>
+                  <span>{promoMessage.text}</span>
+                </div>
               )}
+
+              <form onSubmit={handleRedeemPromo} className="space-y-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={promoCodeInput}
+                    onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
+                    disabled={isRedeemingPromo || (campaignInfo?.isFullyClaimed ?? false)}
+                    placeholder="Enter Promo Code"
+                    className="flex-1 px-3 py-2 text-xs sm:text-sm uppercase font-mono font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 placeholder:normal-case placeholder:font-sans rounded-lg focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-800 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 transition"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isRedeemingPromo || !promoCodeInput.trim() || (campaignInfo?.isFullyClaimed ?? false)}
+                    className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-4 py-2 rounded-lg text-xs sm:text-sm shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    {isRedeemingPromo ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : null}
+                    <span>Claim</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  * Limited to one redemption per student account. Valid for 30 days once redeemed.
+                </p>
+              </form>
             </div>
-          </div>
+          )}
 
           {/* 2. CHANGE PASSWORD CARD */}
           <form

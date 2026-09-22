@@ -3758,12 +3758,29 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
       };
     });
 
-    const redemptions = db.prepare(`
+    const redemptions = (db.prepare(`
       SELECT r.*, u.full_name as user_name, u.email as user_email, u.account_classification
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       ORDER BY r.redeemed_at DESC
-    `).all();
+    `).all() as any[]).map(r => {
+      const now = new Date();
+      let computedStatus = r.status || 'ACTIVE';
+      if (computedStatus === 'REVOKED') {
+        computedStatus = 'REVOKED';
+      } else if (r.expiry_date && new Date(r.expiry_date) < now) {
+        computedStatus = 'EXPIRED';
+      } else if ((r.evaluations_remaining ?? 15) <= 0) {
+        computedStatus = 'EXHAUSTED';
+      } else {
+        computedStatus = 'ACTIVE';
+      }
+      return {
+        ...r,
+        status: computedStatus,
+        raw_status: r.status,
+      };
+    });
 
     return res.json({ success: true, campaigns, redemptions });
   } catch (error: unknown) {
@@ -4087,6 +4104,129 @@ router.get('/promo-codes/:code/redemptions', (req: AuthRequest, res: Response) =
   } catch (error: unknown) {
     console.error('Get promo redemptions error:', error);
     return res.status(500).json({ error: 'Failed to load promo code redemptions' });
+  }
+});
+
+// Revoke a specific promo code redemption
+router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Response) => {
+  try {
+    const redemptionId = req.params.id;
+    const { reason } = req.body || {};
+    const adminEmail = req.user?.email || 'admin';
+    const adminId = req.user?.id || 'admin';
+
+    const redemption = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId) as any;
+
+    if (!redemption) {
+      return res.status(404).json({ error: 'Promo redemption record not found.' });
+    }
+
+    if (redemption.status === 'REVOKED') {
+      return res.status(400).json({ error: 'This promo redemption has already been revoked.' });
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+
+    const revokedAt = new Date().toISOString();
+    const remainingBeforeRevoke = redemption.evaluations_remaining ?? 0;
+    const auditNote = (redemption.audit_note ? redemption.audit_note + ' | ' : '') +
+      `REVOKED by ${adminEmail} on ${revokedAt}${reason ? ': ' + reason : ''}`;
+
+    // Mark redemption as revoked and set remaining evaluations to 0.
+    // IMPORTANT: Keep evaluations_used intact. Consumed evaluations remain in student's history.
+    db.prepare(`
+      UPDATE referral_redemptions
+      SET status = 'REVOKED',
+          evaluations_remaining = 0,
+          revoked_at = ?,
+          revoked_by = ?,
+          revocation_reason = ?,
+          audit_note = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      revokedAt,
+      adminEmail,
+      reason || 'Revoked by administrator',
+      auditNote,
+      revokedAt,
+      redemptionId
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'PROMO_CODE_REVOCATION', 'PROMO_REDEMPTION', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      redemptionId,
+      JSON.stringify({
+        studentId: redemption.user_id,
+        studentEmail: redemption.user_email,
+        promoCode: redemption.referral_code,
+        evaluationsGranted: redemption.max_evaluations,
+        evaluationsUsed: redemption.evaluations_used,
+        evaluationsRemainingRevoked: remainingBeforeRevoke,
+        revokedBy: adminEmail,
+        revokedAt,
+        reason: reason || 'Revoked by administrator',
+      })
+    );
+
+    // Check if campaign was EXHAUSTED and can now be reopened to ACTIVE
+    const campaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(redemption.referral_code) as any;
+    if (campaign) {
+      const activeCount = (db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM referral_redemptions r
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE UPPER(r.referral_code) = UPPER(?)
+          AND r.status != 'REVOKED'
+          AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+      `).get(redemption.referral_code) as any)?.cnt || 0;
+
+      if (campaign.status === 'EXHAUSTED' && activeCount < (campaign.max_redemptions ?? 20)) {
+        db.prepare(`UPDATE referral_campaigns SET status = 'ACTIVE' WHERE UPPER(code) = UPPER(?)`).run(redemption.referral_code);
+      }
+    }
+
+    // Insert system notification to student
+    try {
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, ?, ?, 'SYSTEM')
+      `).run(
+        `notif_${crypto.randomBytes(8).toString('hex')}`,
+        redemption.user_id,
+        `Promotional Benefit Revoked (${redemption.referral_code})`,
+        `Your promotional access for promo code ${redemption.referral_code} has been revoked by an administrator. Remaining promotional evaluations have been removed.`
+      );
+    } catch (_) {}
+
+    db.exec('COMMIT');
+
+    const updated = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId);
+
+    return res.json({
+      success: true,
+      message: `Promo benefit for ${redemption.user_name || redemption.user_email || 'student'} has been revoked successfully.`,
+      redemption: updated,
+    });
+  } catch (error: unknown) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    console.error('Revoke promo redemption error:', error);
+    return res.status(500).json({ error: 'Failed to revoke promo redemption.' });
   }
 });
 
