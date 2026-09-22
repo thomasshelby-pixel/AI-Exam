@@ -1046,6 +1046,56 @@ export const AdminPortal: React.FC = () => {
     }
   };
 
+  // Check administrative MFA requirement: Super Admin and Admin roles require MFA.
+  const isMfaMandatoryRole = user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
+  const isMfaEnrolled = Boolean(user?.mfaEnabled);
+  const isMfaVerified = user?.mfaVerified === true;
+  const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
+
+  // Requirement 11: Detect existing enrolled factor before displaying blocking setup UI
+  const [isCheckingEnrolledFactor, setIsCheckingEnrolledFactor] = useState<boolean>(false);
+  const factorCheckAttemptedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
+      factorCheckAttemptedRef.current = true;
+      setIsCheckingEnrolledFactor(true);
+      getFirebaseEnrolledTotpFactors()
+        .then(async ({ hasTotpFactor }) => {
+          if (hasTotpFactor) {
+            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
+              source: 'admin-portal-gate',
+            });
+            await syncMfaFactor();
+            await refreshUser();
+          }
+        })
+        .catch((err) => {
+          logMfaDiagnostic('factor-check-failed', { error: err?.message });
+        })
+        .finally(() => {
+          setIsCheckingEnrolledFactor(false);
+        });
+    }
+  }, [isMfaMandatoryRole, isMfaEnrolled, syncMfaFactor, refreshUser]);
+
+  useEffect(() => {
+    if (user && isMfaMandatoryRole) {
+      logMfaDiagnostic('route guard decision', {
+        allow: !isMfaBlocked,
+        role: user.role,
+        mfaEnabled: user.mfaEnabled,
+        mfaVerified: user.mfaVerified,
+      });
+
+      if (!isMfaBlocked) {
+        logMfaDiagnostic('final redirect destination', {
+          destination: '/admin/dashboard',
+        });
+      }
+    }
+  }, [user, isMfaBlocked, isMfaMandatoryRole]);
+
   // RBAC GUARD: Check Authentication & Role
   if (isLoading) {
     return (
@@ -1101,56 +1151,6 @@ export const AdminPortal: React.FC = () => {
       </div>
     );
   }
-
-  // Check administrative MFA requirement: Super Admin and Admin roles require MFA.
-  const isMfaMandatoryRole = user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
-  const isMfaEnrolled = Boolean(user?.mfaEnabled);
-  const isMfaVerified = user?.mfaVerified === true;
-  const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
-
-  // Requirement 11: Detect existing enrolled factor before displaying blocking setup UI
-  const [isCheckingEnrolledFactor, setIsCheckingEnrolledFactor] = useState<boolean>(false);
-  const factorCheckAttemptedRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
-      factorCheckAttemptedRef.current = true;
-      setIsCheckingEnrolledFactor(true);
-      getFirebaseEnrolledTotpFactors()
-        .then(async ({ hasTotpFactor }) => {
-          if (hasTotpFactor) {
-            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
-              source: 'admin-portal-gate',
-            });
-            await syncMfaFactor();
-            await refreshUser();
-          }
-        })
-        .catch((err) => {
-          logMfaDiagnostic('factor-check-failed', { error: err?.message });
-        })
-        .finally(() => {
-          setIsCheckingEnrolledFactor(false);
-        });
-    }
-  }, [isMfaMandatoryRole, isMfaEnrolled, syncMfaFactor, refreshUser]);
-
-  useEffect(() => {
-    if (user && isMfaMandatoryRole) {
-      logMfaDiagnostic('route guard decision', {
-        allow: !isMfaBlocked,
-        role: user.role,
-        mfaEnabled: user.mfaEnabled,
-        mfaVerified: user.mfaVerified,
-      });
-
-      if (!isMfaBlocked) {
-        logMfaDiagnostic('final redirect destination', {
-          destination: '/admin/dashboard',
-        });
-      }
-    }
-  }, [user, isMfaBlocked, isMfaMandatoryRole]);
 
   if (isCheckingEnrolledFactor) {
     return (

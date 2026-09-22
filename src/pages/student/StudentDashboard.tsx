@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
@@ -245,14 +245,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-[60vh] flex items-center justify-center text-slate-400">
-        <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />
-      </div>
-    );
-  }
-
   const metrics = data?.metrics || {
     totalEvaluations: 0,
     freeEvaluationsRemaining: 2,
@@ -262,7 +254,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     passProbability: 'Building Baseline',
   };
 
-  const trendPoints: EvaluationTrendPoint[] = React.useMemo(() => {
+  const trendPoints: EvaluationTrendPoint[] = useMemo(() => {
     if (data?.improvementTrend && data.improvementTrend.length > 0) {
       return data.improvementTrend.map((t) => ({
         id: t.id || '',
@@ -296,6 +288,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     return [];
   }, [data?.improvementTrend, data?.recentEvaluations, studentProfile?.ca_level]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center text-slate-400">
+        <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">

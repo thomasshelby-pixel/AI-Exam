@@ -635,6 +635,56 @@ export const InstitutePortal: React.FC = () => {
     }
   };
 
+  // Check institute administrative MFA requirement
+  const isMfaMandatoryRole = user?.role === 'INSTITUTE_ADMIN';
+  const isMfaEnrolled = Boolean(user?.mfaEnabled);
+  const isMfaVerified = user?.mfaVerified === true;
+  const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
+
+  // Requirement 11: Detect existing enrolled factor before displaying blocking setup UI
+  const [isCheckingEnrolledFactor, setIsCheckingEnrolledFactor] = useState<boolean>(false);
+  const factorCheckAttemptedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
+      factorCheckAttemptedRef.current = true;
+      setIsCheckingEnrolledFactor(true);
+      getFirebaseEnrolledTotpFactors()
+        .then(async ({ hasTotpFactor }) => {
+          if (hasTotpFactor) {
+            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
+              source: 'institute-portal-gate',
+            });
+            await syncMfaFactor();
+            await refreshUser();
+          }
+        })
+        .catch((err) => {
+          logMfaDiagnostic('factor-check-failed', { error: err?.message });
+        })
+        .finally(() => {
+          setIsCheckingEnrolledFactor(false);
+        });
+    }
+  }, [isMfaMandatoryRole, isMfaEnrolled, syncMfaFactor, refreshUser]);
+
+  useEffect(() => {
+    if (user && isMfaMandatoryRole) {
+      logMfaDiagnostic('route guard decision', {
+        allow: !isMfaBlocked,
+        role: user.role,
+        mfaEnabled: user.mfaEnabled,
+        mfaVerified: user.mfaVerified,
+      });
+
+      if (!isMfaBlocked) {
+        logMfaDiagnostic('final redirect destination', {
+          destination: '/institute/dashboard',
+        });
+      }
+    }
+  }, [user, isMfaBlocked, isMfaMandatoryRole]);
+
   // RBAC GUARD
   if (isLoading) {
     return (
@@ -690,56 +740,6 @@ export const InstitutePortal: React.FC = () => {
       </div>
     );
   }
-
-  // Check institute administrative MFA requirement
-  const isMfaMandatoryRole = user?.role === 'INSTITUTE_ADMIN';
-  const isMfaEnrolled = Boolean(user?.mfaEnabled);
-  const isMfaVerified = user?.mfaVerified === true;
-  const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
-
-  // Requirement 11: Detect existing enrolled factor before displaying blocking setup UI
-  const [isCheckingEnrolledFactor, setIsCheckingEnrolledFactor] = useState<boolean>(false);
-  const factorCheckAttemptedRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    if (isMfaMandatoryRole && !isMfaEnrolled && !factorCheckAttemptedRef.current) {
-      factorCheckAttemptedRef.current = true;
-      setIsCheckingEnrolledFactor(true);
-      getFirebaseEnrolledTotpFactors()
-        .then(async ({ hasTotpFactor }) => {
-          if (hasTotpFactor) {
-            logMfaDiagnostic('totp factor present BEFORE enrollment: YES', {
-              source: 'institute-portal-gate',
-            });
-            await syncMfaFactor();
-            await refreshUser();
-          }
-        })
-        .catch((err) => {
-          logMfaDiagnostic('factor-check-failed', { error: err?.message });
-        })
-        .finally(() => {
-          setIsCheckingEnrolledFactor(false);
-        });
-    }
-  }, [isMfaMandatoryRole, isMfaEnrolled, syncMfaFactor, refreshUser]);
-
-  useEffect(() => {
-    if (user && isMfaMandatoryRole) {
-      logMfaDiagnostic('route guard decision', {
-        allow: !isMfaBlocked,
-        role: user.role,
-        mfaEnabled: user.mfaEnabled,
-        mfaVerified: user.mfaVerified,
-      });
-
-      if (!isMfaBlocked) {
-        logMfaDiagnostic('final redirect destination', {
-          destination: '/institute/dashboard',
-        });
-      }
-    }
-  }, [user, isMfaBlocked, isMfaMandatoryRole]);
 
   if (isCheckingEnrolledFactor) {
     return (
