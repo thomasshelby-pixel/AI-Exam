@@ -44,11 +44,30 @@ async function startServer() {
 
   // Basic CORS & headers
   app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Razorpay-Signature');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Razorpay-Signature, X-Device-Id, X-Device-Trust-Token'
+    );
     if (req.method === 'OPTIONS') {
       return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // Lightweight cookie-parser middleware to ensure req.cookies is always populated
+  app.use((req, res, next) => {
+    const rawCookies = req.headers.cookie;
+    (req as any).cookies = {};
+    if (rawCookies) {
+      rawCookies.split(';').forEach((part) => {
+        const [k, ...v] = part.trim().split('=');
+        if (k) {
+          (req as any).cookies[k] = decodeURIComponent(v.join('='));
+        }
+      });
     }
     next();
   });

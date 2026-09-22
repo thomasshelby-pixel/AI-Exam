@@ -11,7 +11,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
-import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust } from '../services/trustService.js';
+import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue } from '../services/trustService.js';
 import { getAuthoritativeUserMfaStatus } from '../services/mfaRecoveryService.js';
 import mfaRoutes from './mfaRoutes.js';
 
@@ -635,11 +635,14 @@ router.post('/login', async (req: Request, res: Response) => {
     const deviceId =
       (req.body?.deviceId as string)?.trim() ||
       (req.headers['x-device-id'] as string)?.trim() ||
+      (req as any).cookies?.['ca_device_id'] ||
+      parseCookieValue(req.headers.cookie, 'ca_device_id') ||
       `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
     const trustToken =
       (req.body?.trustToken as string)?.trim() ||
       (req.headers['x-device-trust-token'] as string)?.trim() ||
-      (req as any).cookies?.['ca_trust_token'];
+      (req as any).cookies?.['ca_trust_token'] ||
+      parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
     // Role-Based MFA Evaluation with Trusted Device Checking:
     // Check if MFA challenge is required or if mandatory enrollment is needed
@@ -955,11 +958,14 @@ router.post('/institute/login', async (req: Request, res: Response) => {
     const deviceId =
       (req.body?.deviceId as string)?.trim() ||
       (req.headers['x-device-id'] as string)?.trim() ||
+      (req as any).cookies?.['ca_device_id'] ||
+      parseCookieValue(req.headers.cookie, 'ca_device_id') ||
       `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
     const trustToken =
       (req.body?.trustToken as string)?.trim() ||
       (req.headers['x-device-trust-token'] as string)?.trim() ||
-      (req as any).cookies?.['ca_trust_token'];
+      (req as any).cookies?.['ca_trust_token'] ||
+      parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
     const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken });
     if (mfaCheck.requireMfa) {
@@ -1543,10 +1549,18 @@ router.post('/logout', (req: Request, res: Response) => {
   } catch (err) {
     console.error('Logout session cleanup error:', err);
   }
-  res.setHeader('Set-Cookie', [
-    'ca_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
-    'ca_trust_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
-  ]);
+  // Normal logout only invalidates the active auth token session (ca_token).
+  // The 365-day trusted-device token (ca_trust_token) is intentionally preserved across normal logouts,
+  // unless explicitly requested by the user (e.g. revokeAllDevices or revokeTrustedDevice).
+  const revokeTrust = req.body?.revokeTrustedDevice === true || req.body?.revokeAllDevices === true;
+  if (revokeTrust) {
+    res.setHeader('Set-Cookie', [
+      'ca_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
+      'ca_trust_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
+    ]);
+  } else {
+    res.setHeader('Set-Cookie', 'ca_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  }
   return res.json({ success: true, message: 'Logged out successfully' });
 });
 

@@ -314,10 +314,10 @@ export const MfaModal: React.FC = () => {
         logMfaDiagnostic('executing-challenge-verification');
         await verifyMfaChallenge(code);
         setMfaState('VERIFIED');
-        setSuccessMsg('Identity verified. Continuing to portal...');
+        setSuccessMsg('Device verified successfully. This device is trusted for 365 days.');
         setTimeout(() => {
           closeMfaModal();
-        }, 1000);
+        }, 1200);
       }
     } catch (err: any) {
       logMfaDiagnostic('mfa-verification-failed', {

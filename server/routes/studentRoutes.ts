@@ -23,6 +23,7 @@ import {
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
@@ -2277,6 +2278,9 @@ router.post('/change-password', (req: AuthRequest, res: Response) => {
     if (updatedUser) {
       syncRecordToFirestore('users', studentId, updatedUser).catch(() => {});
     }
+
+    // Revoke all trusted devices upon password change for security
+    revokeAllDeviceTrust(studentId);
 
     // Audit notification
     db.prepare(`

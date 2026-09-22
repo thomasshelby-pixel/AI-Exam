@@ -15,6 +15,7 @@ import {
   markDeviceAsTrusted,
   isDeviceTrusted,
   revokeDeviceTrust,
+  revokeAllDeviceTrust,
   getTrustedDevicesForUser,
 } from '../services/trustService.js';
 import {
@@ -138,16 +139,20 @@ function issueAuthenticatedSession(
     // Non-blocking if table not present
   }
 
+  const isProduction = process.env.NODE_ENV === 'production';
+
   res.cookie('ca_token', token, {
     httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isProduction,
     sameSite: 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/',
   });
 
   const deviceId =
     (req.body?.deviceId as string)?.trim() ||
     (req.headers['x-device-id'] as string)?.trim() ||
+    (req as any).cookies?.['ca_device_id'] ||
     `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
   const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
 
@@ -159,14 +164,25 @@ function issueAuthenticatedSession(
     ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
   });
 
+  // Secure HttpOnly + SameSite cookie for the 365-day trusted-device token
   res.cookie('ca_trust_token', trust.trustToken, {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    secure: isProduction,
     sameSite: 'lax',
     maxAge: 365 * 24 * 60 * 60 * 1000,
+    path: '/',
   });
 
-  return { token, trustToken: trust.trustToken, deviceId };
+  // Also persist device ID cookie for cross-session continuity
+  res.cookie('ca_device_id', deviceId, {
+    httpOnly: false,
+    secure: isProduction,
+    sameSite: 'lax',
+    maxAge: 365 * 24 * 60 * 60 * 1000,
+    path: '/',
+  });
+
+  return { token, trustToken: trust.trustToken, deviceId, expiresAt: trust.expiresAt };
 }
 
 /**
@@ -913,6 +929,27 @@ router.post('/trusted-devices/revoke', authenticateToken, async (req: AuthReques
 });
 
 /**
+ * POST /api/auth/mfa/trusted-devices/revoke-all
+ * Revokes all trusted devices for the user (requiring TOTP on next login across all devices).
+ */
+router.post('/trusted-devices/revoke-all', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const count = revokeAllDeviceTrust(req.user.id);
+    return res.json({
+      success: true,
+      count,
+      message: 'All trusted devices have been revoked. TOTP will be required on next login on all devices.',
+    });
+  } catch (err: any) {
+    console.error('[MFA trusted-devices revoke-all error]:', err);
+    return res.status(500).json({ error: 'Failed to revoke trusted devices.' });
+  }
+});
+
+/**
  * POST /api/auth/mfa/disable
  * Disables TOTP MFA.
  * Allowed ONLY for STUDENT accounts.
@@ -947,6 +984,9 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(req.user.id);
+
+    // Revoke all trusted devices
+    revokeAllDeviceTrust(req.user.id);
 
     // Clean up authenticators and recovery codes locally and in Firestore
     db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(req.user.id);
