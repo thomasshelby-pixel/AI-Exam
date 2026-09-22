@@ -26,6 +26,7 @@ import {
   Dna,
 } from 'lucide-react';
 import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
+import { ProgressDashboard, EvaluationTrendPoint } from '../../components/student/ProgressDashboard.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -89,9 +90,17 @@ interface DashboardData {
   strongTopics: string[];
   weakTopics: string[];
   improvementTrend: Array<{
+    id?: string;
     date: string;
+    fullDate?: string;
     subject: string;
+    level?: string;
+    materialType?: string;
+    marks?: number;
+    maxMarks?: number;
     score: number;
+    percentage?: number;
+    grade?: string;
   }>;
   enrolledInstitutes?: Array<{
     membership_id: string;
@@ -253,6 +262,41 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     passProbability: 'Building Baseline',
   };
 
+  const trendPoints: EvaluationTrendPoint[] = React.useMemo(() => {
+    if (data?.improvementTrend && data.improvementTrend.length > 0) {
+      return data.improvementTrend.map((t) => ({
+        id: t.id || '',
+        date: t.date,
+        fullDate: t.fullDate,
+        subject: t.subject,
+        level: t.level || studentProfile?.ca_level || 'INTERMEDIATE',
+        materialType: t.materialType,
+        marks: t.marks ?? Math.round((t.score / 100) * (t.maxMarks || 100)),
+        maxMarks: t.maxMarks ?? 100,
+        score: t.score ?? 0,
+        percentage: t.percentage ?? t.score ?? 0,
+        grade: t.grade,
+      }));
+    }
+    if (data?.recentEvaluations && data.recentEvaluations.length > 0) {
+      return [...data.recentEvaluations]
+        .reverse()
+        .map((ev) => ({
+          id: ev.id,
+          date: formatDateIST(ev.created_at),
+          fullDate: ev.created_at,
+          subject: ev.subject_name,
+          level: ev.level,
+          marks: ev.total_marks,
+          maxMarks: ev.maximum_marks,
+          score: ev.percentage,
+          percentage: ev.percentage,
+          grade: ev.grade,
+        }));
+    }
+    return [];
+  }, [data?.improvementTrend, data?.recentEvaluations, studentProfile?.ca_level]);
+
   return (
     <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">
       {/* Student Welcome Header Banner */}
@@ -283,6 +327,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <span>New Answer Sheet</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
+
+          <a
+            id="dashboard-progress-trend-btn"
+            href="#student-progress-dashboard"
+            className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer"
+            title="View Progress Trend Chart"
+          >
+            <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Progress Trend</span>
+          </a>
 
           {onNavigateProfile && (
             <button
@@ -781,6 +835,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* 📈 Progress Dashboard - Recharts Score Trajectory & Marks Trend */}
+      <ProgressDashboard
+        trendData={trendPoints}
+        averageScore={metrics.averageScore}
+        totalEvaluations={metrics.totalEvaluations}
+        onViewReport={onViewReport}
+        onNavigateUpload={onNavigateUpload}
+      />
 
       {/* Main Content Layout: Evaluations Table (2 cols) & Side Intelligence (1 col) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

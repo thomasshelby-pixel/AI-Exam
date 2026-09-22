@@ -644,9 +644,11 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
               className="px-2.5 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-700 focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Material Types</option>
-              <option value="MTP">MTP</option>
-              <option value="PYQ">PYQ</option>
-              <option value="MODEL_TEST_PAPER">Model Test Paper</option>
+              {ALLOWED_MATERIAL_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.value === 'MODEL_TEST_PAPER' ? 'Model Test Paper' : t.value}
+                </option>
+              ))}
             </select>
 
             {/* MTP Series Filter */}
@@ -1059,11 +1061,20 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     onChange={(e) => setFormData({ ...formData, materialType: e.target.value as MaterialType })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none"
                   >
-                    <option value="QUESTION_PAPER">Question Paper</option>
-                    <option value="SUGGESTED_ANSWER">Suggested Answer</option>
-                    <option value="MTP">MTP (Mock Test Paper)</option>
-                    <option value="PYQ">PYQ (Past Year Question Paper)</option>
-                    <option value="MODEL_TEST_PAPER">Model Test Paper</option>
+                    {ALLOWED_MATERIAL_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                    {formData.materialType && !ALLOWED_MATERIAL_TYPES.some((t) => t.value === formData.materialType) && (
+                      <option value={formData.materialType}>
+                        {formData.materialType === 'QUESTION_PAPER'
+                          ? 'Question Paper (Legacy)'
+                          : formData.materialType === 'SUGGESTED_ANSWER'
+                          ? 'Suggested Answer (Legacy)'
+                          : formData.materialType}
+                      </option>
+                    )}
                   </select>
                 </div>
 

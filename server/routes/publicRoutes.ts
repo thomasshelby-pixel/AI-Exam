@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db } from '../db.js';
 import { getValidAttemptsForLevel } from '../services/attemptService.js';
-import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
+import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries, getSubjectKeyCandidates } from '../services/materialLookupService.js';
 import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 
 const router = Router();
@@ -231,6 +231,26 @@ router.get('/materials-check', async (req: Request, res: Response) => {
       isAdminApprovedRequired: false,
     });
 
+    // Query other attempts that have active, verified material for this subject and type
+    let availableAttempts: string[] = [];
+    try {
+      const keyCandidates = getSubjectKeyCandidates(String(subjectKey), String(level));
+      const keyPlaceholders = keyCandidates.map(() => '?').join(', ');
+      const rows = db.prepare(`
+        SELECT DISTINCT attempt
+        FROM evaluation_materials
+        WHERE UPPER(level) = UPPER(?)
+          AND subject_key IN (${keyPlaceholders})
+          AND (material_type = ? OR material_type = 'ALL')
+          AND status = 'ACTIVE'
+          AND question_paper_text IS NOT NULL AND length(trim(question_paper_text)) > 20
+        ORDER BY attempt ASC
+      `).all(String(level), ...keyCandidates, String(materialType || 'PYQ')) as Array<{ attempt: string }>;
+      availableAttempts = rows.map((r) => r.attempt).filter(Boolean);
+    } catch (attErr) {
+      console.warn('[materials-check] Error finding available attempts:', attErr);
+    }
+
     return res.json({
       available: !!material,
       material: material
@@ -248,10 +268,11 @@ router.get('/materials-check', async (req: Request, res: Response) => {
             marking_scheme_material_id: material.marking_scheme_material_id,
           }
         : null,
+      availableAttempts,
       message: material
         ? 'Matching evaluation material loaded'
         : isPyq
-          ? 'Evaluation material is not uploaded yet. Please try again once the required material has been added.'
+          ? 'Official question paper material for this subject and attempt is currently not available in our system.'
           : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.',
     });
   } catch (err) {
@@ -259,7 +280,8 @@ router.get('/materials-check', async (req: Request, res: Response) => {
     return res.status(500).json({
       available: false,
       material: null,
-      message: 'Failed to verify evaluation material availability.',
+      error: 'Failed to verify material availability from the database.',
+      message: 'Failed to verify evaluation material availability due to a server error.',
     });
   }
 });

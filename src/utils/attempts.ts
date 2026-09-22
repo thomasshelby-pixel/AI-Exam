@@ -48,6 +48,7 @@ export const OFFICIAL_FINAL_ATTEMPTS: string[] = [
 export const OFFICIAL_MATERIAL_TYPES = [
   { value: 'MTP', label: 'MTP (Mock Test Paper)', shortLabel: 'MTP' },
   { value: 'PYQ', label: 'PYQ (Previous Year Question Paper)', shortLabel: 'PYQ' },
+  { value: 'MODEL_TEST_PAPER', label: 'Model Test Paper', shortLabel: 'Model Paper' },
   { value: 'MODEL', label: 'Model Test Paper', shortLabel: 'Model Paper' },
 ] as const;
 

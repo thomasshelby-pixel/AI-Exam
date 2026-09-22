@@ -170,12 +170,20 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       strongTopics: Array.from(strongTopicsSet).slice(0, 6),
       weakTopics: Array.from(weakTopicsSet).slice(0, 6),
       improvementTrend: completedEvals
-        .slice(0, 10)
+        .slice(0, 20)
         .reverse()
         .map((e) => ({
+          id: String(e.id),
           date: new Date(String(e.created_at)).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
-          subject: e.subject_name,
-          score: e.percentage,
+          fullDate: String(e.created_at),
+          subject: String(e.subject_name || 'General'),
+          level: String(e.level || 'INTERMEDIATE'),
+          materialType: String(e.material_type || 'MOCK_TEST'),
+          marks: Number(e.total_marks) || 0,
+          maxMarks: Number(e.maximum_marks) || 100,
+          score: Number(e.percentage) || 0,
+          percentage: Number(e.percentage) || 0,
+          grade: String(e.grade || 'EVALUATED'),
         })),
       examinerProfile: getStudentExaminerProfile(studentId),
     });

@@ -1,21 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { CA_SUBJECTS, CASubject } from '../../data/caCurriculum.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../types/index.js';
-import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt } from '../../lib/attempts.js';
+import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts.js';
 import {
   UploadCloud,
   FileText,
+  FileX,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   ShieldCheck,
   Zap,
   Info,
   Layers,
   Sparkles,
   ArrowRight,
+  ArrowLeft,
   RefreshCw,
   Scale,
   Building2,
@@ -137,10 +140,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const [fileBase64, setFileBase64] = useState<string>('');
   const [dragOver, setDragOver] = useState<boolean>(false);
 
-  // Material check status
+  // Material check status (Distinguishing AVAILABLE, UNAVAILABLE, and ERROR states)
   const [materialAvailable, setMaterialAvailable] = useState<boolean>(true);
   const [materialTitle, setMaterialTitle] = useState<string>('');
   const [checkingMaterial, setCheckingMaterial] = useState<boolean>(false);
+  const [materialCheckStatus, setMaterialCheckStatus] = useState<
+    'IDLE' | 'CHECKING' | 'AVAILABLE' | 'UNAVAILABLE' | 'ERROR'
+  >('CHECKING');
+  const [materialCheckError, setMaterialCheckError] = useState<string>('');
+  const [verifiedAttemptsForSubject, setVerifiedAttemptsForSubject] = useState<string[]>([]);
 
   // Progress states
   const [showProTipsModal, setShowProTipsModal] = useState<boolean>(false);
@@ -376,53 +384,84 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     }
   }, [level, selectedGroup, filteredSubjects, selectedSubjectKey, evaluationSource]);
 
-  // Check material availability from server
-  useEffect(() => {
+  // Focus and highlight attempt selector
+  const handleFocusAttemptSelect = () => {
+    const el = document.getElementById('evaluation-target-attempt-select');
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-500');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500'), 1500);
+    }
+  };
+
+  // Check material availability from server authoritatively
+  const checkMaterial = useCallback(async () => {
     if (evaluationSource === 'INSTITUTE') {
       if (selectedInstituteMaterialId) {
         const sel = instituteMaterials.find((m: any) => m.id === selectedInstituteMaterialId);
         if (sel) {
           setMaterialAvailable(true);
           setMaterialTitle(sel.title || sel.subject_name);
+          setMaterialCheckStatus('AVAILABLE');
+          setMaterialCheckError('');
           return;
         }
       }
       if (instituteMaterials.length > 0) {
         setMaterialAvailable(true);
         setMaterialTitle(instituteMaterials[0].title || 'Institute Test Series Paper');
+        setMaterialCheckStatus('AVAILABLE');
+        setMaterialCheckError('');
       } else {
         setMaterialAvailable(false);
         setMaterialTitle('');
+        setMaterialCheckStatus('UNAVAILABLE');
+        setMaterialCheckError('');
       }
       return;
     }
 
-    const checkMaterial = async () => {
-      if (!selectedSubjectKey) return;
-      setCheckingMaterial(true);
-      try {
-        const res = await apiRequest<{
-          available: boolean;
-          material?: {
-            question_paper_title: string;
-            attempt: string;
-          };
-        }>(
-          `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
-            attempt
-          )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
-        );
+    if (!selectedSubjectKey) return;
+    setCheckingMaterial(true);
+    setMaterialCheckStatus('CHECKING');
+    setMaterialCheckError('');
+    try {
+      const res = await apiRequest<{
+        available: boolean;
+        material?: {
+          question_paper_title: string;
+          attempt: string;
+        } | null;
+        availableAttempts?: string[];
+        error?: string;
+        message?: string;
+      }>(
+        `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
+          attempt
+        )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
+      );
 
-        setMaterialAvailable(res.available);
-        setMaterialTitle(res.material?.question_paper_title || '');
-      } catch {
+      if (res.available && res.material) {
+        setMaterialAvailable(true);
+        setMaterialTitle(res.material.question_paper_title || '');
+        setMaterialCheckStatus('AVAILABLE');
+        setMaterialCheckError('');
+      } else {
         setMaterialAvailable(false);
-      } finally {
-        setCheckingMaterial(false);
+        setMaterialTitle('');
+        setMaterialCheckStatus('UNAVAILABLE');
+        setMaterialCheckError('');
       }
-    };
-
-    checkMaterial();
+      setVerifiedAttemptsForSubject(res.availableAttempts || []);
+    } catch (err: any) {
+      setMaterialAvailable(false);
+      setMaterialTitle('');
+      setMaterialCheckStatus('ERROR');
+      setMaterialCheckError(err?.message || 'Server connection issue during material verification');
+    } finally {
+      setCheckingMaterial(false);
+    }
   }, [
     evaluationSource,
     selectedInstituteMaterialId,
@@ -433,6 +472,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     materialType,
     mtpSeries,
   ]);
+
+  useEffect(() => {
+    checkMaterial();
+  }, [checkMaterial]);
 
   // Handle file drop & selection
   const processFile = (selectedFile: File) => {
@@ -1038,9 +1081,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       onChange={(e) => setMaterialType(e.target.value as MaterialType)}
                       className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 focus:bg-white dark:focus:bg-slate-900 font-medium"
                     >
-                      <option value="MTP">MTP (Mock Test Paper)</option>
-                      <option value="PYQ">PYQ (Past Year Question Paper)</option>
-                      <option value="MODEL_TEST_PAPER">Model Test Paper</option>
+                      {ALLOWED_MATERIAL_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -1108,6 +1153,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   Verifying Reference Material...
                 </p>
+              ) : materialCheckStatus === 'ERROR' ? (
+                <div className="flex items-center gap-2 text-xs text-rose-800 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 p-2.5 rounded-lg min-w-0">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                  <span className="min-w-0 flex-1 break-words">
+                    Database connection error. Unable to verify official material.
+                  </span>
+                </div>
               ) : materialAvailable ? (
                 <div className="flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-2.5 rounded-lg font-medium min-w-0">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -1125,7 +1177,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   <span className="min-w-0 flex-1 break-words">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Test material pending upload by academy.'
-                      : 'Evaluation material is pending upload for this paper.'}
+                      : materialType === 'PYQ'
+                        ? 'Official PYQ not available for this attempt.'
+                        : 'Evaluation material is pending upload for this paper.'}
                   </span>
                 </div>
               )}
@@ -1133,141 +1187,276 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           </div>
         </div>
 
-        {/* Right Column: File Upload Area & Submit */}
+        {/* Right Column: File Upload Area & Submit or Empty / Error States */}
         <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5 min-w-0">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 space-y-4 sm:space-y-5 shadow-sm">
-            <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                <UploadCloud className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                2. Upload Handwritten Answer Sheet
-              </h2>
-              <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
-                PDF, JPG, PNG (Max 50MB)
-              </span>
+          {checkingMaterial && !materialAvailable ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 sm:p-12 space-y-4 shadow-sm text-center flex flex-col items-center justify-center min-h-[320px]">
+              <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <div>
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  Verifying Official Material Availability...
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Checking official database records for {attempt} • {currentSubject?.name || 'Selected Subject'}
+                </p>
+              </div>
             </div>
+          ) : materialCheckStatus === 'ERROR' ? (
+            /* Technical Error State (Distinguished from material not existing) */
+            <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-xl p-6 sm:p-8 space-y-5 shadow-sm text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 flex items-center justify-center text-rose-600 dark:text-rose-400 mx-auto">
+                <AlertTriangle className="w-7 h-7" />
+              </div>
+              <div className="space-y-1.5 max-w-md mx-auto">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Official Material Verification Unavailable
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                  We encountered a technical issue checking material availability in our database. This is a technical issue and does not indicate the material is missing.
+                </p>
+                {materialCheckError && (
+                  <p className="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 p-2 rounded-lg font-mono">
+                    {materialCheckError}
+                  </p>
+                )}
+              </div>
+              <div className="pt-2 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => checkMaterial()}
+                  className="px-5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-semibold text-xs sm:text-sm transition flex items-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retry Verification</span>
+                </button>
+              </div>
+            </div>
+          ) : materialCheckStatus === 'UNAVAILABLE' ? (
+            /* Empty State: Official PYQ / Material Not Available */
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-8 space-y-6 shadow-sm">
+              <div className="flex flex-col items-center text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <FileX className="w-7 h-7" />
+                </div>
+                <div className="space-y-1.5 max-w-lg">
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                    {materialType === 'PYQ' ? 'Official PYQ Not Available' : 'Official Material Not Available'}
+                  </h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    Official question paper material for this subject and attempt is currently not available in our system.
+                  </p>
+                </div>
+              </div>
 
-            {/* Drag & Drop Box */}
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition flex flex-col items-center justify-center min-h-[260px] cursor-pointer ${
-                dragOver
-                  ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
-                  : file
-                  ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/30'
-                  : 'border-slate-300 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/20 dark:hover:bg-blue-950/20'
-              }`}
-              onClick={() => document.getElementById('answer-sheet-file-input')?.click()}
-            >
-              <input
-                id="answer-sheet-file-input"
-                type="file"
-                accept=".pdf,image/jpeg,image/png,image/jpg"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    processFile(e.target.files[0]);
-                  }
-                }}
-              />
+              {/* Selected Target Details (Course, Attempt, Subject visible) */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl p-4 sm:p-5">
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">
+                  Selected Target Details
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs sm:text-sm">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Course</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">
+                      {level === 'FOUNDATION' ? 'CA Foundation' : level === 'FINAL' ? 'CA Final' : 'CA Intermediate'}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Attempt</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">{attempt}</span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Subject</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block truncate" title={currentSubject?.name}>
+                      {currentSubject?.name || 'Selected Paper'}
+                    </span>
+                  </div>
+                </div>
+              </div>
 
-              {file ? (
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center mx-auto shadow-sm">
-                    <FileText className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white max-w-sm truncate">{file.name}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready for ICAI step-evaluation
-                    </p>
-                  </div>
+              {/* Official Standards Guarantee */}
+              <div className="p-4 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 text-xs sm:text-sm text-blue-900 dark:text-blue-200 flex items-start gap-3">
+                <ShieldCheck className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-blue-950 dark:text-blue-100">Official Standards Guarantee</p>
+                  <p className="text-blue-800 dark:text-blue-300 leading-relaxed">
+                    We only publish official/source-verified material and will not substitute it with unofficial or generated questions.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-4 pt-2">
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFile(null);
-                      setFileBase64('');
-                    }}
-                    className="text-xs text-rose-600 dark:text-rose-400 hover:underline inline-block mt-2 font-semibold cursor-pointer"
+                    id="btn-choose-another-attempt"
+                    onClick={handleFocusAttemptSelect}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Remove &amp; choose another file
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>← Choose Another Attempt</span>
                   </button>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">or change the subject from the left panel</span>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 flex items-center justify-center mx-auto">
-                    <UploadCloud className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                      Drag &amp; drop your handwritten CA answer sheet here
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">or click to browse from your computer or phone</p>
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 font-medium">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    <span>Admit cards, certificates &amp; blank documents are rejected automatically</span>
-                  </div>
-                </div>
-              )}
-            </div>
 
-            {/* Pro Tips Subtle Helper */}
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex items-center gap-2 min-w-0">
-                <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
-                <span className="leading-snug text-xs">
-                  <strong className="text-slate-800 dark:text-slate-200">Pro Tip:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
+                {/* Verified alternative attempts for this subject (if available in database) */}
+                {verifiedAttemptsForSubject.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 text-center space-y-2">
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                      Verified {materialType === 'PYQ' ? 'official PYQ papers' : 'papers'} currently available for this subject:
+                    </p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {verifiedAttemptsForSubject.map((att) => (
+                        <button
+                          key={att}
+                          type="button"
+                          onClick={() => setAttempt(att)}
+                          className="px-3 py-1.5 rounded-md text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 border border-slate-200 dark:border-slate-700 transition cursor-pointer text-slate-700 dark:text-slate-300"
+                        >
+                          {att} →
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Normal Upload & Submit Form when Official Material is Available */
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 space-y-4 sm:space-y-5 shadow-sm">
+              <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <UploadCloud className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  2. Upload Handwritten Answer Sheet
+                </h2>
+                <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
+                  PDF, JPG, PNG (Max 50MB)
                 </span>
               </div>
-              <button
-                type="button"
-                id="pro-tips-btn"
-                onClick={() => setShowProTipsModal(true)}
-                className="text-blue-600 dark:text-blue-400 font-bold hover:underline shrink-0 cursor-pointer text-xs whitespace-nowrap"
-              >
-                View Guidelines →
-              </button>
-            </div>
 
-            {/* Action CTA Button */}
-            <div className="pt-1">
-              <button
-                id="start-evaluation-btn"
-                onClick={handleStartEvaluation}
-                disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
-                className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  evaluationSource === 'INSTITUTE'
-                    ? 'bg-indigo-600 hover:bg-indigo-700'
-                    : 'bg-blue-600 hover:bg-blue-700'
+              {/* Drag & Drop Box */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-xl p-8 text-center transition flex flex-col items-center justify-center min-h-[260px] cursor-pointer ${
+                  dragOver
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
+                    : file
+                    ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/30'
+                    : 'border-slate-300 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/20 dark:hover:bg-blue-950/20'
                 }`}
+                onClick={() => document.getElementById('answer-sheet-file-input')?.click()}
               >
-                {evalStep !== 'IDLE' ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Evaluating Answer Sheet...</span>
-                  </>
-                ) : !materialAvailable && !checkingMaterial ? (
-                  <span>Evaluation Material Pending for this Attempt</span>
+                <input
+                  id="answer-sheet-file-input"
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,image/jpg"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      processFile(e.target.files[0]);
+                    }
+                  }}
+                />
+
+                {file ? (
+                  <div className="space-y-3">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center mx-auto shadow-sm">
+                      <FileText className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white max-w-sm truncate">{file.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready for ICAI step-evaluation
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFile(null);
+                        setFileBase64('');
+                      }}
+                      className="text-xs text-rose-600 dark:text-rose-400 hover:underline inline-block mt-2 font-semibold cursor-pointer"
+                    >
+                      Remove &amp; choose another file
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>
-                      {evaluationSource === 'INSTITUTE'
-                        ? 'Start Institute Evaluation (0 Credits)'
-                        : 'Start ICAI Step Evaluation'}
-                    </span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
+                  <div className="space-y-3">
+                    <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 flex items-center justify-center mx-auto">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                        Drag &amp; drop your handwritten CA answer sheet here
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">or click to browse from your computer or phone</p>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 font-medium">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Admit cards, certificates &amp; blank documents are rejected automatically</span>
+                    </div>
+                  </div>
                 )}
-              </button>
+              </div>
+
+              {/* Pro Tips Subtle Helper */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="leading-snug text-xs">
+                    <strong className="text-slate-800 dark:text-slate-200">Pro Tip:</strong> Ensure clear handwriting, correct page sequence, and visible working notes.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  id="pro-tips-btn"
+                  onClick={() => setShowProTipsModal(true)}
+                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline shrink-0 cursor-pointer text-xs whitespace-nowrap"
+                >
+                  View Guidelines →
+                </button>
+              </div>
+
+              {/* Action CTA Button */}
+              <div className="pt-1">
+                <button
+                  id="start-evaluation-btn"
+                  onClick={handleStartEvaluation}
+                  disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
+                  className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    evaluationSource === 'INSTITUTE'
+                      ? 'bg-indigo-600 hover:bg-indigo-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  {evalStep !== 'IDLE' ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Evaluating Answer Sheet...</span>
+                    </>
+                  ) : !materialAvailable && !checkingMaterial ? (
+                    <span>Evaluation Material Pending for this Attempt</span>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>
+                        {evaluationSource === 'INSTITUTE'
+                          ? 'Start Institute Evaluation (0 Credits)'
+                          : 'Start ICAI Step Evaluation'}
+                      </span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
-import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
+import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts.js';
 import {
   ShieldCheck,
   Users,
@@ -502,9 +502,11 @@ export const AdminDashboard: React.FC = () => {
                     onChange={(e) => setNewMatType(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:bg-white focus:border-blue-600"
                   >
-                    <option value="MTP">MTP (Mock Test Paper)</option>
-                    <option value="PYQ">PYQ (Past Year Question Paper)</option>
-                    <option value="MODEL_TEST_PAPER">Model Test Paper</option>
+                    {ALLOWED_MATERIAL_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
