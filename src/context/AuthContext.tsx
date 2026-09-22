@@ -130,14 +130,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
     const deviceId = getOrCreateDeviceId();
-    const res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/verify-challenge', {
-      method: 'POST',
-      body: JSON.stringify({
-        mfaSessionToken: mfaChallenge?.mfaSessionToken,
-        otpCode,
-        deviceId,
-      }),
-    });
+    let res: { token: string; user: User; trustToken?: string; trustExpiresAt?: string };
+    try {
+      res = await apiRequest<{ token: string; user: User; trustToken?: string; trustExpiresAt?: string }>(
+        '/api/auth/mfa/validate-totp',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            mfaSessionToken: mfaChallenge?.mfaSessionToken,
+            otpCode,
+            deviceId,
+            rememberDevice: true,
+          }),
+        }
+      );
+    } catch {
+      // Fallback to verify-challenge
+      res = await apiRequest<{ token: string; user: User; trustToken?: string }>('/api/auth/mfa/verify-challenge', {
+        method: 'POST',
+        body: JSON.stringify({
+          mfaSessionToken: mfaChallenge?.mfaSessionToken,
+          otpCode,
+          deviceId,
+        }),
+      });
+    }
 
     logMfaDiagnostic('backend MFA state synchronized', {
       mfaEnabled: res.user?.mfaEnabled,

@@ -29,6 +29,7 @@ import {
   type TotpSetupData,
 } from '../../lib/firebaseAuth.js';
 import { formatDateTimeIST } from '../../utils/timezone.js';
+import { useTrustedDevice } from '../../hooks/useTrustedDevice.js';
 
 export type MfaUiState = 'INITIALIZING' | 'READY' | 'VERIFYING' | 'VERIFIED' | 'SHOWING_RECOVERY_CODES' | 'ERROR';
 
@@ -75,6 +76,16 @@ export const MfaModal: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'QR' | 'MANUAL'>('QR');
   const [trustDevice, setTrustDevice] = useState<boolean>(true);
+
+  // useTrustedDevice hook checking HttpOnly cookie and handling server-side TOTP validation
+  const {
+    isTrusted: isBrowserTrusted,
+    isLoading: isCheckingBrowserTrust,
+    trustExpiresAt,
+    validateTotp: validateTotpViaHook,
+  } = useTrustedDevice({
+    mfaSessionToken: mfaChallenge?.mfaSessionToken,
+  });
 
   // Input refs for 6-digit OTP code
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -312,12 +323,29 @@ export const MfaModal: React.FC = () => {
         }
       } else {
         logMfaDiagnostic('executing-challenge-verification');
-        await verifyMfaChallenge(code);
-        setMfaState('VERIFIED');
-        setSuccessMsg('Device verified successfully. This device is trusted for 365 days.');
-        setTimeout(() => {
-          closeMfaModal();
-        }, 1200);
+        // Validate TOTP via server-side logic hook (bypasses if browser is already trusted)
+        const hookResult = await validateTotpViaHook(code, {
+          mfaSessionToken: mfaChallenge?.mfaSessionToken,
+          rememberDevice: trustDevice,
+        });
+
+        if (hookResult.success) {
+          if (hookResult.token) {
+            localStorage.setItem('ca_exam_checker_token', hookResult.token);
+          }
+          await verifyMfaChallenge(code);
+          setMfaState('VERIFIED');
+          setSuccessMsg(
+            hookResult.bypassed
+              ? 'Recognized trusted browser. Access granted without TOTP challenge.'
+              : 'Device verified successfully. This device is trusted for 365 days.'
+          );
+          setTimeout(() => {
+            closeMfaModal();
+          }, 1200);
+        } else {
+          throw new Error(hookResult.error || hookResult.message || 'Verification failed.');
+        }
       }
     } catch (err: any) {
       logMfaDiagnostic('mfa-verification-failed', {
@@ -929,6 +957,26 @@ export const MfaModal: React.FC = () => {
                       />
                     ))}
                   </div>
+                </div>
+
+                {/* Browser Trust Status (from useTrustedDevice HttpOnly cookie check) */}
+                <div className="pt-1">
+                  {isBrowserTrusted ? (
+                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <div className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                        <span className="font-semibold">Trusted Browser recognized.</span> Secure HttpOnly credential valid until{' '}
+                        {trustExpiresAt ? new Date(trustExpiresAt).toLocaleDateString() : '365 days'}.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                        <span className="font-medium text-slate-900 dark:text-white">Untrusted browser detected.</span> TOTP validation required to authenticate and establish 365-day device trust.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Device Trust Checkbox */}

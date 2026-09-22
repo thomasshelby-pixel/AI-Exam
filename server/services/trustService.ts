@@ -165,6 +165,201 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
 }
 
 /**
+ * Returns detailed trust info for a user + device + trustToken combination.
+ */
+export function getDeviceTrustInfo(
+  userId: string,
+  deviceId?: string,
+  trustToken?: string
+): {
+  isTrusted: boolean;
+  status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'UNTRUSTED';
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  deviceId?: string;
+} {
+  if (!userId || !deviceId || !trustToken) {
+    return {
+      isTrusted: false,
+      status: 'UNTRUSTED',
+      expiresAt: null,
+      lastUsedAt: null,
+      deviceId,
+    };
+  }
+
+  ensureTrustedDevicesTable();
+  const tokenHash = hashTrustToken(trustToken);
+  const cleanDeviceId = deviceId.trim();
+
+  try {
+    const record = db.prepare(`
+      SELECT id, status, revoked_at, expires_at, last_used_at
+      FROM trusted_devices
+      WHERE user_id = ?
+        AND device_id = ?
+        AND trust_token_hash = ?
+      LIMIT 1
+    `).get(userId, cleanDeviceId, tokenHash) as {
+      id: string;
+      status: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+      revoked_at: string | null;
+      expires_at: string | null;
+      last_used_at: string | null;
+    } | undefined;
+
+    if (!record) {
+      return {
+        isTrusted: false,
+        status: 'UNTRUSTED',
+        expiresAt: null,
+        lastUsedAt: null,
+        deviceId: cleanDeviceId,
+      };
+    }
+
+    if (record.status !== 'ACTIVE' || record.revoked_at !== null) {
+      return {
+        isTrusted: false,
+        status: 'REVOKED',
+        expiresAt: record.expires_at,
+        lastUsedAt: record.last_used_at,
+        deviceId: cleanDeviceId,
+      };
+    }
+
+    if (record.expires_at) {
+      const expiryTime = new Date(record.expires_at).getTime();
+      if (isNaN(expiryTime) || expiryTime <= Date.now()) {
+        db.prepare(`UPDATE trusted_devices SET status = 'EXPIRED' WHERE id = ?`).run(record.id);
+        return {
+          isTrusted: false,
+          status: 'EXPIRED',
+          expiresAt: record.expires_at,
+          lastUsedAt: record.last_used_at,
+          deviceId: cleanDeviceId,
+        };
+      }
+    }
+
+    // Refresh last_used_at
+    db.prepare(`UPDATE trusted_devices SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`).run(record.id);
+
+    return {
+      isTrusted: true,
+      status: 'ACTIVE',
+      expiresAt: record.expires_at,
+      lastUsedAt: new Date().toISOString(),
+      deviceId: cleanDeviceId,
+    };
+  } catch (err) {
+    console.error('[TrustService] Error fetching device trust info:', err);
+    return {
+      isTrusted: false,
+      status: 'UNTRUSTED',
+      expiresAt: null,
+      lastUsedAt: null,
+      deviceId: cleanDeviceId,
+    };
+  }
+}
+
+/**
+ * Checks if a trusted device record exists for a deviceId + trustToken without requiring userId.
+ * Useful for pre-authenticating an untrusted browser before credentials are submitted.
+ */
+export function findTrustedDeviceByToken(
+  deviceId?: string,
+  trustToken?: string
+): TrustedDeviceRecord | null {
+  if (!deviceId || !trustToken) return null;
+  ensureTrustedDevicesTable();
+  const tokenHash = hashTrustToken(trustToken);
+  try {
+    const record = db.prepare(`
+      SELECT 
+        id,
+        user_id as userId,
+        device_id as deviceId,
+        trust_token_hash as trustTokenHash,
+        device_name as deviceName,
+        user_agent as userAgent,
+        ip_address as ipAddress,
+        trusted_at as trustedAt,
+        expires_at as expiresAt,
+        last_used_at as lastUsedAt,
+        revoked_at as revokedAt,
+        status
+      FROM trusted_devices
+      WHERE device_id = ?
+        AND trust_token_hash = ?
+        AND status = 'ACTIVE'
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+      LIMIT 1
+    `).get(deviceId.trim(), tokenHash) as unknown as TrustedDeviceRecord | undefined;
+
+    return record || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RFC 6238 standard TOTP verification helper.
+ * Validates a 6-digit TOTP token against a Base32 encoded secret key with time drift tolerance (+/- windowSteps).
+ */
+export function verifyRfc6238Totp(secret: string, token: string, windowSteps: number = 1): boolean {
+  if (!secret || !token) return false;
+  const cleanToken = token.trim().replace(/\D/g, '');
+  if (cleanToken.length !== 6) return false;
+
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const output: number[] = [];
+  const cleanSecret = secret.toUpperCase().replace(/=+$/, '').replace(/\s+/g, '');
+
+  for (let i = 0; i < cleanSecret.length; i++) {
+    const idx = alphabet.indexOf(cleanSecret[i]);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  const key = Buffer.from(output);
+  if (key.length === 0) return false;
+
+  const epochSeconds = Math.floor(Date.now() / 1000);
+  const currentStep = Math.floor(epochSeconds / 30);
+
+  for (let stepOffset = -windowSteps; stepOffset <= windowSteps; stepOffset++) {
+    const step = currentStep + stepOffset;
+    const counterBuf = Buffer.alloc(8);
+    counterBuf.writeBigInt64BE(BigInt(step));
+
+    const hmac = crypto.createHmac('sha1', key).update(counterBuf).digest();
+    const offset = hmac[hmac.length - 1] & 0x0f;
+    const binary =
+      ((hmac[offset] & 0x7f) << 24) |
+      ((hmac[offset + 1] & 0xff) << 16) |
+      ((hmac[offset + 2] & 0xff) << 8) |
+      (hmac[offset + 3] & 0xff);
+
+    const otp = (binary % 1000000).toString().padStart(6, '0');
+    if (otp === cleanToken) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Marks a device as trusted for a user after successful TOTP MFA verification.
  * Generates and returns an opaque, high-entropy trustToken valid for exactly 365 days.
  */

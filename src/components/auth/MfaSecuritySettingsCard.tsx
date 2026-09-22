@@ -17,8 +17,10 @@ import {
   KeyRound,
   X,
   AlertTriangle,
+  Laptop,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
+import { useTrustedDevice } from '../../hooks/useTrustedDevice.js';
 import {
   generateTotpSetup,
   enrollFirebaseTotpFactor,
@@ -85,6 +87,18 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
 
   // Authenticator removal state
   const [removingAuthId, setRemovingAuthId] = useState<string | null>(null);
+
+  // useTrustedDevice hook checking HttpOnly cookie and managing 365-day device trust
+  const {
+    isTrusted: isCurrentDeviceTrusted,
+    isLoading: isCheckingDeviceTrust,
+    deviceId: currentDeviceId,
+    trustExpiresAt: deviceTrustExpiresAt,
+    revokeCurrentDevice,
+    revokeAllDevices,
+  } = useTrustedDevice();
+
+  const [isRevokingTrust, setIsRevokingTrust] = useState<boolean>(false);
 
   const loadSecurityDetails = async () => {
     if (!user?.mfaEnabled) return;
@@ -502,6 +516,99 @@ export const MfaSecuritySettingsCard: React.FC<MfaSecuritySettingsCardProps> = (
                   Last updated: {formatDateIST(recoveryStatus.generatedAt)}
                 </span>
               )}
+            </div>
+          </div>
+
+          {/* SECTION: TRUSTED BROWSERS & DEVICES (365-DAY AUTHENTICATION) */}
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Laptop className="w-4 h-4 text-blue-600" />
+                Trusted Browsers & Devices
+              </span>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                365-Day Validity
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              When you complete Two-Factor Authentication, your browser is issued a secure, tamper-proof HttpOnly credential allowing you to remain verified for 365 days without repeating TOTP prompts.
+            </p>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      isCurrentDeviceTrusted
+                        ? 'bg-emerald-500 ring-2 ring-emerald-300 dark:ring-emerald-800'
+                        : 'bg-amber-500'
+                    }`}
+                  />
+                  <span className="text-xs font-bold text-slate-900 dark:text-white">
+                    {isCheckingDeviceTrust
+                      ? 'Checking Browser Credential...'
+                      : isCurrentDeviceTrusted
+                        ? 'Current Browser is Trusted'
+                        : 'Current Browser is Untrusted'}
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono text-slate-500 bg-white dark:bg-slate-900 px-2 py-0.5 border border-slate-200 dark:border-slate-700 rounded-md">
+                  ID: {currentDeviceId.slice(0, 12)}...
+                </span>
+              </div>
+
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span>
+                  Storage: <strong className="text-slate-700 dark:text-slate-200">Secure HttpOnly Cookie (ca_trust_token)</strong>
+                </span>
+                {deviceTrustExpiresAt && (
+                  <span>
+                    Expires:{' '}
+                    <strong className="text-slate-700 dark:text-slate-200">
+                      {formatDateIST(deviceTrustExpiresAt)}
+                    </strong>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200 dark:border-slate-700/60">
+                {isCurrentDeviceTrusted && (
+                  <button
+                    type="button"
+                    disabled={isRevokingTrust}
+                    onClick={async () => {
+                      setIsRevokingTrust(true);
+                      await revokeCurrentDevice();
+                      setIsRevokingTrust(false);
+                      setActionMessage({
+                        type: 'success',
+                        text: 'Trust revoked for this browser. TOTP will be required on your next login.',
+                      });
+                    }}
+                    className="py-1 px-2.5 bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 text-xs font-semibold rounded-lg transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {isRevokingTrust ? 'Revoking...' : 'Revoke This Browser'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  disabled={isRevokingTrust}
+                  onClick={async () => {
+                    setIsRevokingTrust(true);
+                    await revokeAllDevices();
+                    setIsRevokingTrust(false);
+                    setActionMessage({
+                      type: 'success',
+                      text: 'All trusted devices revoked. TOTP will be required across all browsers on next login.',
+                    });
+                  }}
+                  className="py-1 px-2.5 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-lg transition disabled:opacity-50 cursor-pointer"
+                >
+                  Revoke All Devices
+                </button>
+              </div>
             </div>
           </div>
 
