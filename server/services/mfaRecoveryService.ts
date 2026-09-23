@@ -120,6 +120,8 @@ export function initMfaRecoveryTables(): void {
   addCol('mfa_recovery_requests', 'resolution_notes', 'TEXT');
   addCol('mfa_recovery_requests', 'resolved_at', 'TEXT');
   addCol('mfa_recovery_requests', 'resolved_by', 'TEXT');
+  addCol('mfa_recovery_requests', 'user_role', 'TEXT');
+  addCol('users', 'mfa_reset_required', 'INTEGER DEFAULT 0');
 
   addCol('mfa_audit_logs', 'action', 'TEXT');
   addCol('mfa_audit_logs', 'request_id', 'TEXT');
@@ -705,6 +707,7 @@ export function removeAuthenticator(
  * Strictly NO instant bypass or backdoor. Undergoes administrative review.
  */
 export function submitManualRecoveryRequest(data: {
+  userId?: string;
   email: string;
   phone?: string;
   srnRegNo?: string;
@@ -712,13 +715,14 @@ export function submitManualRecoveryRequest(data: {
   ip?: string;
   userAgent?: string;
 }): { success: boolean; requestId?: string; error?: string; message?: string } {
+  initMfaRecoveryTables();
   const cleanEmail = (data.email || '').trim().toLowerCase();
-  if (!cleanEmail || !data.reason?.trim()) {
-    return { success: false, error: 'Registered email address and explanation are required.' };
+  if ((!data.userId && !cleanEmail) || !data.reason?.trim()) {
+    return { success: false, error: 'Registered email address or user ID and explanation are required.' };
   }
 
   // Rate limit recovery requests by IP / email (max 3 in 1 hour)
-  const rateLimitKey = `rec_req_${cleanEmail}_${data.ip || 'unknown'}`;
+  const rateLimitKey = `rec_req_${cleanEmail || data.userId}_${data.ip || 'unknown'}`;
   const rateLimit = checkMfaRateLimit(rateLimitKey);
   if (!rateLimit.allowed) {
     return {
@@ -727,8 +731,15 @@ export function submitManualRecoveryRequest(data: {
     };
   }
 
-  // Find user by email
-  const user = db.prepare('SELECT id, email, role, full_name, phone FROM users WHERE lower(email) = ?').get(cleanEmail) as any;
+  // Find user by immutable userId first, then fallback to email
+  let user: any = null;
+  if (data.userId) {
+    user = db.prepare('SELECT id, email, role, full_name, phone FROM users WHERE id = ?').get(data.userId.trim());
+  }
+  if (!user && cleanEmail) {
+    user = db.prepare('SELECT id, email, role, full_name, phone FROM users WHERE lower(email) = ?').get(cleanEmail);
+  }
+
   if (!user) {
     // Return generic success to prevent account enumeration
     return {
@@ -740,8 +751,8 @@ export function submitManualRecoveryRequest(data: {
   // Check if there is already an open pending request
   const existingPending = db.prepare(`
     SELECT id FROM mfa_recovery_requests
-    WHERE user_id = ? AND status = 'PENDING_REVIEW'
-  `).get(user.id) as { id: string } | undefined;
+    WHERE (user_id = ? OR lower(email) = ?) AND UPPER(status) IN ('PENDING_REVIEW', 'PENDING')
+  `).get(user.id, user.email.toLowerCase()) as { id: string } | undefined;
 
   if (existingPending) {
     return {
@@ -753,12 +764,15 @@ export function submitManualRecoveryRequest(data: {
 
   const requestId = `req_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   db.prepare(`
-    INSERT INTO mfa_recovery_requests (id, user_id, email, phone, srn_reg_no, reason, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', CURRENT_TIMESTAMP)
+    INSERT INTO mfa_recovery_requests (
+      id, user_id, user_role, email, phone, srn_reg_no, reason, status, created_at, reviewed_at, reviewed_by
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', CURRENT_TIMESTAMP, NULL, NULL)
   `).run(
     requestId,
     user.id,
-    cleanEmail,
+    user.role,
+    user.email,
     data.phone?.trim() || user.phone || null,
     data.srnRegNo?.trim() || null,
     data.reason.trim()
@@ -784,13 +798,16 @@ export function submitManualRecoveryRequest(data: {
  * Retrieves pending manual recovery requests for Admin review.
  */
 export function getPendingRecoveryRequests(limit: number = 50) {
+  initMfaRecoveryTables();
   try {
     return db.prepare(`
       SELECT r.id, r.user_id, r.email, r.phone, r.srn_reg_no, r.reason, r.status, r.created_at,
-             u.full_name, u.role
+             r.reviewed_at, r.reviewed_by,
+             COALESCE(r.user_role, u.role, 'STUDENT') AS role,
+             COALESCE(u.full_name, r.email) AS full_name
       FROM mfa_recovery_requests r
       LEFT JOIN users u ON r.user_id = u.id
-      WHERE r.status = 'PENDING_REVIEW'
+      WHERE UPPER(r.status) IN ('PENDING_REVIEW', 'PENDING')
       ORDER BY r.created_at DESC
       LIMIT ?
     `).all(limit);
@@ -827,13 +844,26 @@ export interface ResolveRecoveryResult {
  * - Complete factor invalidation & device/session revocation on approval
  * - Immutable audit logging with canonical IST timestamp
  */
-export function resolveRecoveryRequest(
+/**
+ * Resolves a manual recovery request (APPROVED or REJECTED) by a Super Admin.
+ * Enforces:
+ * - Atomic database transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK)
+ * - Strict duplicate approval protection (idempotency, PENDING_REVIEW only)
+ * - Server-side authorization: Super Admin role enforced, self-approval prohibited
+ * - Zero authority to touch student academic or commercial records
+ * - Complete factor invalidation, secret deletion, recovery code deletion, & trusted device revocation on approval
+ * - Sets user MFA state as requiring fresh enrollment (mfa_reset_required = 1)
+ * - Sends user in-app notification
+ * - Post-commit Firestore clean-up to prevent stale self-healing
+ * - Immutable security audit logging with canonical IST timestamp
+ */
+export async function resolveRecoveryRequest(
   requestId: string,
   reviewerId: string,
   decision: 'APPROVED' | 'REJECTED',
   reviewNotes: string,
   context?: { ip?: string; userAgent?: string }
-): ResolveRecoveryResult {
+): Promise<ResolveRecoveryResult> {
   initMfaRecoveryTables();
 
   // 1. Fetch recovery request
@@ -846,17 +876,33 @@ export function resolveRecoveryRequest(
     };
   }
 
-  // 2. Status checks & Idempotency: only allow resolving requests with status PENDING_REVIEW
-  if (req.status !== 'PENDING_REVIEW') {
+  // 2. Duplicate processing protection (Idempotency)
+  const currentStatus = (req.status || '').toUpperCase();
+  if (currentStatus === 'APPROVED' || currentStatus === 'REJECTED' || currentStatus === 'RESOLVED') {
     return {
       success: false,
-      error: `Recovery request has already been resolved with status: ${req.status}. Duplicate resolution rejected.`,
+      error: `Recovery request has already been processed with status: ${req.status}. Duplicate processing is prohibited.`,
       statusCode: 409,
+    };
+  }
+  if (currentStatus !== 'PENDING_REVIEW' && currentStatus !== 'PENDING') {
+    return {
+      success: false,
+      error: `Recovery request status is '${req.status}' and cannot be processed. Only pending requests can be resolved.`,
+      statusCode: 400,
     };
   }
 
   // 3. Admin authorization & self-approval restriction
-  // Super Admin cannot approve or resolve their own request!
+  const reviewer = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(reviewerId) as any;
+  if (!reviewer || reviewer.role !== 'SUPER_ADMIN') {
+    return {
+      success: false,
+      error: 'Unauthorized: Only Super Administrators can resolve MFA recovery requests.',
+      statusCode: 403,
+    };
+  }
+
   if (req.user_id && req.user_id === reviewerId) {
     return {
       success: false,
@@ -865,13 +911,13 @@ export function resolveRecoveryRequest(
     };
   }
 
-  // 4. Target user verification
+  // 4. Target user verification by immutable UID
   let targetUser = req.user_id
     ? (db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE id = ?').get(req.user_id) as any)
     : null;
 
   if (!targetUser && req.email) {
-    targetUser = db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE email = ? COLLATE NOCASE').get(req.email) as any;
+    targetUser = db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE lower(email) = ?').get(req.email.toLowerCase()) as any;
   }
 
   if (!targetUser) {
@@ -883,8 +929,7 @@ export function resolveRecoveryRequest(
   }
 
   // Self-approval restriction by email
-  const reviewer = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(reviewerId) as any;
-  if (reviewer && reviewer.email && targetUser.email && reviewer.email.toLowerCase() === targetUser.email.toLowerCase()) {
+  if (reviewer.email && targetUser.email && reviewer.email.toLowerCase() === targetUser.email.toLowerCase()) {
     return {
       success: false,
       error: 'Administrators cannot resolve their own account recovery requests.',
@@ -901,7 +946,7 @@ export function resolveRecoveryRequest(
   try {
     const newStatus = decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
 
-    // Update recovery request status across all legacy & canonical column names
+    // Update recovery request status across canonical and legacy fields
     db.prepare(`
       UPDATE mfa_recovery_requests
       SET status = ?,
@@ -924,45 +969,71 @@ export function resolveRecoveryRequest(
     );
 
     if (decision === 'APPROVED') {
-      // Invalidate recovery codes
-      db.prepare('UPDATE mfa_recovery_codes SET used = 1, used_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(targetUser.id);
+      // a. Invalidate and remove old recovery codes
+      db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(targetUser.id);
 
-      // Invalidate authenticators
+      // b. Invalidate and remove authenticators
       db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(targetUser.id);
 
-      // Reset MFA status on user record
+      // c. Reset MFA status on user record, clear totp_secret, and set mfa_reset_required
+      // For STUDENTS: MFA is optional, so mfa_reset_required is 0 and MFA is disabled.
+      // For ADMINS: MFA is mandatory, so mfa_reset_required is 1 to require fresh enrollment.
+      const isStudent = targetUser.role === 'STUDENT';
+      const mfaResetRequiredVal = isStudent ? 0 : 1;
       db.prepare(`
         UPDATE users
-        SET mfa_enabled = 0, mfa_enrolled_at = NULL, updated_at = CURRENT_TIMESTAMP
+        SET mfa_enabled = 0,
+            mfa_enrolled_at = NULL,
+            totp_secret = NULL,
+            mfa_phone = NULL,
+            mfa_reset_required = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(targetUser.id);
+      `).run(mfaResetRequiredVal, targetUser.id);
 
-      // Revoke all trusted devices
+      // d. Revoke all trusted devices
       revokeAllDeviceTrust(targetUser.id);
 
-      // Revoke all active sessions
+      // e. Revoke all active sessions
       revokeAllSessionsForUser(targetUser.id);
+
+      // f. Send in-app notification to affected user
+      const notifId = `notif_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const notifMsg = isStudent
+        ? 'Your MFA recovery request has been approved. MFA has been disabled on your account. You can log in directly with your email and password, and optionally enable Two-Factor Authentication anytime from your profile.'
+        : 'Your MFA recovery request has been approved. Your previous authenticator setup has been reset. Please sign in and complete fresh Two-Factor Authentication setup.';
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type, created_at)
+        VALUES (?, ?, 'MFA Recovery Approved', ?, 'security', CURRENT_TIMESTAMP)
+      `).run(notifId, targetUser.id, notifMsg);
+    } else {
+      // Rejection notification
+      const notifId = `notif_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type, created_at)
+        VALUES (?, ?, 'MFA Recovery Request Update', 'Your MFA recovery request has been reviewed and rejected. Please contact support if you require further assistance.', 'security', CURRENT_TIMESTAMP)
+      `).run(notifId, targetUser.id);
     }
 
-    // 6. Immutable Audit Event Log
+    // 6. Security Audit Event Log
     const auditId = `mfa_audit_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
     const eventType = decision === 'APPROVED' ? 'MFA_RECOVERY_APPROVED' : 'MFA_RECOVERY_REJECTED';
     const auditDetails = JSON.stringify({
-      eventType,
-      action: decision,
+      action: eventType,
       requestId,
-      targetUserUid: targetUser.id,
-      targetUserEmail: targetUser.email,
-      targetUserRole: targetUser.role,
-      adminUid: reviewerId,
-      adminEmail: reviewer?.email || reviewerId,
-      status: 'SUCCESS',
-      resolutionNotes: cleanNotes,
-      correlationId,
-      timestampIST: istNow,
-      timestampUTC: new Date().toISOString(),
-      academicDataImpact: 'NONE_ZERO_AUTHORITY',
-      commercialDataImpact: 'NONE_ZERO_AUTHORITY',
+      affectedUserId: targetUser.id,
+      affectedUserRole: targetUser.role,
+      affectedUserEmail: targetUser.email,
+      reviewedBy: reviewerId,
+      reviewerEmail: reviewer?.email || reviewerId,
+      timestamp: new Date().toISOString(),
+      istTimestamp: istNow,
+      result: 'SUCCESS',
+      notes: cleanNotes,
+      decision,
+      mfaState: decision === 'APPROVED' ? 'RESET_REENROLLMENT_REQUIRED' : 'UNCHANGED',
+      academicDataPreserved: true,
+      commercialDataPreserved: true,
     });
 
     db.prepare(`
@@ -972,23 +1043,35 @@ export function resolveRecoveryRequest(
         status, ist_timestamp, correlation_id, ip_address, user_agent,
         details
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?, ?, ?)
     `).run(
       auditId,
       targetUser.id,
       eventType,
-      decision,
+      eventType,
       requestId,
       targetUser.id,
       targetUser.email,
       targetUser.role,
       reviewerId,
       reviewer?.email || reviewerId,
-      'SUCCESS',
       istNow,
       correlationId,
       context?.ip || null,
       context?.userAgent || null,
+      auditDetails
+    );
+
+    // General system audit log
+    db.prepare(`
+      INSERT INTO audit_logs (
+        id, user_id, action, entity_type, entity_id, details, created_at
+      ) VALUES (?, ?, ?, 'users', ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      `aud_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+      reviewerId,
+      eventType,
+      targetUser.id,
       auditDetails
     );
 
@@ -1007,6 +1090,37 @@ export function resolveRecoveryRequest(
     };
   }
 
+  // 7. Post-transaction Cloud Firestore Clean-up (if APPROVED)
+  if (decision === 'APPROVED') {
+    try {
+      const isStudentTarget = targetUser.role === 'STUDENT';
+      await syncRecordToFirestore('users', targetUser.id, {
+        id: targetUser.id,
+        mfa_enabled: 0,
+        mfa_enrolled_at: null,
+        totp_secret: null,
+        mfa_reset_required: isStudentTarget ? 0 : 1,
+        updated_at: new Date().toISOString(),
+      });
+
+      const cloudAuths = await getAllFirestoreDocs<any>('mfa_authenticators');
+      for (const a of cloudAuths) {
+        if (a.user_id === targetUser.id || a.userId === targetUser.id) {
+          await deleteFirestoreDoc('mfa_authenticators', a.id);
+        }
+      }
+
+      const cloudCodes = await getAllFirestoreDocs<any>('mfa_recovery_codes');
+      for (const c of cloudCodes) {
+        if (c.user_id === targetUser.id || c.userId === targetUser.id) {
+          await deleteFirestoreDoc('mfa_recovery_codes', c.id);
+        }
+      }
+    } catch (firestoreErr) {
+      console.warn('[resolveRecoveryRequest] Firestore sync warning:', firestoreErr);
+    }
+  }
+
   return {
     success: true,
     action: decision,
@@ -1019,9 +1133,33 @@ export function resolveRecoveryRequest(
     },
     message:
       decision === 'APPROVED'
-        ? `Recovery request approved successfully. MFA factors have been reset and active sessions terminated for ${targetUser.email}.`
+        ? `Recovery request approved successfully. MFA factors have been reset, trusted devices revoked, and active sessions terminated for ${targetUser.email}. User will be required to re-enroll MFA on next login.`
         : `Recovery request rejected. Existing MFA configuration remains active for ${targetUser.email}.`,
   };
+}
+
+/**
+ * Server action to approve MFA recovery request.
+ */
+export async function approveMfaRecovery(
+  requestId: string,
+  reviewerId: string,
+  reviewNotes: string = 'Approved by Super Admin',
+  context?: { ip?: string; userAgent?: string }
+): Promise<ResolveRecoveryResult> {
+  return resolveRecoveryRequest(requestId, reviewerId, 'APPROVED', reviewNotes, context);
+}
+
+/**
+ * Server action to reject MFA recovery request.
+ */
+export async function rejectMfaRecovery(
+  requestId: string,
+  reviewerId: string,
+  reviewNotes: string = 'Rejected by Super Admin',
+  context?: { ip?: string; userAgent?: string }
+): Promise<ResolveRecoveryResult> {
+  return resolveRecoveryRequest(requestId, reviewerId, 'REJECTED', reviewNotes, context);
 }
 
 /**
@@ -1057,7 +1195,7 @@ export async function getAuthoritativeUserMfaStatus(
   try {
     // 1. Check local SQLite user record
     const userRow = db.prepare(`
-      SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret
+      SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required
       FROM users WHERE id = ?
     `).get(userId) as {
       id: string;
@@ -1066,7 +1204,18 @@ export async function getAuthoritativeUserMfaStatus(
       mfa_enabled: number;
       mfa_enrolled_at: string | null;
       totp_secret: string | null;
+      mfa_reset_required?: number;
     } | undefined;
+
+    // If an administrator reset MFA and fresh re-enrollment is required, strictly report not enrolled and do NOT self-heal!
+    if (userRow?.mfa_reset_required === 1) {
+      return {
+        mfaEnabled: false,
+        mfaEnrolledAt: null,
+        authenticatorsCount: 0,
+        recoveryCodesRemaining: 0,
+      };
+    }
 
     // 2. Check local authenticators
     const authCountRow = db.prepare(`
@@ -1082,10 +1231,7 @@ export async function getAuthoritativeUserMfaStatus(
 
     let isEnrolled = Boolean(userRow?.mfa_enabled) || localAuthCount > 0 || recoveryRemaining > 0 || Boolean(userRow?.mfa_enrolled_at) || Boolean(userRow?.totp_secret);
 
-    // 4. Check client-reported Firebase TOTP factor (Header: x-firebase-totp-enrolled: true)
-    if (options?.clientClaimsFirebaseTotp) {
-      isEnrolled = true;
-    }
+    // 4. Check client-reported factors (strictly ignored - server DB is authoritative source)
 
     // 5. Cloud Firestore fallback verification if not yet confirmed
     if (!isEnrolled && options?.checkFirestoreFallback !== false) {
@@ -1179,5 +1325,172 @@ export async function getAuthoritativeUserMfaStatus(
       recoveryCodesRemaining: 0,
     };
   }
+}
+
+/**
+ * Authoritative Server-Side MFA Reset
+ * Resets MFA state for a specific user cleanly without affecting any user profile,
+ * password, role, credits, submissions, evaluations, or payment data.
+ */
+export async function executeServerMfaReset(
+  targetUserIdOrEmail: string,
+  performedBy?: {
+    id: string;
+    email?: string;
+    role?: string;
+  },
+  reason: string = 'Security Administrator MFA Reset'
+): Promise<{
+  success: boolean;
+  user: { id: string; email: string; role: string; fullName: string };
+  message: string;
+}> {
+  const cleanTarget = targetUserIdOrEmail.trim();
+  const targetUser = (
+    db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE id = ?').get(cleanTarget) ||
+    db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE lower(email) = ?').get(cleanTarget.toLowerCase())
+  ) as any;
+
+  if (!targetUser) {
+    throw new Error(`Target account '${targetUserIdOrEmail}' not found in database.`);
+  }
+
+  const userId = targetUser.id;
+
+  const adminId = performedBy?.id || 'system_security_admin';
+  const adminEmail = performedBy?.email || adminId;
+
+  // 1. Invalidate and remove recovery codes
+  db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(userId);
+
+  // 2. Remove all registered authenticators
+  db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(userId);
+
+  const isStudent = targetUser.role === 'STUDENT';
+  const mfaResetRequiredVal = isStudent ? 0 : 1;
+
+  // 3. Reset user MFA fields in SQLite
+  db.prepare(`
+    UPDATE users
+    SET mfa_enabled = 0,
+        mfa_enrolled_at = NULL,
+        totp_secret = NULL,
+        mfa_phone = NULL,
+        mfa_reset_required = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(mfaResetRequiredVal, userId);
+
+  // 4. Invalidate all trusted devices
+  revokeAllDeviceTrust(userId);
+
+  // 5. Revoke all active sessions
+  revokeAllSessionsForUser(userId);
+
+  // 6. Send in-app notification to affected user
+  const notifId = `notif_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const notifMsg = isStudent
+    ? 'Your Multi-Factor Authentication (MFA) has been securely reset by an administrator. MFA is now disabled on your account. You can log in directly with your email and password.'
+    : 'Your Multi-Factor Authentication (MFA) has been securely reset by an administrator. Please sign in and complete fresh Two-Factor Authentication setup.';
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, title, message, type, created_at)
+    VALUES (?, ?, 'MFA Reset Notice', ?, 'security', CURRENT_TIMESTAMP)
+  `).run(notifId, userId, notifMsg);
+
+  // 7. Synchronize cleanly to Firestore
+  try {
+    await syncRecordToFirestore('users', userId, {
+      id: userId,
+      mfa_enabled: 0,
+      mfa_enrolled_at: null,
+      totp_secret: null,
+      mfa_reset_required: mfaResetRequiredVal,
+      updated_at: new Date().toISOString(),
+    });
+
+    // Delete cloud authenticators
+    const cloudAuths = await getAllFirestoreDocs<any>('mfa_authenticators');
+    for (const a of cloudAuths) {
+      if (a.user_id === userId || a.userId === userId) {
+        await deleteFirestoreDoc('mfa_authenticators', a.id);
+      }
+    }
+
+    // Delete cloud recovery codes
+    const cloudCodes = await getAllFirestoreDocs<any>('mfa_recovery_codes');
+    for (const c of cloudCodes) {
+      if (c.user_id === userId || c.userId === userId) {
+        await deleteFirestoreDoc('mfa_recovery_codes', c.id);
+      }
+    }
+  } catch (firestoreErr) {
+    console.warn('[executeServerMfaReset] Firestore sync warning:', firestoreErr);
+  }
+
+  // 7. Record immutable security audit log in SQLite
+  const auditId = `mfa_audit_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const istTimestamp = formatDateTimeIST(new Date());
+
+  db.prepare(`
+    INSERT INTO mfa_audit_logs (
+      id, user_id, event_type, action,
+      target_user_uid, target_user_email, target_user_role,
+      admin_uid, admin_email,
+      ist_timestamp, correlation_id, status, details
+    ) VALUES (?, ?, 'MFA_RESET', 'MFA_RESET', ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?)
+  `).run(
+    auditId,
+    userId,
+    userId,
+    targetUser.email,
+    targetUser.role,
+    adminId,
+    adminEmail,
+    istTimestamp,
+    `corr_${crypto.randomBytes(8).toString('hex')}`,
+    JSON.stringify({
+      action: 'MFA_RESET',
+      affectedUserId: userId,
+      affectedUserEmail: targetUser.email,
+      performedBy: adminEmail,
+      timestamp: new Date().toISOString(),
+      istTimestamp,
+      reason,
+      mfaStateReset: true,
+      oldFactorsInvalidated: true,
+      trustedDevicesRevoked: true,
+      sessionsRevoked: true,
+      userDataPreserved: true,
+    })
+  );
+
+  // Also record in system general audit_logs
+  db.prepare(`
+    INSERT INTO audit_logs (
+      id, user_id, action, entity_type, entity_id, details, created_at
+    ) VALUES (?, ?, 'MFA_RESET', 'users', ?, ?, CURRENT_TIMESTAMP)
+  `).run(
+    `aud_${crypto.randomBytes(8).toString('hex')}`,
+    adminId,
+    userId,
+    JSON.stringify({
+      affectedUserId: userId,
+      affectedUserEmail: targetUser.email,
+      performedBy: adminEmail,
+      reason,
+      timestamp: new Date().toISOString(),
+    })
+  );
+
+  return {
+    success: true,
+    user: {
+      id: userId,
+      email: targetUser.email,
+      role: targetUser.role,
+      fullName: targetUser.full_name,
+    },
+    message: `MFA reset successfully completed for ${targetUser.email} (${userId}). Old factor and trusted devices invalidated. Ready for fresh enrollment.`,
+  };
 }
 

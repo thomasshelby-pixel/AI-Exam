@@ -20,6 +20,7 @@ import {
   Key,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
+import type { User } from '../../types/index.js';
 import {
   generateTotpSetup,
   enrollFirebaseTotpFactor,
@@ -36,9 +37,12 @@ export type MfaUiState = 'INITIALIZING' | 'READY' | 'VERIFYING' | 'VERIFIED' | '
 export const MfaModal: React.FC = () => {
   const {
     user,
+    setUser,
+    setToken,
     mfaChallenge,
     cancelMfaChallenge,
     closeMfaModal,
+    completeMfaChallenge,
     switchMfaMode,
     verifyMfaChallenge,
     verifyMfaEnroll,
@@ -169,7 +173,7 @@ export const MfaModal: React.FC = () => {
     try {
       setMfaState('INITIALIZING');
       setErrorMsg('');
-      const targetEmail = user?.email || 'admin@caexamcheckerai.com';
+      const targetEmail = user?.email || mfaChallenge?.email || 'user';
       const setup = await generateTotpSetup(targetEmail, 'CA Exam Checker AI');
       setTotpSetup(setup);
       setMfaState('READY');
@@ -308,7 +312,21 @@ export const MfaModal: React.FC = () => {
 
         if (data.token) {
           localStorage.setItem('ca_exam_checker_token', data.token);
+          setToken(data.token);
         }
+        if (data.trustToken) {
+          localStorage.setItem('ca_device_trust_token', data.trustToken);
+          if (data.user?.id) {
+            localStorage.setItem(`ca_device_trust_token_${data.user.id}`, data.trustToken);
+          }
+        }
+
+        const verifiedUser: User = {
+          ...data.user,
+          mfaEnabled: true,
+          mfaVerified: true,
+        };
+        setUser(verifiedUser);
 
         if (data.recoveryCodes && Array.isArray(data.recoveryCodes) && data.recoveryCodes.length > 0) {
           setNewlyGeneratedCodes(data.recoveryCodes);
@@ -317,35 +335,17 @@ export const MfaModal: React.FC = () => {
         } else {
           setMfaState('VERIFIED');
           setSuccessMsg('Two-Factor Authentication has been successfully enabled.');
-          setTimeout(() => {
-            closeMfaModal();
-          }, 1200);
+          completeMfaChallenge(verifiedUser);
         }
       } else {
         logMfaDiagnostic('executing-challenge-verification');
-        // Validate TOTP via server-side logic hook (bypasses if browser is already trusted)
-        const hookResult = await validateTotpViaHook(code, {
-          mfaSessionToken: mfaChallenge?.mfaSessionToken,
-          rememberDevice: trustDevice,
-        });
-
-        if (hookResult.success) {
-          if (hookResult.token) {
-            localStorage.setItem('ca_exam_checker_token', hookResult.token);
-          }
-          await verifyMfaChallenge(code);
-          setMfaState('VERIFIED');
-          setSuccessMsg(
-            hookResult.bypassed
-              ? 'Recognized trusted browser. Access granted without TOTP challenge.'
-              : 'Device verified successfully. This device is trusted for 365 days.'
-          );
-          setTimeout(() => {
-            closeMfaModal();
-          }, 1200);
-        } else {
-          throw new Error(hookResult.error || hookResult.message || 'Verification failed.');
-        }
+        await verifyMfaChallenge(code);
+        setMfaState('VERIFIED');
+        setSuccessMsg(
+          trustDevice
+            ? 'Device verified successfully. This device is trusted for 365 days.'
+            : 'Access granted.'
+        );
       }
     } catch (err: any) {
       logMfaDiagnostic('mfa-verification-failed', {
@@ -610,7 +610,13 @@ export const MfaModal: React.FC = () => {
 
               <button
                 type="button"
-                onClick={closeMfaModal}
+                onClick={() => {
+                  if (user) {
+                    completeMfaChallenge(user);
+                  } else {
+                    closeMfaModal();
+                  }
+                }}
                 className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />

@@ -306,13 +306,79 @@ export function findTrustedDeviceByToken(
 }
 
 /**
- * RFC 6238 standard TOTP verification helper.
- * Validates a 6-digit TOTP token against a Base32 encoded secret key with time drift tolerance (+/- windowSteps).
+ * Diagnostic results for RFC 6238 TOTP verification with time drift telemetry.
+ * Safe and non-sensitive: Contains ONLY timing, step indices, and drift calculations.
+ * Never stores or returns secret keys or raw OTP tokens.
  */
-export function verifyRfc6238Totp(secret: string, token: string, windowSteps: number = 1): boolean {
-  if (!secret || !token) return false;
+export interface TotpVerificationDiagnostic {
+  valid: boolean;
+  serverTimeUtc: string;
+  serverEpochSeconds: number;
+  currentStep: number;
+  windowSteps: number;
+  driftToleranceSeconds: number;
+  allowedWindowStartUtc: string;
+  allowedWindowEndUtc: string;
+  matchedStepOffset: number | null;
+  detectedOffsetInExpandedWindow: number | null;
+  detectedDriftSeconds: number | null;
+  driftInterpretation: string;
+}
+
+/**
+ * Detailed diagnostic evaluation of RFC 6238 TOTP with safe drift window calculation.
+ * Computes exact time boundaries and tests expanded windows to determine clock drift vs mismatch.
+ * NEVER returns, logs, or leaks the secret key, seed, or plain OTP code.
+ */
+export function evaluateRfc6238TotpDiagnostics(
+  secret: string,
+  token: string,
+  windowSteps: number = 1,
+  expandedWindowSteps: number = 10
+): TotpVerificationDiagnostic {
+  const now = new Date();
+  const serverTimeUtc = now.toISOString();
+  const serverEpochSeconds = Math.floor(now.getTime() / 1000);
+  const currentStep = Math.floor(serverEpochSeconds / 30);
+  const driftToleranceSeconds = windowSteps * 30;
+
+  const allowedWindowStartUtc = new Date((currentStep - windowSteps) * 30 * 1000).toISOString();
+  const allowedWindowEndUtc = new Date(((currentStep + windowSteps + 1) * 30 * 1000) - 1).toISOString();
+
+  if (!secret || !token) {
+    return {
+      valid: false,
+      serverTimeUtc,
+      serverEpochSeconds,
+      currentStep,
+      windowSteps,
+      driftToleranceSeconds,
+      allowedWindowStartUtc,
+      allowedWindowEndUtc,
+      matchedStepOffset: null,
+      detectedOffsetInExpandedWindow: null,
+      detectedDriftSeconds: null,
+      driftInterpretation: 'MISSING_SECRET_OR_TOKEN',
+    };
+  }
+
   const cleanToken = token.trim().replace(/\D/g, '');
-  if (cleanToken.length !== 6) return false;
+  if (cleanToken.length !== 6) {
+    return {
+      valid: false,
+      serverTimeUtc,
+      serverEpochSeconds,
+      currentStep,
+      windowSteps,
+      driftToleranceSeconds,
+      allowedWindowStartUtc,
+      allowedWindowEndUtc,
+      matchedStepOffset: null,
+      detectedOffsetInExpandedWindow: null,
+      detectedDriftSeconds: null,
+      driftInterpretation: 'INVALID_TOKEN_FORMAT_NOT_6_DIGITS',
+    };
+  }
 
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = 0;
@@ -332,11 +398,25 @@ export function verifyRfc6238Totp(secret: string, token: string, windowSteps: nu
   }
 
   const key = Buffer.from(output);
-  if (key.length === 0) return false;
+  if (key.length === 0) {
+    return {
+      valid: false,
+      serverTimeUtc,
+      serverEpochSeconds,
+      currentStep,
+      windowSteps,
+      driftToleranceSeconds,
+      allowedWindowStartUtc,
+      allowedWindowEndUtc,
+      matchedStepOffset: null,
+      detectedOffsetInExpandedWindow: null,
+      detectedDriftSeconds: null,
+      driftInterpretation: 'INVALID_BASE32_SECRET',
+    };
+  }
 
-  const epochSeconds = Math.floor(Date.now() / 1000);
-  const currentStep = Math.floor(epochSeconds / 30);
-
+  // 1. Evaluate within standard allowed window (+/- windowSteps)
+  let matchedOffset: number | null = null;
   for (let stepOffset = -windowSteps; stepOffset <= windowSteps; stepOffset++) {
     const step = currentStep + stepOffset;
     const counterBuf = Buffer.alloc(8);
@@ -352,11 +432,126 @@ export function verifyRfc6238Totp(secret: string, token: string, windowSteps: nu
 
     const otp = (binary % 1000000).toString().padStart(6, '0');
     if (otp === cleanToken) {
-      return true;
+      matchedOffset = stepOffset;
+      break;
     }
   }
 
-  return false;
+  if (matchedOffset !== null) {
+    return {
+      valid: true,
+      serverTimeUtc,
+      serverEpochSeconds,
+      currentStep,
+      windowSteps,
+      driftToleranceSeconds,
+      allowedWindowStartUtc,
+      allowedWindowEndUtc,
+      matchedStepOffset: matchedOffset,
+      detectedOffsetInExpandedWindow: matchedOffset,
+      detectedDriftSeconds: matchedOffset * 30,
+      driftInterpretation: matchedOffset === 0 ? 'SYNCHRONIZED' : `SLIGHT_DRIFT_${matchedOffset * 30}S`,
+    };
+  }
+
+  // 2. Out of allowed window: scan expanded window (e.g. +/- 10 steps = +/- 300s) to diagnose clock drift vs secret mismatch
+  let expandedOffset: number | null = null;
+  for (let stepOffset = -expandedWindowSteps; stepOffset <= expandedWindowSteps; stepOffset++) {
+    if (Math.abs(stepOffset) <= windowSteps) continue; // Already checked
+
+    const step = currentStep + stepOffset;
+    const counterBuf = Buffer.alloc(8);
+    counterBuf.writeBigInt64BE(BigInt(step));
+
+    const hmac = crypto.createHmac('sha1', key).update(counterBuf).digest();
+    const offset = hmac[hmac.length - 1] & 0x0f;
+    const binary =
+      ((hmac[offset] & 0x7f) << 24) |
+      ((hmac[offset + 1] & 0xff) << 16) |
+      ((hmac[offset + 2] & 0xff) << 8) |
+      (hmac[offset + 3] & 0xff);
+
+    const otp = (binary % 1000000).toString().padStart(6, '0');
+    if (otp === cleanToken) {
+      expandedOffset = stepOffset;
+      break;
+    }
+  }
+
+  const detectedDriftSeconds = expandedOffset !== null ? expandedOffset * 30 : null;
+  const driftInterpretation = expandedOffset !== null
+    ? `CLIENT_CLOCK_DRIFT_OUT_OF_WINDOW_${detectedDriftSeconds! > 0 ? '+' : ''}${detectedDriftSeconds}S`
+    : `NO_MATCH_IN_EXPANDED_WINDOW_${expandedWindowSteps * 30}S (SECRET_MISMATCH_OR_INCORRECT_CODE)`;
+
+  return {
+    valid: false,
+    serverTimeUtc,
+    serverEpochSeconds,
+    currentStep,
+    windowSteps,
+    driftToleranceSeconds,
+    allowedWindowStartUtc,
+    allowedWindowEndUtc,
+    matchedStepOffset: null,
+    detectedOffsetInExpandedWindow: expandedOffset,
+    detectedDriftSeconds,
+    driftInterpretation,
+  };
+}
+
+/**
+ * Safe, non-sensitive logging for TOTP verification attempts (especially failures).
+ * Logs server time, user's secret key timestamp, and the drift window calculated.
+ * NEVER logs the secret key, seed, password, or entered TOTP code.
+ */
+export function logSafeTotpDriftDiagnostics(params: {
+  userId: string;
+  userEmail?: string;
+  userRole?: string;
+  endpoint: string;
+  ipAddress?: string;
+  userAgent?: string;
+  secretEnrolledAt: string | null;
+  secretUpdatedAt?: string | null;
+  diagnostics: TotpVerificationDiagnostic;
+  remainingAttempts?: number;
+}): void {
+  const isSpecialStudent = params.userId === 'usr_bf97ebeeae7273b7' || params.userEmail === 'adityakumart484@gmail.com';
+  const prefix = isSpecialStudent
+    ? '[MFA TOTP DIAGNOSTIC - TARGET STUDENT usr_bf97ebeeae7273b7]'
+    : '[MFA TOTP Verification Failure - Safe Drift Diagnostics]';
+
+  const logPayload = {
+    userId: params.userId,
+    userEmail: params.userEmail || 'unknown',
+    userRole: params.userRole || 'STUDENT',
+    endpoint: params.endpoint,
+    serverTimeUtc: params.diagnostics.serverTimeUtc,
+    serverEpochSeconds: params.diagnostics.serverEpochSeconds,
+    currentStep: params.diagnostics.currentStep,
+    secretKeyTimestamp: params.secretEnrolledAt || 'UNSET_OR_NOT_ENROLLED',
+    secretKeyUpdatedAt: params.secretUpdatedAt || null,
+    calculatedDriftWindow: {
+      allowedWindowSteps: params.diagnostics.windowSteps,
+      driftToleranceSeconds: params.diagnostics.driftToleranceSeconds,
+      windowStartUtc: params.diagnostics.allowedWindowStartUtc,
+      windowEndUtc: params.diagnostics.allowedWindowEndUtc,
+    },
+    detectedOffsetInExpandedWindow: params.diagnostics.detectedOffsetInExpandedWindow,
+    detectedDriftSeconds: params.diagnostics.detectedDriftSeconds,
+    driftInterpretation: params.diagnostics.driftInterpretation,
+    remainingAttempts: params.remainingAttempts ?? null,
+  };
+
+  console.warn(prefix, JSON.stringify(logPayload, null, 2));
+}
+
+/**
+ * RFC 6238 standard TOTP verification helper.
+ * Validates a 6-digit TOTP token against a Base32 encoded secret key with time drift tolerance (+/- windowSteps).
+ */
+export function verifyRfc6238Totp(secret: string, token: string, windowSteps: number = 1): boolean {
+  return evaluateRfc6238TotpDiagnostics(secret, token, windowSteps).valid;
 }
 
 /**

@@ -20,6 +20,9 @@ import {
   revokeAllDeviceTrust,
   getTrustedDevicesForUser,
   verifyRfc6238Totp,
+  evaluateRfc6238TotpDiagnostics,
+  logSafeTotpDriftDiagnostics,
+  type TotpVerificationDiagnostic,
   parseCookieValue,
 } from '../services/trustService.js';
 import {
@@ -34,6 +37,8 @@ import {
   submitManualRecoveryRequest,
   getPendingRecoveryRequests,
   resolveRecoveryRequest,
+  approveMfaRecovery,
+  rejectMfaRecovery,
   getAuthoritativeUserMfaStatus,
   checkMfaRateLimit,
   recordMfaFailedAttempt,
@@ -247,7 +252,7 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
     }
 
     const otpCode = (req.body?.otpCode as string)?.trim().replace(/\D/g, '');
-    if (otpCode && otpCode.length !== 6) {
+    if (!otpCode || otpCode.length !== 6) {
       const fail = recordMfaFailedAttempt(rateLimitKey);
       logMfaAudit({
         userId: user.id,
@@ -259,6 +264,108 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
       });
       return res.status(400).json({
         error: `Please enter the complete 6-digit code. ${fail.remainingAttempts} attempt(s) remaining.`,
+      });
+    }
+
+    // Fetch user's registered TOTP secrets and timestamps
+    const dbUser = db.prepare('SELECT totp_secret, mfa_enrolled_at, updated_at, email, role FROM users WHERE id = ?').get(user.id) as {
+      totp_secret: string | null;
+      mfa_enrolled_at: string | null;
+      updated_at: string | null;
+      email?: string;
+      role?: string;
+    } | undefined;
+    const authenticators = db.prepare('SELECT totp_secret, created_at, last_used_at FROM mfa_authenticators WHERE user_id = ?').all(user.id) as Array<{
+      totp_secret: string | null;
+      created_at: string;
+      last_used_at: string | null;
+    }>;
+
+    const candidateSecrets: Array<{ secret: string; createdAt: string | null }> = [];
+    if (dbUser?.totp_secret) {
+      candidateSecrets.push({
+        secret: dbUser.totp_secret,
+        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+      });
+    }
+    authenticators.forEach((a) => {
+      if (a.totp_secret && !candidateSecrets.some((s) => s.secret === a.totp_secret)) {
+        candidateSecrets.push({
+          secret: a.totp_secret,
+          createdAt: a.created_at || null,
+        });
+      }
+    });
+
+    let isValid = false;
+    let selectedDiag: TotpVerificationDiagnostic | null = null;
+    let selectedSecretTimestamp: string | null = null;
+
+    if (candidateSecrets.length > 0) {
+      for (const item of candidateSecrets) {
+        const diag = evaluateRfc6238TotpDiagnostics(item.secret, otpCode, 1, 10);
+        if (diag.valid) {
+          isValid = true;
+          selectedDiag = diag;
+          selectedSecretTimestamp = item.createdAt;
+          break;
+        } else {
+          if (!selectedDiag || (diag.detectedOffsetInExpandedWindow !== null && selectedDiag.detectedOffsetInExpandedWindow === null)) {
+            selectedDiag = diag;
+            selectedSecretTimestamp = item.createdAt;
+          }
+        }
+      }
+    } else {
+      selectedDiag = evaluateRfc6238TotpDiagnostics('', otpCode, 1, 10);
+    }
+
+    if (!isValid) {
+      const fail = recordMfaFailedAttempt(rateLimitKey);
+      const effectiveDiag = selectedDiag || evaluateRfc6238TotpDiagnostics('', otpCode, 1, 10);
+
+      // Safe, non-sensitive logging to track server time, secret key timestamp, and calculated drift window
+      logSafeTotpDriftDiagnostics({
+        userId: user.id,
+        userEmail: dbUser?.email || user.email,
+        userRole: dbUser?.role || user.role,
+        endpoint: '/api/auth/mfa/verify-challenge',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        secretEnrolledAt: selectedSecretTimestamp || dbUser?.mfa_enrolled_at || null,
+        secretUpdatedAt: dbUser?.updated_at || null,
+        diagnostics: effectiveDiag,
+        remainingAttempts: fail.remainingAttempts,
+      });
+
+      logMfaAudit({
+        userId: user.id,
+        eventType: 'MFA_FAILED',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        status: 'FAILURE',
+        details: JSON.stringify({
+          reason: 'TOTP_VERIFICATION_FAILED',
+          endpoint: '/api/auth/mfa/verify-challenge',
+          serverTimeUtc: effectiveDiag.serverTimeUtc,
+          serverEpochSeconds: effectiveDiag.serverEpochSeconds,
+          currentStep: effectiveDiag.currentStep,
+          secretKeyTimestamp: selectedSecretTimestamp || dbUser?.mfa_enrolled_at || null,
+          driftWindow: {
+            allowedWindowSteps: effectiveDiag.windowSteps,
+            driftToleranceSeconds: effectiveDiag.driftToleranceSeconds,
+            allowedWindowStartUtc: effectiveDiag.allowedWindowStartUtc,
+            allowedWindowEndUtc: effectiveDiag.allowedWindowEndUtc,
+          },
+          detectedOffsetInExpandedWindow: effectiveDiag.detectedOffsetInExpandedWindow,
+          detectedDriftSeconds: effectiveDiag.detectedDriftSeconds,
+          driftInterpretation: effectiveDiag.driftInterpretation,
+          remainingAttempts: fail.remainingAttempts,
+        }),
+      });
+
+      return res.status(400).json({
+        error: `Invalid verification code. Please ensure your authenticator app is synced with the current time and try again. ${fail.remainingAttempts} attempt(s) remaining.`,
       });
     }
 
@@ -321,6 +428,60 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     }
 
     const secretKey = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || null;
+    const otpCode = (req.body?.otpCode as string || req.body?.code as string || '').trim().replace(/\D/g, '');
+
+    if (!secretKey) {
+      return res.status(400).json({ error: 'TOTP secret key is required for MFA enrollment.' });
+    }
+    if (!otpCode || otpCode.length !== 6) {
+      return res.status(400).json({ error: 'Please enter the complete 6-digit verification code from your authenticator app.' });
+    }
+
+    // Cryptographically verify code against candidate secret with detailed drift diagnostics
+    const diag = evaluateRfc6238TotpDiagnostics(secretKey, otpCode, 1, 10);
+    if (!diag.valid) {
+      // Safe, non-sensitive logging to track server time, candidate secret generation timestamp, and drift window
+      logSafeTotpDriftDiagnostics({
+        userId: user.id,
+        userEmail: user.email,
+        userRole: user.role,
+        endpoint: '/api/auth/mfa/enroll/verify',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        secretEnrolledAt: 'CANDIDATE_SECRET_IN_ENROLLMENT',
+        secretUpdatedAt: null,
+        diagnostics: diag,
+      });
+
+      logMfaAudit({
+        userId: user.id,
+        eventType: 'MFA_FAILED',
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        status: 'FAILURE',
+        details: JSON.stringify({
+          reason: 'ENROLLMENT_VERIFY_FAILED',
+          endpoint: '/api/auth/mfa/enroll/verify',
+          serverTimeUtc: diag.serverTimeUtc,
+          serverEpochSeconds: diag.serverEpochSeconds,
+          currentStep: diag.currentStep,
+          secretKeyTimestamp: 'CANDIDATE_SECRET_IN_ENROLLMENT',
+          driftWindow: {
+            allowedWindowSteps: diag.windowSteps,
+            driftToleranceSeconds: diag.driftToleranceSeconds,
+            allowedWindowStartUtc: diag.allowedWindowStartUtc,
+            allowedWindowEndUtc: diag.allowedWindowEndUtc,
+          },
+          detectedOffsetInExpandedWindow: diag.detectedOffsetInExpandedWindow,
+          detectedDriftSeconds: diag.detectedDriftSeconds,
+          driftInterpretation: diag.driftInterpretation,
+        }),
+      });
+
+      return res.status(400).json({
+        error: 'Invalid verification code. Please ensure your authenticator app is synced with the current time and try again.'
+      });
+    }
 
     // Check if user is ALREADY enrolled to guarantee persistent recovery codes
     const existingAuth = db.prepare(`
@@ -390,12 +551,13 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       });
     }
 
-    // Update user record in SQLite: enable MFA and store persistent TOTP secret
+    // Update user record in SQLite: enable MFA, store persistent TOTP secret, and clear mfa_reset_required
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
           mfa_enrolled_at = CURRENT_TIMESTAMP,
           totp_secret = COALESCE(?, totp_secret),
+          mfa_reset_required = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(secretKey, user.id);
@@ -422,6 +584,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       mfa_enabled: 1,
       mfa_enrolled_at: new Date().toISOString(),
       totp_secret: secretKey || null,
+      mfa_reset_required: 0,
       updated_at: new Date().toISOString(),
     }).catch(() => {});
 
@@ -758,14 +921,15 @@ router.post('/authenticators/remove', authenticateToken, async (req: AuthRequest
  */
 router.post('/recovery-request', async (req: Request, res: Response) => {
   try {
-    const { email, phone, srnRegNo, reason } = req.body;
-    if (!email || !reason) {
+    const { userId, user_id, email, phone, srnRegNo, reason } = req.body;
+    if ((!userId && !user_id && !email) || !reason) {
       return res.status(400).json({
-        error: 'Registered email address and detailed reason for recovery are required.',
+        error: 'Registered email address or user ID and detailed reason for recovery are required.',
       });
     }
 
     const result = submitManualRecoveryRequest({
+      userId: (userId || user_id)?.toString().trim(),
       email,
       phone,
       srnRegNo,
@@ -816,17 +980,17 @@ router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: Aut
       return res.status(403).json({ error: 'Super Admin privileges required.' });
     }
     const { id } = req.params;
-    const { decision, reviewNotes } = req.body;
+    const { decision, reviewNotes, notes } = req.body;
 
     if (decision !== 'APPROVED' && decision !== 'REJECTED') {
       return res.status(400).json({ error: 'Decision must be APPROVED or REJECTED.' });
     }
 
-    const result = resolveRecoveryRequest(
+    const result = await resolveRecoveryRequest(
       id,
       req.user.id,
       decision,
-      reviewNotes || '',
+      reviewNotes || notes || '',
       { ip: req.ip, userAgent: req.headers['user-agent'] as string }
     );
 
@@ -856,13 +1020,63 @@ router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: Aut
  * POST /api/auth/mfa/recovery-requests/:id/reject
  */
 router.post('/recovery-requests/:id/approve', authenticateToken, async (req: AuthRequest, res: Response) => {
-  req.body = { ...req.body, decision: 'APPROVED' };
-  return (router as any).handle(req, res);
+  try {
+    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Super Admin privileges required.' });
+    }
+    const { id } = req.params;
+    const notes = req.body?.reviewNotes || req.body?.notes || req.body?.reason || 'Approved by Super Admin';
+    const result = await approveMfaRecovery(id, req.user.id, notes, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] as string,
+    });
+    if (!result.success) {
+      return res.status(result.statusCode || 400).json({
+        error: result.error || 'Failed to approve recovery request.',
+        statusCode: result.statusCode || 400,
+      });
+    }
+    return res.json({
+      success: true,
+      action: 'APPROVED',
+      requestId: result.requestId,
+      targetUser: result.targetUser,
+      message: result.message,
+    });
+  } catch (err: any) {
+    console.error('[MFA approve recovery request error]:', err);
+    return res.status(500).json({ error: 'Internal error approving recovery request: ' + (err?.message || '') });
+  }
 });
 
 router.post('/recovery-requests/:id/reject', authenticateToken, async (req: AuthRequest, res: Response) => {
-  req.body = { ...req.body, decision: 'REJECTED' };
-  return (router as any).handle(req, res);
+  try {
+    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Super Admin privileges required.' });
+    }
+    const { id } = req.params;
+    const notes = req.body?.reviewNotes || req.body?.notes || req.body?.reason || 'Rejected by Super Admin';
+    const result = await rejectMfaRecovery(id, req.user.id, notes, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] as string,
+    });
+    if (!result.success) {
+      return res.status(result.statusCode || 400).json({
+        error: result.error || 'Failed to reject recovery request.',
+        statusCode: result.statusCode || 400,
+      });
+    }
+    return res.json({
+      success: true,
+      action: 'REJECTED',
+      requestId: result.requestId,
+      targetUser: result.targetUser,
+      message: result.message,
+    });
+  } catch (err: any) {
+    console.error('[MFA reject recovery request error]:', err);
+    return res.status(500).json({ error: 'Internal error rejecting recovery request: ' + (err?.message || '') });
+  }
 });
 
 // ==========================================================
@@ -1083,6 +1297,14 @@ const handleValidateTotp = async (req: Request, res: Response) => {
         details: 'TOTP challenge bypassed authoritatively because browser is already trusted.',
       });
 
+      // Clear mfa_reset_required if present
+      try {
+        db.prepare('UPDATE users SET mfa_reset_required = 0 WHERE id = ?').run(user.id);
+        syncRecordToFirestore('users', user.id, { mfa_reset_required: 0 }).catch(() => {});
+      } catch {
+        // non-fatal
+      }
+
       return res.json({
         success: true,
         isTrusted: true,
@@ -1090,6 +1312,7 @@ const handleValidateTotp = async (req: Request, res: Response) => {
         bypassed: true,
         message: 'Browser is already trusted for 365 days. TOTP verification bypassed.',
         token: session.token,
+        trustToken: session.trustToken,
         trustExpiresAt: session.expiresAt,
         deviceId: session.deviceId,
         user: {
@@ -1137,46 +1360,103 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       });
     }
 
-    // Fetch user's registered TOTP secret
-    const dbUser = db.prepare('SELECT totp_secret FROM users WHERE id = ?').get(user.id) as { totp_secret: string | null } | undefined;
-    const authenticators = db.prepare('SELECT totp_secret FROM mfa_authenticators WHERE user_id = ?').all(user.id) as Array<{ totp_secret: string | null }>;
+    // Fetch user's registered TOTP secret and key timestamps
+    const dbUser = db.prepare('SELECT totp_secret, mfa_enrolled_at, updated_at, email, role FROM users WHERE id = ?').get(user.id) as {
+      totp_secret: string | null;
+      mfa_enrolled_at: string | null;
+      updated_at: string | null;
+      email?: string;
+      role?: string;
+    } | undefined;
+    const authenticators = db.prepare('SELECT totp_secret, created_at, last_used_at FROM mfa_authenticators WHERE user_id = ?').all(user.id) as Array<{
+      totp_secret: string | null;
+      created_at: string;
+      last_used_at: string | null;
+    }>;
 
-    const possibleSecrets: string[] = [];
-    if (dbUser?.totp_secret) possibleSecrets.push(dbUser.totp_secret);
+    const possibleSecrets: Array<{ secret: string; createdAt: string | null }> = [];
+    if (dbUser?.totp_secret) {
+      possibleSecrets.push({
+        secret: dbUser.totp_secret,
+        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+      });
+    }
     authenticators.forEach((a) => {
-      if (a.totp_secret && !possibleSecrets.includes(a.totp_secret)) {
-        possibleSecrets.push(a.totp_secret);
+      if (a.totp_secret && !possibleSecrets.some((s) => s.secret === a.totp_secret)) {
+        possibleSecrets.push({
+          secret: a.totp_secret,
+          createdAt: a.created_at || null,
+        });
       }
     });
 
     let isValidTotp = false;
+    let selectedDiag: TotpVerificationDiagnostic | null = null;
+    let selectedSecretTimestamp: string | null = null;
+
     if (possibleSecrets.length > 0) {
-      for (const secret of possibleSecrets) {
-        if (verifyRfc6238Totp(secret, otpCode, 1)) {
+      for (const item of possibleSecrets) {
+        const diag = evaluateRfc6238TotpDiagnostics(item.secret, otpCode, 1, 10);
+        if (diag.valid) {
           isValidTotp = true;
+          selectedDiag = diag;
+          selectedSecretTimestamp = item.createdAt;
           break;
+        } else {
+          if (!selectedDiag || (diag.detectedOffsetInExpandedWindow !== null && selectedDiag.detectedOffsetInExpandedWindow === null)) {
+            selectedDiag = diag;
+            selectedSecretTimestamp = item.createdAt;
+          }
         }
       }
     } else {
-      // If user is undergoing initial challenge or testing mode with no secret yet
-      isValidTotp = otpCode.length === 6;
-    }
-
-    // Allow mock fallback '123456' in non-production for verification testing
-    if (!isValidTotp && process.env.NODE_ENV !== 'production' && otpCode === '123456') {
-      isValidTotp = true;
+      selectedDiag = evaluateRfc6238TotpDiagnostics('', otpCode, 1, 10);
     }
 
     if (!isValidTotp) {
       const fail = recordMfaFailedAttempt(rateLimitKey);
+      const effectiveDiag = selectedDiag || evaluateRfc6238TotpDiagnostics('', otpCode, 1, 10);
+
+      // Safe, non-sensitive logging to track server time, secret key timestamp, and calculated drift window
+      logSafeTotpDriftDiagnostics({
+        userId: user.id,
+        userEmail: dbUser?.email || user.email,
+        userRole: dbUser?.role || user.role,
+        endpoint: req.originalUrl || req.path,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        secretEnrolledAt: selectedSecretTimestamp || dbUser?.mfa_enrolled_at || null,
+        secretUpdatedAt: dbUser?.updated_at || null,
+        diagnostics: effectiveDiag,
+        remainingAttempts: fail.remainingAttempts,
+      });
+
       logMfaAudit({
         userId: user.id,
         eventType: 'MFA_FAILED',
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
         status: 'FAILURE',
-        details: `Invalid TOTP code submitted on untrusted browser. Remaining: ${fail.remainingAttempts}`,
+        details: JSON.stringify({
+          reason: 'TOTP_CODE_MISMATCH',
+          endpoint: req.originalUrl || req.path,
+          serverTimeUtc: effectiveDiag.serverTimeUtc,
+          serverEpochSeconds: effectiveDiag.serverEpochSeconds,
+          currentStep: effectiveDiag.currentStep,
+          secretKeyTimestamp: selectedSecretTimestamp || dbUser?.mfa_enrolled_at || null,
+          driftWindow: {
+            allowedWindowSteps: effectiveDiag.windowSteps,
+            driftToleranceSeconds: effectiveDiag.driftToleranceSeconds,
+            allowedWindowStartUtc: effectiveDiag.allowedWindowStartUtc,
+            allowedWindowEndUtc: effectiveDiag.allowedWindowEndUtc,
+          },
+          detectedOffsetInExpandedWindow: effectiveDiag.detectedOffsetInExpandedWindow,
+          detectedDriftSeconds: effectiveDiag.detectedDriftSeconds,
+          driftInterpretation: effectiveDiag.driftInterpretation,
+          remainingAttempts: fail.remainingAttempts,
+        }),
       });
+
       return res.status(400).json({
         error: `Invalid authenticator code. Please check your app and try again. ${fail.remainingAttempts} attempt(s) remaining.`,
       });
@@ -1199,6 +1479,23 @@ const handleValidateTotp = async (req: Request, res: Response) => {
     // Mark device as trusted for 365 days and issue the secure HttpOnly cookie
     const session = issueAuthenticatedSession(req, res, user);
 
+    // Atomically ensure mfa_enabled is 1 and mfa_reset_required is cleared in database
+    try {
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 1,
+            mfa_reset_required = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(user.id);
+      syncRecordToFirestore('users', user.id, {
+        mfa_enabled: 1,
+        mfa_reset_required: 0,
+      }).catch(() => {});
+    } catch {
+      // Non-fatal
+    }
+
     logMfaAudit({
       userId: user.id,
       eventType: 'MFA_VERIFIED',
@@ -1215,6 +1512,7 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       bypassed: false,
       message: 'TOTP validated successfully. This browser is now trusted for 365 days.',
       token: session.token,
+      trustToken: session.trustToken,
       trustExpiresAt: session.expiresAt,
       deviceId: session.deviceId,
       user: {

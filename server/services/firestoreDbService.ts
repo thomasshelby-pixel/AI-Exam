@@ -41,6 +41,13 @@ export function getFirestoreDb(): Firestore | null {
   return null;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number = 3000, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export async function setFirestoreDoc(collectionName: string, docId: string, data: Record<string, any>): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) return false;
@@ -52,8 +59,11 @@ export async function setFirestoreDoc(collectionName: string, docId: string, dat
       }
     }
     cleanData._updatedAt = new Date().toISOString();
-    await setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true });
-    return true;
+    return await withTimeout(
+      setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true }).then(() => true),
+      3000,
+      false
+    );
   } catch (err) {
     console.warn(`[Firestore] Failed to set document in ${collectionName}/${docId}:`, err);
     return false;
@@ -64,8 +74,12 @@ export async function getFirestoreDoc<T = DocumentData>(collectionName: string, 
   const db = getFirestoreDb();
   if (!db || !docId) return null;
   try {
-    const snap = await getDoc(doc(db, collectionName, String(docId)));
-    if (!snap.exists()) return null;
+    const snap = await withTimeout(
+      getDoc(doc(db, collectionName, String(docId))),
+      2500,
+      null as any
+    );
+    if (!snap || !snap.exists()) return null;
     return { id: snap.id, ...snap.data() } as unknown as T;
   } catch (err) {
     console.warn(`[Firestore] Failed to get document in ${collectionName}/${docId}:`, err);
@@ -77,8 +91,11 @@ export async function deleteFirestoreDoc(collectionName: string, docId: string):
   const db = getFirestoreDb();
   if (!db || !docId) return false;
   try {
-    await deleteDoc(doc(db, collectionName, String(docId)));
-    return true;
+    return await withTimeout(
+      deleteDoc(doc(db, collectionName, String(docId))).then(() => true),
+      3000,
+      false
+    );
   } catch (err) {
     console.warn(`[Firestore] Failed to delete document in ${collectionName}/${docId}:`, err);
     return false;
@@ -89,9 +106,14 @@ export async function getAllFirestoreDocs<T = DocumentData>(collectionName: stri
   const db = getFirestoreDb();
   if (!db) return [];
   try {
-    const snap = await getDocs(collection(db, collectionName));
+    const snap = await withTimeout(
+      getDocs(collection(db, collectionName)),
+      2500,
+      null as any
+    );
+    if (!snap) return [];
     const results: T[] = [];
-    snap.forEach((d) => {
+    snap.forEach((d: any) => {
       results.push({ id: d.id, ...d.data() } as unknown as T);
     });
     return results;

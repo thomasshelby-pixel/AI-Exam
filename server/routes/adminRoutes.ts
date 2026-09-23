@@ -36,6 +36,7 @@ import {
   deletePersistentFile,
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
+import { executeServerMfaReset } from '../services/mfaRecoveryService.js';
 import {
   auditStorageConsistency,
   inspectCloudStorageStatus,
@@ -1973,6 +1974,29 @@ router.put('/users/:id/reactivate', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Reactivate user error:', error);
     return res.status(500).json({ error: 'Failed to reactivate user' });
+  }
+});
+
+// Admin Action: Reset MFA for User
+router.post('/users/:id/reset-mfa', async (req: AuthRequest, res: Response) => {
+  try {
+    const targetUserId = req.params.id;
+    const reason = (req.body?.reason as string)?.trim() || 'Super Admin Security Reset';
+
+    const result = await executeServerMfaReset(
+      targetUserId,
+      {
+        id: req.user!.id,
+        email: req.user!.email,
+        role: req.user!.role,
+      },
+      reason
+    );
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Reset MFA error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to reset MFA' });
   }
 });
 

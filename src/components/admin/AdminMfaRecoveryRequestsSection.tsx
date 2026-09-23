@@ -83,9 +83,9 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
       });
 
       setActionSuccessMessage(
-        `Recovery request for ${selectedRequest.email} has been ${
-          actionType === 'APPROVE' ? 'approved (MFA reset)' : 'rejected'
-        }.`
+        actionType === 'APPROVE'
+          ? `MFA reset successfully executed for ${selectedRequest.email}. All previous authenticators, recovery codes, and trusted devices have been invalidated.`
+          : `Recovery request for ${selectedRequest.email} has been rejected.`
       );
       setSelectedRequest(null);
       setActionType(null);
@@ -282,7 +282,7 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
                   <ShieldAlert className="w-5 h-5 text-rose-600" />
                 )}
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  {actionType === 'APPROVE' ? 'Approve Recovery & Reset MFA' : 'Reject Recovery Request'}
+                  {actionType === 'APPROVE' ? 'Approve MFA reset?' : 'Reject this MFA recovery request?'}
                 </h3>
               </div>
               <button
@@ -317,7 +317,7 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
                     Security Reset Action
                   </p>
                   <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
-                    Approving will retire all existing TOTP authenticator secrets and recovery codes. The user will be required to configure fresh Two-Factor Authentication upon their next sign-in.
+                    Approving this request will invalidate the user's current MFA enrollment and trusted devices. The user will need to set up MFA again.
                   </p>
                 </div>
               ) : (
@@ -327,7 +327,7 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
                     Request Rejection
                   </p>
                   <p className="text-[11px] text-rose-800 dark:text-rose-300 leading-relaxed">
-                    The recovery request will be closed. The user will not be granted account access until authentic verification is provided.
+                    Rejecting this recovery request will leave the user's existing MFA configuration unchanged and reject their recovery request.
                   </p>
                 </div>
               )}
@@ -362,7 +362,7 @@ export const AdminMfaRecoveryRequestsSection: React.FC = () => {
                       <span>Processing...</span>
                     </>
                   ) : (
-                    <span>{actionType === 'APPROVE' ? 'Confirm Approval' : 'Confirm Rejection'}</span>
+                    <span>{actionType === 'APPROVE' ? 'Approve & Reset MFA' : 'Reject'}</span>
                   )}
                 </button>
                 <button

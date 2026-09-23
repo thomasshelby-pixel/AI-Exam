@@ -1011,6 +1011,7 @@ function runMigrations() {
   addColumnIfNotExists('payment_orders', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('evaluations', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
 
   // Explicitly tag identified development/testing entities as TEST so they can be cleaned up
   try {

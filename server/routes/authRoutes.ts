@@ -54,23 +54,48 @@ export async function evaluateMfaRequirementForLogin(
   const authStatus = await getAuthoritativeUserMfaStatus(user.id);
   const isEnrolled = authStatus.mfaEnabled;
 
+  const userRow = db.prepare('SELECT mfa_reset_required FROM users WHERE id = ?').get(user.id) as { mfa_reset_required?: number } | undefined;
+  const isResetRequired = Boolean(userRow?.mfa_reset_required);
+
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
 
   // Role: STUDENT -> MFA is strictly OPTIONAL
   if (user.role === 'STUDENT') {
     if (!isEnrolled) {
+      // If student had mfa_reset_required lingering, cleanly clear it
+      if (isResetRequired) {
+        try {
+          db.prepare('UPDATE users SET mfa_reset_required = 0 WHERE id = ?').run(user.id);
+        } catch {
+          // non-fatal
+        }
+      }
       return { requireMfa: false };
     }
-    // Student voluntarily enabled MFA -> Check trusted device status
+    // Student voluntarily enabled MFA -> Check trusted device status (365 days)
     if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
       return { requireMfa: false, deviceTrusted: true };
     }
+    // Untrusted device for student who enabled MFA -> Issue challenge
+    const sessionToken = generateMfaSessionToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+      type: 'MFA_CHALLENGE',
+    });
+    return {
+      requireMfa: true,
+      mfaEnrolled: true,
+      mfaSessionToken: sessionToken,
+      role: user.role,
+      message: 'Please enter the 6-digit verification code from your authenticator app.',
+    };
   }
 
   // Role: INSTITUTE_ADMIN / SUPER_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
-    if (!isEnrolled) {
-      // First-time setup / enrollment flow ONLY for brand-new admin accounts
+    if (isResetRequired || !isEnrolled) {
       const sessionToken = generateMfaSessionToken({
         userId: user.id,
         email: user.email,
@@ -83,11 +108,13 @@ export async function evaluateMfaRequirementForLogin(
         mfaEnrolled: false,
         mfaSessionToken: sessionToken,
         role: user.role,
-        message: 'Two-Factor Authentication is required for this administrative account.',
+        message: isResetRequired
+          ? 'Your MFA has been reset by an administrator. Please configure fresh Two-Factor Authentication to secure your account.'
+          : 'Two-Factor Authentication is required for this administrative account.',
       };
     }
 
-    // Check trusted device status for administrative roles
+    // Check trusted device status for administrative roles (365 days)
     if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
       return { requireMfa: false, deviceTrusted: true };
     }
@@ -1212,22 +1239,21 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
 
-    // Authoritative MFA status check across SQLite, Firestore, authenticators, recovery codes, and client header
-    const clientClaimsFirebaseTotp =
-      req.headers['x-firebase-totp-enrolled'] === 'true' ||
-      (req.query.firebaseTotpEnrolled as string) === 'true';
-
-    const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id, {
-      clientClaimsFirebaseTotp,
-    });
+    // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes
+    const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);
     const mfaEnabled = authMfaStatus.mfaEnabled;
 
+    const rawCookies = (req as any).cookies || {};
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
-      (req.query.deviceId as string)?.trim();
+      (req.query.deviceId as string)?.trim() ||
+      rawCookies['ca_device_id'];
     const trustToken =
       (req.headers['x-device-trust-token'] as string)?.trim() ||
-      (req as any).cookies?.['ca_trust_token'];
+      rawCookies['ca_trust_token'] ||
+      (typeof req.headers.cookie === 'string' && req.headers.cookie.includes('ca_trust_token')
+        ? req.headers.cookie.split(';').find(c => c.trim().startsWith('ca_trust_token='))?.split('=')[1]?.trim()
+        : undefined);
 
     const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
 

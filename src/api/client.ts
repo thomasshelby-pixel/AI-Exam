@@ -46,7 +46,6 @@ export async function apiRequest<T = unknown>(
 ): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('ca_exam_checker_token') : null;
   const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
-  const totpEnrolled = typeof window !== 'undefined' ? localStorage.getItem('ca_totp_enrolled') : null;
   const deviceId = getOrCreateDeviceId();
 
   const headers: Record<string, string> = {
@@ -54,10 +53,6 @@ export async function apiRequest<T = unknown>(
     'X-Device-Id': deviceId,
     ...(options.headers as Record<string, string>),
   };
-
-  if (totpEnrolled === 'true' && !headers['X-Firebase-Totp-Enrolled']) {
-    headers['X-Firebase-Totp-Enrolled'] = 'true';
-  }
 
   if (trustToken && !headers['X-Device-Trust-Token']) {
     headers['X-Device-Trust-Token'] = trustToken;

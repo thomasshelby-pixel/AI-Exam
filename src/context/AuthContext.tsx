@@ -37,6 +37,8 @@ interface AuthContextType {
   switchMfaMode: (mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY') => void;
   cancelMfaChallenge: () => void;
   closeMfaModal: () => void;
+  completeMfaChallenge: (verifiedUser: User) => void;
+  setToken: React.Dispatch<React.SetStateAction<string | null>>;
   verifyMfaChallenge: (otpCode: string) => Promise<User>;
   verifyMfaRecoveryCode: (recoveryCode: string) => Promise<{ user: User; remainingCodes: number; warning?: string }>;
   generateRecoveryCodes: () => Promise<{ recoveryCodes: string[]; total: number }>;
@@ -96,6 +98,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const closeMfaModal = () => {
     setMfaChallenge(null);
+  };
+
+  const completeMfaChallenge = (verifiedUser: User) => {
+    const onSuccessCb = mfaChallenge?.onSuccess;
+    setMfaChallenge(null);
+    if (onSuccessCb) {
+      onSuccessCb(verifiedUser);
+    }
   };
 
   const triggerMfaEnrollment = () => {
@@ -163,6 +173,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (res.trustToken) {
       localStorage.setItem('ca_device_trust_token', res.trustToken);
+      if (res.user?.id) {
+        localStorage.setItem(`ca_device_trust_token_${res.user.id}`, res.trustToken);
+      }
       logMfaDiagnostic('trusted device state created');
     }
 
@@ -176,20 +189,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(verifiedUser);
     setSuspendedAccount(null);
+    setIsLoading(false);
 
     const onSuccessCb = mfaChallenge?.onSuccess;
     setMfaChallenge(null);
 
-    try {
-      await refreshUser();
-      logMfaDiagnostic('auth state refreshed');
-    } catch {
-      // Keep verifiedUser
-    }
-
     if (onSuccessCb) {
       onSuccessCb(verifiedUser);
     }
+
+    refreshUser().catch(() => {});
     return verifiedUser;
   };
 
@@ -484,11 +493,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (response && response.user) {
-        setUser(response.user);
+        setUser((prev) => {
+          const shouldPreserveVerified = prev?.id === response.user!.id && prev?.mfaVerified === true;
+          return {
+            ...response.user!,
+            mfaVerified: shouldPreserveVerified ? true : response.user!.mfaVerified,
+          };
+        });
         setProfile(response.profile || null);
-        if (response.user.mfaEnabled) {
-          localStorage.setItem('ca_totp_enrolled', 'true');
-        }
         if (storedToken) {
           setToken(storedToken);
         } else {
@@ -680,10 +692,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await apiRequest('/api/auth/logout', { method: 'POST' }).catch(() => {});
     } finally {
       localStorage.removeItem('ca_exam_checker_token');
+      localStorage.removeItem('ca_totp_enrolled');
+      localStorage.removeItem('ca_device_trust_token');
       setToken(null);
       setUser(null);
       setProfile(null);
       setSuspendedAccount(null);
+      setMfaChallenge(null);
     }
   };
 
@@ -706,6 +721,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switchMfaMode,
         cancelMfaChallenge,
         closeMfaModal,
+        completeMfaChallenge,
+        setToken,
         verifyMfaChallenge,
         verifyMfaRecoveryCode,
         generateRecoveryCodes,
