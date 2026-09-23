@@ -102,6 +102,14 @@ export async function hydrateFromFirestore(): Promise<void> {
           }
         }
 
+        // MCQ Admin enforcement:
+        if (normEmail === 'priyatca15@gmail.com' || u.id === 'usr_mcq_admin_priyatca15') {
+          targetId = 'usr_mcq_admin_priyatca15';
+          normEmail = 'priyatca15@gmail.com';
+          targetRole = 'MCQ_ADMIN';
+          targetStatus = 'ACTIVE';
+        }
+
         // Deactivate old superseded admin emails if present in Firestore
         if (normEmail === 'admin@caexamchecker.ai' || normEmail === 'superadmin@ca-exam-checker.com') {
           targetStatus = 'DISABLED';

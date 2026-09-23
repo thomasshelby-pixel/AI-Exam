@@ -35,6 +35,13 @@ import { EvaluationReportView } from './pages/student/EvaluationReportView.js';
 import { PersonalExaminerProfilePage } from './pages/student/PersonalExaminerProfilePage.js';
 import { InstitutePortal } from './pages/institute/InstitutePortal.js';
 import { AdminPortal } from './pages/admin/AdminPortal.js';
+import { McqArenaDashboard } from './pages/student/McqArenaDashboard.js';
+import { McqPracticeSessionPage } from './pages/student/McqPracticeSessionPage.js';
+import { McqWrongVaultPage } from './pages/student/McqWrongVaultPage.js';
+import { McqBookmarksPage } from './pages/student/McqBookmarksPage.js';
+import { McqProgressPage } from './pages/student/McqProgressPage.js';
+import { McqAdminPortal } from './pages/admin/McqAdminPortal.js';
+import { McqAdminLoginPage } from './pages/auth/McqAdminLoginPage.js';
 import { EvaluationResult } from './types/index.js';
 import { apiRequest } from './api/client.js';
 
@@ -244,6 +251,12 @@ const PublicAndStudentLayout: React.FC<{
       case 'student-profile':
         navigate('/student/profile');
         break;
+      case 'arena':
+        navigate('/arena');
+        break;
+      case 'mcq-admin':
+        navigate('/mcq-admin');
+        break;
       case 'institute-dashboard':
         navigate('/institute/dashboard');
         break;
@@ -288,6 +301,8 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
         navigate('/admin/dashboard', { replace: true });
       } else if (user.role === 'INSTITUTE_ADMIN') {
         navigate('/institute/dashboard', { replace: true });
+      } else if (user.role === 'MCQ_ADMIN') {
+        navigate('/mcq-admin', { replace: true });
       } else {
         navigate('/student/dashboard', { replace: true });
       }
@@ -308,6 +323,8 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
       navigate('/admin/dashboard', { replace: true });
     } else if (role === 'INSTITUTE_ADMIN') {
       navigate('/institute/dashboard', { replace: true });
+    } else if (role === 'MCQ_ADMIN') {
+      navigate('/mcq-admin', { replace: true });
     } else {
       navigate('/student/dashboard', { replace: true });
     }
@@ -405,6 +422,13 @@ const AppRoutes: React.FC = () => {
         {/* ============================================================ */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
         <Route path="/admin/*" element={<AdminPortal />} />
+
+        {/* ============================================================ */}
+        {/* MCQ ADMIN PORTAL ROUTES — Dedicated Content Management */}
+        {/* ============================================================ */}
+        <Route path="/mcq-admin/login" element={<McqAdminLoginPage />} />
+        <Route path="/mcq-admin" element={<McqAdminPortal />} />
+        <Route path="/mcq-admin/*" element={<McqAdminPortal />} />
 
         {/* ============================================================ */}
         {/* INSTITUTE PORTAL ROUTES — Dedicated Full Screen Backoffice */}
@@ -711,6 +735,50 @@ const AppRoutes: React.FC = () => {
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
                 <EvaluationReportWrapper />
               </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        {/* ============================================================ */}
+        {/* MCQ ARENA STUDENT ROUTES — Authenticated CA Student Practice */}
+        {/* ============================================================ */}
+        <Route
+          path="/arena"
+          element={
+            <ProtectedStudentRoute>
+              <McqArenaDashboard />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
+          path="/arena/session/:sessionId"
+          element={
+            <ProtectedStudentRoute>
+              <McqPracticeSessionPage />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
+          path="/arena/wrong-vault"
+          element={
+            <ProtectedStudentRoute>
+              <McqWrongVaultPage />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
+          path="/arena/bookmarks"
+          element={
+            <ProtectedStudentRoute>
+              <McqBookmarksPage />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
+          path="/arena/progress"
+          element={
+            <ProtectedStudentRoute>
+              <McqProgressPage />
             </ProtectedStudentRoute>
           }
         />

@@ -40,6 +40,9 @@ import {
   approveMfaRecovery,
   rejectMfaRecovery,
   getAuthoritativeUserMfaStatus,
+  getAuthoritativeUserMfaState,
+  getOrCreatePendingMfaSetup,
+  generateNewAuthenticatorDeviceSetup,
   checkMfaRateLimit,
   recordMfaFailedAttempt,
   clearMfaRateLimit,
@@ -416,6 +419,28 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/auth/mfa/setup
+ * Returns the active pending TOTP setup (secret, URI, QR code).
+ * Re-uses the existing pending secret. Never regenerates secret on reload!
+ */
+router.get('/setup', async (req: Request, res: Response) => {
+  try {
+    const { user, error } = resolveMfaContext(req);
+    if (!user || error) {
+      return res.status(401).json({ error: error || 'Unauthorized' });
+    }
+    const authState = await getAuthoritativeUserMfaState(user.id);
+    if (authState.state === 'MFA_ENROLLED') {
+      return res.status(400).json({ error: 'MFA is already enrolled for this account.' });
+    }
+    const setup = await getOrCreatePendingMfaSetup(user.id, user.email, user.role);
+    return res.json({ success: true, totpSetup: setup });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to retrieve MFA setup.' });
+  }
+});
+
+/**
  * POST /api/auth/mfa/enroll/verify
  * Finalizes enrollment and activates TOTP MFA for the account.
  * Automatically provisions initial one-time recovery codes and returns them!
@@ -427,10 +452,11 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       return res.status(401).json({ error: error || 'Unauthorized' });
     }
 
-    const secretKey = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || null;
+    const userRow = db.prepare('SELECT pending_totp_secret, totp_secret FROM users WHERE id = ?').get(user.id) as any;
+    const candidateSecret = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || userRow?.pending_totp_secret || userRow?.totp_secret || null;
     const otpCode = (req.body?.otpCode as string || req.body?.code as string || '').trim().replace(/\D/g, '');
 
-    if (!secretKey) {
+    if (!candidateSecret) {
       return res.status(400).json({ error: 'TOTP secret key is required for MFA enrollment.' });
     }
     if (!otpCode || otpCode.length !== 6) {
@@ -438,7 +464,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     }
 
     // Cryptographically verify code against candidate secret with detailed drift diagnostics
-    const diag = evaluateRfc6238TotpDiagnostics(secretKey, otpCode, 1, 10);
+    const diag = evaluateRfc6238TotpDiagnostics(candidateSecret, otpCode, 1, 10);
     if (!diag.valid) {
       // Safe, non-sensitive logging to track server time, candidate secret generation timestamp, and drift window
       logSafeTotpDriftDiagnostics({
@@ -483,84 +509,17 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       });
     }
 
-    // Check if user is ALREADY enrolled to guarantee persistent recovery codes
-    const existingAuth = db.prepare(`
-      SELECT id FROM mfa_authenticators WHERE user_id = ?
-    `).get(user.id);
-    const existingRecovery = db.prepare(`
-      SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ?
-    `).get(user.id) as { count: number } | undefined;
-
-    const hasAlreadyEnrolled = Boolean(existingAuth || (existingRecovery && existingRecovery.count > 0));
-
-    if (hasAlreadyEnrolled) {
-      // READ-ONLY: Do NOT generate new recovery codes or overwrite authenticator!
-      const existingStatus = getRecoveryCodeStatus(user.id);
-      const session = issueAuthenticatedSession(req, res, user);
-
-      // Self-heal SQLite & Firestore mfa_enabled = 1
-      db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 1,
-            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
-            totp_secret = COALESCE(?, totp_secret),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(secretKey, user.id);
-
-      if (secretKey) {
-        db.prepare(`
-          UPDATE mfa_authenticators
-          SET totp_secret = COALESCE(totp_secret, ?),
-              last_used_at = CURRENT_TIMESTAMP
-          WHERE user_id = ? AND factor_type = 'PRIMARY_TOTP'
-        `).run(secretKey, user.id);
-      }
-
-      syncRecordToFirestore('users', user.id, {
-        id: user.id,
-        mfa_enabled: 1,
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
-
-      logMfaAudit({
-        userId: user.id,
-        eventType: 'MFA_VERIFIED',
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        status: 'SUCCESS',
-        details: 'Two-Factor Authentication verified on already-enrolled account. Existing codes and secret preserved.',
-      });
-
-      return res.json({
-        success: true,
-        token: session.token,
-        trustToken: session.trustToken,
-        deviceId: session.deviceId,
-        deviceTrusted: true,
-        message: 'Two-Factor Authentication is already active.',
-        remainingCodes: existingStatus.remaining,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          fullName: user.full_name,
-          mfaEnabled: true,
-          mfaVerified: true,
-        },
-      });
-    }
-
-    // Update user record in SQLite: enable MFA, store persistent TOTP secret, and clear mfa_reset_required
+    // Update user record in SQLite: enable MFA, store persistent TOTP secret, clear pending_totp_secret, and clear mfa_reset_required
     db.prepare(`
       UPDATE users
       SET mfa_enabled = 1,
           mfa_enrolled_at = CURRENT_TIMESTAMP,
-          totp_secret = COALESCE(?, totp_secret),
+          totp_secret = ?,
+          pending_totp_secret = NULL,
           mfa_reset_required = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(secretKey, user.id);
+    `).run(candidateSecret, user.id);
 
     // Ensure primary authenticator record exists with persistent secret
     const primaryId = `auth_prim_${user.id}`;
@@ -568,22 +527,32 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
       VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
-        totp_secret = COALESCE(excluded.totp_secret, mfa_authenticators.totp_secret),
+        totp_secret = excluded.totp_secret,
         last_used_at = CURRENT_TIMESTAMP
-    `).run(primaryId, user.id, secretKey);
+    `).run(primaryId, user.id, candidateSecret);
 
-    // Generate initial one-time recovery codes upon INITIAL enrollment ONLY
-    const recoveryResult = generateRecoveryCodes(user.id, {
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-    });
+    // Provisions recovery codes if not already present
+    let recoveryCodes: string[] | undefined = undefined;
+    let remainingCodes = 0;
+    const existingRecovery = db.prepare('SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ?').get(user.id) as { count: number } | undefined;
+    if (!existingRecovery || existingRecovery.count === 0) {
+      const recoveryResult = generateRecoveryCodes(user.id, {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      recoveryCodes = recoveryResult.plaintextCodes;
+      remainingCodes = recoveryResult.total;
+    } else {
+      const existingStatus = getRecoveryCodeStatus(user.id);
+      remainingCodes = existingStatus.remaining;
+    }
 
     // Mirror to Firestore
     syncRecordToFirestore('users', user.id, {
       id: user.id,
       mfa_enabled: 1,
       mfa_enrolled_at: new Date().toISOString(),
-      totp_secret: secretKey || null,
+      totp_secret: candidateSecret,
       mfa_reset_required: 0,
       updated_at: new Date().toISOString(),
     }).catch(() => {});
@@ -594,7 +563,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       status: 'SUCCESS',
-      details: 'Two-Factor Authentication successfully enrolled. Initial recovery codes generated.',
+      details: 'Two-Factor Authentication successfully enrolled. Initial authenticator active.',
     });
 
     const session = issueAuthenticatedSession(req, res, user);
@@ -605,9 +574,10 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       trustToken: session.trustToken,
       deviceId: session.deviceId,
       deviceTrusted: true,
+      mfaState: 'MFA_ENROLLED',
       message: 'Two-Factor Authentication enabled successfully.',
-      recoveryCodes: recoveryResult.plaintextCodes,
-      remainingCodes: recoveryResult.total,
+      recoveryCodes,
+      remainingCodes,
       user: {
         id: user.id,
         email: user.email,
@@ -846,9 +816,29 @@ router.get('/authenticators', authenticateToken, async (req: AuthRequest, res: R
 });
 
 /**
+ * GET /api/auth/mfa/device/new-setup
+ * Generates a brand new TOTP secret & QR code for adding a new authenticator device.
+ * Section 6: Security Settings -> MFA -> Authenticator Devices -> Add Authenticator
+ */
+router.get('/device/new-setup', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const label = (req.query?.label as string) || 'Secondary Authenticator';
+    const setup = await generateNewAuthenticatorDeviceSetup(req.user.email, label);
+    return res.json({ success: true, setup });
+  } catch (err: any) {
+    console.error('[MFA new device setup error]:', err);
+    return res.status(500).json({ error: 'Failed to generate new authenticator device setup.' });
+  }
+});
+
+/**
  * POST /api/auth/mfa/backup-authenticator/enroll
  * Registers a newly enrolled backup authenticator factor with custom label.
- * The client generated a BRAND NEW secret for this factor with Firebase or RFC 6238.
+ * The client generated a BRAND NEW secret for this factor.
+ * Validates the 6-digit TOTP code against the new device secret before registering.
  */
 router.post('/backup-authenticator/enroll', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -856,17 +846,31 @@ router.post('/backup-authenticator/enroll', authenticateToken, async (req: AuthR
       return res.status(401).json({ error: 'Authentication required.' });
     }
 
-    const label = (req.body?.label as string)?.trim() || 'Backup Authenticator';
+    const label = (req.body?.label as string)?.trim() || 'Authenticator Device';
+    const secretKey = (req.body?.secretKey as string)?.trim();
+    const verificationCode = (req.body?.verificationCode as string || req.body?.otpCode as string || '').trim().replace(/\D/g, '');
     const firebaseFactorUid = (req.body?.firebaseFactorUid as string)?.trim();
 
-    const record = registerBackupAuthenticator(req.user.id, label, firebaseFactorUid, {
+    // If a secretKey was provided, verify the 6-digit TOTP code against it
+    if (secretKey) {
+      if (!verificationCode || verificationCode.length !== 6) {
+        return res.status(400).json({ error: 'Please enter the 6-digit verification code from your authenticator app.' });
+      }
+
+      const diag = evaluateRfc6238TotpDiagnostics(secretKey, verificationCode, 1, 10);
+      if (!diag.valid) {
+        return res.status(400).json({ error: 'Invalid verification code. Please check your authenticator code and time synchronization.' });
+      }
+    }
+
+    const record = registerBackupAuthenticator(req.user.id, label, secretKey, firebaseFactorUid, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
 
     return res.json({
       success: true,
-      message: `Backup authenticator "${record.label}" has been enrolled.`,
+      message: `Authenticator device "${record.label}" has been enrolled.`,
       authenticator: record,
     });
   } catch (err: any) {

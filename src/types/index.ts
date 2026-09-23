@@ -1,4 +1,4 @@
-export type UserRole = 'STUDENT' | 'INSTITUTE_ADMIN' | 'SUPER_ADMIN';
+export type UserRole = 'STUDENT' | 'INSTITUTE_ADMIN' | 'SUPER_ADMIN' | 'MCQ_ADMIN';
 
 export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'BLOCKED' | 'REMOVED';
 
@@ -896,4 +896,142 @@ export interface ReviewEligibilityResponse {
   completedEvaluationsCount: number;
   message?: string;
 }
+
+// ==========================================
+// MCQ ARENA TYPES & INTERFACES
+// ==========================================
+export type McqCourse = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL';
+export type McqQuestionType = 'normal' | 'case_based';
+export type McqDifficulty = 'easy' | 'moderate' | 'hard';
+export type McqSource = 'ICAI Module' | 'PYQ' | 'RTP' | 'MTP' | 'Conceptual' | 'Practical';
+export type McqStatus = 'draft' | 'review' | 'approved' | 'published' | 'archived';
+
+export interface McqQuestion {
+  id: string;
+  course: McqCourse;
+  subject: string;
+  chapter: string;
+  topic?: string;
+  questionType: McqQuestionType;
+  caseStudyScenario?: string;
+  difficulty: McqDifficulty;
+  source: McqSource;
+  attempt?: string;
+  applicableFrom?: string;
+  applicableTill?: string;
+  amendmentVersion?: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctAnswer: 'A' | 'B' | 'C' | 'D';
+  explanation: string;
+  reference?: string;
+  status: McqStatus;
+  createdBy?: string;
+  reviewedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type McqSessionType = 'practice' | 'quick' | 'mock' | 'revision' | 'wrong_review' | 'weak_area';
+export type McqSessionStatus = 'in_progress' | 'completed' | 'abandoned';
+
+export interface McqSessionQuestion extends McqQuestion {
+  userResponse?: {
+    selectedOption: 'A' | 'B' | 'C' | 'D' | null;
+    isCorrect?: boolean;
+    isMarkedForReview?: boolean;
+    eliminatedOptions?: ('A' | 'B' | 'C' | 'D')[];
+    timeTakenSeconds?: number;
+  };
+  isBookmarked?: boolean;
+}
+
+export interface McqSession {
+  id: string;
+  studentId: string;
+  sessionType: McqSessionType;
+  course: McqCourse;
+  subject: string;
+  chapter?: string;
+  topic?: string;
+  difficulty?: string;
+  totalQuestions: number;
+  attemptedQuestions: number;
+  correctCount: number;
+  incorrectCount: number;
+  skippedCount: number;
+  score: number;
+  accuracyPercentage: number;
+  timeSpentSeconds: number;
+  durationSeconds?: number;
+  status: McqSessionStatus;
+  createdAt: string;
+  completedAt?: string;
+  questions?: McqSessionQuestion[];
+}
+
+export interface McqBookmarkItem {
+  id: string;
+  studentId: string;
+  questionId: string;
+  notes?: string;
+  createdAt: string;
+  question?: McqQuestion;
+}
+
+export interface McqWrongVaultItem {
+  id: string;
+  studentId: string;
+  questionId: string;
+  lastWrongOption?: string;
+  wrongCount: number;
+  resolved: boolean;
+  lastAttemptedAt: string;
+  question?: McqQuestion;
+}
+
+export interface McqStudentProgress {
+  totalAttempted: number;
+  totalCorrect: number;
+  totalIncorrect: number;
+  overallAccuracy: number;
+  streakDays: number;
+  totalPracticeTimeSeconds: number;
+  subjectBreakdown: Array<{
+    subject: string;
+    total: number;
+    correct: number;
+    accuracy: number;
+  }>;
+  recentSessions: McqSession[];
+  wrongVaultCount: number;
+  bookmarkCount: number;
+}
+
+export interface McqAdminStats {
+  totalQuestions: number;
+  publishedCount: number;
+  reviewCount: number;
+  draftCount: number;
+  archivedCount: number;
+  byCourse: {
+    CA_FOUNDATION: number;
+    CA_INTERMEDIATE: number;
+    CA_FINAL: number;
+  };
+  byType: {
+    normal: number;
+    case_based: number;
+  };
+  byDifficulty: {
+    easy: number;
+    moderate: number;
+    hard: number;
+  };
+  totalSessionsAttempted: number;
+}
+
 

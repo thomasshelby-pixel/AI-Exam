@@ -14,6 +14,7 @@ import paymentRoutes from './server/routes/paymentRoutes.js';
 import publicRoutes, { getPublicReviewsHandler, votePublicReviewHandler } from './server/routes/publicRoutes.js';
 import pricingRoutes from './server/routes/pricingRoutes.js';
 import legalRoutes from './server/routes/legalRoutes.js';
+import mcqRoutes from './server/routes/mcqRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
 
@@ -151,6 +152,7 @@ async function startServer() {
   app.post('/api/reviews/:id/vote', authenticateToken, votePublicReviewHandler);
   app.use('/api/pricing', pricingRoutes);
   app.use('/api/legal', legalRoutes);
+  app.use('/api/mcq', mcqRoutes);
 
   // Vite middleware in development vs static file serving in production
   if (process.env.NODE_ENV !== 'production') {

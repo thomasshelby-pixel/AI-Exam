@@ -22,6 +22,7 @@ import {
   EyeOff,
   ShieldCheck,
   X,
+  Target,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -532,8 +533,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
           </div>
         )}
 
-        {/* Coaching Institute Portal Gateway Link */}
-        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+        {/* Dedicated Admin Portals Gateway Links */}
+        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
           <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-md bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 flex items-center justify-center shrink-0">
@@ -551,6 +552,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
               className="px-2.5 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition shrink-0 cursor-pointer"
             >
               Portal Login →
+            </button>
+          </div>
+
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0">
+                <Target className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-800 dark:text-white">MCQ Arena Admin Portal</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Dedicated question bank backoffice</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-switch-mcq-portal"
+              onClick={() => navigate('/mcq-admin/login')}
+              className="px-2.5 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition shrink-0 cursor-pointer"
+            >
+              MCQ Login →
             </button>
           </div>
         </div>

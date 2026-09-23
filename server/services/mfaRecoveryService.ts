@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import QRCode from 'qrcode';
 import { db } from '../db.js';
 import { UserRole } from '../../src/types/index.js';
 import { revokeAllDeviceTrust } from './trustService.js';
@@ -122,6 +123,7 @@ export function initMfaRecoveryTables(): void {
   addCol('mfa_recovery_requests', 'resolved_by', 'TEXT');
   addCol('mfa_recovery_requests', 'user_role', 'TEXT');
   addCol('users', 'mfa_reset_required', 'INTEGER DEFAULT 0');
+  addCol('users', 'pending_totp_secret', 'TEXT');
 
   addCol('mfa_audit_logs', 'action', 'TEXT');
   addCol('mfa_audit_logs', 'request_id', 'TEXT');
@@ -132,6 +134,348 @@ export function initMfaRecoveryTables(): void {
   addCol('mfa_audit_logs', 'admin_email', 'TEXT');
   addCol('mfa_audit_logs', 'ist_timestamp', 'TEXT');
   addCol('mfa_audit_logs', 'correlation_id', 'TEXT');
+
+  // Fix inconsistent admin MFA states immediately on table initialization
+  fixInconsistentAdminMfaStates();
+}
+
+/**
+ * Repairs any inconsistent admin accounts where mfa_enabled = 1 but no valid TOTP secret exists.
+ * Safely transitions them into MFA_RESET_REQUIRED without deleting the account or changing UID.
+ */
+export function fixInconsistentAdminMfaStates(): void {
+  try {
+    const adminUsers = db.prepare(`
+      SELECT id, email, role, mfa_enabled, totp_secret, mfa_reset_required
+      FROM users
+      WHERE role IN ('MCQ_ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN')
+    `).all() as Array<{
+      id: string;
+      email: string;
+      role: string;
+      mfa_enabled: number;
+      totp_secret: string | null;
+      mfa_reset_required: number;
+    }>;
+
+    for (const admin of adminUsers) {
+      const authWithSecret = db.prepare(`
+        SELECT totp_secret FROM mfa_authenticators
+        WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
+        LIMIT 1
+      `).get(admin.id) as { totp_secret: string } | undefined;
+
+      const hasValidSecret = Boolean(
+        (admin.totp_secret && admin.totp_secret.trim().length >= 16) ||
+        authWithSecret?.totp_secret
+      );
+
+      if (admin.mfa_enabled === 1 && !hasValidSecret) {
+        console.warn(`[MFA Architecture] Repairing inconsistent admin account state for ${admin.email} (${admin.id}): Transitioning to MFA_RESET_REQUIRED.`);
+        db.prepare(`
+          UPDATE users
+          SET mfa_enabled = 0,
+              mfa_enrolled_at = NULL,
+              totp_secret = NULL,
+              pending_totp_secret = NULL,
+              mfa_reset_required = 1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(admin.id);
+
+        db.prepare(`
+          DELETE FROM mfa_authenticators
+          WHERE user_id = ? AND (totp_secret IS NULL OR length(totp_secret) < 16)
+        `).run(admin.id);
+
+        revokeAllDeviceTrust(admin.id);
+
+        syncRecordToFirestore('users', admin.id, {
+          id: admin.id,
+          mfa_enabled: 0,
+          mfa_reset_required: 1,
+          totp_secret: null,
+          updated_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('[MFA Architecture] fixInconsistentAdminMfaStates error:', err);
+  }
+}
+
+export type AuthoritativeMfaState = 'MFA_NOT_ENROLLED' | 'MFA_ENROLLED' | 'MFA_RESET_REQUIRED' | 'MFA_RECOVERY_PENDING';
+
+/**
+ * Generates a cryptographically secure 20-byte Base32 secret (RFC 4648)
+ */
+export function generateBase32Secret(byteLength: number = 20): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const randomBytes = crypto.randomBytes(byteLength);
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (let i = 0; i < randomBytes.length; i++) {
+    value = (value << 8) | randomBytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      output += chars[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += chars[(value << (5 - bits)) & 31];
+  }
+  return output;
+}
+
+export function formatSecretKeyForDisplay(secretKey: string): string {
+  if (!secretKey) return '';
+  const clean = secretKey.replace(/\s+/g, '').toUpperCase();
+  return clean.match(/.{1,4}/g)?.join(' ') || clean;
+}
+
+/**
+ * Obtains or creates a persistent pending TOTP setup for initial enrollment or after reset.
+ * NEVER regenerates secret when page reloads, session refreshes, or user navigates!
+ */
+export async function getOrCreatePendingMfaSetup(
+  userId: string,
+  accountEmail: string,
+  role: string
+): Promise<{
+  secretKey: string;
+  formattedKey: string;
+  otpauthUri: string;
+  qrDataUrl: string;
+  account: string;
+  accountEmail: string;
+}> {
+  const userRow = db.prepare('SELECT pending_totp_secret FROM users WHERE id = ?').get(userId) as any;
+  let secret = userRow?.pending_totp_secret?.trim();
+
+  if (!secret || secret.length < 16) {
+    secret = generateBase32Secret(20);
+    db.prepare('UPDATE users SET pending_totp_secret = ? WHERE id = ?').run(secret, userId);
+  }
+
+  const issuer = 'MCQ Arena';
+  const accountLabel = role === 'MCQ_ADMIN' ? 'MCQ Admin' : role === 'SUPER_ADMIN' ? 'Super Admin' : 'Institute Admin';
+  const encodedIssuer = encodeURIComponent(issuer);
+  const encodedEmail = encodeURIComponent(accountEmail);
+  const otpauthUri = `otpauth://totp/${encodedIssuer}:${encodedEmail}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
+
+  const qrDataUrl = await QRCode.toDataURL(otpauthUri, {
+    width: 220,
+    margin: 1,
+    color: {
+      dark: '#0f172a',
+      light: '#ffffff',
+    },
+  });
+
+  return {
+    secretKey: secret,
+    formattedKey: formatSecretKeyForDisplay(secret),
+    otpauthUri,
+    qrDataUrl,
+    account: accountLabel,
+    accountEmail,
+  };
+}
+
+/**
+ * Generates a brand-new distinct TOTP secret and QR code for adding an additional authenticator device.
+ * Does NOT overwrite existing primary authenticator.
+ */
+export async function generateNewAuthenticatorDeviceSetup(
+  accountEmail: string,
+  deviceLabel: string = 'Secondary Authenticator'
+): Promise<{
+  secretKey: string;
+  formattedKey: string;
+  otpauthUri: string;
+  qrDataUrl: string;
+  label: string;
+  accountEmail: string;
+}> {
+  const secretKey = generateBase32Secret(20);
+  const issuer = 'MCQ Arena';
+  const encodedIssuer = encodeURIComponent(issuer);
+  const encodedEmail = encodeURIComponent(accountEmail);
+  const otpauthUri = `otpauth://totp/${encodedIssuer}:${encodedEmail}?secret=${secretKey}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
+
+  const qrDataUrl = await QRCode.toDataURL(otpauthUri, {
+    width: 220,
+    margin: 1,
+    color: {
+      dark: '#0f172a',
+      light: '#ffffff',
+    },
+  });
+
+  return {
+    secretKey,
+    formattedKey: formatSecretKeyForDisplay(secretKey),
+    otpauthUri,
+    qrDataUrl,
+    label: deviceLabel,
+    accountEmail,
+  };
+}
+
+/**
+ * Authoritatively determines user MFA enrollment state:
+ * - MFA_NOT_ENROLLED
+ * - MFA_ENROLLED
+ * - MFA_RESET_REQUIRED
+ * - MFA_RECOVERY_PENDING
+ */
+export async function getAuthoritativeUserMfaState(userId: string): Promise<{
+  state: AuthoritativeMfaState;
+  hasValidSecret: boolean;
+  secret?: string;
+  pendingSecret?: string;
+  authenticatorsCount: number;
+  recoveryCodesRemaining: number;
+}> {
+  if (!userId) {
+    return {
+      state: 'MFA_NOT_ENROLLED',
+      hasValidSecret: false,
+      authenticatorsCount: 0,
+      recoveryCodesRemaining: 0,
+    };
+  }
+
+  try {
+    // 1. Check for pending manual recovery requests
+    const pendingRecovery = db.prepare(`
+      SELECT id FROM mfa_recovery_requests
+      WHERE user_id = ? AND status = 'PENDING_REVIEW'
+      LIMIT 1
+    `).get(userId);
+
+    if (pendingRecovery) {
+      return {
+        state: 'MFA_RECOVERY_PENDING',
+        hasValidSecret: false,
+        authenticatorsCount: 0,
+        recoveryCodesRemaining: 0,
+      };
+    }
+
+    // 2. Fetch user row
+    const userRow = db.prepare(`
+      SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret, pending_totp_secret, mfa_reset_required
+      FROM users WHERE id = ?
+    `).get(userId) as any;
+
+    if (!userRow) {
+      return {
+        state: 'MFA_NOT_ENROLLED',
+        hasValidSecret: false,
+        authenticatorsCount: 0,
+        recoveryCodesRemaining: 0,
+      };
+    }
+
+    // 3. Count authenticators with valid secrets
+    const authRecords = db.prepare(`
+      SELECT id, totp_secret FROM mfa_authenticators
+      WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
+    `).all(userId) as Array<{ id: string; totp_secret: string }>;
+    const authenticatorsCount = authRecords.length;
+
+    // 4. Count remaining recovery codes
+    const recoveryCountRow = db.prepare(`
+      SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ? AND used = 0
+    `).get(userId) as { count: number } | undefined;
+    const recoveryCodesRemaining = recoveryCountRow?.count || 0;
+
+    // 5. Check if Super Admin reset MFA
+    if (userRow.mfa_reset_required === 1) {
+      return {
+        state: 'MFA_RESET_REQUIRED',
+        hasValidSecret: false,
+        pendingSecret: userRow.pending_totp_secret || undefined,
+        authenticatorsCount,
+        recoveryCodesRemaining,
+      };
+    }
+
+    // 6. Check for valid secret
+    let validSecret: string | undefined = undefined;
+    if (userRow.totp_secret && userRow.totp_secret.trim().length >= 16) {
+      validSecret = userRow.totp_secret.trim();
+    } else if (authRecords.length > 0) {
+      validSecret = authRecords[0].totp_secret.trim();
+      db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(validSecret, userId);
+    }
+
+    // 7. Enrolled state verification
+    if (userRow.mfa_enabled === 1 && validSecret) {
+      return {
+        state: 'MFA_ENROLLED',
+        hasValidSecret: true,
+        secret: validSecret,
+        authenticatorsCount,
+        recoveryCodesRemaining,
+      };
+    }
+
+    // 8. Inconsistent state detection: mfa_enabled = 1 but NO valid secret
+    if (userRow.mfa_enabled === 1 && !validSecret) {
+      console.warn(`[MFA Architecture] Inconsistent MFA enrollment detected for user ${userRow.email} (${userId}). Transitioning safely to MFA_RESET_REQUIRED.`);
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 0,
+            mfa_reset_required = 1,
+            totp_secret = NULL,
+            pending_totp_secret = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(userId);
+
+      db.prepare(`
+        DELETE FROM mfa_authenticators
+        WHERE user_id = ? AND (totp_secret IS NULL OR length(totp_secret) < 16)
+      `).run(userId);
+
+      revokeAllDeviceTrust(userId);
+
+      syncRecordToFirestore('users', userId, {
+        id: userId,
+        mfa_enabled: 0,
+        mfa_reset_required: 1,
+        totp_secret: null,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
+
+      return {
+        state: 'MFA_RESET_REQUIRED',
+        hasValidSecret: false,
+        authenticatorsCount: 0,
+        recoveryCodesRemaining,
+      };
+    }
+
+    return {
+      state: 'MFA_NOT_ENROLLED',
+      hasValidSecret: false,
+      pendingSecret: userRow.pending_totp_secret || undefined,
+      authenticatorsCount,
+      recoveryCodesRemaining,
+    };
+  } catch (err) {
+    console.error(`[MFA getAuthoritativeUserMfaState Error for ${userId}]:`, err);
+    return {
+      state: 'MFA_NOT_ENROLLED',
+      hasValidSecret: false,
+      authenticatorsCount: 0,
+      recoveryCodesRemaining: 0,
+    };
+  }
 }
 
 // Auto-run table setup on service load
@@ -545,15 +889,15 @@ export function listAuthenticators(userId: string): AuthenticatorRecord[] {
     ORDER BY factor_type ASC, created_at ASC
   `).all(userId) as any[];
 
-  // Auto-seed primary record for accounts that had MFA enabled previously
+  // Auto-seed primary record for accounts that had MFA enabled previously with valid secret
   if (rows.length === 0) {
-    const user = db.prepare('SELECT mfa_enabled, mfa_enrolled_at FROM users WHERE id = ?').get(userId) as any;
-    if (user && user.mfa_enabled) {
+    const user = db.prepare('SELECT mfa_enabled, mfa_enrolled_at, totp_secret FROM users WHERE id = ?').get(userId) as any;
+    if (user && user.mfa_enabled && user.totp_secret && user.totp_secret.trim().length >= 16) {
       const primaryId = `auth_prim_${userId}`;
       db.prepare(`
-        INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, created_at)
-        VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', COALESCE(?, CURRENT_TIMESTAMP))
-      `).run(primaryId, userId, user.mfa_enrolled_at);
+        INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at)
+        VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(primaryId, userId, user.totp_secret.trim(), user.mfa_enrolled_at);
 
       rows = db.prepare(`
         SELECT id, user_id, factor_type, label, created_at, last_used_at
@@ -580,6 +924,7 @@ export function listAuthenticators(userId: string): AuthenticatorRecord[] {
 export function registerBackupAuthenticator(
   userId: string,
   label: string,
+  totpSecret?: string,
   firebaseFactorUid?: string,
   context?: { ip?: string; userAgent?: string }
 ): AuthenticatorRecord {
@@ -587,9 +932,9 @@ export function registerBackupAuthenticator(
   const cleanLabel = (label || 'Backup Authenticator App').trim().slice(0, 50);
 
   db.prepare(`
-    INSERT INTO mfa_authenticators (id, user_id, factor_type, label, firebase_factor_uid, created_at)
-    VALUES (?, ?, 'BACKUP_TOTP', ?, ?, CURRENT_TIMESTAMP)
-  `).run(id, userId, cleanLabel, firebaseFactorUid || null);
+    INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, firebase_factor_uid, created_at)
+    VALUES (?, ?, 'BACKUP_TOTP', ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(id, userId, cleanLabel, totpSecret || null, firebaseFactorUid || null);
 
   // Durable Cloud Firestore synchronization
   syncRecordToFirestore('mfa_authenticators', id, {
@@ -597,6 +942,7 @@ export function registerBackupAuthenticator(
     user_id: userId,
     factor_type: 'BACKUP_TOTP',
     label: cleanLabel,
+    totp_secret: totpSecret || null,
     firebase_factor_uid: firebaseFactorUid || null,
     created_at: new Date().toISOString(),
     last_used_at: null,
@@ -985,6 +1331,7 @@ export async function resolveRecoveryRequest(
         SET mfa_enabled = 0,
             mfa_enrolled_at = NULL,
             totp_secret = NULL,
+            pending_totp_secret = NULL,
             mfa_phone = NULL,
             mfa_reset_required = ?,
             updated_at = CURRENT_TIMESTAMP
@@ -1193,128 +1540,18 @@ export async function getAuthoritativeUserMfaStatus(
   }
 
   try {
-    // 1. Check local SQLite user record
+    const authState = await getAuthoritativeUserMfaState(userId);
     const userRow = db.prepare(`
-      SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required
-      FROM users WHERE id = ?
-    `).get(userId) as {
-      id: string;
-      email: string;
-      role: string;
-      mfa_enabled: number;
-      mfa_enrolled_at: string | null;
-      totp_secret: string | null;
-      mfa_reset_required?: number;
-    } | undefined;
+      SELECT mfa_enrolled_at FROM users WHERE id = ?
+    `).get(userId) as { mfa_enrolled_at: string | null } | undefined;
 
-    // If an administrator reset MFA and fresh re-enrollment is required, strictly report not enrolled and do NOT self-heal!
-    if (userRow?.mfa_reset_required === 1) {
-      return {
-        mfaEnabled: false,
-        mfaEnrolledAt: null,
-        authenticatorsCount: 0,
-        recoveryCodesRemaining: 0,
-      };
-    }
-
-    // 2. Check local authenticators
-    const authCountRow = db.prepare(`
-      SELECT COUNT(*) as count FROM mfa_authenticators WHERE user_id = ?
-    `).get(userId) as { count: number } | undefined;
-    const localAuthCount = authCountRow?.count || 0;
-
-    // 3. Check local recovery codes
-    const recoveryCountRow = db.prepare(`
-      SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ? AND used = 0
-    `).get(userId) as { count: number } | undefined;
-    const recoveryRemaining = recoveryCountRow?.count || 0;
-
-    let isEnrolled = Boolean(userRow?.mfa_enabled) || localAuthCount > 0 || recoveryRemaining > 0 || Boolean(userRow?.mfa_enrolled_at) || Boolean(userRow?.totp_secret);
-
-    // 4. Check client-reported factors (strictly ignored - server DB is authoritative source)
-
-    // 5. Cloud Firestore fallback verification if not yet confirmed
-    if (!isEnrolled && options?.checkFirestoreFallback !== false) {
-      try {
-        const firestoreUser = await getFirestoreDoc<any>('users', userId);
-        if (
-          firestoreUser &&
-          (firestoreUser.mfa_enabled === 1 ||
-            firestoreUser.mfa_enabled === true ||
-            Boolean(firestoreUser.mfa_enrolled_at) ||
-            Boolean(firestoreUser.totp_secret))
-        ) {
-          isEnrolled = true;
-        }
-
-        if (!isEnrolled) {
-          const firestoreAuths = await getAllFirestoreDocs<any>('mfa_authenticators');
-          const hasFirestoreAuth = firestoreAuths.some(
-            (a) => a.user_id === userId || a.userId === userId
-          );
-          if (hasFirestoreAuth) {
-            isEnrolled = true;
-          }
-        }
-      } catch (firestoreErr) {
-        // Non-blocking firestore check
-      }
-    }
-
-    // 6. Automatic Self-Healing: If enrolled anywhere, ensure all local & cloud stores are synchronized
-    if (isEnrolled && userRow) {
-      const enrolledAt = userRow.mfa_enrolled_at || new Date().toISOString();
-
-      if (userRow.mfa_enabled !== 1) {
-        db.prepare(`
-          UPDATE users
-          SET mfa_enabled = 1,
-              mfa_enrolled_at = COALESCE(mfa_enrolled_at, ?),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(enrolledAt, userId);
-      }
-
-      // Ensure at least one primary authenticator record exists if count is 0
-      let finalAuthCount = localAuthCount;
-      if (finalAuthCount === 0) {
-        const primaryId = `auth_prim_${userId}`;
-        db.prepare(`
-          INSERT OR IGNORE INTO mfa_authenticators (id, user_id, factor_type, label, created_at)
-          VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', CURRENT_TIMESTAMP)
-        `).run(primaryId, userId);
-        finalAuthCount = 1;
-
-        syncRecordToFirestore('mfa_authenticators', primaryId, {
-          id: primaryId,
-          user_id: userId,
-          factor_type: 'PRIMARY_TOTP',
-          label: 'Primary Authenticator App',
-          created_at: enrolledAt,
-        }).catch(() => {});
-      }
-
-      // Sync user profile to Firestore
-      syncRecordToFirestore('users', userId, {
-        id: userId,
-        mfa_enabled: 1,
-        mfa_enrolled_at: enrolledAt,
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
-
-      return {
-        mfaEnabled: true,
-        mfaEnrolledAt: enrolledAt,
-        authenticatorsCount: finalAuthCount,
-        recoveryCodesRemaining: recoveryRemaining,
-      };
-    }
+    const isEnrolled = authState.state === 'MFA_ENROLLED';
 
     return {
-      mfaEnabled: false,
-      mfaEnrolledAt: null,
-      authenticatorsCount: localAuthCount,
-      recoveryCodesRemaining: recoveryRemaining,
+      mfaEnabled: isEnrolled,
+      mfaEnrolledAt: isEnrolled ? (userRow?.mfa_enrolled_at || new Date().toISOString()) : null,
+      authenticatorsCount: authState.authenticatorsCount,
+      recoveryCodesRemaining: authState.recoveryCodesRemaining,
     };
   } catch (err) {
     console.error(`[MFA Authoritative Status Error for ${userId}]:`, err);
@@ -1375,6 +1612,7 @@ export async function executeServerMfaReset(
     SET mfa_enabled = 0,
         mfa_enrolled_at = NULL,
         totp_secret = NULL,
+        pending_totp_secret = NULL,
         mfa_phone = NULL,
         mfa_reset_required = ?,
         updated_at = CURRENT_TIMESTAMP

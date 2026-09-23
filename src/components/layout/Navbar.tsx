@@ -17,6 +17,7 @@ import {
   Sun,
   Moon,
   Dna,
+  Target,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -226,6 +227,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       My Reports
                     </button>
                     <button
+                      id="nav-student-mcq-arena"
+                      onClick={() => onNavigate('arena')}
+                      className={`text-xs 2xl:text-sm font-bold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+                        currentView === 'arena'
+                          ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 font-bold'
+                          : 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40'
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                      <span>MCQ Arena</span>
+                    </button>
+                    <button
                       id="nav-student-examiner-profile"
                       onClick={() => onNavigate('student-examiner-profile')}
                       className={`text-xs 2xl:text-sm font-semibold px-2 2xl:px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
@@ -279,6 +292,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                       }`}
                     >
                       Super Admin Portal
+                    </button>
+                    <button
+                      id="nav-mcq-admin-portal"
+                      onClick={() => onNavigate('mcq-admin')}
+                      className={`text-xs xl:text-sm font-semibold px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                        currentView === 'mcq-admin'
+                          ? 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 font-bold'
+                          : 'text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <Target className="w-3.5 h-3.5 text-amber-500" />
+                      <span>MCQ Admin Portal</span>
                     </button>
                   </>
                 )}
@@ -530,6 +555,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                   </button>
                   <button
                     onClick={() => {
+                      onNavigate('arena');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 text-sm font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2"
+                  >
+                    <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <span>MCQ Arena</span>
+                  </button>
+                  <button
+                    onClick={() => {
                       onNavigate('student-examiner-profile');
                       setMobileMenuOpen(false);
                     }}
@@ -563,15 +598,27 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
               )}
 
               {isAdmin && (
-                <button
-                  onClick={() => {
-                    onNavigate('admin-dashboard');
-                    setMobileMenuOpen(false);
-                  }}
-                  className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
-                >
-                  Super Admin Portal
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      onNavigate('admin-dashboard');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 text-sm text-slate-700 dark:text-slate-200 font-medium"
+                  >
+                    Super Admin Portal
+                  </button>
+                  <button
+                    onClick={() => {
+                      onNavigate('mcq-admin');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left py-2 text-sm text-amber-600 dark:text-amber-400 font-bold flex items-center gap-2"
+                  >
+                    <Target className="w-4 h-4 text-amber-500" />
+                    <span>MCQ Admin Portal</span>
+                  </button>
+                </>
               )}
 
               <button

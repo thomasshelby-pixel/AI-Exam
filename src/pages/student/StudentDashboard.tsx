@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
@@ -30,6 +31,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
 import { ProgressDashboard, EvaluationTrendPoint } from '../../components/student/ProgressDashboard.js';
 import { StudentPromoBanner } from '../../components/student/StudentPromoBanner.js';
+import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -135,6 +137,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateEnrollments,
   onNavigateExaminerProfile,
 }) => {
+  const navigate = useNavigate();
   const { user, profile } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -394,6 +397,37 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onNavigateProfile={onNavigateProfile}
         onOpenCreditsModal={onOpenCreditsModal}
       />
+
+      {/* MCQ ARENA SPOTLIGHT BANNER */}
+      <div
+        onClick={() => navigate('/arena')}
+        className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white p-5 rounded-2xl border border-blue-700/50 shadow-md cursor-pointer hover:shadow-xl hover:border-blue-500/80 transition-all group flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+      >
+        <div className="flex items-center gap-4">
+          <div className="shrink-0 group-hover:scale-105 transition-transform">
+            <McqArenaLogo size="md" variant="icon" withGlow />
+          </div>
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black uppercase tracking-widest text-blue-300">MCQ ARENA</span>
+              <span className="px-2 py-0.5 bg-blue-500/30 text-blue-200 text-[10px] font-bold rounded-full border border-blue-400/30">
+                CA Practice Platform
+              </span>
+            </div>
+            <h3 className="text-base sm:text-lg font-black text-white group-hover:text-blue-200 transition-colors">
+              Practice Smarter. Improve Every Day.
+            </h3>
+            <p className="text-xs text-slate-300 max-w-xl">
+              Master CA Foundation, Intermediate, and Final MCQs with authoritative statutory solutions, case study scenarios, negative marking mock exams, and Mistake Vault drills.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs font-bold text-white bg-blue-600 group-hover:bg-blue-500 px-4 py-2.5 rounded-xl shrink-0 transition-colors shadow-lg shadow-blue-600/30">
+          <span>Enter MCQ Arena</span>
+          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+        </div>
+      </div>
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

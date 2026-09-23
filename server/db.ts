@@ -9,6 +9,7 @@ import {
   DEFAULT_REFUND_POLICY,
   DEFAULT_LEGAL_SETTINGS,
 } from './services/legalConstants.js';
+import { initMcqTables, seedMcqAdminAndQuestions } from './services/mcqService.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -1674,6 +1675,10 @@ function seedInitialData() {
 
   // 10. Seed Official Legal Documents (Terms, Privacy, Refund v1.0) and Settings
   seedLegalDocuments();
+
+  // 11. Initialize MCQ Arena Tables & Seed Admin / Verified CA Questions
+  initMcqTables();
+  seedMcqAdminAndQuestions();
 }
 
 function seedMcqScoringRules() {
@@ -3002,7 +3007,7 @@ function seedSampleInstitute() {
     const instAdminEmail = 'institute@apexca.edu';
     const pwdHash = hashPassword('ApexCA@2026');
     const instAdminId = 'usr_inst_apex_admin';
-    const userExists = db.prepare('SELECT id FROM users WHERE email = ?').get(instAdminEmail);
+    const userExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(instAdminEmail, instAdminId);
     if (!userExists) {
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -3012,9 +3017,9 @@ function seedSampleInstitute() {
 
     // Create Demo Student User
     const studentEmail = 'student@caexamchecker.ai';
-    const studentExists = db.prepare('SELECT id FROM users WHERE email = ?').get(studentEmail);
+    const sId = 'usr_student_demo_001';
+    const studentExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(studentEmail, sId);
     if (!studentExists) {
-      const sId = 'usr_student_demo_001';
       const sHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -3034,9 +3039,9 @@ function seedSampleInstitute() {
 
     // Seed Active Account for at9767676@gmail.com
     const userEmail = 'at9767676@gmail.com';
-    const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(userEmail.toLowerCase());
+    const uId = 'usr_user_at9767';
+    const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
     if (!activeUserExists) {
-      const uId = 'usr_user_at9767';
       const uHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)

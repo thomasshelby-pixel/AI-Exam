@@ -66,6 +66,8 @@ import {
   Filter,
   X,
   Menu,
+  Target,
+  Zap,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -140,6 +142,13 @@ export const AdminPortal: React.FC = () => {
   const pathParts = location.pathname.split('/').filter(Boolean);
   // /admin or /admin/dashboard -> 'dashboard'
   const activeSection = pathParts[1] || 'dashboard';
+
+  // Redirect directly to MCQ Admin Portal if requested
+  useEffect(() => {
+    if (activeSection === 'mcq-arena') {
+      navigate('/mcq-admin', { replace: true });
+    }
+  }, [activeSection, navigate]);
 
   // Sub-view data states
   const [loadingData, setLoadingData] = useState<boolean>(true);
@@ -1219,6 +1228,7 @@ export const AdminPortal: React.FC = () => {
   // Navigation Items for Admin Sidebar
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'mcq-arena', label: 'MCQ Admin Portal', icon: Target },
     { id: 'reviews', label: 'Student Reviews', icon: Star, badge: pendingReviewsCount },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
@@ -1307,7 +1317,13 @@ export const AdminPortal: React.FC = () => {
             return (
               <button
                 key={item.id}
-                onClick={() => navigate(`/admin/${item.id}`)}
+                onClick={() => {
+                  if (item.id === 'mcq-arena') {
+                    navigate('/mcq-admin');
+                  } else {
+                    navigate(`/admin/${item.id}`);
+                  }
+                }}
                 title={item.label}
                 aria-label={item.label}
                 className={`w-full flex items-center ${
@@ -1480,7 +1496,11 @@ export const AdminPortal: React.FC = () => {
                   <button
                     key={item.id}
                     onClick={() => {
-                      navigate(`/admin/${item.id}`);
+                      if (item.id === 'mcq-arena') {
+                        navigate('/mcq-admin');
+                      } else {
+                        navigate(`/admin/${item.id}`);
+                      }
                       setMobileDrawerOpen(false);
                     }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
@@ -1683,6 +1703,34 @@ export const AdminPortal: React.FC = () => {
               {/* 1. DASHBOARD */}
               {activeSection === 'dashboard' && dashboardData && (
                 <div className="space-y-6">
+                  {/* Super Admin Direct Access: MCQ Arena Admin Portal */}
+                  <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-4 sm:p-5 rounded-2xl border border-indigo-800/60 shadow-md text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-purple-400" />
+                          Super Admin Direct Access
+                        </span>
+                        <span className="text-[11px] text-indigo-300 font-medium hidden sm:inline">• Unified authenticated session</span>
+                      </div>
+                      <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                        <Target className="w-5 h-5 text-amber-400 shrink-0" />
+                        MCQ Arena Admin Portal
+                      </h2>
+                      <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                        Direct Super Admin management of the CA MCQ Question Bank, ICAI marking schemes, chapter mapping, and arena analytics without creating separate credentials or second MFA.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/mcq-admin')}
+                      className="px-4 py-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                    >
+                      <Zap className="w-4 h-4 text-slate-950" />
+                      Open MCQ Admin Portal →
+                    </button>
+                  </div>
+
                   {/* Top Stats Metrics */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">

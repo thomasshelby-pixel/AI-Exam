@@ -12,7 +12,12 @@ import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../service
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue } from '../services/trustService.js';
-import { getAuthoritativeUserMfaStatus } from '../services/mfaRecoveryService.js';
+import {
+  getAuthoritativeUserMfaStatus,
+  getAuthoritativeUserMfaState,
+  getOrCreatePendingMfaSetup,
+  AuthoritativeMfaState
+} from '../services/mfaRecoveryService.js';
 import mfaRoutes from './mfaRoutes.js';
 
 const router = Router();
@@ -25,7 +30,7 @@ router.use('/mfa', mfaRoutes);
  * Evaluates whether MFA is mandatory or voluntarily enabled for the given user.
  * Role-Based Policy:
  *  - STUDENT: TOTP MFA is OPTIONAL. Only required if student voluntarily enabled MFA.
- *  - INSTITUTE_ADMIN & SUPER_ADMIN: TOTP MFA is strictly MANDATORY. If not enrolled, force enrollment.
+ *  - MCQ_ADMIN, INSTITUTE_ADMIN & SUPER_ADMIN: TOTP MFA is strictly MANDATORY.
  * Trusted Device Policy:
  *  - If the device is verified as trusted (valid non-revoked trust token in trusted_devices), MFA challenge is bypassed.
  */
@@ -42,39 +47,37 @@ export async function evaluateMfaRequirementForLogin(
   }
 ): Promise<{
   requireMfa: boolean;
+  mfaState?: AuthoritativeMfaState;
   mfaEnrolled?: boolean;
   mfaSessionToken?: string;
+  totpSetup?: {
+    secretKey: string;
+    formattedKey: string;
+    otpauthUri: string;
+    qrDataUrl: string;
+    account: string;
+    accountEmail: string;
+  };
   canonicalPhoneE164?: string;
   maskedPhone?: string;
   role?: string;
   message?: string;
   deviceTrusted?: boolean;
 }> {
-  // Comprehensive enrollment evaluation across SQLite, Firestore, authenticators, and recovery codes
-  const authStatus = await getAuthoritativeUserMfaStatus(user.id);
-  const isEnrolled = authStatus.mfaEnabled;
-
-  const userRow = db.prepare('SELECT mfa_reset_required FROM users WHERE id = ?').get(user.id) as { mfa_reset_required?: number } | undefined;
-  const isResetRequired = Boolean(userRow?.mfa_reset_required);
-
-  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+  // Authoritative server/database MFA state evaluation
+  const authState = await getAuthoritativeUserMfaState(user.id);
+  const mfaState = authState.state;
+  const isEnrolled = mfaState === 'MFA_ENROLLED';
+  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
 
   // Role: STUDENT -> MFA is strictly OPTIONAL
   if (user.role === 'STUDENT') {
     if (!isEnrolled) {
-      // If student had mfa_reset_required lingering, cleanly clear it
-      if (isResetRequired) {
-        try {
-          db.prepare('UPDATE users SET mfa_reset_required = 0 WHERE id = ?').run(user.id);
-        } catch {
-          // non-fatal
-        }
-      }
-      return { requireMfa: false };
+      return { requireMfa: false, mfaState };
     }
     // Student voluntarily enabled MFA -> Check trusted device status (365 days)
     if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
-      return { requireMfa: false, deviceTrusted: true };
+      return { requireMfa: false, mfaState, deviceTrusted: true };
     }
     // Untrusted device for student who enabled MFA -> Issue challenge
     const sessionToken = generateMfaSessionToken({
@@ -86,6 +89,7 @@ export async function evaluateMfaRequirementForLogin(
     });
     return {
       requireMfa: true,
+      mfaState,
       mfaEnrolled: true,
       mfaSessionToken: sessionToken,
       role: user.role,
@@ -93,9 +97,21 @@ export async function evaluateMfaRequirementForLogin(
     };
   }
 
-  // Role: INSTITUTE_ADMIN / SUPER_ADMIN -> MFA is strictly MANDATORY
+  // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
-    if (isResetRequired || !isEnrolled) {
+    if (mfaState === 'MFA_RECOVERY_PENDING') {
+      return {
+        requireMfa: true,
+        mfaState,
+        mfaEnrolled: false,
+        role: user.role,
+        message: 'Your MFA recovery request is currently pending review by Super Admin.',
+      };
+    }
+
+    if (mfaState === 'MFA_NOT_ENROLLED' || mfaState === 'MFA_RESET_REQUIRED') {
+      // Obtain or reuse persistent setup secret & real QR code. Never regenerate on reload!
+      const totpSetup = await getOrCreatePendingMfaSetup(user.id, user.email, user.role);
       const sessionToken = generateMfaSessionToken({
         userId: user.id,
         email: user.email,
@@ -105,38 +121,41 @@ export async function evaluateMfaRequirementForLogin(
       });
       return {
         requireMfa: true,
+        mfaState,
         mfaEnrolled: false,
         mfaSessionToken: sessionToken,
+        totpSetup,
         role: user.role,
-        message: isResetRequired
-          ? 'Your MFA has been reset by an administrator. Please configure fresh Two-Factor Authentication to secure your account.'
+        message: mfaState === 'MFA_RESET_REQUIRED'
+          ? 'Your Multi-Factor Authentication has been reset. Fresh authenticator setup is required.'
           : 'Two-Factor Authentication is required for this administrative account.',
       };
     }
 
-    // Check trusted device status for administrative roles (365 days)
+    // mfaState === 'MFA_ENROLLED': Check trusted device status (365 days)
     if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
-      return { requireMfa: false, deviceTrusted: true };
+      return { requireMfa: false, mfaState, deviceTrusted: true };
     }
+
+    // Untrusted device for enrolled admin -> show verification screen (CHALLENGE) - NO QR code
+    const sessionToken = generateMfaSessionToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+      type: 'MFA_CHALLENGE',
+    });
+    return {
+      requireMfa: true,
+      mfaState,
+      mfaEnrolled: true,
+      mfaSessionToken: sessionToken,
+      role: user.role,
+      message: 'Enter the 6-digit verification code from your authenticator app.',
+    };
   }
 
-  // Active enrolled MFA verification challenge for untrusted device/session
-  // Returning enrolled admins and students always receive CHALLENGE mode (read-only)
-  const sessionToken = generateMfaSessionToken({
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    fullName: user.full_name,
-    type: 'MFA_CHALLENGE',
-  });
-
-  return {
-    requireMfa: true,
-    mfaEnrolled: true,
-    mfaSessionToken: sessionToken,
-    role: user.role,
-    message: 'Enter the 6-digit verification code from your authenticator app.',
-  };
+  return { requireMfa: false, mfaState };
 }
 
 /**
@@ -677,8 +696,10 @@ router.post('/login', async (req: Request, res: Response) => {
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
+        mfaState: mfaCheck.mfaState,
         mfaEnrolled: mfaCheck.mfaEnrolled,
         mfaSessionToken: mfaCheck.mfaSessionToken,
+        totpSetup: mfaCheck.totpSetup,
         canonicalPhoneE164: mfaCheck.canonicalPhoneE164,
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
@@ -998,8 +1019,10 @@ router.post('/institute/login', async (req: Request, res: Response) => {
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
+        mfaState: mfaCheck.mfaState,
         mfaEnrolled: mfaCheck.mfaEnrolled,
         mfaSessionToken: mfaCheck.mfaSessionToken,
+        totpSetup: mfaCheck.totpSetup,
         canonicalPhoneE164: mfaCheck.canonicalPhoneE164,
         maskedPhone: mfaCheck.maskedPhone,
         role: mfaCheck.role,
@@ -1554,6 +1577,53 @@ router.post('/reset-password', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error('[AuthRoutes] Reset password error:', error);
     return res.status(500).json({ error: 'Failed to reset password. Please try again.' });
+  }
+});
+
+// Authenticated User Password Change (e.g. for MCQ Admin or any logged in role)
+router.post('/change-password', authenticateToken, (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required.' });
+    }
+
+    if (confirmPassword && newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New password and confirm password do not match.' });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+    }
+
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ error: 'New password must be different from current password.' });
+    }
+
+    const user = db.prepare('SELECT id, password_hash, email FROM users WHERE id = ?').get(userId) as any;
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      return res.status(400).json({ error: 'Incorrect current password. Please try again.' });
+    }
+
+    const newHash = hashPassword(newPassword);
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newHash, userId);
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'CHANGE_PASSWORD', 'USER', ?, 'User updated security credentials')
+    `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, userId);
+
+    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+    if (updatedUser) {
+      syncRecordToFirestore('users', userId, updatedUser).catch(() => {});
+    }
+
+    return res.json({ success: true, message: 'Password updated successfully.' });
+  } catch (error: any) {
+    console.error('[AuthRoutes] Change password error:', error);
+    return res.status(500).json({ error: 'Failed to change password. Please try again.' });
   }
 });
 

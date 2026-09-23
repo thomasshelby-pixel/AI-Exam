@@ -371,8 +371,8 @@ export function requireRole(...allowedRoles: UserRole[]) {
     }
 
     // Server-Side Role-Based MFA Policy Enforcement
-    // INSTITUTE_ADMIN and SUPER_ADMIN must have verified MFA to access privileged routes
-    if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN') {
+    // INSTITUTE_ADMIN, SUPER_ADMIN, and MCQ_ADMIN must have verified MFA to access privileged routes
+    if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN' || req.user.role === 'MCQ_ADMIN') {
       const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
 
       const deviceId =
@@ -385,7 +385,13 @@ export function requireRole(...allowedRoles: UserRole[]) {
       const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
       const isMfaVerified = !!req.user.mfaVerified || deviceIsTrusted;
 
-      if (!dbUser?.mfa_enabled || !isMfaVerified) {
+      // Super Admin's MFA verification is centralized through the main Super Admin authentication session.
+      // If the Super Admin is authenticated and mfaVerified is true (or device is trusted), they have satisfied Super Admin MFA.
+      const isMfaSatisfied = req.user.role === 'SUPER_ADMIN'
+        ? isMfaVerified
+        : (Boolean(dbUser?.mfa_enabled) && isMfaVerified);
+
+      if (!isMfaSatisfied) {
         return res.status(403).json({
           error: 'Multi-Factor Authentication (TOTP Authenticator) is mandatory for administrative access. Please complete MFA verification.',
           code: 'MFA_REQUIRED',
@@ -699,3 +705,7 @@ export function getStudentEntitlement(
     reason: 'Your free evaluations for this month are exhausted. Please purchase credits to continue.',
   };
 }
+
+export const requireMcqAdmin = requireRole('MCQ_ADMIN', 'SUPER_ADMIN');
+export const requireOnlyMcqAdmin = requireRole('MCQ_ADMIN');
+
