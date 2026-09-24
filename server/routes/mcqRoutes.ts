@@ -18,6 +18,23 @@ import {
   bulkUpdateQuestionStatus,
   getAdminStats,
 } from '../services/mcqService.js';
+import {
+  validateMaterialFile,
+  extractTextSafely,
+  checkMcqMaterialDuplicate,
+  saveMcqMaterial,
+  listMcqMaterials,
+  getMcqMaterialById,
+  updateMcqMaterial,
+  deleteMcqMaterial,
+  getMaterialFileStream,
+} from '../services/mcqMaterialService.js';
+import {
+  parseCsvText,
+  validateBulkQuestions,
+  commitBulkQuestions,
+} from '../services/mcqBulkImportService.js';
+import { computeFileHash } from '../services/materialDuplicateProtectionService.js';
 
 const router = Router();
 
@@ -266,6 +283,276 @@ router.post('/admin/questions/bulk-status', requireMcqAdmin, (req: AuthRequest, 
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to update question status' });
+  }
+});
+
+// ------------------------------------------
+// MCQ ADMIN: MATERIAL LIBRARY (PDF & TXT)
+// ------------------------------------------
+
+// 1. Validate & Preview Material Upload (PDF or TXT)
+router.post('/admin/materials/validate-preview', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const { fileBase64, filename, mimeType, course, subject, materialType, attempt, overrideDuplicate, overrideReason } = req.body;
+
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'No document data provided. Please select a PDF or TXT file.' });
+    }
+
+    const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    // 1. Strict file signature / format validation (PDF/TXT only, no CSV/XLSX)
+    const valResult = await validateMaterialFile(buffer, filename || 'source_material', mimeType);
+    if (!valResult.valid || !valResult.fileType) {
+      return res.status(400).json({ error: valResult.error || 'Invalid file type. Supported formats: PDF, TXT.' });
+    }
+
+    // 2. Safe text extraction without destroying questions or formatting
+    const extraction = await extractTextSafely(buffer, valResult.fileType, valResult.sanitizedFilename);
+
+    // 3. Duplicate detection
+    const fileHash = computeFileHash(buffer);
+    const duplicateCheck = checkMcqMaterialDuplicate({
+      fileHash,
+      extractedText: extraction.extractedText,
+      course: course || 'CA_INTERMEDIATE',
+      subject: subject || 'Corporate and Other Laws',
+      materialType: materialType || 'MTP',
+      attempt,
+      overrideDuplicate: Boolean(overrideDuplicate),
+      overrideReason,
+    });
+
+    return res.json({
+      valid: true,
+      fileType: valResult.fileType,
+      fileName: valResult.sanitizedFilename,
+      fileSize: buffer.length,
+      fileHash,
+      pageCount: extraction.pageCount,
+      extractedTextSnippet: extraction.extractedText.slice(0, 1500),
+      fullExtractedText: extraction.extractedText,
+      titleHint: extraction.titleHint,
+      duplicateCheck,
+    });
+  } catch (err: any) {
+    console.error('Material validate preview error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to validate and preview material document' });
+  }
+});
+
+// 2. Save New Material
+router.post('/admin/materials', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      materialName,
+      course,
+      subject,
+      chapter,
+      topic,
+      materialType,
+      source,
+      attempt,
+      applicableFrom,
+      applicableTill,
+      amendmentVersion,
+      description,
+      status,
+      fileBase64,
+      originalFilename,
+      mimeType,
+      overrideDuplicate,
+      overrideReason,
+    } = req.body;
+
+    if (!materialName || !course || !subject || !materialType) {
+      return res.status(400).json({ error: 'Material Name, Course, Subject, and Material Type are required.' });
+    }
+
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'Please upload a PDF or TXT source document.' });
+    }
+
+    const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    // Re-verify file integrity
+    const valResult = await validateMaterialFile(buffer, originalFilename || 'material_doc', mimeType);
+    if (!valResult.valid || !valResult.fileType) {
+      return res.status(400).json({ error: valResult.error || 'Invalid file format. Supported formats: PDF, TXT.' });
+    }
+
+    // Extract text
+    const extraction = await extractTextSafely(buffer, valResult.fileType, valResult.sanitizedFilename);
+
+    // Duplicate verification
+    const fileHash = computeFileHash(buffer);
+    const dupCheck = checkMcqMaterialDuplicate({
+      fileHash,
+      extractedText: extraction.extractedText,
+      course,
+      subject,
+      materialType,
+      attempt,
+      overrideDuplicate: Boolean(overrideDuplicate),
+      overrideReason,
+    });
+
+    if (dupCheck.isDuplicate) {
+      return res.status(409).json({
+        error: dupCheck.message,
+        duplicateCheck: dupCheck,
+      });
+    }
+
+    const saved = await saveMcqMaterial({
+      materialName,
+      course,
+      subject,
+      chapter,
+      topic,
+      materialType,
+      source: source || 'ICAI',
+      attempt,
+      applicableFrom,
+      applicableTill,
+      amendmentVersion,
+      description,
+      status: status || 'Draft',
+      fileBuffer: buffer,
+      originalFilename: valResult.sanitizedFilename,
+      fileType: valResult.fileType,
+      pageCount: extraction.pageCount,
+      extractedText: extraction.extractedText,
+      uploadedBy: req.user!.id,
+      overrideReason: overrideDuplicate ? overrideReason : undefined,
+    });
+
+    return res.status(201).json({ material: saved });
+  } catch (err: any) {
+    console.error('Save material error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to save material record.' });
+  }
+});
+
+// 3. List Materials
+router.get('/admin/materials', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { course, subject, materialType, status, search, page, limit } = req.query;
+    const result = listMcqMaterials({
+      course: course as string,
+      subject: subject as string,
+      materialType: materialType as string,
+      status: status as string,
+      search: search as string,
+      page: page ? parseInt(page as string, 10) : 1,
+      limit: limit ? parseInt(limit as string, 10) : 20,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    console.error('List materials error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve material list' });
+  }
+});
+
+// 4. Get Single Material
+router.get('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const item = getMcqMaterialById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: 'Material not found.' });
+    }
+    return res.json({ material: item });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to fetch material details.' });
+  }
+});
+
+// 5. Update Material Metadata & Status
+router.put('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const updated = updateMcqMaterial(req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ error: 'Material not found' });
+    }
+    return res.json({ material: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update material.' });
+  }
+});
+
+// 6. Delete Material
+router.delete('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const success = deleteMcqMaterial(req.params.id);
+    if (!success) {
+      return res.status(404).json({ error: 'Material not found.' });
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to delete material.' });
+  }
+});
+
+// 7. Secure File Download (Authenticated Admins Only)
+router.get('/admin/materials/:id/download', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const fileStream = getMaterialFileStream(req.params.id);
+    if (!fileStream) {
+      return res.status(404).json({ error: 'Material file not found on server storage.' });
+    }
+
+    res.setHeader('Content-Type', fileStream.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileStream.fileName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Length', fileStream.buffer.length);
+    res.setHeader('Cache-Control', 'private, no-cache');
+    return res.send(fileStream.buffer);
+  } catch (err: any) {
+    console.error('Download material file error:', err);
+    return res.status(500).json({ error: 'Failed to download material file.' });
+  }
+});
+
+// ------------------------------------------
+// MCQ ADMIN: STRUCTURED MCQ BULK IMPORT (CSV / XLSX)
+// ------------------------------------------
+
+// 8. Validate Bulk Import CSV
+router.post('/admin/bulk-import/validate', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { csvText, defaultValues } = req.body;
+    if (!csvText || !csvText.trim()) {
+      return res.status(400).json({ error: 'Please provide CSV content to parse.' });
+    }
+
+    const parsedRows = parseCsvText(csvText);
+    if (parsedRows.length < 2) {
+      return res.status(400).json({ error: 'CSV must contain at least a header row and one question row.' });
+    }
+
+    const preview = validateBulkQuestions(parsedRows, defaultValues || {});
+    return res.json(preview);
+  } catch (err: any) {
+    console.error('Bulk validate error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to parse CSV content.' });
+  }
+});
+
+// 9. Commit Bulk Questions
+router.post('/admin/bulk-import/commit', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { validRows } = req.body;
+    if (!Array.isArray(validRows) || validRows.length === 0) {
+      return res.status(400).json({ error: 'No valid questions to commit.' });
+    }
+
+    const result = commitBulkQuestions(validRows, req.user!.id);
+    return res.json(result);
+  } catch (err: any) {
+    console.error('Commit bulk questions error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to import bulk questions.' });
   }
 });
 

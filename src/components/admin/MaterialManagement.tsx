@@ -86,10 +86,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     getAttemptsForLevel(initialFormState.level)
   );
 
-  // Duplicate upload protection state
-  const [duplicateInfo, setDuplicateInfo] = useState<{
+  // Duplicate upload protection state (staged tiers: NEW, EXACT_DUPLICATE, POSSIBLE_DUPLICATE, SIMILAR, REPLACEMENT_VERSION)
+  interface DuplicateInfoState {
+    status: 'NEW' | 'EXACT_DUPLICATE' | 'POSSIBLE_DUPLICATE' | 'SIMILAR' | 'REPLACEMENT_VERSION';
     isDuplicate: boolean;
+    canOverride: boolean;
+    similarity?: number;
     message: string;
+    reason?: string;
     details?: {
       level: string;
       subject: string;
@@ -97,10 +101,18 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       materialType: string;
       series?: string;
       paper?: string;
+      version?: string;
+      title?: string;
+      year?: string;
     };
     existingMaterial?: any;
-  } | null>(null);
+    fileHash?: string | null;
+  }
+
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfoState | null>(null);
   const [showDuplicateBlockedModal, setShowDuplicateBlockedModal] = useState<boolean>(false);
+  const [showOverrideModal, setShowOverrideModal] = useState<boolean>(false);
+  const [overrideReasonInput, setOverrideReasonInput] = useState<string>('Contains different mock questions / revised answers.');
 
   // Sync available exam attempts dynamically when CA level changes in form
   useEffect(() => {
@@ -122,7 +134,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     };
   }, [formData.level]);
 
-  // Strict Duplicate-Upload Real-Time Pre-Check
+  // Staged Duplicate-Upload Real-Time Pre-Check
   useEffect(() => {
     if (!showFormModal || editingMaterial) {
       setDuplicateInfo(null);
@@ -132,10 +144,16 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     let isMounted = true;
     const runCheck = async () => {
       try {
+        const fullContent = `${formData.questionPaperText || ''}\n\n${formData.suggestedAnswersText || ''}`.trim();
         const res = await apiRequest<{
+          status: 'NEW' | 'EXACT_DUPLICATE' | 'POSSIBLE_DUPLICATE' | 'SIMILAR' | 'REPLACEMENT_VERSION';
           isDuplicate: boolean;
+          canOverride: boolean;
+          similarity?: number;
           duplicateKey?: string;
           message?: string;
+          reason?: string;
+          fileHash?: string | null;
           details?: {
             level: string;
             subject: string;
@@ -143,6 +161,9 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             materialType: string;
             series?: string;
             paper?: string;
+            version?: string;
+            title?: string;
+            year?: string;
           };
           existingMaterial?: any;
         }>('/api/admin/materials/check-duplicate', {
@@ -155,80 +176,75 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             materialType: formData.materialType,
             mtpSeries: formData.mtpSeries,
             paper: formData.paper,
+            version: formData.version,
+            title: formData.questionPaperTitle,
+            fileName: formData.attachedFile?.name,
+            rawText: fullContent.length >= 30 ? fullContent : undefined,
           }),
         });
 
         if (!isMounted) return;
-        if (res && res.isDuplicate) {
-          setDuplicateInfo({
-            isDuplicate: true,
-            message: res.message || 'This material is already uploaded.',
-            details: res.details,
-            existingMaterial: res.existingMaterial,
-          });
-          return;
+
+        if (res) {
+          if (res.status === 'EXACT_DUPLICATE') {
+            setDuplicateInfo({
+              status: 'EXACT_DUPLICATE',
+              isDuplicate: true,
+              canOverride: false,
+              similarity: 100,
+              message: res.message || 'An identical material already exists in the database.',
+              reason: res.reason,
+              details: res.details,
+              existingMaterial: res.existingMaterial,
+              fileHash: res.fileHash,
+            });
+          } else if (res.status === 'POSSIBLE_DUPLICATE') {
+            setDuplicateInfo({
+              status: 'POSSIBLE_DUPLICATE',
+              isDuplicate: true,
+              canOverride: true,
+              similarity: res.similarity || 85,
+              message: res.message || 'This material appears very similar to an existing material. Please review.',
+              reason: res.reason,
+              details: res.details,
+              existingMaterial: res.existingMaterial,
+              fileHash: res.fileHash,
+            });
+          } else if (res.status === 'SIMILAR') {
+            setDuplicateInfo({
+              status: 'SIMILAR',
+              isDuplicate: false,
+              canOverride: false,
+              similarity: res.similarity,
+              message: res.message || 'Similar material exists for this attempt; new distinct material is allowed.',
+              reason: res.reason,
+              details: res.details,
+              existingMaterial: res.existingMaterial,
+              fileHash: res.fileHash,
+            });
+          } else if (res.status === 'REPLACEMENT_VERSION') {
+            setDuplicateInfo({
+              status: 'REPLACEMENT_VERSION',
+              isDuplicate: false,
+              canOverride: false,
+              similarity: res.similarity,
+              message: res.message || `New version ${formData.version} detected.`,
+              reason: res.reason,
+              details: res.details,
+              existingMaterial: res.existingMaterial,
+              fileHash: res.fileHash,
+            });
+          } else {
+            // NEW material
+            setDuplicateInfo(null);
+          }
         }
       } catch {
-        // Handled by local fallback below
-      }
-
-      // Fast, resilient local verification against cached materials list
-      if (!isMounted) return;
-      const normLevel = formData.level.toUpperCase();
-      const normType = formData.materialType.toUpperCase();
-      const normAttempt = formData.attempt.trim().toLowerCase();
-      const normPaper = (formData.paper || 'Paper 1').trim().toLowerCase();
-
-      const localMatch = materials.find((m: any) => {
-        if (editingMaterial && m.id === editingMaterial.id) return false;
-        const mLevel = String(m.level || '').toUpperCase();
-        if (mLevel !== normLevel && !mLevel.includes(normLevel) && !normLevel.includes(mLevel)) return false;
-
-        const mSubKey = String(m.subject_key || m.subjectKey || '').toLowerCase();
-        const formSubKey = String(formData.subjectKey || '').toLowerCase();
-        if (mSubKey !== formSubKey) return false;
-
-        const mAttempt = String(m.attempt || '').trim().toLowerCase();
-        if (mAttempt !== normAttempt) return false;
-
-        const mType = String(m.material_type || m.materialType || '').toUpperCase();
-        if (normType === 'MTP') {
-          if (mType !== 'MTP') return false;
-          const mSeries = Number(m.mtp_series || m.mtpSeries || 1);
-          const formSeries = Number(formData.mtpSeries || 1);
-          return mSeries === formSeries;
-        } else {
-          if (mType === 'MTP') return false;
-          const typeMatches = mType === normType || (normType === 'QUESTION_PAPER' && mType === 'PYQ') || (normType === 'PYQ' && mType === 'QUESTION_PAPER');
-          if (!typeMatches) return false;
-          const mPaper = String(m.paper || 'Paper 1').trim().toLowerCase();
-          return mPaper === normPaper || (!m.paper && normPaper === 'paper 1');
-        }
-      });
-
-      if (localMatch) {
-        const friendlyLevel = formData.level === 'INTERMEDIATE' ? 'CA Intermediate' : formData.level === 'FINAL' ? 'CA Final' : 'CA Foundation';
-        setDuplicateInfo({
-          isDuplicate: true,
-          message: formData.materialType === 'MTP'
-            ? 'This MTP is already uploaded for the selected subject, attempt and Series.'
-            : 'An existing material for this exact subject, attempt and material type is already available.',
-          details: {
-            level: friendlyLevel,
-            subject: formData.subjectName,
-            attempt: formData.attempt,
-            materialType: formData.materialType === 'MTP' ? 'MTP' : (formData.materialType === 'QUESTION_PAPER' ? 'Question Paper' : formData.materialType),
-            series: formData.materialType === 'MTP' ? `Series ${formData.mtpSeries}` : undefined,
-            paper: formData.materialType !== 'MTP' ? (formData.paper || 'Paper 1') : undefined,
-          },
-          existingMaterial: localMatch,
-        });
-      } else {
-        setDuplicateInfo(null);
+        // Silent error during pre-check typing
       }
     };
 
-    const timer = setTimeout(runCheck, 120);
+    const timer = setTimeout(runCheck, 250);
     return () => {
       isMounted = false;
       clearTimeout(timer);
@@ -243,7 +259,9 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     formData.materialType,
     formData.mtpSeries,
     formData.paper,
-    materials,
+    formData.version,
+    formData.questionPaperTitle,
+    formData.attachedFile?.name,
   ]);
 
   // Handle PDF / Text File Upload and AI Extraction
@@ -473,23 +491,33 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     }
   };
 
-  // Handle Form Submit (Create or Update)
+  // Handle Form Submit (Create or Update) with staged duplicate review
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // STRICT DUPLICATE-UPLOAD PROTECTION: Block immediate submission
-    if (duplicateInfo?.isDuplicate && !editingMaterial) {
+    // STRICT DUPLICATE-UPLOAD PROTECTION: Block immediate submission for exact duplicates
+    if (duplicateInfo?.status === 'EXACT_DUPLICATE' && !editingMaterial) {
       setShowDuplicateBlockedModal(true);
       return;
     }
 
+    // High-similarity possible duplicate: Prompt admin for review & confirmation
+    if (duplicateInfo?.status === 'POSSIBLE_DUPLICATE' && !editingMaterial) {
+      setShowOverrideModal(true);
+      return;
+    }
+
+    await executeSaveMaterial(false);
+  };
+
+  const executeSaveMaterial = async (overrideDuplicate: boolean = false, overrideReason: string = '') => {
     if (!formData.questionPaperTitle.trim()) {
       alert('Please provide a title for the material.');
       return;
     }
 
     const isPyqCombined = formData.materialType === 'PYQ' && formData.sourceFormat === 'COMBINED';
-    const payload = { ...formData };
+    const payload: any = { ...formData };
     if (isPyqCombined) {
       const combinedVal = (payload.combinedText || payload.questionPaperText || payload.suggestedAnswersText || '').trim();
       if (!combinedVal) {
@@ -506,6 +534,11 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       }
     }
 
+    if (overrideDuplicate) {
+      payload.overrideDuplicate = true;
+      payload.overrideReason = overrideReason || overrideReasonInput || 'Admin confirmed distinct material content.';
+    }
+
     try {
       setIsSubmitting(true);
       if (editingMaterial) {
@@ -519,17 +552,31 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        onNotify?.('New material added successfully', 'success');
+        onNotify?.(
+          overrideDuplicate
+            ? 'New material added successfully (Duplicate override logged)'
+            : 'New material added successfully',
+          'success'
+        );
       }
       setShowFormModal(false);
+      setShowOverrideModal(false);
       fetchMaterials();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
+        const status = err.data?.status || 'EXACT_DUPLICATE';
+        const canOverride = Boolean(err.data?.canOverride);
         const details = err.data?.duplicateDetails || duplicateInfo?.details;
         const msg = err.data?.message || duplicateInfo?.message || 'This material is already uploaded.';
+        const sim = err.data?.similarity || duplicateInfo?.similarity;
+
         setDuplicateInfo({
+          status: status as any,
           isDuplicate: true,
+          canOverride,
+          similarity: sim,
           message: msg,
+          reason: err.data?.reason,
           details: details || {
             level: formData.level === 'INTERMEDIATE' ? 'CA Intermediate' : formData.level === 'FINAL' ? 'CA Final' : 'CA Foundation',
             subject: formData.subjectName,
@@ -539,8 +586,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             paper: formData.paper || 'Paper 1',
           },
           existingMaterial: err.data?.existingMaterial,
+          fileHash: err.data?.fileHash,
         });
-        setShowDuplicateBlockedModal(true);
+
+        if (canOverride) {
+          setShowOverrideModal(true);
+        } else {
+          setShowDuplicateBlockedModal(true);
+        }
         return;
       }
       const msg = err instanceof Error ? err.message : 'Failed to save material';
@@ -981,52 +1034,103 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             </div>
 
             <form onSubmit={handleSubmitForm} className="p-6 overflow-y-auto space-y-4 text-xs">
-              {/* STRICT DUPLICATE-UPLOAD PROTECTION BANNER */}
-              {duplicateInfo?.isDuplicate && !editingMaterial && (
-                <div
-                  id="admin-material-duplicate-banner"
-                  className="p-4 bg-amber-50 border-2 border-amber-400 rounded-xl flex items-start justify-between gap-3 text-amber-950 shadow-xs animate-in fade-in duration-200"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold text-base flex-shrink-0 mt-0.5">
-                      ⚠️
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-amber-900">
-                          {formData.materialType === 'MTP' ? '⚠️ MTP Already Uploaded' : '⚠️ This material is already uploaded.'}
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          Already Uploaded ✓
-                        </span>
+              {/* TIERED DUPLICATE-UPLOAD PROTECTION BANNER */}
+              {duplicateInfo && !editingMaterial && (
+                <>
+                  {duplicateInfo.status === 'EXACT_DUPLICATE' && (
+                    <div
+                      id="admin-material-exact-duplicate-banner"
+                      className="p-4 bg-red-50 border-2 border-red-500 rounded-xl flex items-start justify-between gap-3 text-red-950 shadow-xs animate-in fade-in duration-200"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-red-600 text-white flex items-center justify-center font-bold text-base flex-shrink-0 mt-0.5">
+                          🛑
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-sm text-red-900">
+                              Exact Duplicate Detected
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-200 text-red-800 border border-red-300">
+                              100% Identical
+                            </span>
+                          </div>
+                          <p className="text-xs text-red-800 mt-1 font-medium">
+                            {duplicateInfo.message || 'An identical material or file checksum already exists in the database. Exact duplicate uploads are rejected.'}
+                          </p>
+                          <div className="mt-2 text-[11px] text-red-700 bg-red-100/70 p-2 rounded border border-red-200">
+                            <strong>Existing:</strong> {duplicateInfo.existingMaterial?.question_paper_title || duplicateInfo.existingMaterial?.title || 'Existing Material'} ({duplicateInfo.details?.subject} • {duplicateInfo.details?.attempt})
+                            {duplicateInfo.fileHash && <span className="block font-mono text-[10px] mt-0.5">Checksum: {duplicateInfo.fileHash.slice(0, 16)}...</span>}
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-xs text-amber-800 mt-1 font-medium">
-                        {formData.materialType === 'MTP'
-                          ? 'This MTP is already uploaded for the selected subject, attempt and Series.'
-                          : 'An existing material for this exact subject, attempt and material type is already available.'}
+                    </div>
+                  )}
+
+                  {duplicateInfo.status === 'POSSIBLE_DUPLICATE' && (
+                    <div
+                      id="admin-material-possible-duplicate-banner"
+                      className="p-4 bg-amber-50 border-2 border-amber-400 rounded-xl flex items-start justify-between gap-3 text-amber-950 shadow-xs animate-in fade-in duration-200"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold text-base flex-shrink-0 mt-0.5">
+                          ⚠️
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-sm text-amber-900">
+                              Possible Duplicate ({duplicateInfo.similarity || 85}% Similarity)
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              Admin Review Required
+                            </span>
+                          </div>
+                          <p className="text-xs text-amber-800 mt-1 font-medium">
+                            {duplicateInfo.message || 'This material shares high text overlap with an existing entry. CA materials may repeat concepts or questions; you can review and override if this is a distinct material.'}
+                          </p>
+                          <div className="mt-2 text-[11px] text-amber-900 bg-amber-100/70 p-2 rounded border border-amber-200 flex items-center justify-between gap-2">
+                            <span><strong>Matches:</strong> {duplicateInfo.existingMaterial?.question_paper_title || duplicateInfo.existingMaterial?.title || 'Existing Material'}</span>
+                            <button
+                              type="button"
+                              onClick={() => setShowOverrideModal(true)}
+                              className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded text-[11px] transition shrink-0 cursor-pointer"
+                            >
+                              Review & Override →
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {duplicateInfo.status === 'SIMILAR' && (
+                    <div
+                      id="admin-material-similar-banner"
+                      className="p-3 bg-blue-50 border border-blue-300 rounded-xl flex items-center gap-3 text-blue-950 shadow-xs animate-in fade-in duration-200"
+                    >
+                      <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                        ℹ️
+                      </div>
+                      <p className="text-xs text-blue-800 font-medium">
+                        Existing material found for <strong>{duplicateInfo.details?.subject} ({duplicateInfo.details?.attempt})</strong>. Distinct questions/content can be uploaded freely.
                       </p>
-                      <div className="mt-2.5 text-xs text-amber-900 grid grid-cols-2 sm:grid-cols-4 gap-2 bg-amber-100/70 p-2.5 rounded-lg border border-amber-200 font-medium">
-                        <div><span className="font-bold text-amber-950">Level:</span> {duplicateInfo.details?.level || formData.level}</div>
-                        <div><span className="font-bold text-amber-950">Subject:</span> {duplicateInfo.details?.subject || formData.subjectName}</div>
-                        <div><span className="font-bold text-amber-950">Attempt:</span> {duplicateInfo.details?.attempt || formData.attempt}</div>
-                        <div><span className="font-bold text-amber-950">Material Type:</span> {duplicateInfo.details?.materialType || formData.materialType}</div>
-                        {formData.materialType === 'MTP' && (
-                          <div className="col-span-2 text-blue-800 font-bold bg-blue-50/80 px-2 py-0.5 rounded border border-blue-200">
-                            Series: {duplicateInfo.details?.series || `Series ${formData.mtpSeries}`}
-                          </div>
-                        )}
-                        {formData.materialType !== 'MTP' && (
-                          <div className="col-span-2 text-purple-800 font-bold bg-purple-50/80 px-2 py-0.5 rounded border border-purple-200">
-                            Paper: {formData.paper || 'Paper 1'}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2 text-[11px] text-amber-700 font-medium">
-                        Upload is strictly blocked. No replacement, overwrite, or duplicate versioning is permitted.
-                      </div>
                     </div>
-                  </div>
-                </div>
+                  )}
+
+                  {duplicateInfo.status === 'REPLACEMENT_VERSION' && (
+                    <div
+                      id="admin-material-version-banner"
+                      className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center gap-3 text-emerald-950 shadow-xs animate-in fade-in duration-200"
+                    >
+                      <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                        ✨
+                      </div>
+                      <p className="text-xs text-emerald-800 font-medium">
+                        Uploading new version <strong>{duplicateInfo.details?.version || '2.0'}</strong> for this material.
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Row 1: Level, Material Type, MTP Series / PYQ Format, Subject */}
@@ -1471,22 +1575,31 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                 <button
                   type="submit"
                   id="admin-material-save-btn"
-                  disabled={isSubmitting || (Boolean(duplicateInfo?.isDuplicate) && !editingMaterial)}
+                  disabled={isSubmitting || (duplicateInfo?.status === 'EXACT_DUPLICATE' && !editingMaterial)}
                   className={`px-5 py-2 rounded-lg font-semibold flex items-center gap-1.5 transition ${
-                    duplicateInfo?.isDuplicate && !editingMaterial
+                    duplicateInfo?.status === 'EXACT_DUPLICATE' && !editingMaterial
                       ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300 shadow-none'
+                      : duplicateInfo?.status === 'POSSIBLE_DUPLICATE' && !editingMaterial
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer shadow-sm'
                       : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50'
                   }`}
                   title={
-                    duplicateInfo?.isDuplicate && !editingMaterial
-                      ? 'Upload blocked: Material already exists in database.'
+                    duplicateInfo?.status === 'EXACT_DUPLICATE' && !editingMaterial
+                      ? 'Upload blocked: Material is an exact duplicate.'
+                      : duplicateInfo?.status === 'POSSIBLE_DUPLICATE' && !editingMaterial
+                      ? 'High similarity detected. Click to review and override.'
                       : 'Save Material'
                   }
                 >
-                  {duplicateInfo?.isDuplicate && !editingMaterial ? (
+                  {duplicateInfo?.status === 'EXACT_DUPLICATE' && !editingMaterial ? (
                     <>
-                      <ShieldAlert className="w-4 h-4 text-amber-600" />
-                      <span>Upload Blocked (Already Uploaded)</span>
+                      <ShieldAlert className="w-4 h-4 text-red-600" />
+                      <span>Upload Blocked (Exact Duplicate)</span>
+                    </>
+                  ) : duplicateInfo?.status === 'POSSIBLE_DUPLICATE' && !editingMaterial ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-amber-100" />
+                      <span>Review & Confirm Upload ({duplicateInfo.similarity || 85}% Match)...</span>
                     </>
                   ) : (
                     <>
@@ -1505,25 +1618,21 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         </div>
       )}
 
-      {/* STRICT DUPLICATE UPLOAD BLOCKED MODAL */}
+      {/* STRICT EXACT DUPLICATE BLOCKED MODAL */}
       {showDuplicateBlockedModal && duplicateInfo && (
         <div
           id="duplicate-material-blocked-modal"
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-60 flex items-center justify-center p-4 animate-in fade-in duration-150"
         >
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border-2 border-amber-300 animate-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-3">
-              <AlertTriangle className="w-6 h-6" />
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border-2 border-red-400 animate-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-3">
+              <ShieldAlert className="w-6 h-6" />
             </div>
             <h3 className="text-lg font-black text-slate-900 text-center mb-1">
-              {formData.materialType === 'MTP'
-                ? '⚠️ MTP Already Uploaded'
-                : '⚠️ This material is already uploaded.'}
+              Exact Duplicate Detected
             </h3>
             <p className="text-xs text-slate-600 text-center mb-4 font-medium">
-              {formData.materialType === 'MTP'
-                ? 'This MTP is already uploaded for the selected subject, attempt and Series.'
-                : 'An existing material for this exact subject, attempt and material type is already available.'}
+              An identical file checksum or content matching this material already exists in the database.
             </p>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 space-y-2 text-xs">
@@ -1543,22 +1652,20 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                 <span className="text-slate-500 font-medium">Material Type:</span>
                 <span className="font-bold text-slate-900">{duplicateInfo.details?.materialType || formData.materialType}</span>
               </div>
-              {duplicateInfo.details?.series && (
-                <div className="flex justify-between py-1 bg-blue-50 px-2 rounded text-blue-900">
-                  <span className="font-semibold">MTP Series:</span>
-                  <span className="font-black">{duplicateInfo.details.series}</span>
+              {duplicateInfo.existingMaterial && (
+                <div className="py-1 bg-red-50 px-2 rounded text-red-900 font-medium text-[11px]">
+                  <strong>Existing Title:</strong> {duplicateInfo.existingMaterial.question_paper_title || duplicateInfo.existingMaterial.title}
                 </div>
               )}
-              {duplicateInfo.details?.paper && !duplicateInfo.details?.series && (
-                <div className="flex justify-between py-1 bg-purple-50 px-2 rounded text-purple-900">
-                  <span className="font-semibold">Paper / Set:</span>
-                  <span className="font-black">{duplicateInfo.details.paper}</span>
+              {duplicateInfo.fileHash && (
+                <div className="text-[10px] font-mono text-slate-500 break-all pt-1 border-t border-slate-200">
+                  SHA-256: {duplicateInfo.fileHash}
                 </div>
               )}
             </div>
 
-            <p className="text-[11px] text-slate-500 text-center mb-5 leading-relaxed bg-amber-50/70 p-2.5 rounded-lg border border-amber-200 text-amber-900 font-medium">
-              Strict duplicate protection is enforced. There is NO overwrite, replacement, or versioning for duplicate materials. Existing data remains protected and intact.
+            <p className="text-[11px] text-slate-500 text-center mb-5 leading-relaxed bg-red-50/70 p-2.5 rounded-lg border border-red-200 text-red-900 font-medium">
+              Strict duplicate protection blocks exact re-uploads to preserve system accuracy. If you wish to update this material, use the Edit action instead.
             </p>
 
             <div className="flex justify-end">
@@ -1568,7 +1675,89 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                 onClick={() => setShowDuplicateBlockedModal(false)}
                 className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold transition shadow-sm cursor-pointer"
               >
-                Cancel
+                Close & Review Form
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POSSIBLE DUPLICATE OVERRIDE MODAL */}
+      {showOverrideModal && duplicateInfo && (
+        <div
+          id="duplicate-material-override-modal"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-60 flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border-2 border-amber-400 animate-in zoom-in-95 duration-150">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-3">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="text-center mb-4">
+              <span className="inline-block px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full text-xs font-bold mb-2">
+                {duplicateInfo.similarity || 85}% Content Similarity
+              </span>
+              <h3 className="text-lg font-black text-slate-900">
+                Possible Duplicate Detected
+              </h3>
+              <p className="text-xs text-slate-600 mt-1 font-medium">
+                The content you are uploading shares substantial overlap with an existing material.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 text-xs space-y-3">
+              <div>
+                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Existing Material</div>
+                <div className="font-bold text-slate-900 bg-white p-2.5 rounded-lg border border-slate-200">
+                  {duplicateInfo.existingMaterial?.question_paper_title || duplicateInfo.existingMaterial?.title || 'Existing Material'}
+                  <div className="text-[11px] text-slate-500 font-normal mt-0.5">
+                    {duplicateInfo.details?.subject} • {duplicateInfo.details?.attempt} • {duplicateInfo.details?.materialType}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">New Upload</div>
+                <div className="font-bold text-blue-900 bg-blue-50/60 p-2.5 rounded-lg border border-blue-200">
+                  {formData.questionPaperTitle}
+                  <div className="text-[11px] text-blue-700 font-normal mt-0.5">
+                    {formData.subjectName} • {formData.attempt} • {formData.materialType} (v{formData.version || '1.0'})
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Admin Override Justification (Logged to Security Audit Trail) *
+              </label>
+              <input
+                type="text"
+                value={overrideReasonInput}
+                onChange={(e) => setOverrideReasonInput(e.target.value)}
+                placeholder="e.g., Distinct mock questions / revised answers for this attempt"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                CA exams frequently revisit syllabus concepts. Overriding will approve this upload and create an audit log.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowOverrideModal(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-semibold text-xs cursor-pointer"
+              >
+                Cancel / Review
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting || !overrideReasonInput.trim()}
+                onClick={() => executeSaveMaterial(true, overrideReasonInput)}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 transition shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                Confirm & Upload Material
               </button>
             </div>
           </div>

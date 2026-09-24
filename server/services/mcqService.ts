@@ -124,6 +124,19 @@ export function initMcqTables() {
 
     CREATE INDEX IF NOT EXISTS idx_mcq_wrong_student ON mcq_wrong_vault(student_id, resolved);
   `);
+
+  // Ensure enhanced tracking columns for question bank duplicates / source referencing
+  try {
+    const qCols = db.prepare('PRAGMA table_info(mcq_questions)').all() as any[];
+    if (!qCols.some((c) => c.name === 'source_material_id')) {
+      db.prepare('ALTER TABLE mcq_questions ADD COLUMN source_material_id TEXT').run();
+    }
+    if (!qCols.some((c) => c.name === 'usage_count')) {
+      db.prepare('ALTER TABLE mcq_questions ADD COLUMN usage_count INTEGER DEFAULT 1').run();
+    }
+  } catch (colErr) {
+    console.warn('[McqService] Column check error:', colErr);
+  }
 }
 
 // ==========================================

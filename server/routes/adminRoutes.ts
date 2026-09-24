@@ -54,6 +54,9 @@ import {
   checkMaterialDuplicate,
   computeMaterialUniqueKey,
   normalizeMtpSeriesNumber,
+  computeFileHash,
+  computeContentHash,
+  normalizeExtractedContent,
 } from '../services/materialDuplicateProtectionService.js';
 
 const router = Router();
@@ -655,6 +658,13 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
       mtpSeries,
       mtp_series,
       paper,
+      version,
+      title,
+      fileHash,
+      fileName,
+      rawText,
+      overrideDuplicate,
+      overrideReason,
       excludeId,
     } = params;
 
@@ -668,6 +678,13 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
         materialType: String(materialType || ''),
         mtpSeries: series,
         paper: paper ? String(paper) : undefined,
+        version: version ? String(version) : undefined,
+        title: title ? String(title) : undefined,
+        fileHash: fileHash ? String(fileHash) : undefined,
+        fileName: fileName ? String(fileName) : undefined,
+        rawText: rawText ? String(rawText) : undefined,
+        overrideDuplicate: Boolean(overrideDuplicate),
+        overrideReason: overrideReason ? String(overrideReason) : undefined,
       },
       excludeId ? String(excludeId) : undefined
     );
@@ -705,6 +722,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       version,
       status,
       attachedFile,
+      overrideDuplicate,
+      overrideReason,
     } = req.body;
 
     const parsedMtpSeries = normalizeMtpSeriesNumber(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
@@ -716,29 +735,6 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           message: 'Please select an MTP Series (e.g. Series 1, Series 2) to continue.'
         });
       }
-    }
-
-    // =========================================================================
-    // STRICT DUPLICATE-UPLOAD PROTECTION (Pre-upload blocking gate)
-    // =========================================================================
-    const duplicateCheck = checkMaterialDuplicate({
-      level,
-      subjectKey,
-      subjectName,
-      attempt,
-      materialType,
-      mtpSeries: parsedMtpSeries,
-      paper,
-    });
-
-    if (duplicateCheck.isDuplicate) {
-      console.warn(`[AdminRoutes] BLOCKED DUPLICATE MATERIAL UPLOAD: ${duplicateCheck.duplicateKey}`, duplicateCheck.details);
-      return res.status(409).json({
-        error: 'DUPLICATE_MATERIAL',
-        message: duplicateCheck.message,
-        duplicateDetails: duplicateCheck.details,
-        existingMaterial: duplicateCheck.existingMaterial,
-      });
     }
 
     const { sourceFormat, source_format } = req.body;
@@ -774,6 +770,108 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Please provide required fields: level, materialType, subjectKey, subjectName, title, question paper text, and suggested answers text.' });
     }
 
+    // Extract file buffer and compute SHA-256 hash if attached
+    let parsedFileBuffer: Buffer | null = null;
+    let computedFileHash: string | null = null;
+    if (attachedFile && attachedFile.base64) {
+      const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
+      parsedFileBuffer = Buffer.from(rawBase64, 'base64');
+      if (parsedFileBuffer.length === 0) {
+        return res.status(400).json({ error: 'Uploaded file binary is empty' });
+      }
+      computedFileHash = computeFileHash(parsedFileBuffer);
+    } else if (req.body.fileHash) {
+      computedFileHash = String(req.body.fileHash).toLowerCase().trim();
+    }
+
+    const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}`.trim();
+
+    // =========================================================================
+    // STAGED DUPLICATE-UPLOAD PROTECTION (File Hash -> Content Hash -> Metadata)
+    // =========================================================================
+    const duplicateCheck = checkMaterialDuplicate({
+      level,
+      subjectKey,
+      subjectName,
+      attempt,
+      materialType,
+      mtpSeries: parsedMtpSeries,
+      paper,
+      version: version || '1.0',
+      title: questionPaperTitle,
+      fileBuffer: parsedFileBuffer || undefined,
+      fileHash: computedFileHash || undefined,
+      fileName: attachedFile?.name,
+      rawText: fullContentText,
+      overrideDuplicate: Boolean(overrideDuplicate),
+      overrideReason: overrideReason ? String(overrideReason) : undefined,
+    });
+
+    if (duplicateCheck.status === 'EXACT_DUPLICATE') {
+      console.warn(`[AdminRoutes] BLOCKED EXACT DUPLICATE MATERIAL UPLOAD: ${duplicateCheck.duplicateKey}`, duplicateCheck.details);
+      return res.status(409).json({
+        error: 'EXACT_DUPLICATE',
+        status: 'EXACT_DUPLICATE',
+        canOverride: false,
+        similarity: 100,
+        message: duplicateCheck.message,
+        reason: duplicateCheck.reason,
+        duplicateDetails: duplicateCheck.details,
+        existingMaterial: duplicateCheck.existingMaterial,
+        fileHash: duplicateCheck.fileHash,
+      });
+    }
+
+    if (duplicateCheck.status === 'POSSIBLE_DUPLICATE' && !overrideDuplicate) {
+      console.warn(`[AdminRoutes] POSSIBLE DUPLICATE MATERIAL DETECTED (${duplicateCheck.similarity}%):`, duplicateCheck.details);
+      return res.status(409).json({
+        error: 'POSSIBLE_DUPLICATE',
+        status: 'POSSIBLE_DUPLICATE',
+        canOverride: true,
+        similarity: duplicateCheck.similarity,
+        message: duplicateCheck.message,
+        reason: duplicateCheck.reason,
+        duplicateDetails: duplicateCheck.details,
+        existingMaterial: duplicateCheck.existingMaterial,
+        fileHash: duplicateCheck.fileHash,
+      });
+    }
+
+    // If override was requested for a possible duplicate, verify admin role and record audit log
+    if (overrideDuplicate) {
+      const userRole = req.user?.role || '';
+      if (!['SUPER_ADMIN', 'MCQ_ADMIN'].includes(userRole)) {
+        return res.status(403).json({ error: 'Only administrators can override duplicate warnings.' });
+      }
+
+      const overrideLogId = `log_${crypto.randomBytes(8).toString('hex')}`;
+      const overrideAudit = {
+        id: overrideLogId,
+        user_id: req.user!.id,
+        action: 'DUPLICATE_DETECTION_OVERRIDE',
+        entity_type: 'MATERIAL',
+        entity_id: questionPaperTitle,
+        details: JSON.stringify({
+          reason: overrideReason || 'Administrator verified distinct content and approved upload.',
+          similarity: duplicateCheck.similarity,
+          title: questionPaperTitle,
+          attempt,
+          subject: subjectName,
+          materialType,
+          existingMaterial: duplicateCheck.existingMaterial,
+        }),
+        created_at: new Date().toISOString(),
+      };
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(overrideAudit.id, overrideAudit.user_id, overrideAudit.action, overrideAudit.entity_type, overrideAudit.entity_id, overrideAudit.details);
+      } catch (logErr) {
+        console.warn('[AdminRoutes] Error logging duplicate override:', logErr);
+      }
+    }
+
     const materialId = `mat_${crypto.randomBytes(8).toString('hex')}`;
     let fileInfo: {
       fileId: string;
@@ -784,14 +882,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       downloadUrl: string;
     } | null = null;
 
-    if (attachedFile && attachedFile.base64) {
+    if (parsedFileBuffer) {
       try {
-        const rawBase64 = attachedFile.base64.includes(',') ? attachedFile.base64.split(',')[1] : attachedFile.base64;
-        const fileBuffer = Buffer.from(rawBase64, 'base64');
-        if (fileBuffer.length === 0) {
-          return res.status(400).json({ error: 'Uploaded file binary is empty' });
-        }
-
         const fileId = `mat_file_${crypto.randomBytes(8).toString('hex')}`;
         const fileName = attachedFile.name || `${materialId}.pdf`;
         const mimeType = attachedFile.type || 'application/pdf';
@@ -800,7 +892,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           fileId,
           fileName,
           mimeType,
-          fileBuffer,
+          parsedFileBuffer,
           'MATERIAL_QUESTION_PAPER',
           {
             materialId,
@@ -823,7 +915,6 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       } catch (uploadErr: unknown) {
         const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
         console.error('[AdminRoutes] Error persisting attached file to Cloud Storage:', uploadErr);
-        // Honest failure: Abort material creation to prevent ghost or inconsistent state!
         return res.status(502).json({
           error: 'Material could not be stored in Cloud Storage. Creation aborted to preserve integrity.',
           details: msg,
@@ -832,6 +923,9 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     }
 
     const nowIso = new Date().toISOString();
+    const contentHash = fullContentText.length >= 30 ? computeContentHash(normalizeExtractedContent(fullContentText)) : null;
+    const yearMatch = (attempt || '').match(/\b(20\d\d)\b/);
+    const year = yearMatch ? yearMatch[1] : null;
 
     let combinedSourceMaterialId: string | null = null;
     let questionMaterialId: string | null = null;
@@ -874,9 +968,9 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       question_paper_title: questionPaperTitle.trim(),
       question_paper_text: questionPaperText.trim(),
       suggested_answers_text: suggestedAnswersText.trim(),
-      marking_scheme_text: markingSchemeText?.trim() || '',
-      reference_guidance_text: referenceGuidanceText?.trim() || '',
-      amendments_provisions_text: amendmentsProvisionsText?.trim() || '',
+      marking_scheme_text: markingSchemeText?.trim() || null,
+      reference_guidance_text: referenceGuidanceText?.trim() || null,
+      amendments_provisions_text: amendmentsProvisionsText?.trim() || null,
       effective_date: effectiveDate || nowIso.split('T')[0],
       version: version || '1.0',
       status: status || 'ACTIVE',
@@ -886,7 +980,12 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       storage_path: fileInfo?.storagePath || null,
       file_name: fileInfo?.filename || null,
       file_size: fileInfo?.size || null,
-      checksum: fileInfo?.checksum || null,
+      checksum: fileInfo?.checksum || computedFileHash || null,
+      file_hash: fileInfo?.checksum || computedFileHash || null,
+      content_hash: contentHash,
+      year: year,
+      language: 'English',
+      source: req.body.source || 'ICAI',
       download_url: fileInfo?.downloadUrl || (fileInfo?.fileId ? `/api/admin/materials/${materialId}/file` : null),
       uploaded_by: req.user!.email,
       created_at: nowIso,
@@ -900,7 +999,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       console.warn('[AdminRoutes] Warning persisting material to Firestore:', fsErr);
     }
 
-    // 2. Insert into SQLite with atomic unique constraint protection
+    // 2. Insert into SQLite with clean metadata and staged hash tracking
     try {
       db.prepare(`
         INSERT INTO evaluation_materials (
@@ -912,8 +1011,9 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           marking_scheme_text, reference_guidance_text, amendments_provisions_text,
           effective_date, version, status, source_type, admin_approved,
           file_id, storage_path, file_name, file_size, checksum, download_url,
-          uploaded_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          uploaded_by, created_at, updated_at,
+          content_hash, file_hash, year, language, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
         materialRecord.unique_identity_key,
@@ -927,19 +1027,11 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
         materialRecord.version, materialRecord.status, materialRecord.source_type, materialRecord.admin_approved,
         materialRecord.file_id, materialRecord.storage_path, materialRecord.file_name, materialRecord.file_size,
         materialRecord.checksum, materialRecord.download_url, materialRecord.uploaded_by, materialRecord.created_at,
-        materialRecord.updated_at
+        materialRecord.updated_at,
+        materialRecord.content_hash, materialRecord.file_hash, materialRecord.year, materialRecord.language, materialRecord.source
       );
     } catch (insertErr: unknown) {
-      const errStr = String(insertErr);
-      if (errStr.includes('UNIQUE constraint failed') || errStr.includes('idx_eval_materials_unique_identity')) {
-        console.warn(`[AdminRoutes] Atomic unique constraint caught duplicate material: ${duplicateCheck.duplicateKey}`);
-        return res.status(409).json({
-          error: 'DUPLICATE_MATERIAL',
-          message: duplicateCheck.message,
-          duplicateDetails: duplicateCheck.details,
-          existingMaterial: duplicateCheck.existingMaterial,
-        });
-      }
+      console.error('[AdminRoutes] Error inserting material into SQLite:', insertErr);
       throw insertErr;
     }
 
@@ -1021,6 +1113,10 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const effPaper = paper || existing.paper;
     const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
 
+    const effQp = questionPaperText !== undefined ? questionPaperText : existing.question_paper_text;
+    const effSa = suggestedAnswersText !== undefined ? suggestedAnswersText : existing.suggested_answers_text;
+    const putFullText = `${effQp || ''}\n\n${effSa || ''}`.trim();
+
     // Check if updated attributes collide with another existing material
     const dupCheck = checkMaterialDuplicate({
       level: effLevel,
@@ -1030,14 +1126,38 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       materialType: effMatType,
       mtpSeries: effSeries,
       paper: effPaper,
+      version: version || existing.version,
+      title: questionPaperTitle || existing.question_paper_title,
+      fileHash: (attachedFile ? undefined : existing.checksum) || undefined,
+      rawText: putFullText,
+      overrideDuplicate: Boolean(req.body.overrideDuplicate),
+      overrideReason: req.body.overrideReason,
     }, req.params.id);
 
-    if (dupCheck.isDuplicate) {
+    if (dupCheck.status === 'EXACT_DUPLICATE') {
       return res.status(409).json({
-        error: 'DUPLICATE_MATERIAL',
+        error: 'EXACT_DUPLICATE',
+        status: 'EXACT_DUPLICATE',
+        canOverride: false,
         message: dupCheck.message,
+        reason: dupCheck.reason,
         duplicateDetails: dupCheck.details,
         existingMaterial: dupCheck.existingMaterial,
+        fileHash: dupCheck.fileHash,
+      });
+    }
+
+    if (dupCheck.status === 'POSSIBLE_DUPLICATE' && !req.body.overrideDuplicate) {
+      return res.status(409).json({
+        error: 'POSSIBLE_DUPLICATE',
+        status: 'POSSIBLE_DUPLICATE',
+        canOverride: true,
+        similarity: dupCheck.similarity,
+        message: dupCheck.message,
+        reason: dupCheck.reason,
+        duplicateDetails: dupCheck.details,
+        existingMaterial: dupCheck.existingMaterial,
+        fileHash: dupCheck.fileHash,
       });
     }
 

@@ -28,11 +28,15 @@ import {
   PlusCircle,
   Shield,
   ArrowLeft,
+  FileText,
+  Upload,
 } from 'lucide-react';
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { mcqApi } from '../../api/mcqClient.js';
 import { apiRequest } from '../../api/client.js';
 import { generateTotpSetup, TotpSetupData } from '../../lib/firebaseAuth.js';
+import { McqMaterialLibrary } from '../../components/admin/McqMaterialLibrary.js';
+import { McqBulkImport } from '../../components/admin/McqBulkImport.js';
 import {
   McqQuestion,
   McqAdminStats,
@@ -48,7 +52,7 @@ export const McqAdminPortal: React.FC = () => {
   const { user, logout, isLoading, isAuthenticated } = useAuth();
   const isSuperAdmin = (user?.role || '').toUpperCase() === 'SUPER_ADMIN';
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'bank' | 'add' | 'security'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'materials' | 'bulk_import' | 'bank' | 'add' | 'security'>('overview');
   const [stats, setStats] = useState<McqAdminStats | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
 
@@ -435,18 +439,34 @@ export const McqAdminPortal: React.FC = () => {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs font-bold">
+        <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs font-bold overflow-x-auto max-w-full">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'overview' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
             📊 Overview
           </button>
           <button
+            onClick={() => setActiveTab('materials')}
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              activeTab === 'materials' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            📁 Material Library (PDF/TXT)
+          </button>
+          <button
+            onClick={() => setActiveTab('bulk_import')}
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+              activeTab === 'bulk_import' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            📥 Bulk Import (CSV/XLSX)
+          </button>
+          <button
             onClick={() => setActiveTab('bank')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'bank' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -454,7 +474,7 @@ export const McqAdminPortal: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('add')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'add' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -462,7 +482,7 @@ export const McqAdminPortal: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('security')}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${
+            className={`px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
               activeTab === 'security' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -611,6 +631,37 @@ export const McqAdminPortal: React.FC = () => {
               </div>
             </div>
 
+            {/* CONTENT MANAGEMENT WORKFLOW SELECTOR */}
+            <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-6 shadow-sm">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider text-blue-400 bg-blue-500/10 border border-blue-500/20">
+                    Content Management
+                  </div>
+                  <h3 className="text-base font-bold text-white mt-1.5">Dual-Stream Content Ingestion</h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                    Source study documents and structured questions are handled in two dedicated workflows. Select the appropriate workflow based on your file format:
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setActiveTab('materials')}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-blue-600/20 cursor-pointer"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Upload Material (PDF / TXT)</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bulk_import')}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/20 cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Bulk Import MCQs (CSV / XLSX)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* Quick Actions */}
             <div className="p-6 bg-gradient-to-r from-blue-950/60 to-indigo-950/60 border border-blue-800/40 rounded-2xl flex items-center justify-between">
               <div className="space-y-1">
@@ -627,6 +678,22 @@ export const McqAdminPortal: React.FC = () => {
               </button>
             </div>
           </div>
+        )}
+
+        {/* TAB 2: MATERIAL LIBRARY (PDF / TXT) */}
+        {activeTab === 'materials' && (
+          <McqMaterialLibrary onSelectForBulkImport={() => setActiveTab('bulk_import')} />
+        )}
+
+        {/* TAB 3: STRUCTURED MCQ BULK IMPORT (CSV / XLSX) */}
+        {activeTab === 'bulk_import' && (
+          <McqBulkImport
+            onImportComplete={() => {
+              loadStats();
+              setActiveTab('bank');
+            }}
+            onGoToMaterialLibrary={() => setActiveTab('materials')}
+          />
         )}
 
         {/* TAB 2: QUESTION BANK */}

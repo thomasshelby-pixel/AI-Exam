@@ -950,13 +950,20 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'updated_at', 'TEXT');
   addColumnIfNotExists('evaluation_materials', 'unique_identity_key', 'TEXT');
 
+  addColumnIfNotExists('evaluation_materials', 'content_hash', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'file_hash', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'year', 'TEXT');
+  addColumnIfNotExists('evaluation_materials', 'language', "TEXT DEFAULT 'English'");
+  addColumnIfNotExists('evaluation_materials', 'source', "TEXT DEFAULT 'ICAI'");
+
   try {
-    db.prepare(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_eval_materials_unique_identity
-      ON evaluation_materials(unique_identity_key)
-    `).run();
+    // Drop restrictive unique index that incorrectly blocked different materials with same subject/attempt
+    db.prepare('DROP INDEX IF EXISTS idx_eval_materials_unique_identity').run();
+    // Create lookup index on file checksum and content_hash for fast staged duplicate detection
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_eval_materials_checksum ON evaluation_materials(checksum)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_eval_materials_content_hash ON evaluation_materials(content_hash)').run();
   } catch (idxErr) {
-    console.warn('[DB] Warning creating idx_eval_materials_unique_identity:', idxErr);
+    console.warn('[DB] Warning updating evaluation_materials indexes:', idxErr);
   }
 
   // Ensure evaluations has all enhanced columns
