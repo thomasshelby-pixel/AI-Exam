@@ -584,6 +584,11 @@ async function runVerification() {
   console.log(`V2 CHECKED COPY SHA-256: ${studentSha}`);
   console.log('================================================================');
 
+  // Teardown: Clean up ephemeral test users
+  try {
+    db.prepare('DELETE FROM users WHERE id IN (?, ?, ?)').run(adminUser.id, studentUser.id, otherStudentUser.id);
+  } catch {}
+
   return {
     passedTests,
     totalTests,

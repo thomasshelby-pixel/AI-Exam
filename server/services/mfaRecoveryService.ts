@@ -119,6 +119,9 @@ export function initMfaRecoveryTables(): void {
 
   const addCol = (tbl: string, col: string, typ: string) => {
     try {
+      if (!/^[a-zA-Z0-9_]+$/.test(tbl) || !/^[a-zA-Z0-9_]+$/.test(col) || !/^[a-zA-Z0-9_ ]+$/.test(typ)) {
+        return;
+      }
       const cols = db.prepare(`PRAGMA table_info(${tbl})`).all() as any[];
       if (!cols.some((c) => c.name === col)) {
         db.prepare(`ALTER TABLE ${tbl} ADD COLUMN ${col} ${typ}`).run();

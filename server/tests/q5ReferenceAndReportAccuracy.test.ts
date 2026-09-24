@@ -10,7 +10,7 @@ console.log('================================================================');
 
 // 1. Fetch official evaluation materials for CA Inter Taxation (Series 1 contains the Q5 Cloak Room scenario)
 const mat = db
-  .prepare("SELECT * FROM evaluation_materials WHERE subject_key = 'inter_taxation' AND (question_paper_title LIKE '%Series 1%' OR question_paper_title LIKE '%Series-1%') LIMIT 1")
+  .prepare("SELECT * FROM evaluation_materials WHERE subject_key = 'inter_taxation' AND (id = 'mat_553c27c981ae740c' OR (attempt LIKE '%September%' AND mtp_series = '1')) LIMIT 1")
   .get() as any;
 
 assert(mat, 'Evaluation materials for inter_taxation must exist');

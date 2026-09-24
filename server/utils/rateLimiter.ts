@@ -162,3 +162,12 @@ export const evaluationSubmissionRateLimiter = createRateLimiter({
     return `eval_sub:${userId}`;
   },
 });
+
+// 9. MFA Recovery Request: 3 recovery requests per 15 minutes per IP
+export const mfaRecoveryRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  message: 'Too many recovery requests submitted. Please wait 15 minutes before submitting another request.',
+  keyGenerator: (req) => `mfa_recovery:${getClientIp(req)}`,
+});
+

@@ -48,6 +48,7 @@ import {
   clearMfaRateLimit,
 } from '../services/mfaRecoveryService.js';
 import { UserRole } from '../../src/types/index.js';
+import { mfaRecoveryRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -923,7 +924,7 @@ router.post('/authenticators/remove', authenticateToken, async (req: AuthRequest
  * Submits a manual recovery request for accounts that lost all factors & recovery codes.
  * Strictly NO instant bypass or backdoor.
  */
-router.post('/recovery-request', async (req: Request, res: Response) => {
+router.post('/recovery-request', mfaRecoveryRateLimiter, async (req: Request, res: Response) => {
   try {
     const { userId, user_id, email, phone, srnRegNo, reason } = req.body;
     if ((!userId && !user_id && !email) || !reason) {
@@ -932,12 +933,26 @@ router.post('/recovery-request', async (req: Request, res: Response) => {
       });
     }
 
+    const rawEmail = (email || '').toString().trim().toLowerCase();
+    if (rawEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+
+    const cleanReason = (reason || '').toString().trim().slice(0, 2000);
+    if (!cleanReason) {
+      return res.status(400).json({ error: 'A detailed reason for recovery is required.' });
+    }
+
+    const cleanUserId = (userId || user_id) ? (userId || user_id).toString().trim().slice(0, 128) : undefined;
+    const cleanPhone = phone ? phone.toString().trim().slice(0, 25) : undefined;
+    const cleanSrn = srnRegNo ? srnRegNo.toString().trim().toUpperCase().slice(0, 25) : undefined;
+
     const result = submitManualRecoveryRequest({
-      userId: (userId || user_id)?.toString().trim(),
-      email,
-      phone,
-      srnRegNo,
-      reason,
+      userId: cleanUserId,
+      email: rawEmail || undefined,
+      phone: cleanPhone,
+      srnRegNo: cleanSrn,
+      reason: cleanReason,
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });

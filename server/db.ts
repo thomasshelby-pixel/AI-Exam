@@ -824,6 +824,9 @@ export function initDatabase() {
 function runMigrations() {
   function addColumnIfNotExists(table: string, column: string, colDef: string) {
     try {
+      if (!/^[a-zA-Z0-9_]+$/.test(table) || !/^[a-zA-Z0-9_]+$/.test(column)) {
+        throw new Error(`Invalid table or column identifier: ${table}.${column}`);
+      }
       const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
       if (!tableExists) {
         return;
