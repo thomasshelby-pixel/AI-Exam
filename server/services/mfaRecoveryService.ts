@@ -48,6 +48,15 @@ export interface AuditLogRecord {
  * Initializes tables for MFA Recovery Codes, Multi-Authenticators, Audit Logs, and Rate Limits.
  */
 export function initMfaRecoveryTables(): void {
+  try {
+    const hasUsersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+    if (!hasUsersTable) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
       id TEXT PRIMARY KEY,
@@ -145,6 +154,16 @@ export function initMfaRecoveryTables(): void {
  */
 export function fixInconsistentAdminMfaStates(): void {
   try {
+    const hasUsersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+    if (!hasUsersTable) {
+      return;
+    }
+    const cols = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has('mfa_enabled') || !colNames.has('totp_secret') || !colNames.has('mfa_reset_required')) {
+      return;
+    }
+
     const adminUsers = db.prepare(`
       SELECT id, email, role, mfa_enabled, totp_secret, mfa_reset_required
       FROM users
@@ -477,9 +496,6 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
     };
   }
 }
-
-// Auto-run table setup on service load
-initMfaRecoveryTables();
 
 /**
  * Normalizes and cryptographically hashes a recovery code with salt.

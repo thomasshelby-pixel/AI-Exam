@@ -63,6 +63,12 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Evaluation Versions (Immutable V1/V2 audit & recheck records)
+    match /evaluation_versions/{versionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Credit Ledger (Append-only immutable audit trail)
     match /credit_ledger/{ledgerId} {
       allow read: if true;

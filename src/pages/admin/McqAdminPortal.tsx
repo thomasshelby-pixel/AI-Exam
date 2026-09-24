@@ -46,7 +46,7 @@ import { useAuth } from '../../context/AuthContext.js';
 export const McqAdminPortal: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout, isLoading, isAuthenticated } = useAuth();
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = (user?.role || '').toUpperCase() === 'SUPER_ADMIN';
 
   const [activeTab, setActiveTab] = useState<'overview' | 'bank' | 'add' | 'security'>('overview');
   const [stats, setStats] = useState<McqAdminStats | null>(null);
@@ -115,11 +115,12 @@ export const McqAdminPortal: React.FC = () => {
     if (isLoading) return;
 
     if (!isAuthenticated || !user) {
-      navigate('/login?redirect=/mcq-admin');
+      navigate('/mcq-admin/login');
       return;
     }
 
-    if (user.role !== 'MCQ_ADMIN' && user.role !== 'SUPER_ADMIN') {
+    const roleUpper = (user.role || '').toUpperCase();
+    if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
       navigate('/student/dashboard');
     }
   }, [user, isLoading, isAuthenticated, navigate]);

@@ -30,16 +30,29 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
   if (fs.existsSync(DB_FILE)) {
     try {
       conn = new DatabaseSync(DB_FILE);
-      const check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
-      const isOk = check.length === 1 && check[0].quick_check === 'ok';
+      conn.exec('PRAGMA journal_mode = WAL;');
+      conn.exec('PRAGMA synchronous = NORMAL;');
+      conn.exec('PRAGMA foreign_keys = ON;');
+      let check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
+      let isOk = check.length === 1 && check[0].quick_check === 'ok';
+      if (!isOk) {
+        console.warn('[DB Integrity] Quick check failed, attempting REINDEX repair...', check);
+        try {
+          conn.exec('REINDEX;');
+          check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
+          isOk = check.length === 1 && check[0].quick_check === 'ok';
+          if (isOk) {
+            console.log('[DB Integrity] Database successfully self-healed via REINDEX.');
+          }
+        } catch (reindexErr) {
+          console.error('[DB Integrity] REINDEX attempt failed:', reindexErr);
+        }
+      }
       if (!isOk) {
         console.error('[DB Integrity] Database failed quick_check on startup:', check);
         needsRepair = true;
         try { conn.close(); } catch {}
       } else {
-        conn.exec('PRAGMA journal_mode = WAL;');
-        conn.exec('PRAGMA synchronous = NORMAL;');
-        conn.exec('PRAGMA foreign_keys = ON;');
         return conn;
       }
     } catch (err) {
@@ -101,6 +114,10 @@ export function initDatabase() {
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
+      mfa_recovery_codes_generated_at TEXT,
+      totp_secret TEXT,
+      pending_totp_secret TEXT,
+      mfa_reset_required INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -168,6 +185,51 @@ export function initDatabase() {
       granted_by TEXT NOT NULL DEFAULT 'SYSTEM_POLICY',
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS institute_materials (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      level TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_name TEXT NOT NULL,
+      paper TEXT DEFAULT 'Paper 1',
+      material_type TEXT DEFAULT 'TEST_SERIES',
+      question_paper_text TEXT NOT NULL,
+      question_paper_pdf_base64 TEXT,
+      suggested_answers_text TEXT NOT NULL,
+      suggested_answers_pdf_base64 TEXT,
+      marking_scheme_text TEXT,
+      marking_scheme_pdf_base64 TEXT,
+      mtp_series INTEGER,
+      source_format TEXT DEFAULT 'SEPARATE',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS institute_tests (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      batch_id TEXT,
+      title TEXT NOT NULL,
+      level TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_name TEXT NOT NULL,
+      paper TEXT DEFAULT 'Paper 1',
+      checking_mode TEXT NOT NULL DEFAULT 'INSTITUTE_MATERIAL',
+      institute_material_id TEXT,
+      target_type TEXT NOT NULL DEFAULT 'ALL',
+      selected_student_ids TEXT,
+      maximum_marks REAL NOT NULL DEFAULT 100,
+      time_limit_minutes INTEGER,
+      deadline TEXT NOT NULL,
+      instructions TEXT,
+      status TEXT NOT NULL DEFAULT 'PUBLISHED',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE,
+      FOREIGN KEY (institute_material_id) REFERENCES institute_materials(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS evaluation_materials (
@@ -760,6 +822,10 @@ export function initDatabase() {
 function runMigrations() {
   function addColumnIfNotExists(table: string, column: string, colDef: string) {
     try {
+      const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if (!tableExists) {
+        return;
+      }
       const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
       if (!cols.some(c => c.name === column)) {
         // SQLite does not allow ALTER TABLE ADD COLUMN with non-constant defaults like CURRENT_TIMESTAMP
@@ -3295,6 +3361,13 @@ export function closeDatabaseCleanly(): void {
   } catch (err) {
     console.warn('[DB] Warning while closing database:', err);
   }
+}
+
+// Ensure database tables, schema, and baseline records are always initialized upon import
+try {
+  initDatabase();
+} catch (dbInitErr) {
+  console.error('[DB] Immediate database initialization error:', dbInitErr);
 }
 
 export default db;

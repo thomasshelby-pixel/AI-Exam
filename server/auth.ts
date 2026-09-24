@@ -364,7 +364,9 @@ export function requireRole(...allowedRoles: UserRole[]) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    const userRole = (req.user.role || '').toUpperCase();
+    const isAllowed = allowedRoles.some((r) => r.toUpperCase() === userRole);
+    if (!isAllowed) {
       return res.status(403).json({
         error: `Access denied. Role ${req.user.role} is not authorized for this resource.`,
       });
@@ -372,7 +374,7 @@ export function requireRole(...allowedRoles: UserRole[]) {
 
     // Server-Side Role-Based MFA Policy Enforcement
     // INSTITUTE_ADMIN, SUPER_ADMIN, and MCQ_ADMIN must have verified MFA to access privileged routes
-    if (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN' || req.user.role === 'MCQ_ADMIN') {
+    if (userRole === 'INSTITUTE_ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'MCQ_ADMIN') {
       const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
 
       const deviceId =
@@ -387,7 +389,7 @@ export function requireRole(...allowedRoles: UserRole[]) {
 
       // Super Admin's MFA verification is centralized through the main Super Admin authentication session.
       // If the Super Admin is authenticated and mfaVerified is true (or device is trusted), they have satisfied Super Admin MFA.
-      const isMfaSatisfied = req.user.role === 'SUPER_ADMIN'
+      const isMfaSatisfied = userRole === 'SUPER_ADMIN'
         ? isMfaVerified
         : (Boolean(dbUser?.mfa_enabled) && isMfaVerified);
 

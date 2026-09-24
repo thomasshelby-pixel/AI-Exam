@@ -45,8 +45,11 @@ export const McqAdminLoginPage: React.FC = () => {
 
   // If already logged in as MCQ_ADMIN or SUPER_ADMIN, automatically redirect
   useEffect(() => {
-    if (user && (user.role === 'MCQ_ADMIN' || user.role === 'SUPER_ADMIN')) {
-      navigate('/mcq-admin');
+    if (user) {
+      const roleUpper = (user.role || '').toUpperCase();
+      if (roleUpper === 'MCQ_ADMIN' || roleUpper === 'SUPER_ADMIN') {
+        navigate('/mcq-admin');
+      }
     }
   }, [user, navigate]);
 
@@ -474,21 +477,6 @@ export const McqAdminLoginPage: React.FC = () => {
             </button>
           </form>
         )}
-
-        {/* Super Admin Quick Gateway Link */}
-        <div className="mt-6 pt-5 border-t border-slate-800 text-center">
-          <p className="text-xs text-slate-400">
-            Super Administrator with existing credentials?
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('/login?redirect=/mcq-admin')}
-            className="mt-2 text-xs font-bold text-amber-400 hover:text-amber-300 hover:underline transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4 text-amber-400" />
-            <span>Sign in via Super Admin Central Portal →</span>
-          </button>
-        </div>
       </div>
     </div>
   );

@@ -278,6 +278,36 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "user_id", "display_name", "rating", "review_text", "status"]
+    },
+    "EvaluationVersion": {
+      "title": "EvaluationVersion",
+      "description": "Immutable evaluation versions and recheck audit snapshots.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "evaluation_id": { "type": "string" },
+        "version_number": { "type": "number" },
+        "version_tag": { "type": "string" },
+        "parent_version_id": { "type": "string" },
+        "status": { "type": "string" },
+        "total_marks": { "type": "number" },
+        "maximum_marks": { "type": "number" },
+        "percentage": { "type": "number" },
+        "grade": { "type": "string" },
+        "result_json": { "type": "string" },
+        "amendment_reason": { "type": "string" },
+        "amended_questions_json": { "type": "string" },
+        "review_resolution": { "type": "string" },
+        "admin_id": { "type": "string" },
+        "admin_email": { "type": "string" },
+        "checked_copy_file_id": { "type": "string" },
+        "checked_copy_storage_path": { "type": "string" },
+        "report_file_id": { "type": "string" },
+        "report_storage_path": { "type": "string" },
+        "audit_metadata_json": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "evaluation_id", "version_number", "version_tag", "status", "total_marks", "maximum_marks"]
     }
   },
   "firestore": {
@@ -312,6 +342,10 @@
     "/evaluations/{evaluationId}": {
       "schema": { "$ref": "#/entities/Evaluation" },
       "description": "Student evaluated answer sheets, scores, and examiner feedback."
+    },
+    "/evaluation_versions/{versionId}": {
+      "schema": { "$ref": "#/entities/EvaluationVersion" },
+      "description": "Immutable evaluation versions and recheck audit snapshots."
     },
     "/credit_ledger/{ledgerId}": {
       "schema": { "$ref": "#/entities/CreditLedger" },
