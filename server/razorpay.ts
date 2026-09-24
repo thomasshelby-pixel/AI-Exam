@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
 import { recordCreditPurchase } from './services/studentCreditService.js';
+import { safeTimingCompare } from './utils/cryptoSecurity.js';
 
 function getCleanEnv(name: string): string {
   const val = process.env[name] || '';
@@ -159,7 +160,7 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
     .update(`${razorpayOrderId}|${razorpayPaymentId}`)
     .digest('hex');
 
-  if (generatedSignature !== razorpaySignature) {
+  if (!safeTimingCompare(generatedSignature, razorpaySignature)) {
     db.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').run('FAILED', order.id);
     throw new Error('Payment signature verification failed. Untrusted payment.');
   }
@@ -247,13 +248,20 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
  */
 export function processRazorpayWebhook(rawBody: string, signature: string): { received: boolean } {
   const webhookSecret = getCleanEnv('RAZORPAY_WEBHOOK_SECRET');
-  if (webhookSecret) {
+  if (!webhookSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('RAZORPAY_WEBHOOK_SECRET not configured. Rejecting untrusted webhook.');
+    }
+  } else {
+    if (!signature) {
+      throw new Error('Missing Razorpay webhook signature header');
+    }
     const expectedSignature = crypto
       .createHmac('sha256', webhookSecret)
       .update(rawBody)
       .digest('hex');
 
-    if (expectedSignature !== signature) {
+    if (!safeTimingCompare(expectedSignature, signature)) {
       throw new Error('Invalid Razorpay webhook signature');
     }
   }

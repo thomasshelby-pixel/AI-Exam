@@ -5,6 +5,7 @@ import { db } from '../db.js';
 import { getValidAttemptsForLevel } from '../services/attemptService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries, getSubjectKeyCandidates } from '../services/materialLookupService.js';
 import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
+import { contactTicketRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -287,7 +288,7 @@ router.get('/materials-check', async (req: Request, res: Response) => {
 });
 
 // Public Contact / Support Form
-router.post('/contact', (req: Request, res: Response) => {
+router.post('/contact', contactTicketRateLimiter, (req: Request, res: Response) => {
   try {
     const { name, email, subject, message, evaluationId, category } = req.body;
     if (!name || !email || !subject || !message) {

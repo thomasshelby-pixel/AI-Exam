@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authenticateToken, AuthRequest } from '../auth.js';
+import { paymentOrderRateLimiter } from '../utils/rateLimiter.js';
 import {
   createRazorpayOrder,
   verifyAndFulfillPayment,
@@ -11,7 +12,7 @@ import {
 const router = Router();
 
 // Create Razorpay Order
-router.post('/create-order', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const { quantity } = req.body;

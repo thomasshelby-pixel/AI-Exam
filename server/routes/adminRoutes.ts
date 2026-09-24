@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
@@ -60,6 +60,28 @@ const router = Router();
 
 // Strict Super Admin Access ONLY
 router.use(authenticateToken);
+router.use((req: AuthRequest, res: Response, next: NextFunction) => {
+  const normEmail = (req.user?.email || '').toLowerCase().trim();
+  const userRole = (req.user?.role || '').toUpperCase();
+
+  // Explicit Directive: priyatca15@gmail.com must NEVER receive Super Admin authorization
+  if (normEmail === 'priyatca15@gmail.com' || req.user?.id === 'usr_mcq_admin_priyatca15') {
+    return res.status(403).json({
+      error: 'Access denied: priyatca15@gmail.com is restricted to MCQ Arena administration and cannot access Super Admin resources.',
+      code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
+    });
+  }
+
+  // Required logic: if role === "super_admin": allow else deny
+  if (userRole !== 'SUPER_ADMIN') {
+    return res.status(403).json({
+      error: `Access denied. Super Administrator authorization required. Role '${req.user?.role}' is forbidden from this resource.`,
+      code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
+    });
+  }
+
+  next();
+});
 router.use(requireRole('SUPER_ADMIN'));
 
 // 1. Admin Dashboard Overview

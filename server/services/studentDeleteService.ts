@@ -32,7 +32,9 @@ export function deleteStudentAccount(
   userAgent?: string | null
 ): DeleteStudentResult {
   // 1. Authorization: Only SUPER_ADMIN can permanently delete
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to permanently delete student accounts.');
     error.statusCode = 403;
     throw error;
@@ -257,7 +259,9 @@ export function updateStudentClassification(
   classification: 'NORMAL' | 'TEST',
   actor: { id: string; email: string; role: string }
 ) {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin can change account classification.');
     error.statusCode = 403;
     throw error;

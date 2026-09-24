@@ -83,6 +83,8 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
 
 export const db = openDatabaseWithIntegrityCheck();
 
+import { safeTimingCompare } from './utils/cryptoSecurity.js';
+
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(password, salt, 64).toString('hex');
@@ -94,7 +96,7 @@ export function verifyPassword(password: string, stored: string): boolean {
     const [salt, hash] = stored.split(':');
     if (!salt || !hash) return false;
     const computed = scryptSync(password, salt, 64).toString('hex');
-    return computed === hash;
+    return safeTimingCompare(computed, hash);
   } catch {
     return false;
   }

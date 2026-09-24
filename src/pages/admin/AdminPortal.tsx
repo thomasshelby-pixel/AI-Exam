@@ -114,10 +114,13 @@ export const AdminPortal: React.FC = () => {
     setMobileDrawerOpen(false);
   }, [location.pathname]);
 
-  // Keep pending review badge updated when subroutes change
+  // Keep pending review badge updated when subroutes change (Super Admin ONLY)
   useEffect(() => {
-    fetchPendingReviewsCount();
-  }, [location.pathname]);
+    const normEmail = (user?.email || '').toLowerCase().trim();
+    if (isAuthenticated && (user?.role || '').toUpperCase() === 'SUPER_ADMIN' && normEmail !== 'priyatca15@gmail.com') {
+      fetchPendingReviewsCount();
+    }
+  }, [location.pathname, isAuthenticated, user]);
 
   // Handle escape key and body scroll lock for mobile drawer
   useEffect(() => {
@@ -140,8 +143,12 @@ export const AdminPortal: React.FC = () => {
 
   // Determine current active subroute from pathname
   const pathParts = location.pathname.split('/').filter(Boolean);
-  // /admin or /admin/dashboard -> 'dashboard'
-  const activeSection = pathParts[1] || 'dashboard';
+  // /admin or /admin/dashboard or /super-admin/dashboard -> 'dashboard'
+  // Support aliases: /admin/recovery or /super-admin/recovery -> 'mfa-recovery', /admin/security -> 'rules'
+  const rawSubSection = pathParts[1] || 'dashboard';
+  const activeSection = rawSubSection === 'recovery'
+    ? 'mfa-recovery'
+    : (rawSubSection === 'security' ? 'rules' : rawSubSection);
 
   // Redirect directly to MCQ Admin Portal if requested
   useEffect(() => {
@@ -478,7 +485,8 @@ export const AdminPortal: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isAuthenticated && (user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN')) {
+    const normEmail = (user?.email || '').toLowerCase().trim();
+    if (isAuthenticated && (user?.role || '').toUpperCase() === 'SUPER_ADMIN' && normEmail !== 'priyatca15@gmail.com' && user?.id !== 'usr_mcq_admin_priyatca15') {
       loadActiveSectionData();
     }
   }, [
@@ -1055,8 +1063,17 @@ export const AdminPortal: React.FC = () => {
     }
   };
 
-  // Check administrative MFA requirement: Super Admin and Admin roles require MFA.
-  const isMfaMandatoryRole = user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
+  // Check administrative authorization: Strictly SUPER_ADMIN only (excluding priyatca15@gmail.com)
+  const normEmail = (user?.email || '').toLowerCase().trim();
+  const isSuperAdminAuthorized = Boolean(
+    isAuthenticated &&
+    user &&
+    (user.role || '').toUpperCase() === 'SUPER_ADMIN' &&
+    normEmail !== 'priyatca15@gmail.com' &&
+    user.id !== 'usr_mcq_admin_priyatca15'
+  );
+
+  const isMfaMandatoryRole = isSuperAdminAuthorized;
   const isMfaEnrolled = Boolean(user?.mfaEnabled);
   const isMfaVerified = user?.mfaVerified === true;
   const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
@@ -1139,23 +1156,68 @@ export const AdminPortal: React.FC = () => {
     );
   }
 
-  if (user?.role !== 'SUPER_ADMIN' && user?.role !== 'ADMIN') {
+  if (!isSuperAdminAuthorized) {
+    const isMcqAdmin = (user?.role || '').toUpperCase() === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com';
+
     return (
-      <div className="min-h-[80vh] flex items-center justify-center p-4">
-        <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-md w-full text-center shadow-lg">
-          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-200">
-            <AlertCircle className="w-6 h-6" />
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-slate-800 border border-rose-500/40 rounded-2xl p-8 max-w-lg w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-rose-500" />
+          <div className="w-16 h-16 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto mb-5 border border-rose-500/30">
+            <ShieldAlert className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">Access Denied (HTTP 403)</h2>
-          <p className="text-xs text-slate-500 mb-6">
-            Your current account role (<span className="font-semibold text-rose-600">{user?.role}</span>) does not have permission to access the Super Admin Portal. This incident has been logged.
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/20 text-rose-300 rounded-full text-xs font-bold tracking-wider uppercase mb-3 border border-rose-500/30">
+            HTTP 403 Forbidden
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">Super Admin Access Denied</h2>
+          <p className="text-sm text-slate-300 mb-4 leading-relaxed">
+            {isMcqAdmin ? (
+              <>
+                The account <span className="font-mono text-amber-300 font-semibold">{user?.email}</span> is strictly authorized for <strong>MCQ Arena Administration</strong> and is forbidden from accessing the Super Admin Portal, system settings, user management, or administrative recovery.
+              </>
+            ) : (
+              <>
+                Your current account role (<span className="font-semibold text-rose-400">{user?.role}</span>) does not have authorization to access the Super Administrator Portal. This administrative boundary is enforced server-side.
+              </>
+            )}
           </p>
-          <button
-            onClick={() => navigate('/student/dashboard')}
-            className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-semibold text-sm transition"
-          >
-            Return to Student Dashboard
-          </button>
+          <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-700 text-xs text-slate-400 mb-6 text-left space-y-1">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Authenticated Account:</span>
+              <span className="font-mono text-slate-300">{user?.email}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Effective Role:</span>
+              <span className="font-mono text-slate-300">{user?.role || 'UNASSIGNED'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Security Clearance:</span>
+              <span className="font-semibold text-rose-400">DENIED (Non-Super Admin)</span>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            {isMcqAdmin ? (
+              <button
+                onClick={() => navigate('/mcq-admin')}
+                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Go to MCQ Admin Portal
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/student/dashboard')}
+                className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Return to Student Dashboard
+              </button>
+            )}
+            <button
+              onClick={() => logout()}
+              className="w-full sm:w-auto py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl font-semibold text-sm transition cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
     );

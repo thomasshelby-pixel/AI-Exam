@@ -293,16 +293,23 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
     if (!isLoading && isAuthenticated && user) {
       const searchParams = new URLSearchParams(location.search);
       const redirectUrl = searchParams.get('redirect');
+      const normEmail = (user.email || '').toLowerCase().trim();
+      const isMcqAdmin = (user.role || '').toUpperCase() === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com';
+
       if (redirectUrl && !redirectUrl.startsWith('/login')) {
+        if (isMcqAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
+          navigate('/mcq-admin', { replace: true });
+          return;
+        }
         navigate(redirectUrl, { replace: true });
         return;
       }
-      if (user.role === 'SUPER_ADMIN' || (user.role as string) === 'ADMIN') {
+      if (isMcqAdmin) {
+        navigate('/mcq-admin', { replace: true });
+      } else if (user.role === 'SUPER_ADMIN' || (user.role as string) === 'ADMIN') {
         navigate('/admin/dashboard', { replace: true });
       } else if (user.role === 'INSTITUTE_ADMIN') {
         navigate('/institute/dashboard', { replace: true });
-      } else if (user.role === 'MCQ_ADMIN') {
-        navigate('/mcq-admin', { replace: true });
       } else {
         navigate('/student/dashboard', { replace: true });
       }
@@ -313,18 +320,26 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
     const searchParams = new URLSearchParams(location.search);
     const redirectUrl = searchParams.get('redirect');
 
+    const activeUser = loggedInUser || user;
+    const role = (activeUser?.role || '').toUpperCase();
+    const email = (activeUser?.email || '').toLowerCase().trim();
+    const isMcqAdmin = role === 'MCQ_ADMIN' || email === 'priyatca15@gmail.com';
+
     if (redirectUrl && !redirectUrl.startsWith('/login')) {
+      if (isMcqAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
+        navigate('/mcq-admin', { replace: true });
+        return;
+      }
       navigate(redirectUrl, { replace: true });
       return;
     }
 
-    const role = loggedInUser?.role || user?.role;
-    if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
+    if (isMcqAdmin) {
+      navigate('/mcq-admin', { replace: true });
+    } else if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
       navigate('/admin/dashboard', { replace: true });
     } else if (role === 'INSTITUTE_ADMIN') {
       navigate('/institute/dashboard', { replace: true });
-    } else if (role === 'MCQ_ADMIN') {
-      navigate('/mcq-admin', { replace: true });
     } else {
       navigate('/student/dashboard', { replace: true });
     }
@@ -353,6 +368,30 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
   if (!isAuthenticated || !user) {
     return <Navigate to="/login?redirect=/student/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Protected MCQ Admin Route Guard
+const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/mcq-admin/login" replace />;
+  }
+
+  const roleUpper = (user.role || '').toUpperCase();
+  if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
+    return <Navigate to="/student/dashboard" replace />;
   }
 
   return <>{children}</>;
@@ -422,13 +461,29 @@ const AppRoutes: React.FC = () => {
         {/* ============================================================ */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
         <Route path="/admin/*" element={<AdminPortal />} />
+        <Route path="/super-admin" element={<AdminPortal />} />
+        <Route path="/super-admin/*" element={<AdminPortal />} />
 
         {/* ============================================================ */}
         {/* MCQ ADMIN PORTAL ROUTES — Dedicated Content Management */}
         {/* ============================================================ */}
         <Route path="/mcq-admin/login" element={<McqAdminLoginPage />} />
-        <Route path="/mcq-admin" element={<McqAdminPortal />} />
-        <Route path="/mcq-admin/*" element={<McqAdminPortal />} />
+        <Route
+          path="/mcq-admin"
+          element={
+            <ProtectedMcqAdminRoute>
+              <McqAdminPortal />
+            </ProtectedMcqAdminRoute>
+          }
+        />
+        <Route
+          path="/mcq-admin/*"
+          element={
+            <ProtectedMcqAdminRoute>
+              <McqAdminPortal />
+            </ProtectedMcqAdminRoute>
+          }
+        />
 
         {/* ============================================================ */}
         {/* INSTITUTE PORTAL ROUTES — Dedicated Full Screen Backoffice */}

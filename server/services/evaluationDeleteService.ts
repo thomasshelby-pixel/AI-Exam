@@ -59,7 +59,9 @@ export function getEvaluationDetails(
   evaluationId: string,
   actor: { id: string; email: string; role: string }
 ): EvaluationDetails {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to view administrative evaluation details.');
     error.statusCode = 403;
     throw error;
@@ -184,7 +186,9 @@ export function deleteEvaluation(
   userAgent?: string | null
 ): DeleteEvaluationResult {
   // 1. Authorization: ONLY SUPER_ADMIN
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to delete evaluations.');
     error.statusCode = 403;
     throw error;
@@ -373,7 +377,9 @@ export function bulkDeleteEvaluations(
   ipAddress?: string | null,
   userAgent?: string | null
 ): BulkDeleteEvaluationsResult {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to bulk delete evaluations.');
     error.statusCode = 403;
     throw error;

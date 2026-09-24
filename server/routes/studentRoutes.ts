@@ -33,6 +33,7 @@ import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../se
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { selfDeleteStudentAccount } from '../services/studentDeleteService.js';
+import { promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -438,7 +439,7 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
 const inFlightStudentEvaluations = new Set<string>();
 
 // 2. Upload and Evaluate Answer Sheet
-router.post('/evaluate', requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/evaluate', evaluationSubmissionRateLimiter, requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   const studentId = req.user!.id;
 
   // Prevent double deduction or concurrent submissions if user double-clicks Evaluate
@@ -1223,6 +1224,10 @@ router.get(
       const userRole = req.user!.role;
       const evaluationId = req.params.id;
 
+      if (!evaluationId || !/^[a-zA-Z0-9_-]+$/.test(evaluationId)) {
+        return res.status(400).json({ error: 'Invalid evaluation ID format.' });
+      }
+
       let record: any;
       const roleStr = String(userRole);
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
@@ -1412,6 +1417,10 @@ router.get(
       const userRole = req.user!.role;
       const evaluationId = req.params.id;
 
+      if (!evaluationId || !/^[a-zA-Z0-9_-]+$/.test(evaluationId)) {
+        return res.status(400).json({ error: 'Invalid evaluation ID format.' });
+      }
+
       let record: any;
       const roleStr = String(userRole);
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
@@ -1565,6 +1574,10 @@ router.get(
     const studentId = req.user!.id;
     const userRole = req.user!.role;
     const evaluationId = req.params.id;
+
+    if (!evaluationId || !/^[a-zA-Z0-9_-]+$/.test(evaluationId)) {
+      return res.status(400).json({ error: 'Invalid evaluation ID format.' });
+    }
 
     let record: any;
     const roleStr = String(userRole);
@@ -2380,7 +2393,7 @@ router.delete('/account', async (req: AuthRequest, res: Response) => {
 });
 
 // 7. Referral Code Redemption (AI30: 1 month free access, max 15 evaluations, strict 20 redemptions limit)
-router.post('/referral/redeem', (req: AuthRequest, res: Response) => {
+router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const userEmail = req.user!.email;
   const { code } = req.body;

@@ -54,7 +54,9 @@ export function getPaymentOrderDetails(
   orderId: string,
   actor: { id: string; email: string; role: string }
 ): PaymentOrderDetails {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to view administrative payment details.');
     error.statusCode = 403;
     throw error;
@@ -157,7 +159,9 @@ export function deletePaymentOrder(
   userAgent?: string | null
 ): DeletePaymentOrderResult {
   // 1. Authorization: ONLY SUPER_ADMIN
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to delete payment records.');
     error.statusCode = 403;
     throw error;
@@ -354,7 +358,9 @@ export function bulkDeletePaymentOrders(
   ipAddress?: string | null,
   userAgent?: string | null
 ): BulkDeletePaymentsResult {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to bulk delete payment records.');
     error.statusCode = 403;
     throw error;
@@ -430,7 +436,9 @@ export function deletePaymentTransaction(
   ipAddress?: string | null,
   userAgent?: string | null
 ) {
-  if (!actor || actor.role !== 'SUPER_ADMIN') {
+  const actorRole = (actor?.role || '').toUpperCase();
+  const actorEmail = (actor?.email || '').toLowerCase().trim();
+  if (!actor || actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || actor.id === 'usr_mcq_admin_priyatca15') {
     const error: any = new Error('Access denied. Only Super Admin has permission to delete payment transactions.');
     error.statusCode = 403;
     throw error;

@@ -17,6 +17,9 @@ import legalRoutes from './server/routes/legalRoutes.js';
 import mcqRoutes from './server/routes/mcqRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
+import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
+import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 
 async function startServer() {
   // Initialize Database schemas, indices, and baseline ICAI materials
@@ -43,20 +46,11 @@ async function startServer() {
   // In local development or AI Studio preview, falls back to 3000.
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Basic CORS & headers
-  app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Razorpay-Signature, X-Device-Id, X-Device-Trust-Token'
-    );
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
-    next();
-  });
+  // Security Headers: HSTS, Anti-sniff, CSP Frame-Ancestors, Referrer-Policy, Anti-cache for APIs
+  app.use(applySecurityHeadersMiddleware);
+
+  // Hardened CORS & Origin Validation: restricts credentialed cross-origin access
+  app.use(hardenedCorsMiddleware);
 
   // Lightweight cookie-parser middleware to ensure req.cookies is always populated
   app.use((req, res, next) => {
@@ -149,7 +143,7 @@ async function startServer() {
   app.use('/api/public', publicRoutes);
   // Transparent Public Reviews API (supports both /api/reviews and /api/public/reviews)
   app.get('/api/reviews', getPublicReviewsHandler);
-  app.post('/api/reviews/:id/vote', authenticateToken, votePublicReviewHandler);
+  app.post('/api/reviews/:id/vote', authenticateToken, reviewVoteRateLimiter, votePublicReviewHandler);
   app.use('/api/pricing', pricingRoutes);
   app.use('/api/legal', legalRoutes);
   app.use('/api/mcq', mcqRoutes);

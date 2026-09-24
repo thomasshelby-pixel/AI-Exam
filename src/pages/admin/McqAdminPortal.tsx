@@ -110,32 +110,43 @@ export const McqAdminPortal: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [formFeedback, setFormFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const isAuthorized = !isLoading && isAuthenticated && Boolean(user) && (
+    (user?.role || '').toUpperCase() === 'MCQ_ADMIN' ||
+    (user?.role || '').toUpperCase() === 'SUPER_ADMIN'
+  );
+
   // Guard: Ensure user has MCQ_ADMIN or SUPER_ADMIN
   useEffect(() => {
     if (isLoading) return;
 
     if (!isAuthenticated || !user) {
-      navigate('/mcq-admin/login');
+      navigate('/mcq-admin/login', { replace: true });
       return;
     }
 
     const roleUpper = (user.role || '').toUpperCase();
     if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
-      navigate('/student/dashboard');
+      navigate('/student/dashboard', { replace: true });
     }
   }, [user, isLoading, isAuthenticated, navigate]);
 
   useEffect(() => {
+    if (!isAuthorized) return;
     loadStats();
     loadQuestions();
-  }, [filterCourse, filterStatus, page]);
+  }, [filterCourse, filterStatus, page, isAuthorized]);
 
   const loadStats = async () => {
+    if (!isAuthorized) return;
     setLoadingStats(true);
     try {
       const data = await mcqApi.getAdminStats();
       setStats(data);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.status === 401 || err?.statusCode === 401) {
+        navigate('/mcq-admin/login', { replace: true });
+        return;
+      }
       console.error('Failed to load admin stats:', err);
     } finally {
       setLoadingStats(false);
@@ -143,6 +154,7 @@ export const McqAdminPortal: React.FC = () => {
   };
 
   const loadQuestions = async () => {
+    if (!isAuthorized) return;
     setLoadingQuestions(true);
     try {
       const res = await mcqApi.getAdminQuestions({
@@ -154,7 +166,11 @@ export const McqAdminPortal: React.FC = () => {
       });
       setQuestions(res.questions || []);
       setTotalPages(res.totalPages || 1);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.status === 401 || err?.statusCode === 401) {
+        navigate('/mcq-admin/login', { replace: true });
+        return;
+      }
       console.error('Failed to load questions:', err);
     } finally {
       setLoadingQuestions(false);
@@ -402,7 +418,8 @@ export const McqAdminPortal: React.FC = () => {
     );
   }
 
-  if (!isAuthenticated || !user || (user.role !== 'MCQ_ADMIN' && user.role !== 'SUPER_ADMIN')) {
+  const roleUpper = (user?.role || '').toUpperCase();
+  if (!isAuthenticated || !user || (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN')) {
     return null;
   }
 

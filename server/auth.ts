@@ -23,12 +23,16 @@ export function generateToken(
   sessionId?: string,
   mfaVerified?: boolean
 ): string {
+  const normEmail = (user.email || '').toLowerCase().trim();
+  const effectiveRole: UserRole = (normEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
+    ? 'MCQ_ADMIN'
+    : user.role;
   const isMfaVerified = mfaVerified !== undefined ? mfaVerified : true;
   return jwt.sign(
     {
       id: user.id,
-      email: user.email.toLowerCase(),
-      role: user.role,
+      email: normEmail,
+      role: effectiveRole,
       fullName: user.fullName,
       sessionId,
       mfaVerified: isMfaVerified,
@@ -45,9 +49,15 @@ export function generateMfaSessionToken(payload: {
   fullName: string;
   type: 'MFA_CHALLENGE' | 'MFA_ENROLLMENT_REQUIRED';
 }): string {
+  const normEmail = (payload.email || '').toLowerCase().trim();
+  const effectiveRole: UserRole = (normEmail === 'priyatca15@gmail.com' || payload.userId === 'usr_mcq_admin_priyatca15')
+    ? 'MCQ_ADMIN'
+    : payload.role;
   return jwt.sign(
     {
       ...payload,
+      email: normEmail,
+      role: effectiveRole,
       isMfaSession: true,
     },
     JWT_SECRET,
@@ -108,7 +118,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
   }
 
   // Also support token passed in query parameter for direct PDF and file downloads
-  if (!token && typeof req.query.token === 'string') {
+  if (!token && typeof req.query?.token === 'string') {
     token = req.query.token;
   }
 
@@ -222,10 +232,17 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
 
     const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
 
+    const normEmail = (user.email || '').toLowerCase().trim();
+    // Invariable Principle of Least Privilege:
+    // priyatca15@gmail.com is strictly an MCQ_ADMIN and can NEVER receive SUPER_ADMIN privileges
+    const effectiveRole: UserRole = (normEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
+      ? 'MCQ_ADMIN'
+      : user.role;
+
     req.user = {
       id: user.id,
       email: user.email,
-      role: user.role,
+      role: effectiveRole,
       fullName: user.full_name,
       sessionId: decoded.sessionId,
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
@@ -359,13 +376,45 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
+  const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase());
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
+    const normEmail = (req.user.email || '').toLowerCase().trim();
     const userRole = (req.user.role || '').toUpperCase();
-    const isAllowed = allowedRoles.some((r) => r.toUpperCase() === userRole);
+
+    // STRICT ISOLATION DIRECTIVE:
+    // priyatca15@gmail.com is strictly an MCQ_ADMIN and must NEVER receive Super Admin authorization.
+    if (normEmail === 'priyatca15@gmail.com' || req.user.id === 'usr_mcq_admin_priyatca15') {
+      if (normalizedAllowed.includes('SUPER_ADMIN') && !normalizedAllowed.includes('MCQ_ADMIN')) {
+        return res.status(403).json({
+          error: 'Access denied: Account priyatca15@gmail.com is restricted to MCQ Arena administration and cannot access Super Admin resources.',
+          code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
+        });
+      }
+      if (userRole === 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error: 'Access denied: priyatca15@gmail.com cannot receive Super Admin privileges.',
+          code: 'FORBIDDEN_PRIVILEGE_VIOLATION',
+        });
+      }
+    }
+
+    // Required logic:
+    // if role === "super_admin": allow Super Admin access
+    // else: deny access
+    if (normalizedAllowed.includes('SUPER_ADMIN') && !normalizedAllowed.includes('MCQ_ADMIN')) {
+      if (userRole !== 'SUPER_ADMIN' || normEmail === 'priyatca15@gmail.com' || req.user.id === 'usr_mcq_admin_priyatca15') {
+        return res.status(403).json({
+          error: `Access denied. Super Administrator authorization required. Role ${req.user.role} is not authorized for this resource.`,
+          code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
+        });
+      }
+    }
+
+    const isAllowed = normalizedAllowed.includes(userRole);
     if (!isAllowed) {
       return res.status(403).json({
         error: `Access denied. Role ${req.user.role} is not authorized for this resource.`,

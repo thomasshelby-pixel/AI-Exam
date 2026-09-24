@@ -11,6 +11,7 @@ import {
   type CloudFileMetadata,
   type UploadOptions
 } from './firebaseCloudStorageService.js';
+import { sanitizeFilename } from '../utils/fileValidation.js';
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 const DATA_UPLOADS_DIR = path.join(process.cwd(), 'data', 'uploads');
@@ -43,6 +44,9 @@ export async function savePersistentFile(
     evaluationId?: string | null;
   }
 ): Promise<CloudFileMetadata> {
+  const safeFilename = sanitizeFilename(filename);
+  const safeFileId = path.basename(fileId).replace(/[^a-zA-Z0-9._\-]/g, '');
+
   // 1. Immediately cache locally to ensure local resilience and fast zero-latency serving
   try {
     if (!fs.existsSync(UPLOADS_DIR)) {
@@ -51,14 +55,14 @@ export async function savePersistentFile(
     if (!fs.existsSync(DATA_UPLOADS_DIR)) {
       fs.mkdirSync(DATA_UPLOADS_DIR, { recursive: true });
     }
-    const localPath1 = path.join(UPLOADS_DIR, filename);
+    const localPath1 = path.join(UPLOADS_DIR, safeFilename);
     fs.writeFileSync(localPath1, buffer);
-    const localPath2 = path.join(DATA_UPLOADS_DIR, filename);
+    const localPath2 = path.join(DATA_UPLOADS_DIR, safeFilename);
     fs.writeFileSync(localPath2, buffer);
-    if (filename !== `${fileId}.pdf`) {
+    if (safeFilename !== `${safeFileId}.pdf`) {
       try {
-        fs.writeFileSync(path.join(UPLOADS_DIR, `${fileId}.pdf`), buffer);
-        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, `${fileId}.pdf`), buffer);
+        fs.writeFileSync(path.join(UPLOADS_DIR, `${safeFileId}.pdf`), buffer);
+        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, `${safeFileId}.pdf`), buffer);
       } catch {
         // ignore alias write
       }
@@ -68,14 +72,14 @@ export async function savePersistentFile(
   }
 
   const uploadOptions: UploadOptions = {
-    fileId,
-    filename,
+    fileId: safeFileId,
+    filename: safeFilename,
     mimeType,
     buffer,
     ownerUserId: context?.ownerUserId,
     instituteId: context?.instituteId || undefined,
     materialId: context?.materialId || undefined,
-    evaluationId: context?.evaluationId || (fileId.startsWith('eval_') ? fileId.split('_')[0] + '_' + fileId.split('_')[1] : undefined),
+    evaluationId: context?.evaluationId || (safeFileId.startsWith('eval_') ? safeFileId.split('_')[0] + '_' + safeFileId.split('_')[1] : undefined),
     category,
   };
 
@@ -94,17 +98,18 @@ export async function getPersistentFile(
   fileId: string,
   preferredFilename?: string
 ): Promise<{ buffer: Buffer; metadata?: CloudFileMetadata } | null> {
-  const filename = preferredFilename || `${fileId}.pdf`;
+  const safeFileId = path.basename(fileId).replace(/[^a-zA-Z0-9._\-]/g, '');
+  const safeFilename = preferredFilename ? sanitizeFilename(preferredFilename) : `${safeFileId}.pdf`;
 
   // 1. Check local working directories first
   const candidatePaths = [
-    path.join(UPLOADS_DIR, filename),
-    path.join(DATA_UPLOADS_DIR, filename),
-    path.join(UPLOADS_DIR, `${fileId}_original.pdf`),
-    path.join(UPLOADS_DIR, `${fileId}_checked_copy.pdf`),
-    path.join(UPLOADS_DIR, `${fileId}_report.pdf`),
-    path.join(DATA_UPLOADS_DIR, `${fileId}_original.pdf`),
-    path.join(DATA_UPLOADS_DIR, `${fileId}_checked_copy.pdf`),
+    path.join(UPLOADS_DIR, safeFilename),
+    path.join(DATA_UPLOADS_DIR, safeFilename),
+    path.join(UPLOADS_DIR, `${safeFileId}_original.pdf`),
+    path.join(UPLOADS_DIR, `${safeFileId}_checked_copy.pdf`),
+    path.join(UPLOADS_DIR, `${safeFileId}_report.pdf`),
+    path.join(DATA_UPLOADS_DIR, `${safeFileId}_original.pdf`),
+    path.join(DATA_UPLOADS_DIR, `${safeFileId}_checked_copy.pdf`),
   ];
 
   for (const p of candidatePaths) {
@@ -126,7 +131,10 @@ export async function getPersistentFile(
     if (downloaded && downloaded.buffer.length > 0) {
       // Repopulate local working directory
       try {
-        const targetPath = path.join(UPLOADS_DIR, downloaded.metadata?.originalFilename || filename);
+        const targetFilename = downloaded.metadata?.originalFilename
+          ? sanitizeFilename(downloaded.metadata.originalFilename)
+          : safeFilename;
+        const targetPath = path.join(UPLOADS_DIR, targetFilename);
         fs.writeFileSync(targetPath, downloaded.buffer);
       } catch {
         // ignore

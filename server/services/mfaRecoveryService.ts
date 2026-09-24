@@ -1257,10 +1257,13 @@ export async function resolveRecoveryRequest(
 
   // 3. Admin authorization & self-approval restriction
   const reviewer = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(reviewerId) as any;
-  if (!reviewer || reviewer.role !== 'SUPER_ADMIN') {
+  const reviewerRole = (reviewer?.role || '').toUpperCase();
+  const reviewerEmail = (reviewer?.email || '').toLowerCase().trim();
+
+  if (!reviewer || reviewerRole !== 'SUPER_ADMIN' || reviewerEmail === 'priyatca15@gmail.com' || reviewer.id === 'usr_mcq_admin_priyatca15') {
     return {
       success: false,
-      error: 'Unauthorized: Only Super Administrators can resolve MFA recovery requests.',
+      error: 'Unauthorized: Only Super Administrators can resolve MFA recovery requests. MCQ Admin accounts are restricted.',
       statusCode: 403,
     };
   }
@@ -1606,6 +1609,15 @@ export async function executeServerMfaReset(
 
   if (!targetUser) {
     throw new Error(`Target account '${targetUserIdOrEmail}' not found in database.`);
+  }
+
+  // Strict Super Admin verification for reset actor
+  if (performedBy) {
+    const actorRole = (performedBy.role || '').toUpperCase();
+    const actorEmail = (performedBy.email || '').toLowerCase().trim();
+    if (actorRole !== 'SUPER_ADMIN' || actorEmail === 'priyatca15@gmail.com' || performedBy.id === 'usr_mcq_admin_priyatca15') {
+      throw new Error('Unauthorized: Only Super Administrators can execute MFA resets. Account priyatca15@gmail.com is restricted.');
+    }
   }
 
   const userId = targetUser.id;

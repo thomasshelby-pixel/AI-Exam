@@ -19,6 +19,11 @@ import {
   AuthoritativeMfaState
 } from '../services/mfaRecoveryService.js';
 import mfaRoutes from './mfaRoutes.js';
+import {
+  authLoginRateLimiter,
+  authRegisterRateLimiter,
+  passwordResetRateLimiter,
+} from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -202,12 +207,17 @@ async function authenticateWithFirestoreFallback(
       return null;
     }
 
-    const uRole = (fUserDoc.role || 'STUDENT') as UserRole;
-    if (expectedRole && uRole !== expectedRole && uRole !== 'SUPER_ADMIN') {
-      return null;
+    const uId = fUserDoc.id || `usr_${crypto.randomBytes(8).toString('hex')}`;
+    let uRole = (fUserDoc.role || 'STUDENT') as UserRole;
+    if (normalizedEmail === 'priyatca15@gmail.com' || uId === 'usr_mcq_admin_priyatca15') {
+      uRole = 'MCQ_ADMIN';
+    }
+    if (expectedRole && uRole !== expectedRole) {
+      if (expectedRole === 'SUPER_ADMIN' || uRole !== 'SUPER_ADMIN') {
+        return null;
+      }
     }
 
-    const uId = fUserDoc.id || `usr_${crypto.randomBytes(8).toString('hex')}`;
     const uFullName = fUserDoc.full_name || fUserDoc.name || 'CA Student';
     const uPhone = fUserDoc.phone || null;
     const uStatus = fUserDoc.status || 'ACTIVE';
@@ -326,7 +336,7 @@ function syncPendingInstituteEnrollments(userId: string, email: string) {
 }
 
 // Student Registration
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
 
@@ -580,7 +590,7 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // Normal Professional SaaS Login (Server-Side RBAC)
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -732,10 +742,14 @@ router.post('/login', async (req: Request, res: Response) => {
       sessionId = session.sessionId;
     }
 
+    const effectiveRole: UserRole = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
+      ? 'MCQ_ADMIN'
+      : user.role;
+
     const token = generateToken({
       id: user.id,
       email: user.email,
-      role: user.role,
+      role: effectiveRole,
       fullName: user.full_name,
     }, sessionId);
 
@@ -752,21 +766,21 @@ router.post('/login', async (req: Request, res: Response) => {
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
 
-    return res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        role: user.role,
-        status: user.status,
-        hasPermanentFreeAccess: isPermanentFree,
-        mfaEnabled: authMfa.mfaEnabled,
-        mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
-        mfaVerified: true,
-        mfaMandatory: isMandatoryRole,
-      },
-    });
+      return res.json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.full_name,
+          role: effectiveRole,
+          status: user.status,
+          hasPermanentFreeAccess: isPermanentFree,
+          mfaEnabled: authMfa.mfaEnabled,
+          mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
+          mfaVerified: true,
+          mfaMandatory: isMandatoryRole,
+        },
+      });
   } catch (error: unknown) {
     console.error('Login error:', error);
     return res.status(500).json({ error: 'Login failed. Please try again.' });
@@ -836,7 +850,7 @@ router.post('/google/complete-profile', (req: Request, res: Response) => {
 
 
 // SEPARATE INSTITUTE REGISTRATION FLOW
-router.post('/institute/register', (req: Request, res: Response) => {
+router.post('/institute/register', authRegisterRateLimiter, (req: Request, res: Response) => {
   try {
     const { instituteName, contactPerson, email, password, phone, address, website } = req.body;
 
@@ -934,7 +948,7 @@ router.post('/institute/register', (req: Request, res: Response) => {
 });
 
 // SEPARATE INSTITUTE LOGIN FLOW
-router.post('/institute/login', async (req: Request, res: Response) => {
+router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -1372,7 +1386,7 @@ router.post('/sessions/revoke-others', authenticateToken, (req: AuthRequest, res
 });
 
 // Forgot Password
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', passwordResetRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
     if (!email || typeof email !== 'string') {
@@ -1495,7 +1509,7 @@ router.post('/verify-reset-token', (req: Request, res: Response) => {
 });
 
 // Complete Password Reset
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', passwordResetRateLimiter, async (req: Request, res: Response) => {
   try {
     const { token, email, newPassword } = req.body;
     if (!token || !email || !newPassword) {

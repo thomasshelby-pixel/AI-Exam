@@ -958,12 +958,24 @@ router.post('/recovery-request', async (req: Request, res: Response) => {
 });
 
 /**
+ * Helper to check Super Admin privileges strictly
+ */
+function isStrictSuperAdmin(req: AuthRequest): boolean {
+  if (!req.user) return false;
+  const roleUpper = (req.user.role || '').toUpperCase();
+  const emailNorm = (req.user.email || '').toLowerCase().trim();
+  if (roleUpper !== 'SUPER_ADMIN') return false;
+  if (emailNorm === 'priyatca15@gmail.com' || req.user.id === 'usr_mcq_admin_priyatca15') return false;
+  return true;
+}
+
+/**
  * GET /api/auth/mfa/recovery-requests
  * Administrative endpoint to list pending account recovery requests.
  */
 router.get('/recovery-requests', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+    if (!isStrictSuperAdmin(req)) {
       return res.status(403).json({ error: 'Super Admin privileges required.' });
     }
     const requests = getPendingRecoveryRequests();
@@ -980,7 +992,7 @@ router.get('/recovery-requests', authenticateToken, async (req: AuthRequest, res
  */
 router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+    if (!isStrictSuperAdmin(req)) {
       return res.status(403).json({ error: 'Super Admin privileges required.' });
     }
     const { id } = req.params;
@@ -992,7 +1004,7 @@ router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: Aut
 
     const result = await resolveRecoveryRequest(
       id,
-      req.user.id,
+      req.user!.id,
       decision,
       reviewNotes || notes || '',
       { ip: req.ip, userAgent: req.headers['user-agent'] as string }
@@ -1025,12 +1037,12 @@ router.post('/recovery-requests/:id/resolve', authenticateToken, async (req: Aut
  */
 router.post('/recovery-requests/:id/approve', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+    if (!isStrictSuperAdmin(req)) {
       return res.status(403).json({ error: 'Super Admin privileges required.' });
     }
     const { id } = req.params;
     const notes = req.body?.reviewNotes || req.body?.notes || req.body?.reason || 'Approved by Super Admin';
-    const result = await approveMfaRecovery(id, req.user.id, notes, {
+    const result = await approveMfaRecovery(id, req.user!.id, notes, {
       ip: req.ip,
       userAgent: req.headers['user-agent'] as string,
     });
@@ -1055,12 +1067,12 @@ router.post('/recovery-requests/:id/approve', authenticateToken, async (req: Aut
 
 router.post('/recovery-requests/:id/reject', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || req.user.role !== 'SUPER_ADMIN') {
+    if (!isStrictSuperAdmin(req)) {
       return res.status(403).json({ error: 'Super Admin privileges required.' });
     }
     const { id } = req.params;
     const notes = req.body?.reviewNotes || req.body?.notes || req.body?.reason || 'Rejected by Super Admin';
-    const result = await rejectMfaRecovery(id, req.user.id, notes, {
+    const result = await rejectMfaRecovery(id, req.user!.id, notes, {
       ip: req.ip,
       userAgent: req.headers['user-agent'] as string,
     });
@@ -1097,7 +1109,7 @@ router.get('/audit-logs', authenticateToken, async (req: AuthRequest, res: Respo
       return res.status(401).json({ error: 'Authentication required.' });
     }
 
-    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const isSuperAdmin = isStrictSuperAdmin(req);
     const targetUserId = isSuperAdmin && req.query.all === 'true' ? undefined : req.user.id;
 
     const logs = getMfaAuditLogs(targetUserId, 50);
