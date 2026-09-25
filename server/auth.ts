@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
-import { isDeviceTrusted } from './services/trustService.js';
+import { isDeviceTrusted, parseCookieValue } from './services/trustService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -223,12 +223,16 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       }
     }
 
+    const rawCookies = (req as any).cookies || {};
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
-      (req.query.deviceId as string)?.trim();
+      (req.query.deviceId as string)?.trim() ||
+      rawCookies['ca_device_id'] ||
+      parseCookieValue(req.headers.cookie, 'ca_device_id');
     const trustToken =
       (req.headers['x-device-trust-token'] as string)?.trim() ||
-      (req as any).cookies?.['ca_trust_token'];
+      rawCookies['ca_trust_token'] ||
+      parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
     const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
 
@@ -346,12 +350,16 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
       mfa_enabled: number;
     } | undefined;
 
+    const rawCookies = (req as any).cookies || {};
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
-      (req.query.deviceId as string)?.trim();
+      (req.query.deviceId as string)?.trim() ||
+      rawCookies['ca_device_id'] ||
+      parseCookieValue(req.headers.cookie, 'ca_device_id');
     const trustToken =
       (req.headers['x-device-trust-token'] as string)?.trim() ||
-      (req as any).cookies?.['ca_trust_token'];
+      rawCookies['ca_trust_token'] ||
+      parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
     const deviceIsTrusted = !!(user && deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
 
@@ -402,20 +410,14 @@ export function requireRole(...allowedRoles: UserRole[]) {
       }
     }
 
-    // Required logic:
-    // if role === "super_admin": allow Super Admin access
-    // else: deny access
-    if (normalizedAllowed.includes('SUPER_ADMIN') && !normalizedAllowed.includes('MCQ_ADMIN')) {
-      if (userRole !== 'SUPER_ADMIN' || normEmail === 'priyatca15@gmail.com' || req.user.id === 'usr_mcq_admin_priyatca15') {
+    const isAllowed = normalizedAllowed.includes(userRole);
+    if (!isAllowed) {
+      if (normalizedAllowed.length === 1 && normalizedAllowed[0] === 'SUPER_ADMIN') {
         return res.status(403).json({
           error: `Access denied. Super Administrator authorization required. Role ${req.user.role} is not authorized for this resource.`,
           code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
         });
       }
-    }
-
-    const isAllowed = normalizedAllowed.includes(userRole);
-    if (!isAllowed) {
       return res.status(403).json({
         error: `Access denied. Role ${req.user.role} is not authorized for this resource.`,
       });
@@ -426,12 +428,16 @@ export function requireRole(...allowedRoles: UserRole[]) {
     if (userRole === 'INSTITUTE_ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'MCQ_ADMIN') {
       const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
 
+      const rawCookies = (req as any).cookies || {};
       const deviceId =
         (req.headers['x-device-id'] as string)?.trim() ||
-        (req.query.deviceId as string)?.trim();
+        (req.query.deviceId as string)?.trim() ||
+        rawCookies['ca_device_id'] ||
+        parseCookieValue(req.headers.cookie, 'ca_device_id');
       const trustToken =
         (req.headers['x-device-trust-token'] as string)?.trim() ||
-        (req as any).cookies?.['ca_trust_token'];
+        rawCookies['ca_trust_token'] ||
+        parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
       const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
       const isMfaVerified = !!req.user.mfaVerified || deviceIsTrusted;

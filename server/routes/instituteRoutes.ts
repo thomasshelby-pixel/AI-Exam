@@ -50,6 +50,91 @@ function logInstituteAudit(userId: string, action: string, entityType: string, e
   }
 }
 
+// Helper to determine authoritative subscription entitlement and active plan status
+export function getInstituteSubscriptionStatus(instituteId: string): {
+  hasActivePlan: boolean;
+  plan: string;
+  status: string;
+  expiresAt: string | null;
+  maxStudents: number;
+  activeStudents: number;
+  remainingSeats: number;
+  reason?: string;
+} {
+  const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+  if (!inst) {
+    return {
+      hasActivePlan: false,
+      plan: 'NONE',
+      status: 'NOT_FOUND',
+      expiresAt: null,
+      maxStudents: 0,
+      activeStudents: 0,
+      remainingSeats: 0,
+      reason: 'Institute not found',
+    };
+  }
+
+  const activeMembersRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as any;
+  const activeStudents = activeMembersRow?.count || 0;
+  const maxStudents = inst.max_students || 0;
+  const remainingSeats = Math.max(0, maxStudents - activeStudents);
+
+  const plan = (inst.subscription_plan || '').trim();
+  const noPlanKeywords = ['', 'NONE', 'NO_PLAN', 'INACTIVE', 'EXPIRED'];
+  if (noPlanKeywords.includes(plan.toUpperCase())) {
+    return {
+      hasActivePlan: false,
+      plan: plan || 'NONE',
+      status: inst.status,
+      expiresAt: inst.subscription_expires_at,
+      maxStudents,
+      activeStudents,
+      remainingSeats,
+      reason: 'No active plan associated with this institute.',
+    };
+  }
+
+  if (inst.status !== 'ACTIVE') {
+    return {
+      hasActivePlan: false,
+      plan,
+      status: inst.status,
+      expiresAt: inst.subscription_expires_at,
+      maxStudents,
+      activeStudents,
+      remainingSeats,
+      reason: `Institute account status is ${inst.status}.`,
+    };
+  }
+
+  if (inst.subscription_expires_at) {
+    const expiryTime = new Date(inst.subscription_expires_at).getTime();
+    if (!isNaN(expiryTime) && expiryTime <= Date.now()) {
+      return {
+        hasActivePlan: false,
+        plan,
+        status: 'EXPIRED',
+        expiresAt: inst.subscription_expires_at,
+        maxStudents,
+        activeStudents,
+        remainingSeats,
+        reason: `Subscription plan expired on ${inst.subscription_expires_at}.`,
+      };
+    }
+  }
+
+  return {
+    hasActivePlan: true,
+    plan,
+    status: 'ACTIVE',
+    expiresAt: inst.subscription_expires_at,
+    maxStudents,
+    activeStudents,
+    remainingSeats,
+  };
+}
+
 // 1. Institute Dashboard
 router.get('/dashboard', (req: AuthRequest, res: Response) => {
   try {
@@ -110,16 +195,24 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       ORDER BY count DESC
     `).all(instituteId);
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+
     return res.json({
       institute,
+      hasActivePlan: subStatus.hasActivePlan,
+      subscriptionPlan: subStatus.plan,
+      subscriptionExpiresAt: subStatus.expiresAt,
       metrics: {
         totalStudents: studentCountRow.total_students || 0,
         activeStudents: studentCountRow.active_students || 0,
         totalEvaluations: evalStats.total_evaluations || 0,
         averageScore: evalStats.average_score ? Math.round(evalStats.average_score * 10) / 10 : 0,
-        maxStudentsAllowed: institute.max_students || 500,
-        subscriptionStatus: institute.status,
-        subscriptionExpiresAt: institute.subscription_expires_at,
+        maxStudentsAllowed: subStatus.maxStudents,
+        remainingSeats: subStatus.remainingSeats,
+        hasActivePlan: subStatus.hasActivePlan,
+        subscriptionStatus: subStatus.status,
+        subscriptionPlan: subStatus.plan,
+        subscriptionExpiresAt: subStatus.expiresAt,
       },
       batches,
       topPerformers,
@@ -212,12 +305,21 @@ router.post('/students', (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Check institute capacity
-    const countRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
-    const inst = db.prepare('SELECT name, max_students FROM institutes WHERE id = ?').get(instituteId) as { name: string; max_students: number };
-    const maxCapacity = inst?.max_students || 50;
-    if (countRow.count >= maxCapacity) {
-      return res.status(403).json({ error: `Institute student limit (${maxCapacity}) reached. Please upgrade your capacity.` });
+    // Subscription Gating & Quota Check
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
+    if (subStatus.activeStudents >= subStatus.maxStudents) {
+      return res.status(403).json({
+        error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} students (${subStatus.activeStudents} active). Please upgrade your plan.`,
+        code: 'QUOTA_EXCEEDED',
+      });
     }
 
     // Check if student user exists in users table
@@ -335,6 +437,15 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'A list of students is required.' });
     }
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const results = {
       enrolled: 0,
       invited: 0,
@@ -342,9 +453,8 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
       errors: [] as string[],
     };
 
-    const institute = db.prepare('SELECT name, max_students FROM institutes WHERE id = ?').get(instituteId) as { name: string; max_students: number } | undefined;
-    const currentCount = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as { count: number };
-    const maxCapacity = institute?.max_students || 50;
+    const maxCapacity = subStatus.maxStudents;
+    const currentCount = { count: subStatus.activeStudents };
 
     for (const item of students) {
       const email = typeof item === 'string' ? item.trim() : item?.email?.trim();
@@ -609,6 +719,15 @@ router.post('/batches', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const { name, courseLevel, targetAttempt, description, capacity } = req.body;
     if (!name || !courseLevel) {
       return res.status(400).json({ error: 'Batch name and course level are required.' });
@@ -727,6 +846,15 @@ router.post('/batches/:id/students', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
 
     const batchId = req.params.id;
     const batch = db.prepare('SELECT id, name FROM batches WHERE id = ? AND institute_id = ?').get(batchId, instituteId) as { id: string; name: string } | undefined;
@@ -954,6 +1082,15 @@ router.post('/assignments', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const { title, subjectKey, subjectName, maximumMarks, instructions, timeLimitMinutes, deadline, batchId } = req.body;
 
     if (!title || !subjectKey || !subjectName || !deadline) {
@@ -1143,6 +1280,15 @@ router.post('/tests', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const { title, subjectKey, subjectName, maximumMarks, instructions, timeLimitMinutes, deadline, batchId } = req.body;
 
     if (!title || !subjectKey || !deadline) {
@@ -1296,15 +1442,18 @@ router.get('/subscription', (req: AuthRequest, res: Response) => {
       features: JSON.parse(p.features_json || '[]'),
     }));
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+
     return res.json({
       instituteId,
       instituteName: inst.name,
-      plan: inst.subscription_plan || 'plan_inst_starter',
-      status: inst.status,
-      maxStudents: inst.max_students || 50,
-      activeStudents: activeMembers,
-      remainingSeats: Math.max(0, (inst.max_students || 50) - activeMembers),
-      expiresAt: inst.subscription_expires_at,
+      plan: subStatus.plan,
+      hasActivePlan: subStatus.hasActivePlan,
+      status: subStatus.status,
+      maxStudents: subStatus.maxStudents,
+      activeStudents: subStatus.activeStudents,
+      remainingSeats: subStatus.remainingSeats,
+      expiresAt: subStatus.expiresAt,
       contactPerson: inst.contact_person,
       email: inst.email,
       phone: inst.phone,
@@ -1515,6 +1664,15 @@ router.post('/materials', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const {
       title,
       level,
@@ -1668,6 +1826,15 @@ router.post('/tests', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
 
     const {
       title,

@@ -173,11 +173,28 @@ export const InstitutePortal: React.FC = () => {
   const [notificationsList, setNotificationsList] = useState<any[]>([]);
   const [settingsData, setSettingsData] = useState<any>(null);
 
+  // Subscription Gating UX State
+  const [showNoPlanModal, setShowNoPlanModal] = useState<boolean>(false);
+  const [restrictedActionName, setRestrictedActionName] = useState<string>('');
+
+  const requireActivePlan = (actionName: string, onAllowed: () => void) => {
+    if (dashboardData && dashboardData.hasActivePlan === false) {
+      setRestrictedActionName(actionName);
+      setShowNoPlanModal(true);
+      return;
+    }
+    onAllowed();
+  };
+
   // Fetch section data
   const loadSectionData = async () => {
     try {
       setLoadingData(true);
       setErrorMsg('');
+
+      if (!dashboardData && activeSection !== 'dashboard') {
+        apiRequest<any>('/api/institute/dashboard').then((d) => setDashboardData(d)).catch(() => {});
+      }
 
       switch (activeSection) {
         case 'dashboard': {
@@ -281,7 +298,12 @@ export const InstitutePortal: React.FC = () => {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load institute data';
-      setErrorMsg(msg);
+      if (msg.includes('No Active Plan') || (err as any)?.data?.code === 'SUBSCRIPTION_REQUIRED') {
+        setRestrictedActionName('this resource');
+        setShowNoPlanModal(true);
+      } else {
+        setErrorMsg(msg);
+      }
     } finally {
       setLoadingData(false);
     }
@@ -330,6 +352,12 @@ export const InstitutePortal: React.FC = () => {
       setSuccessMsg('Student enrolled successfully.');
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setShowAddStudentModal(false);
+        setRestrictedActionName('Student Enrollment');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to enroll student');
     }
   };
@@ -355,6 +383,12 @@ export const InstitutePortal: React.FC = () => {
       setSuccessMsg('Batch created successfully.');
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setShowCreateBatchModal(false);
+        setRestrictedActionName('Batch Creation');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to create batch');
     }
   };
@@ -558,6 +592,12 @@ export const InstitutePortal: React.FC = () => {
       setSuccessMsg(res.message || `Successfully processed ${res.enrolledCount} enrolled students.`);
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setShowBulkImportModal(false);
+        setRestrictedActionName('Bulk Student Import');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to import students');
     } finally {
       setIsBulkImporting(false);
@@ -590,6 +630,12 @@ export const InstitutePortal: React.FC = () => {
       setSuccessMsg('Institute study material uploaded successfully.');
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setShowUploadMaterialModal(false);
+        setRestrictedActionName('Material Upload');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to upload material');
     }
   };
