@@ -187,5 +187,36 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // MCQ Materials & Questions (Source documents and question pool)
+    match /mcq_materials/{materialId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_questions/{questionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_sessions/{sessionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_user_responses/{responseId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_bookmarks/{bookmarkId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_wrong_vault/{vaultId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

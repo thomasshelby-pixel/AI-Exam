@@ -285,6 +285,72 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
+    // 6b. Hydrate MCQ Materials (Source PDF/TXT documents)
+    // First remove any tombstoned MCQ materials from local SQLite
+    for (const t of tombstones) {
+      if (t.collectionName === 'mcq_materials' && (t.targetId || t.id)) {
+        const idToDelete = t.targetId || t.id.replace(/^mcq_materials_/, '');
+        try {
+          db.prepare('DELETE FROM mcq_materials WHERE id = ?').run(idToDelete);
+          db.prepare('DELETE FROM mcq_questions WHERE source_material_id = ?').run(idToDelete);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const mcqMaterials = await getAllFirestoreDocs<any>('mcq_materials');
+    for (const mm of mcqMaterials) {
+      if (tombstoneSet.has(`mcq_materials_${mm.id}`) || tombstoneSet.has(mm.id) || mm.status === 'DELETED') {
+        try {
+          db.prepare('DELETE FROM mcq_materials WHERE id = ?').run(mm.id);
+          db.prepare('DELETE FROM mcq_questions WHERE source_material_id = ?').run(mm.id);
+        } catch {}
+        continue;
+      }
+      try {
+        db.prepare(`
+          INSERT INTO mcq_materials (
+            id, material_name, course, subject, chapter, topic,
+            material_type, source, attempt, applicable_from, applicable_till,
+            amendment_version, description, status, file_type, file_name,
+            file_size, file_hash, content_hash, storage_path, storage_key,
+            extracted_text, page_count, uploaded_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            material_name = excluded.material_name,
+            course = excluded.course,
+            subject = excluded.subject,
+            chapter = excluded.chapter,
+            topic = excluded.topic,
+            material_type = excluded.material_type,
+            source = excluded.source,
+            attempt = excluded.attempt,
+            applicable_from = excluded.applicable_from,
+            applicable_till = excluded.applicable_till,
+            amendment_version = excluded.amendment_version,
+            description = excluded.description,
+            status = excluded.status,
+            file_type = excluded.file_type,
+            file_name = excluded.file_name,
+            file_size = excluded.file_size,
+            file_hash = excluded.file_hash,
+            page_count = excluded.page_count,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          mm.id, mm.material_name, mm.course, mm.subject, mm.chapter || null, mm.topic || null,
+          mm.material_type || 'MTP', mm.source || 'ICAI', mm.attempt || null, mm.applicable_from || null,
+          mm.applicable_till || null, mm.amendment_version || null, mm.description || null,
+          mm.status || 'Draft', mm.file_type || 'PDF', mm.file_name || 'document.pdf',
+          mm.file_size || 0, mm.file_hash || '', mm.content_hash || null, mm.storage_path || null,
+          mm.storage_key || null, mm.extracted_text || null, mm.page_count || 1, mm.uploaded_by || 'ADMIN',
+          mm.created_at || null
+        );
+      } catch (mmErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate mcq_material ${mm.id}:`, mmErr);
+      }
+    }
+
     // 7. Hydrate Evaluations (Student Submissions, Grades, Annotations)
     const evaluations = await getAllFirestoreDocs<any>('evaluations');
     let evHydrated = 0;

@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
-import db from '../db.js';
+import { db, recordLocalTombstone, removeLocalTombstone } from '../db.js';
+import { syncRecordToFirestore, permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import {
   computeFileHash,
@@ -12,7 +13,7 @@ import {
   DuplicateStatus,
 } from './materialDuplicateProtectionService.js';
 
-export type McqMaterialStatus = 'Draft' | 'Review' | 'Approved' | 'Published' | 'Archived';
+export type McqMaterialStatus = 'Draft' | 'Review' | 'Approved' | 'Published' | 'Archived' | 'DELETED';
 
 export type McqMaterialType =
   | 'ICAI Module'
@@ -339,7 +340,7 @@ export function checkMcqMaterialDuplicate(params: {
   const { fileHash, extractedText, course, subject, materialType, attempt, excludeId, overrideDuplicate, overrideReason } = params;
 
   // 1. Exact SHA-256 file check
-  let fileHashQuery = 'SELECT * FROM mcq_materials WHERE file_hash = ?';
+  let fileHashQuery = "SELECT * FROM mcq_materials WHERE file_hash = ? AND status != 'DELETED' AND id NOT IN (SELECT targetId FROM tombstones WHERE collectionName = 'mcq_materials')";
   const fileHashParams: any[] = [fileHash];
   if (excludeId) {
     fileHashQuery += ' AND id != ?';
@@ -370,7 +371,7 @@ export function checkMcqMaterialDuplicate(params: {
 
   // 2. Content-level similarity check against same course and subject
   if (extractedText && extractedText.length > 80) {
-    let textQuery = 'SELECT * FROM mcq_materials WHERE course = ? AND subject = ?';
+    let textQuery = "SELECT * FROM mcq_materials WHERE course = ? AND subject = ? AND status != 'DELETED' AND id NOT IN (SELECT targetId FROM tombstones WHERE collectionName = 'mcq_materials')";
     const textParams: any[] = [course, subject];
     if (excludeId) {
       textQuery += ' AND id != ?';
@@ -588,6 +589,26 @@ export async function saveMcqMaterial(params: {
     uploadedBy || 'ADMIN'
   );
 
+  // Clear any existing tombstone if this ID was previously deleted
+  removeLocalTombstone('mcq_materials', id);
+
+  // Sync to Cloud Firestore for durable cross-container persistence
+  try {
+    const insertedRecord = (db.prepare('SELECT * FROM mcq_materials WHERE id = ?').get(id) as unknown as McqMaterialRecord) || null;
+    if (insertedRecord) {
+      const firestorePayload: any = { ...insertedRecord };
+      // Keep extracted_text snippet in Cloud Firestore to stay safely within document limits
+      if (firestorePayload.extracted_text && firestorePayload.extracted_text.length > 20000) {
+        firestorePayload.extracted_text = firestorePayload.extracted_text.slice(0, 20000);
+      }
+      syncRecordToFirestore('mcq_materials', id, firestorePayload).catch((syncErr) => {
+        console.warn('[McqMaterialService] Cloud Firestore sync warning:', syncErr);
+      });
+    }
+  } catch (syncErr) {
+    console.warn('[McqMaterialService] Firestore sync dispatch note:', syncErr);
+  }
+
   // Record audit log if override was used
   if (overrideReason) {
     try {
@@ -609,7 +630,14 @@ export async function saveMcqMaterial(params: {
 }
 
 export function getMcqMaterialById(id: string): McqMaterialRecord | null {
-  return (db.prepare('SELECT * FROM mcq_materials WHERE id = ?').get(id) as unknown as McqMaterialRecord) || null;
+  const row = (db.prepare("SELECT * FROM mcq_materials WHERE id = ? AND status != 'DELETED'").get(id) as unknown as McqMaterialRecord) || null;
+  if (!row) return null;
+
+  // Also verify not in tombstones
+  const tombstone = db.prepare("SELECT 1 FROM tombstones WHERE collection_name = 'mcq_materials' AND entity_id = ?").get(id);
+  if (tombstone) return null;
+
+  return row;
 }
 
 export function listMcqMaterials(filters: {
@@ -625,7 +653,11 @@ export function listMcqMaterials(filters: {
   const limit = Math.max(1, Math.min(100, filters.limit || 20));
   const offset = (page - 1) * limit;
 
-  const conditions: string[] = [];
+  // ALWAYS exclude DELETED status and tombstones
+  const conditions: string[] = [
+    "status != 'DELETED'",
+    "id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')"
+  ];
   const params: any[] = [];
 
   if (filters.course && filters.course !== 'ALL') {
@@ -650,7 +682,7 @@ export function listMcqMaterials(filters: {
     params.push(term, term, term, term);
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
   const totalRow = db.prepare(`SELECT count(*) as total FROM mcq_materials ${whereClause}`).get(...params) as any;
   const total = totalRow?.total || 0;
@@ -720,23 +752,71 @@ export function updateMcqMaterial(
   params.push(id);
 
   db.prepare(`UPDATE mcq_materials SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
-  return getMcqMaterialById(id);
+  
+  const updated = getMcqMaterialById(id);
+  if (updated) {
+    const firestorePayload: any = { ...updated };
+    if (firestorePayload.extracted_text && firestorePayload.extracted_text.length > 20000) {
+      firestorePayload.extracted_text = firestorePayload.extracted_text.slice(0, 20000);
+    }
+    syncRecordToFirestore('mcq_materials', id, firestorePayload).catch(() => {});
+  }
+  return updated;
 }
 
-export function deleteMcqMaterial(id: string): boolean {
-  const record = getMcqMaterialById(id);
-  if (!record) return false;
+export async function deleteMcqMaterial(id: string): Promise<boolean> {
+  const record = (db.prepare('SELECT * FROM mcq_materials WHERE id = ?').get(id) as unknown as McqMaterialRecord) || null;
+  if (!record) {
+    const isAlreadyTombstoned = db.prepare("SELECT 1 FROM tombstones WHERE collection_name = 'mcq_materials' AND entity_id = ?").get(id);
+    return !!isAlreadyTombstoned;
+  }
 
-  // Clean up private disk file
+  // 1. Clean up private disk file
   if (record.storage_path && fs.existsSync(record.storage_path)) {
     try {
       fs.unlinkSync(record.storage_path);
     } catch (e) {
-      console.warn('Could not remove file on delete:', e);
+      console.warn('[McqMaterialService] Could not remove disk file on delete:', e);
     }
   }
 
+  // 2. Authoritative Tombstoning (Local SQLite + Cloud Firestore)
+  // Ensures deleted material is NEVER resurrected on server restart, container reboot, or background sync
+  recordLocalTombstone('mcq_materials', id, 'ADMIN_DELETED');
+  try {
+    await permanentlyDeleteFromFirestore('mcq_materials', id, 'ADMIN_DELETED');
+  } catch (delFsErr) {
+    console.warn('[McqMaterialService] Cloud Firestore delete error:', delFsErr);
+  }
+
+  // 3. Mark canonical DELETED state first in SQLite
+  try {
+    db.prepare("UPDATE mcq_materials SET status = 'DELETED', updated_at = datetime('now') WHERE id = ?").run(id);
+  } catch {}
+
+  // 4. Hard-delete from SQLite table
   db.prepare('DELETE FROM mcq_materials WHERE id = ?').run(id);
+
+  // 5. CRITICAL CASCADE: Prevent questions generated from this material from reappearing in student pool
+  try {
+    db.prepare("UPDATE mcq_questions SET status = 'DELETED', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+    db.prepare('DELETE FROM mcq_questions WHERE source_material_id = ?').run(id);
+  } catch (cascErr) {
+    console.warn('[McqMaterialService] Cascade question delete notice:', cascErr);
+  }
+
+  // 6. Write audit log
+  try {
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address, created_at)
+      VALUES (?, 'MCQ_ADMIN', 'MCQ_MATERIAL_DELETED', 'MCQ_MATERIAL', ?, ?, '127.0.0.1', datetime('now'))
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      id,
+      JSON.stringify({ materialId: id, materialName: record.material_name, fileHash: record.file_hash })
+    );
+  } catch {}
+
   return true;
 }
 

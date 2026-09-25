@@ -175,8 +175,16 @@ export function seedMcqAdminAndQuestions() {
   }
 
   // B. Seed comprehensive, verified CA MCQs
+  const seedFlag = db.prepare("SELECT value FROM pricing_settings WHERE key = 'MCQ_QUESTIONS_INITIAL_SEED_DONE'").get() as { value?: string } | undefined;
+  if (seedFlag?.value === 'true') {
+    return; // Already initialized; never re-seed or resurrect intentionally deleted questions on restart!
+  }
+
   const count = (db.prepare('SELECT count(*) as total FROM mcq_questions').get() as any)?.total || 0;
   if (count >= 15) {
+    try {
+      db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('MCQ_QUESTIONS_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding mcq questions on restart')").run();
+    } catch {}
     return; // Already populated
   }
 
@@ -640,6 +648,11 @@ export function getCurriculumStats() {
     SELECT course, subject, chapter, question_type, difficulty, count(*) as count
     FROM mcq_questions
     WHERE status = 'published'
+      AND status != 'DELETED'
+      AND (source_material_id IS NULL OR (
+        source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED')
+        AND source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')
+      ))
     GROUP BY course, subject, chapter, question_type, difficulty
   `).all() as Array<{
     course: string;
@@ -679,8 +692,14 @@ export function createSession(studentId: string, params: {
     durationMinutes,
   } = params;
 
-  // Strict SQL query construction
-  const conditions: string[] = ["status = 'published'", "course = ?"];
+  // Strict SQL query construction:
+  // Must exclude any deleted questions AND any questions whose source material was deleted or tombstoned
+  const conditions: string[] = [
+    "status = 'published'",
+    "status != 'DELETED'",
+    "course = ?",
+    "(source_material_id IS NULL OR (source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))"
+  ];
   const queryParams: any[] = [course];
 
   if (subject && subject !== 'ALL') {
@@ -1266,7 +1285,7 @@ export function getAdminQuestions(filters: {
   limit?: number;
 }) {
   const { course, subject, status, search, page = 1, limit = 20 } = filters;
-  const conditions: string[] = ['1=1'];
+  const conditions: string[] = ["status != 'DELETED'"];
   const params: any[] = [];
 
   if (course && course !== 'ALL') {
@@ -1440,27 +1459,32 @@ export function bulkUpdateQuestionStatus(ids: string[], status: McqStatus) {
 }
 
 export function deleteAdminQuestion(id: string) {
-  db.prepare('DELETE FROM mcq_questions WHERE id = ?').run(id);
+  try {
+    db.prepare("UPDATE mcq_questions SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    db.prepare('DELETE FROM mcq_questions WHERE id = ?').run(id);
+  } catch (err) {
+    console.warn('[McqService] Delete question warning:', err);
+  }
   return { success: true };
 }
 
 export function getAdminStats(): McqAdminStats {
-  const totalQuestions = (db.prepare('SELECT count(*) as count FROM mcq_questions').get() as any)?.count || 0;
+  const totalQuestions = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE status != 'DELETED'").get() as any)?.count || 0;
   const publishedCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE status = 'published'").get() as any)?.count || 0;
   const reviewCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE status = 'review'").get() as any)?.count || 0;
   const draftCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE status = 'draft'").get() as any)?.count || 0;
   const archivedCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE status = 'archived'").get() as any)?.count || 0;
 
-  const foundationCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_FOUNDATION'").get() as any)?.count || 0;
-  const interCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_INTERMEDIATE'").get() as any)?.count || 0;
-  const finalCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_FINAL'").get() as any)?.count || 0;
+  const foundationCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_FOUNDATION' AND status != 'DELETED'").get() as any)?.count || 0;
+  const interCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_INTERMEDIATE' AND status != 'DELETED'").get() as any)?.count || 0;
+  const finalCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE course = 'CA_FINAL' AND status != 'DELETED'").get() as any)?.count || 0;
 
-  const normalCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE question_type = 'normal'").get() as any)?.count || 0;
-  const caseCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE question_type = 'case_based'").get() as any)?.count || 0;
+  const normalCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE question_type = 'normal' AND status != 'DELETED'").get() as any)?.count || 0;
+  const caseCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE question_type = 'case_based' AND status != 'DELETED'").get() as any)?.count || 0;
 
-  const easyCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'easy'").get() as any)?.count || 0;
-  const modCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'moderate'").get() as any)?.count || 0;
-  const hardCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'hard'").get() as any)?.count || 0;
+  const easyCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'easy' AND status != 'DELETED'").get() as any)?.count || 0;
+  const modCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'moderate' AND status != 'DELETED'").get() as any)?.count || 0;
+  const hardCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE difficulty = 'hard' AND status != 'DELETED'").get() as any)?.count || 0;
 
   const totalSessionsAttempted = (db.prepare('SELECT count(*) as count FROM mcq_sessions').get() as any)?.count || 0;
 

@@ -529,6 +529,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     refreshUser();
+
+    const handleAuthEvent = () => {
+      refreshUser();
+    };
+
+    window.addEventListener('auth-changed', handleAuthEvent);
+    window.addEventListener('storage', handleAuthEvent);
+
+    return () => {
+      window.removeEventListener('auth-changed', handleAuthEvent);
+      window.removeEventListener('storage', handleAuthEvent);
+    };
   }, [refreshUser]);
 
   const login = async (email: string, password: string): Promise<User> => {

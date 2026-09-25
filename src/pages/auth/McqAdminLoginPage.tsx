@@ -28,7 +28,7 @@ export interface ServerTotpSetupData {
 
 export const McqAdminLoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, refreshUser, setUser, setToken } = useAuth();
 
   const [email, setEmail] = useState<string>('priyatca15@gmail.com');
   const [password, setPassword] = useState<string>('');
@@ -111,7 +111,10 @@ export const McqAdminLoginPage: React.FC = () => {
         localStorage.setItem('ca_exam_checker_token', res.token);
         localStorage.setItem('auth_token', res.token);
         localStorage.setItem('ca_token', res.token);
+        setToken(res.token);
+        setUser(res.user);
         window.dispatchEvent(new Event('auth-changed'));
+        await refreshUser().catch(() => {});
         navigate('/mcq-admin');
       }
     } catch (err: any) {
@@ -156,6 +159,10 @@ export const McqAdminLoginPage: React.FC = () => {
         localStorage.setItem('ca_exam_checker_token', activeToken);
         localStorage.setItem('auth_token', activeToken);
         localStorage.setItem('ca_token', activeToken);
+        setToken(activeToken);
+      }
+      if (res.user) {
+        setUser(res.user);
       }
       if (res.trustToken) {
         localStorage.setItem('ca_trust_token', res.trustToken);
@@ -163,6 +170,7 @@ export const McqAdminLoginPage: React.FC = () => {
       }
 
       window.dispatchEvent(new Event('auth-changed'));
+      await refreshUser().catch(() => {});
       navigate('/mcq-admin');
     } catch (err: any) {
       setErrorMsg(err.message || 'Invalid 6-digit code. Please verify against your authenticator app time.');
@@ -196,11 +204,14 @@ export const McqAdminLoginPage: React.FC = () => {
         localStorage.setItem('ca_exam_checker_token', res.token);
         localStorage.setItem('auth_token', res.token);
         localStorage.setItem('ca_token', res.token);
+        setToken(res.token);
+        setUser(res.user);
         if (res.trustToken) {
           localStorage.setItem('ca_trust_token', res.trustToken);
           localStorage.setItem('ca_device_trust_token', res.trustToken);
         }
         window.dispatchEvent(new Event('auth-changed'));
+        await refreshUser().catch(() => {});
         navigate('/mcq-admin');
       } else {
         throw new Error('Verification completed but session could not be established.');

@@ -3270,6 +3270,15 @@ export function recordLocalTombstone(collectionName: string, entityId: string, r
   }
 }
 
+export function removeLocalTombstone(collectionName: string, entityId: string) {
+  try {
+    const id = `${collectionName}_${entityId}`;
+    db.prepare('DELETE FROM tombstones WHERE id = ? OR (collection_name = ? AND entity_id = ?)').run(id, collectionName, entityId);
+  } catch (err) {
+    console.warn('[db] Failed to remove local tombstone:', err);
+  }
+}
+
 export function getAllLocalTombstoneSet(): Set<string> {
   try {
     const rows = db.prepare('SELECT id, collection_name, entity_id FROM tombstones').all() as Array<{

@@ -483,9 +483,9 @@ router.put('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Resp
 });
 
 // 6. Delete Material
-router.delete('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+router.delete('/admin/materials/:id', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const success = deleteMcqMaterial(req.params.id);
+    const success = await deleteMcqMaterial(req.params.id);
     if (!success) {
       return res.status(404).json({ error: 'Material not found.' });
     }
