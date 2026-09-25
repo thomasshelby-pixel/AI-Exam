@@ -95,6 +95,7 @@ export const MfaModal: React.FC = () => {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const isSubmittingRef = useRef<boolean>(false);
   const hasInitializedRef = useRef<boolean>(false);
+  const verifiedUserRef = useRef<User | null>(null);
 
   // Initialize or reset modal state when challenge opens or mode changes
   useEffect(() => {
@@ -103,6 +104,7 @@ export const MfaModal: React.FC = () => {
       setSuccessMsg('');
       setCopiedKey(false);
       isSubmittingRef.current = false;
+      verifiedUserRef.current = null;
 
       if (mfaChallenge.mode === 'RECOVERY_CODE') {
         setMfaState('READY');
@@ -122,6 +124,23 @@ export const MfaModal: React.FC = () => {
       if (mfaChallenge.mode === 'ENROLL') {
         setOtpDigits(['', '', '', '', '', '']);
         setActiveTab('QR');
+
+        // Priority 1: Use server-provided totpSetup directly if passed from login challenge
+        if (mfaChallenge.totpSetup) {
+          setTotpSetup(mfaChallenge.totpSetup);
+          setMfaState('READY');
+          setTimeout(() => {
+            inputRefs.current[0]?.focus();
+          }, 200);
+          return;
+        }
+
+        // Priority 2: When an active mfaSessionToken is present (e.g. fresh enrollment or after MFA reset),
+        // we must NOT auto-bypass based on stale cached client credentials! Always load fresh setup:
+        if (mfaChallenge.mfaSessionToken) {
+          loadTotpSetup();
+          return;
+        }
 
         if (user?.mfaEnabled) {
           setMfaState('VERIFIED');
@@ -166,6 +185,7 @@ export const MfaModal: React.FC = () => {
     } else {
       hasInitializedRef.current = false;
       isSubmittingRef.current = false;
+      verifiedUserRef.current = null;
     }
   }, [mfaChallenge?.isOpen, mfaChallenge?.mode]);
 
@@ -173,6 +193,29 @@ export const MfaModal: React.FC = () => {
     try {
       setMfaState('INITIALIZING');
       setErrorMsg('');
+
+      // If we have an mfaSessionToken, attempt to query authoritative server setup first
+      if (mfaChallenge?.mfaSessionToken) {
+        try {
+          const res = await (window as any).fetch(
+            `/api/auth/mfa/setup?mfaSessionToken=${encodeURIComponent(mfaChallenge.mfaSessionToken)}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.totpSetup) {
+              setTotpSetup(data.totpSetup);
+              setMfaState('READY');
+              setTimeout(() => {
+                inputRefs.current[0]?.focus();
+              }, 200);
+              return;
+            }
+          }
+        } catch (setupErr) {
+          console.warn('[MfaModal] Could not fetch server setup, falling back:', setupErr);
+        }
+      }
+
       const targetEmail = user?.email || mfaChallenge?.email || 'user';
       const setup = await generateTotpSetup(targetEmail, 'CA Exam Checker AI');
       setTotpSetup(setup);
@@ -326,6 +369,7 @@ export const MfaModal: React.FC = () => {
           mfaEnabled: true,
           mfaVerified: true,
         };
+        verifiedUserRef.current = verifiedUser;
         setUser(verifiedUser);
 
         if (data.recoveryCodes && Array.isArray(data.recoveryCodes) && data.recoveryCodes.length > 0) {
@@ -611,8 +655,9 @@ export const MfaModal: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (user) {
-                    completeMfaChallenge(user);
+                  const finalUser = verifiedUserRef.current || user;
+                  if (finalUser) {
+                    completeMfaChallenge(finalUser);
                   } else {
                     closeMfaModal();
                   }

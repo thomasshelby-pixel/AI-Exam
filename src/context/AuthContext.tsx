@@ -15,6 +15,7 @@ export interface MfaChallengeState {
   isOpen: boolean;
   mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY';
   mfaSessionToken: string;
+  totpSetup?: any;
   canonicalPhoneE164?: string;
   maskedPhone?: string;
   role?: string;
@@ -553,6 +554,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mfaRequired?: boolean;
         mfaEnrolled?: boolean;
         mfaSessionToken?: string;
+        totpSetup?: any;
         canonicalPhoneE164?: string;
         maskedPhone?: string;
         role?: string;
@@ -567,6 +569,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isOpen: true,
             mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
             mfaSessionToken: res.mfaSessionToken!,
+            totpSetup: res.totpSetup,
             canonicalPhoneE164: res.canonicalPhoneE164,
             maskedPhone: res.maskedPhone,
             role: res.role,
@@ -599,6 +602,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         mfaRequired?: boolean;
         mfaEnrolled?: boolean;
         mfaSessionToken?: string;
+        totpSetup?: any;
         canonicalPhoneE164?: string;
         maskedPhone?: string;
         role?: string;
@@ -613,6 +617,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isOpen: true,
             mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
             mfaSessionToken: res.mfaSessionToken!,
+            totpSetup: res.totpSetup,
             canonicalPhoneE164: res.canonicalPhoneE164,
             maskedPhone: res.maskedPhone,
             role: res.role,

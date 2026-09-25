@@ -882,7 +882,7 @@ function runMigrations() {
     `);
   } catch {}
 
-  // Ensure recovery and factor tables exist in migrated databases
+  // Ensure recovery, authenticator, and factor tables exist in migrated databases
   db.exec(`
     CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
       id TEXT PRIMARY KEY,
@@ -894,6 +894,71 @@ function runMigrations() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON mfa_recovery_codes(user_id, used);
+
+    CREATE TABLE IF NOT EXISTS mfa_authenticators (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      factor_type TEXT NOT NULL DEFAULT 'PRIMARY_TOTP',
+      label TEXT NOT NULL DEFAULT 'Authenticator App',
+      totp_secret TEXT,
+      secret_key TEXT,
+      phone_number TEXT,
+      is_backup INTEGER NOT NULL DEFAULT 0,
+      firebase_factor_uid TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_auth_user ON mfa_authenticators(user_id, factor_type);
+
+    CREATE TABLE IF NOT EXISTS mfa_recovery_requests (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      email TEXT NOT NULL,
+      phone TEXT,
+      srn_reg_no TEXT,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
+      admin_notes TEXT,
+      review_notes TEXT,
+      resolution_notes TEXT,
+      reviewed_by TEXT,
+      reviewed_at TEXT,
+      resolved_by TEXT,
+      resolved_at TEXT,
+      user_role TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_rec_req_status ON mfa_recovery_requests(status);
+
+    CREATE TABLE IF NOT EXISTS mfa_audit_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      event_type TEXT NOT NULL,
+      action TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      status TEXT NOT NULL,
+      request_id TEXT,
+      target_user_uid TEXT,
+      target_user_email TEXT,
+      target_user_role TEXT,
+      admin_uid TEXT,
+      admin_email TEXT,
+      ist_timestamp TEXT,
+      correlation_id TEXT,
+      details TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_mfa_audit_user ON mfa_audit_logs(user_id, event_type);
+    CREATE INDEX IF NOT EXISTS idx_mfa_audit_created ON mfa_audit_logs(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS mfa_rate_limits (
+      identifier TEXT PRIMARY KEY,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TEXT,
+      last_attempt_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
 
     CREATE TABLE IF NOT EXISTS mfa_factors (
       id TEXT PRIMARY KEY,
@@ -921,8 +986,31 @@ function runMigrations() {
   addColumnIfNotExists('mfa_recovery_codes', 'status', "TEXT NOT NULL DEFAULT 'UNUSED'");
   addColumnIfNotExists('mfa_recovery_codes', 'salt', "TEXT");
   addColumnIfNotExists('mfa_recovery_codes', 'revoked_at', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'factor_type', "TEXT NOT NULL DEFAULT 'PRIMARY_TOTP'");
+  addColumnIfNotExists('mfa_authenticators', 'label', "TEXT NOT NULL DEFAULT 'Authenticator App'");
   addColumnIfNotExists('mfa_authenticators', 'totp_secret', "TEXT");
   addColumnIfNotExists('mfa_authenticators', 'secret_key', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'phone_number', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'is_backup', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('mfa_authenticators', 'firebase_factor_uid', "TEXT");
+  addColumnIfNotExists('mfa_authenticators', 'last_used_at', "TEXT");
+  addColumnIfNotExists('mfa_recovery_requests', 'review_notes', "TEXT");
+  addColumnIfNotExists('mfa_recovery_requests', 'resolution_notes', "TEXT");
+  addColumnIfNotExists('mfa_recovery_requests', 'resolved_at', "TEXT");
+  addColumnIfNotExists('mfa_recovery_requests', 'resolved_by', "TEXT");
+  addColumnIfNotExists('mfa_recovery_requests', 'user_role', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'action', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'request_id', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'target_user_uid', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'target_user_email', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'target_user_role', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'admin_uid', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'admin_email', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'ist_timestamp', "TEXT");
+  addColumnIfNotExists('mfa_audit_logs', 'correlation_id', "TEXT");
+  addColumnIfNotExists('users', 'mfa_reset_required', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('users', 'pending_totp_secret', "TEXT");
+  addColumnIfNotExists('users', 'mfa_phone', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'admin_approved', "INTEGER NOT NULL DEFAULT 0");
   addColumnIfNotExists('evaluation_materials', 'approved_by', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'approved_at', "TEXT");

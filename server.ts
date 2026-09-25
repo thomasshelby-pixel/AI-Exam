@@ -17,6 +17,7 @@ import legalRoutes from './server/routes/legalRoutes.js';
 import mcqRoutes from './server/routes/mcqRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
@@ -24,6 +25,7 @@ import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 async function startServer() {
   // Initialize Database schemas, indices, and baseline ICAI materials
   initDatabase();
+  initMfaRecoveryTables();
 
   // Hydrate persistent cloud data from Cloud Firestore BEFORE serving traffic
   try {

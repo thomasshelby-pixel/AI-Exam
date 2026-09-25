@@ -12,6 +12,7 @@ import {
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
+import { initMfaRecoveryTables } from './mfaRecoveryService.js';
 
 /**
  * Asynchronously mirrors an inserted or updated record from SQLite to Cloud Firestore.
@@ -748,6 +749,9 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 16. Hydrate MFA Authenticators & Recovery Codes
+    try {
+      initMfaRecoveryTables();
+    } catch {}
     const mfaAuthenticators = await getAllFirestoreDocs<any>('mfa_authenticators');
     for (const auth of mfaAuthenticators) {
       try {

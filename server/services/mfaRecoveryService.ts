@@ -47,7 +47,13 @@ export interface AuditLogRecord {
 /**
  * Initializes tables for MFA Recovery Codes, Multi-Authenticators, Audit Logs, and Rate Limits.
  */
-export function initMfaRecoveryTables(): void {
+let mfaTablesInitialized = false;
+
+export function initMfaRecoveryTables(force: boolean = false): void {
+  if (mfaTablesInitialized && !force) {
+    return;
+  }
+
   try {
     const hasUsersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
     if (!hasUsersTable) {
@@ -73,7 +79,11 @@ export function initMfaRecoveryTables(): void {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       factor_type TEXT NOT NULL DEFAULT 'PRIMARY_TOTP',
-      label TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT 'Authenticator App',
+      totp_secret TEXT,
+      secret_key TEXT,
+      phone_number TEXT,
+      is_backup INTEGER NOT NULL DEFAULT 0,
       firebase_factor_uid TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       last_used_at TEXT,
@@ -90,8 +100,13 @@ export function initMfaRecoveryTables(): void {
       reason TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
       admin_notes TEXT,
+      review_notes TEXT,
+      resolution_notes TEXT,
       reviewed_by TEXT,
       reviewed_at TEXT,
+      resolved_by TEXT,
+      resolved_at TEXT,
+      user_role TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_mfa_rec_req_status ON mfa_recovery_requests(status);
@@ -100,9 +115,18 @@ export function initMfaRecoveryTables(): void {
       id TEXT PRIMARY KEY,
       user_id TEXT,
       event_type TEXT NOT NULL,
+      action TEXT,
       ip_address TEXT,
       user_agent TEXT,
       status TEXT NOT NULL,
+      request_id TEXT,
+      target_user_uid TEXT,
+      target_user_email TEXT,
+      target_user_role TEXT,
+      admin_uid TEXT,
+      admin_email TEXT,
+      ist_timestamp TEXT,
+      correlation_id TEXT,
       details TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -129,6 +153,15 @@ export function initMfaRecoveryTables(): void {
     } catch {}
   };
 
+  addCol('mfa_authenticators', 'factor_type', "TEXT NOT NULL DEFAULT 'PRIMARY_TOTP'");
+  addCol('mfa_authenticators', 'label', "TEXT NOT NULL DEFAULT 'Authenticator App'");
+  addCol('mfa_authenticators', 'totp_secret', 'TEXT');
+  addCol('mfa_authenticators', 'secret_key', 'TEXT');
+  addCol('mfa_authenticators', 'phone_number', 'TEXT');
+  addCol('mfa_authenticators', 'is_backup', 'INTEGER NOT NULL DEFAULT 0');
+  addCol('mfa_authenticators', 'firebase_factor_uid', 'TEXT');
+  addCol('mfa_authenticators', 'last_used_at', 'TEXT');
+
   addCol('mfa_recovery_requests', 'review_notes', 'TEXT');
   addCol('mfa_recovery_requests', 'resolution_notes', 'TEXT');
   addCol('mfa_recovery_requests', 'resolved_at', 'TEXT');
@@ -136,6 +169,7 @@ export function initMfaRecoveryTables(): void {
   addCol('mfa_recovery_requests', 'user_role', 'TEXT');
   addCol('users', 'mfa_reset_required', 'INTEGER DEFAULT 0');
   addCol('users', 'pending_totp_secret', 'TEXT');
+  addCol('users', 'mfa_phone', 'TEXT');
 
   addCol('mfa_audit_logs', 'action', 'TEXT');
   addCol('mfa_audit_logs', 'request_id', 'TEXT');
@@ -147,9 +181,20 @@ export function initMfaRecoveryTables(): void {
   addCol('mfa_audit_logs', 'ist_timestamp', 'TEXT');
   addCol('mfa_audit_logs', 'correlation_id', 'TEXT');
 
+  mfaTablesInitialized = true;
+
   // Fix inconsistent admin MFA states immediately on table initialization
-  fixInconsistentAdminMfaStates();
+  try {
+    fixInconsistentAdminMfaStates();
+  } catch (err) {
+    console.warn('[MFA] Note during fixInconsistentAdminMfaStates:', err);
+  }
 }
+
+// Auto-run initialization eagerly if database is already opened
+try {
+  initMfaRecoveryTables();
+} catch {}
 
 /**
  * Repairs any inconsistent admin accounts where mfa_enabled = 1 but no valid TOTP secret exists.
@@ -371,6 +416,8 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
   }
 
   try {
+    initMfaRecoveryTables();
+
     // 1. Check for pending manual recovery requests
     const pendingRecovery = db.prepare(`
       SELECT id FROM mfa_recovery_requests
@@ -901,6 +948,7 @@ export function getMfaAuditLogs(userId?: string, limit: number = 25): AuditLogRe
  * Auto-creates a primary record if user has mfa_enabled = 1 but no entry in table.
  */
 export function listAuthenticators(userId: string): AuthenticatorRecord[] {
+  initMfaRecoveryTables();
   let rows = db.prepare(`
     SELECT id, user_id, factor_type, label, created_at, last_used_at
     FROM mfa_authenticators
@@ -1604,6 +1652,7 @@ export async function executeServerMfaReset(
   user: { id: string; email: string; role: string; fullName: string };
   message: string;
 }> {
+  initMfaRecoveryTables();
   const cleanTarget = targetUserIdOrEmail.trim();
   const targetUser = (
     db.prepare('SELECT id, email, role, full_name, status, mfa_enabled FROM users WHERE id = ?').get(cleanTarget) ||

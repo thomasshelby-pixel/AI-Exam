@@ -26,6 +26,7 @@ import {
   parseCookieValue,
 } from '../services/trustService.js';
 import {
+  initMfaRecoveryTables,
   generateRecoveryCodes,
   getRecoveryCodeStatus,
   verifyAndConsumeRecoveryCode,
@@ -51,6 +52,13 @@ import { UserRole } from '../../src/types/index.js';
 import { mfaRecoveryRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
+
+// Ensure all MFA tables exist before handling any route
+initMfaRecoveryTables();
+router.use((_req, _res, next) => {
+  initMfaRecoveryTables();
+  next();
+});
 
 router.use(optionalAuthenticateToken);
 
