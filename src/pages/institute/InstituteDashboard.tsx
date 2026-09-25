@@ -159,7 +159,11 @@ export const InstituteDashboard: React.FC = () => {
       await loadDashboard();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to enroll student';
-      setActionError(msg);
+      if (msg.includes('No Active Plan') || (err as any)?.data?.code === 'SUBSCRIPTION_REQUIRED') {
+        setActionError('No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.');
+      } else {
+        setActionError(msg);
+      }
     }
   };
 
@@ -198,7 +202,12 @@ export const InstituteDashboard: React.FC = () => {
       setActionSuccess('Batch created successfully.');
       await loadDashboard();
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to create batch');
+      const msg = err instanceof Error ? err.message : 'Failed to create batch';
+      if (msg.includes('No Active Plan') || (err as any)?.data?.code === 'SUBSCRIPTION_REQUIRED') {
+        setActionError('No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.');
+      } else {
+        setActionError(msg);
+      }
     }
   };
 
@@ -222,7 +231,12 @@ export const InstituteDashboard: React.FC = () => {
       setActionSuccess('Assignment created successfully.');
       await loadDashboard();
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to create assignment');
+      const msg = err instanceof Error ? err.message : 'Failed to create assignment';
+      if (msg.includes('No Active Plan') || (err as any)?.data?.code === 'SUBSCRIPTION_REQUIRED') {
+        setActionError('No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.');
+      } else {
+        setActionError(msg);
+      }
     }
   };
 

@@ -15,7 +15,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ArrowRight,
-  Building2,
   GraduationCap,
   Tag,
   Eye,
@@ -36,7 +35,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const { login, register, suspendedAccount, clearSuspension } = useAuth();
   const accountDeletedMessage = (location.state as any)?.accountDeletedMessage;
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
-  const [accountType, setAccountType] = useState<'STUDENT' | 'INSTITUTE'>('STUDENT');
 
   // Form states
   const [email, setEmail] = useState('');
@@ -84,11 +82,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-
-    if (accountType === 'INSTITUTE') {
-      navigate('/institute/register');
-      return;
-    }
 
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
@@ -173,53 +166,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
           </p>
         </div>
 
-        {/* Account Type Selection during registration */}
+        {/* Free Tier Callout on Register */}
         {mode === 'register' && (
-          <div className="mb-5">
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
-              Are you registering as:
-            </label>
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setAccountType('STUDENT')}
-                className={`p-3 rounded-lg border text-left transition flex flex-col items-start gap-1 cursor-pointer ${
-                  accountType === 'STUDENT'
-                    ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 ring-1 ring-blue-600 text-blue-900 dark:text-blue-200'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 font-bold text-xs">
-                  <GraduationCap className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  <span>CA Student</span>
-                </div>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">Individual exam aspirant</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountType('INSTITUTE');
-                  navigate('/institute/register');
-                }}
-                className={`p-3 rounded-lg border text-left transition flex flex-col items-start gap-1 cursor-pointer ${
-                  accountType === 'INSTITUTE'
-                    ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/60 ring-1 ring-indigo-600 text-indigo-900 dark:text-indigo-200'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 font-bold text-xs">
-                  <Building2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Coaching Institute</span>
-                </div>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">Academy / Educator batch</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Free Tier Callout on Register (Student) */}
-        {mode === 'register' && accountType === 'STUDENT' && (
           <div className="mb-5 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 flex items-center gap-3">
             <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">
               FREE
@@ -377,7 +325,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Student Registration Form */}
-        {mode === 'register' && accountType === 'STUDENT' && (
+        {mode === 'register' && (
           <div className="space-y-4">
             <form onSubmit={handleRegisterSubmit} className="space-y-3">
               <div>
@@ -533,7 +481,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Terms notice */}
-        <p className="text-[10px] text-slate-400 dark:text-slate-400 text-center mt-4 leading-relaxed">
+        <p className="text-[10px] text-slate-400 dark:text-slate-400 text-center mt-6 leading-relaxed">
           By signing in or registering, you agree to our{' '}
           <a href="/legal" className="text-blue-600 dark:text-blue-400 hover:underline">
             Terms of Service

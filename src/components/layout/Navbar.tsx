@@ -31,9 +31,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
   const { isDark, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isStudent = user?.role === 'STUDENT';
-  const isInstitute = user?.role === 'INSTITUTE_ADMIN' || (user?.role as string) === 'INSTITUTE';
-  const isAdmin = user?.role === 'SUPER_ADMIN' || (user?.role as string) === 'ADMIN';
+  const normRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
+  const isStudent = normRole === 'STUDENT';
+  const isInstitute = normRole === 'INSTITUTE_ADMIN' || normRole === 'INSTITUTE';
+  const isAdmin = normRole === 'SUPER_ADMIN' || normRole === 'ADMIN';
 
   const studentProfile = profile as {
     free_evaluations_used?: number;

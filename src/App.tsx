@@ -296,9 +296,16 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
       const normEmail = (user.email || '').toLowerCase().trim();
       const isMcqAdmin = (user.role || '').toUpperCase() === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com';
 
+      const normRole = (user.role || '').toUpperCase().replace(/\s+/g, '_');
+      const isInstituteAdmin = normRole === 'INSTITUTE_ADMIN' || normRole === 'INSTITUTE';
+
       if (redirectUrl && !redirectUrl.startsWith('/login')) {
         if (isMcqAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
           navigate('/mcq-admin', { replace: true });
+          return;
+        }
+        if (isInstituteAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
+          navigate('/institute/dashboard', { replace: true });
           return;
         }
         navigate(redirectUrl, { replace: true });
@@ -306,10 +313,10 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
       }
       if (isMcqAdmin) {
         navigate('/mcq-admin', { replace: true });
+      } else if (isInstituteAdmin) {
+        navigate('/institute/dashboard', { replace: true });
       } else if (user.role === 'SUPER_ADMIN' || (user.role as string) === 'ADMIN') {
         navigate('/admin/dashboard', { replace: true });
-      } else if (user.role === 'INSTITUTE_ADMIN') {
-        navigate('/institute/dashboard', { replace: true });
       } else {
         navigate('/student/dashboard', { replace: true });
       }
@@ -321,13 +328,18 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
     const redirectUrl = searchParams.get('redirect');
 
     const activeUser = loggedInUser || user;
-    const role = (activeUser?.role || '').toUpperCase();
+    const role = (activeUser?.role || '').toUpperCase().replace(/\s+/g, '_');
     const email = (activeUser?.email || '').toLowerCase().trim();
     const isMcqAdmin = role === 'MCQ_ADMIN' || email === 'priyatca15@gmail.com';
+    const isInstituteAdmin = role === 'INSTITUTE_ADMIN' || role === 'INSTITUTE';
 
     if (redirectUrl && !redirectUrl.startsWith('/login')) {
       if (isMcqAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
         navigate('/mcq-admin', { replace: true });
+        return;
+      }
+      if (isInstituteAdmin && (redirectUrl === '/admin' || redirectUrl.startsWith('/admin/') || redirectUrl === '/super-admin' || redirectUrl.startsWith('/super-admin/'))) {
+        navigate('/institute/dashboard', { replace: true });
         return;
       }
       navigate(redirectUrl, { replace: true });
@@ -336,10 +348,10 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
 
     if (isMcqAdmin) {
       navigate('/mcq-admin', { replace: true });
+    } else if (isInstituteAdmin) {
+      navigate('/institute/dashboard', { replace: true });
     } else if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
       navigate('/admin/dashboard', { replace: true });
-    } else if (role === 'INSTITUTE_ADMIN') {
-      navigate('/institute/dashboard', { replace: true });
     } else {
       navigate('/student/dashboard', { replace: true });
     }
@@ -386,11 +398,48 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/mcq-admin/login" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   const roleUpper = (user.role || '').toUpperCase();
   if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Protected Super Admin Route Guard
+// Automatically routes Institute Admin to Institute Portal rather than hitting 403 Access Denied
+const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login?redirect=/admin/dashboard" replace />;
+  }
+
+  const roleUpper = (user.role || '').toUpperCase().replace(/\s+/g, '_');
+  const normEmail = (user.email || '').toLowerCase().trim();
+
+  // Redirect MCQ Admin to MCQ Admin Portal
+  if (roleUpper === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com') {
+    return <Navigate to="/mcq-admin" replace />;
+  }
+
+  // Redirect Institute Admin cleanly to Institute Dashboard
+  if (roleUpper === 'INSTITUTE_ADMIN' || roleUpper === 'INSTITUTE') {
+    return <Navigate to="/institute/dashboard" replace />;
+  }
+
+  if (roleUpper !== 'SUPER_ADMIN' && roleUpper !== 'ADMIN') {
     return <Navigate to="/student/dashboard" replace />;
   }
 
@@ -460,9 +509,30 @@ const AppRoutes: React.FC = () => {
         {/* SUPER ADMIN PORTAL ROUTES — Dedicated Full Screen Backoffice */}
         {/* ============================================================ */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-        <Route path="/admin/*" element={<AdminPortal />} />
-        <Route path="/super-admin" element={<AdminPortal />} />
-        <Route path="/super-admin/*" element={<AdminPortal />} />
+        <Route
+          path="/admin/*"
+          element={
+            <ProtectedSuperAdminRoute>
+              <AdminPortal />
+            </ProtectedSuperAdminRoute>
+          }
+        />
+        <Route
+          path="/super-admin"
+          element={
+            <ProtectedSuperAdminRoute>
+              <AdminPortal />
+            </ProtectedSuperAdminRoute>
+          }
+        />
+        <Route
+          path="/super-admin/*"
+          element={
+            <ProtectedSuperAdminRoute>
+              <AdminPortal />
+            </ProtectedSuperAdminRoute>
+          }
+        />
 
         {/* ============================================================ */}
         {/* MCQ ADMIN PORTAL ROUTES — Dedicated Content Management */}

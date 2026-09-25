@@ -305,6 +305,20 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
               </div>
             ))}
           </div>
+
+          {/* Option to skip plan and explore dashboard */}
+          <div className="mt-8 pt-6 border-t border-slate-700/80 text-center flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-slate-400">
+              Want to review the portal first? You can activate or upgrade a plan anytime later.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/institute/dashboard', { replace: true })}
+              className="px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-xl transition cursor-pointer border border-slate-600/60"
+            >
+              Explore Dashboard Without Plan →
+            </button>
+          </div>
         </div>
       ) : (
         <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-2xl">

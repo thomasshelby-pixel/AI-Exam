@@ -12,20 +12,56 @@ router.use(requireRole('INSTITUTE_ADMIN', 'SUPER_ADMIN'));
 
 // Helper to get the institute ID for the authenticated admin
 function getAdminInstituteId(req: AuthRequest): string | null {
-  if (req.user!.role === 'SUPER_ADMIN') {
+  if (!req.user) return null;
+  const roleNorm = (req.user.role || '').toUpperCase().replace(/\s+/g, '_');
+  if (roleNorm === 'SUPER_ADMIN' || roleNorm === 'ADMIN') {
     if (req.query.instituteId) {
       return String(req.query.instituteId);
     }
-    const instByEmail = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user!.email) as { id: string } | undefined;
+    const instByEmail = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user.email) as { id: string } | undefined;
     if (instByEmail) return instByEmail.id;
     const firstInst = db.prepare('SELECT id FROM institutes ORDER BY created_at ASC LIMIT 1').get() as { id: string } | undefined;
     return firstInst ? firstInst.id : null;
   }
-  const inst = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user!.email) as { id: string } | undefined;
+  const inst = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user.email) as { id: string } | undefined;
   if (inst) return inst.id;
-  if (req.user!.email?.toLowerCase() === 'institute@apexca.edu') {
+  if (req.user.email?.toLowerCase() === 'institute@apexca.edu') {
     return 'inst_apex_academy_01';
   }
+
+  // Check audit log signup
+  const signupLog = db.prepare("SELECT entity_id FROM audit_logs WHERE user_id = ? AND action = 'INSTITUTE_SIGNUP' ORDER BY created_at DESC LIMIT 1").get(req.user.id) as { entity_id: string } | undefined;
+  if (signupLog) {
+    const instFromLog = db.prepare('SELECT id FROM institutes WHERE id = ?').get(signupLog.entity_id) as { id: string } | undefined;
+    if (instFromLog) return instFromLog.id;
+  }
+
+  // If user is INSTITUTE_ADMIN but no institute record exists yet, automatically provision an initial profile
+  if (roleNorm === 'INSTITUTE_ADMIN' || roleNorm === 'INSTITUTE') {
+    const newInstId = `inst_${crypto.randomBytes(8).toString('hex')}`;
+    const code = `INST-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    const name = `${req.user.fullName || 'CA'} Academy`;
+    try {
+      db.prepare(`
+        INSERT INTO institutes (
+          id, name, code, logo_url, email, phone, address, website,
+          contact_person, status, subscription_plan, max_students, created_at
+        ) VALUES (?, ?, ?, '', ?, ?, '', '', ?, 'ACTIVE', 'NONE', 50, CURRENT_TIMESTAMP)
+      `).run(newInstId, name, code, req.user.email.toLowerCase().trim(), (req.user as any).phone || '9999999999', req.user.fullName || 'Administrator');
+
+      const batchId = `batch_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO batches (id, institute_id, name, course_level, description)
+        VALUES (?, ?, 'First Batch - Foundation & Inter', 'INTERMEDIATE', 'Primary batch for enrolled CA students')
+      `).run(batchId, newInstId);
+
+      return newInstId;
+    } catch {
+      const existing = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user.email) as { id: string } | undefined;
+      if (existing) return existing.id;
+    }
+  }
+
   return null;
 }
 
@@ -81,8 +117,21 @@ export function getInstituteSubscriptionStatus(instituteId: string): {
   const remainingSeats = Math.max(0, maxStudents - activeStudents);
 
   const plan = (inst.subscription_plan || '').trim();
-  const noPlanKeywords = ['', 'NONE', 'NO_PLAN', 'INACTIVE', 'EXPIRED'];
-  if (noPlanKeywords.includes(plan.toUpperCase())) {
+  const noPlanKeywords = [
+    '',
+    'NONE',
+    'NO_PLAN',
+    'INACTIVE',
+    'EXPIRED',
+    'PENDING_SELECTION',
+    'UNPAID',
+    'FREE',
+    'TRIAL_EXPIRED',
+    'CANCELLED',
+    'CANCELED',
+    'SUSPENDED',
+  ];
+  if (!plan || noPlanKeywords.includes(plan.toUpperCase())) {
     return {
       hasActivePlan: false,
       plan: plan || 'NONE',
@@ -290,6 +339,9 @@ router.post('/students', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    const inst = db.prepare('SELECT id, name FROM institutes WHERE id = ?').get(instituteId) as { id: string; name: string } | undefined;
+    const instName = inst?.name || 'the Institute';
+
     const { email, batchId, studentName, notes, phone, icaiRegistrationNumber, caLevel } = req.body;
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Valid student email is required.' });
@@ -344,7 +396,7 @@ router.post('/students', (req: AuthRequest, res: Response) => {
           if (batchId && batchId !== existingMembership.batch_id) {
             db.prepare('UPDATE institute_memberships SET batch_id = ?, notes = COALESCE(?, notes) WHERE id = ?').run(batchId, notes || null, existingMembership.id);
             logInstituteAudit(req.user!.id, 'ASSIGN_BATCH', 'MEMBERSHIP', existingMembership.id, { batchId, studentEmail: normalizedEmail });
-            return res.json({ success: true, message: `Student ${existingUser.full_name} is already enrolled in ${inst.name}. Batch updated.` });
+            return res.json({ success: true, message: `Student ${existingUser.full_name} is already enrolled in ${instName}. Batch updated.` });
           }
           return res.status(400).json({ error: `Student ${existingUser.full_name} (${normalizedEmail}) is already actively enrolled in this institute.` });
         } else {
@@ -379,7 +431,7 @@ router.post('/students', (req: AuthRequest, res: Response) => {
       db.prepare(`
         INSERT INTO notifications (id, user_id, title, message, type, created_at)
         VALUES (?, ?, 'Institute Membership Activated', ?, 'INSTITUTE', CURRENT_TIMESTAMP)
-      `).run(notifId, existingUser.id, `You have been enrolled in ${inst.name}. Your evaluations and test series are now sponsored.`);
+      `).run(notifId, existingUser.id, `You have been enrolled in ${instName}. Your evaluations and test series are now sponsored.`);
 
       logInstituteAudit(req.user!.id, 'ENROLL_STUDENT', 'MEMBERSHIP', membershipId, {
         instituteId,
@@ -390,7 +442,7 @@ router.post('/students', (req: AuthRequest, res: Response) => {
 
       return res.status(201).json({
         success: true,
-        message: `Student ${existingUser.full_name} enrolled successfully with full institute sponsorship in ${inst.name}.`,
+        message: `Student ${existingUser.full_name} enrolled successfully with full institute sponsorship in ${instName}.`,
       });
     } else {
       // User has not registered yet -> create pending invitation record
@@ -417,7 +469,7 @@ router.post('/students', (req: AuthRequest, res: Response) => {
       return res.status(201).json({
         success: true,
         pending: true,
-        message: `Student invitation recorded for ${normalizedEmail}. When this student signs up with this email, their account will automatically be linked to ${inst.name} and the selected batch.`,
+        message: `Student invitation recorded for ${normalizedEmail}. When this student signs up with this email, their account will automatically be linked to ${instName} and the selected batch.`,
       });
     }
   } catch (error: unknown) {
@@ -599,6 +651,16 @@ router.put('/students/:id/batch', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    // Subscription Gating: Batch assignment requires an active plan
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
 
     const studentIdOrMembershipId = req.params.id;
     const { batchId } = req.body;
@@ -932,6 +994,16 @@ router.post('/batches/:id/move-student', (req: AuthRequest, res: Response) => {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
+    // Subscription Gating: Moving students requires an active plan
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
+
     const { id: sourceBatchId } = req.params;
     const { studentId, targetBatchId } = req.body;
 
@@ -1211,6 +1283,16 @@ router.put('/students/:id/batch', (req: AuthRequest, res: Response) => {
   try {
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
+
+    // Subscription Gating: Batch assignment requires an active plan
+    const subStatus = getInstituteSubscriptionStatus(instituteId);
+    if (!subStatus.hasActivePlan) {
+      return res.status(403).json({
+        error: 'No Active Plan: You need an active subscription to perform this action. Please activate a plan to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
 
     const studentId = req.params.id;
     const { batchId } = req.body;

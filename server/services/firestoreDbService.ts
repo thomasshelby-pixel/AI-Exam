@@ -129,12 +129,16 @@ export async function recordTombstone(collectionName: string, docId: string, rea
   if (!db || !docId) return;
   try {
     const tombstoneId = `${collectionName}_${docId}`;
-    await setDoc(doc(db, 'tombstones', tombstoneId), {
-      collectionName,
-      targetId: docId,
-      reason: reason || 'PERMANENT_DELETION',
-      deletedAt: new Date().toISOString(),
-    });
+    await withTimeout(
+      setDoc(doc(db, 'tombstones', tombstoneId), {
+        collectionName,
+        targetId: docId,
+        reason: reason || 'PERMANENT_DELETION',
+        deletedAt: new Date().toISOString(),
+      }),
+      2500,
+      undefined
+    );
   } catch (err) {
     console.warn(`[Firestore] Failed to record tombstone for ${collectionName}/${docId}:`, err);
   }
@@ -145,8 +149,12 @@ export async function isTombstoned(collectionName: string, docId: string): Promi
   if (!db || !docId) return false;
   try {
     const tombstoneId = `${collectionName}_${docId}`;
-    const snap = await getDoc(doc(db, 'tombstones', tombstoneId));
-    return snap.exists();
+    const snap = await withTimeout(
+      getDoc(doc(db, 'tombstones', tombstoneId)),
+      2500,
+      null
+    );
+    return Boolean(snap && snap.exists());
   } catch {
     return false;
   }

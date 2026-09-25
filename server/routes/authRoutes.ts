@@ -11,7 +11,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
-import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue } from '../services/trustService.js';
+import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
 import {
   getAuthoritativeUserMfaStatus,
   getAuthoritativeUserMfaState,
@@ -49,6 +49,7 @@ export async function evaluateMfaRequirementForLogin(
   deviceContext?: {
     deviceId?: string;
     trustToken?: string;
+    candidateTokens?: Array<string | undefined | null>;
   }
 ): Promise<{
   requireMfa: boolean;
@@ -68,6 +69,7 @@ export async function evaluateMfaRequirementForLogin(
   role?: string;
   message?: string;
   deviceTrusted?: boolean;
+  trustToken?: string;
 }> {
   // Authoritative server/database MFA state evaluation
   const authState = await getAuthoritativeUserMfaState(user.id);
@@ -75,14 +77,22 @@ export async function evaluateMfaRequirementForLogin(
   const isEnrolled = mfaState === 'MFA_ENROLLED';
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
 
+  const candidateTokens = [
+    deviceContext?.trustToken,
+    ...(deviceContext?.candidateTokens || []),
+  ].filter(Boolean) as string[];
+
   // Role: STUDENT -> MFA is strictly OPTIONAL
   if (user.role === 'STUDENT') {
     if (!isEnrolled) {
       return { requireMfa: false, mfaState };
     }
     // Student voluntarily enabled MFA -> Check trusted device status (365 days)
-    if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
-      return { requireMfa: false, mfaState, deviceTrusted: true };
+    if (deviceContext?.deviceId && candidateTokens.length > 0) {
+      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext.deviceId, candidateTokens);
+      if (trustCheck.isTrusted) {
+        return { requireMfa: false, mfaState, deviceTrusted: true, trustToken: trustCheck.trustToken };
+      }
     }
     // Untrusted device for student who enabled MFA -> Issue challenge
     const sessionToken = generateMfaSessionToken({
@@ -138,8 +148,11 @@ export async function evaluateMfaRequirementForLogin(
     }
 
     // mfaState === 'MFA_ENROLLED': Check trusted device status (365 days)
-    if (deviceContext?.deviceId && deviceContext?.trustToken && isDeviceTrusted(user.id, deviceContext.deviceId, deviceContext.trustToken)) {
-      return { requireMfa: false, mfaState, deviceTrusted: true };
+    if (deviceContext?.deviceId && candidateTokens.length > 0) {
+      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext.deviceId, candidateTokens);
+      if (trustCheck.isTrusted) {
+        return { requireMfa: false, mfaState, deviceTrusted: true, trustToken: trustCheck.trustToken };
+      }
     }
 
     // Untrusted device for enrolled admin -> show verification screen (CHALLENGE) - NO QR code
@@ -700,9 +713,17 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       (req as any).cookies?.['ca_trust_token'] ||
       parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
+    const candidateTokens = [
+      trustToken,
+      req.body?.trustToken,
+      req.headers['x-device-trust-token'],
+      (req as any).cookies?.['ca_trust_token'],
+      parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+    ].filter(Boolean) as string[];
+
     // Role-Based MFA Evaluation with Trusted Device Checking:
     // Check if MFA challenge is required or if mandatory enrollment is needed
-    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken });
+    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken, candidateTokens });
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
@@ -751,7 +772,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       email: user.email,
       role: effectiveRole,
       fullName: user.full_name,
-    }, sessionId);
+    }, sessionId, true);
 
     const isPermanentFree = checkPermanentFreeAccess(user.email);
 
@@ -761,26 +782,41 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       VALUES (?, ?, 'USER_LOGIN', 'USER', ?, 'User successfully logged in')
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, user.id, user.id);
 
-    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
+    const resolvedTrustToken = mfaCheck.trustToken || trustToken;
 
-      return res.json({
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.full_name,
-          role: effectiveRole,
-          status: user.status,
-          hasPermanentFreeAccess: isPermanentFree,
-          mfaEnabled: authMfa.mfaEnabled,
-          mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
-          mfaVerified: true,
-          mfaMandatory: isMandatoryRole,
-        },
-      });
+    const isProduction = process.env.NODE_ENV === 'production';
+    const secureFlag = isProduction ? '; Secure' : '';
+
+    const cookieHeaders: string[] = [
+      `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`,
+      `ca_device_id=${encodeURIComponent(deviceId)}; Path=/; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`,
+    ];
+    if (resolvedTrustToken) {
+      cookieHeaders.push(`ca_trust_token=${encodeURIComponent(resolvedTrustToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`);
+    }
+    res.setHeader('Set-Cookie', cookieHeaders);
+
+    return res.json({
+      token,
+      trustToken: resolvedTrustToken,
+      deviceId,
+      deviceTrusted: Boolean(mfaCheck.deviceTrusted),
+      isTrusted: Boolean(mfaCheck.deviceTrusted),
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: effectiveRole,
+        status: user.status,
+        hasPermanentFreeAccess: isPermanentFree,
+        mfaEnabled: authMfa.mfaEnabled,
+        mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
+        mfaVerified: true,
+        mfaMandatory: isMandatoryRole,
+      },
+    });
   } catch (error: unknown) {
     console.error('Login error:', error);
     return res.status(500).json({ error: 'Login failed. Please try again.' });
@@ -1029,7 +1065,15 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
       (req as any).cookies?.['ca_trust_token'] ||
       parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
-    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken });
+    const candidateTokens = [
+      trustToken,
+      req.body?.trustToken,
+      req.headers['x-device-trust-token'],
+      (req as any).cookies?.['ca_trust_token'],
+      parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+    ].filter(Boolean) as string[];
+
+    const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken, candidateTokens });
     if (mfaCheck.requireMfa) {
       return res.json({
         mfaRequired: true,
@@ -1049,14 +1093,29 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
       email: user.email,
       role: user.role,
       fullName: user.full_name,
-    });
-
-    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+    }, undefined, true);
 
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
+    const resolvedTrustToken = mfaCheck.trustToken || trustToken;
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    const secureFlag = isProduction ? '; Secure' : '';
+
+    const cookieHeaders: string[] = [
+      `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`,
+      `ca_device_id=${encodeURIComponent(deviceId)}; Path=/; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`,
+    ];
+    if (resolvedTrustToken) {
+      cookieHeaders.push(`ca_trust_token=${encodeURIComponent(resolvedTrustToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`);
+    }
+    res.setHeader('Set-Cookie', cookieHeaders);
 
     return res.json({
       token,
+      trustToken: resolvedTrustToken,
+      deviceId,
+      deviceTrusted: Boolean(mfaCheck.deviceTrusted),
+      isTrusted: Boolean(mfaCheck.deviceTrusted),
       user: {
         id: user.id,
         email: user.email,
@@ -1274,7 +1333,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       profileData = { institute };
     }
 
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
 
     // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes
     const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);
@@ -1284,15 +1343,21 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
       (req.query.deviceId as string)?.trim() ||
-      rawCookies['ca_device_id'];
+      rawCookies['ca_device_id'] ||
+      parseCookieValue(req.headers.cookie, 'ca_device_id');
     const trustToken =
       (req.headers['x-device-trust-token'] as string)?.trim() ||
       rawCookies['ca_trust_token'] ||
-      (typeof req.headers.cookie === 'string' && req.headers.cookie.includes('ca_trust_token')
-        ? req.headers.cookie.split(';').find(c => c.trim().startsWith('ca_trust_token='))?.split('=')[1]?.trim()
-        : undefined);
+      parseCookieValue(req.headers.cookie, 'ca_trust_token');
 
-    const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
+    const candidateTokens = [
+      trustToken,
+      rawCookies['ca_trust_token'],
+      parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+    ].filter(Boolean) as string[];
+
+    const trustResult = verifyUserDeviceTrust(user.id, deviceId, candidateTokens);
+    const deviceIsTrusted = trustResult.isTrusted;
 
     let mfaVerified = false;
     if (!isMandatoryRole) {
@@ -1301,7 +1366,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       if (mfaEnabled) {
         mfaVerified = !!req.user?.mfaVerified || deviceIsTrusted;
       } else {
-        mfaVerified = false;
+        mfaVerified = deviceIsTrusted || !!req.user?.mfaVerified;
       }
     }
 

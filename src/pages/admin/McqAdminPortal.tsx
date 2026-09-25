@@ -124,13 +124,13 @@ export const McqAdminPortal: React.FC = () => {
     if (isLoading) return;
 
     if (!isAuthenticated || !user) {
-      navigate('/mcq-admin/login', { replace: true });
+      navigate('/login', { replace: true });
       return;
     }
 
     const roleUpper = (user.role || '').toUpperCase();
     if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
-      navigate('/student/dashboard', { replace: true });
+      navigate('/login', { replace: true });
     }
   }, [user, isLoading, isAuthenticated, navigate]);
 

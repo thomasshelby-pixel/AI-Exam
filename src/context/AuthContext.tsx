@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types/index.js';
-import { apiRequest, getOrCreateDeviceId } from '../api/client.js';
+import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken, getScopedTrustToken } from '../api/client.js';
 import { MfaModal } from '../components/auth/MfaModal.js';
 import { logMfaDiagnostic } from '../lib/firebaseAuth.js';
 
@@ -173,10 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (res.trustToken) {
-      localStorage.setItem('ca_device_trust_token', res.trustToken);
-      if (res.user?.id) {
-        localStorage.setItem(`ca_device_trust_token_${res.user.id}`, res.trustToken);
-      }
+      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
       logMfaDiagnostic('trusted device state created');
     }
 
@@ -236,7 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (res.trustToken) {
-      localStorage.setItem('ca_device_trust_token', res.trustToken);
+      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
       logMfaDiagnostic('trusted device state created');
     }
 
@@ -283,7 +280,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logMfaDiagnostic('backend MFA factor synchronized');
 
     if (res.trustToken) {
-      localStorage.setItem('ca_device_trust_token', res.trustToken);
+      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
     }
 
     if (res.token) {
@@ -347,7 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (res.trustToken) {
-      localStorage.setItem('ca_device_trust_token', res.trustToken);
+      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
     }
 
     if (res.token) {
@@ -547,7 +544,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string): Promise<User> => {
     try {
       const deviceId = getOrCreateDeviceId();
-      const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
+      const trustToken = getScopedTrustToken(email);
       const res = await apiRequest<{
         token: string;
         user: User;
@@ -558,6 +555,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canonicalPhoneE164?: string;
         maskedPhone?: string;
         role?: string;
+        trustToken?: string;
+        deviceTrusted?: boolean;
       }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password, deviceId, trustToken }),
@@ -579,6 +578,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
+      if (res.trustToken) {
+        saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
+      }
+
       localStorage.setItem('ca_exam_checker_token', res.token);
       setToken(res.token);
       setUser(res.user);
@@ -595,7 +598,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const instituteLogin = async (email: string, password: string): Promise<User> => {
     try {
       const deviceId = getOrCreateDeviceId();
-      const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
+      const trustToken = getScopedTrustToken(email);
       const res = await apiRequest<{
         token: string;
         user: User;
@@ -606,6 +609,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canonicalPhoneE164?: string;
         maskedPhone?: string;
         role?: string;
+        trustToken?: string;
+        deviceTrusted?: boolean;
       }>('/api/auth/institute/login', {
         method: 'POST',
         body: JSON.stringify({ email, password, deviceId, trustToken }),
@@ -625,6 +630,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             onCancel: () => reject(new Error('MFA verification was cancelled.')),
           });
         });
+      }
+
+      if (res.trustToken) {
+        saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
       }
 
       localStorage.setItem('ca_exam_checker_token', res.token);
@@ -710,7 +719,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       localStorage.removeItem('ca_exam_checker_token');
       localStorage.removeItem('ca_totp_enrolled');
-      localStorage.removeItem('ca_device_trust_token');
+      // PRESERVE TRUSTED DEVICE STATE ACROSS LOGOUTS:
+      // The 365-day trusted-device token is an authorization proof for this device,
+      // and must remain intact until explicitly revoked or expired.
       setToken(null);
       setUser(null);
       setProfile(null);

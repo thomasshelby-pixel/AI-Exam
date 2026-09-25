@@ -204,6 +204,7 @@ Answer: (A)`;
   db.prepare("DELETE FROM mcq_questions WHERE source = 'TEST_ICAI'").run();
 
   console.log('✅ ALL MCQ Material Upload & Protection tests passed successfully!');
+  process.exit(0);
 }
 
 runTests().catch((err) => {

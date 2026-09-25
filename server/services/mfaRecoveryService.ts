@@ -85,6 +85,10 @@ export function initMfaRecoveryTables(force: boolean = false): void {
       phone_number TEXT,
       is_backup INTEGER NOT NULL DEFAULT 0,
       firebase_factor_uid TEXT,
+      totp_secret TEXT,
+      secret_key TEXT,
+      phone_number TEXT,
+      is_backup INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       last_used_at TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -167,6 +171,10 @@ export function initMfaRecoveryTables(force: boolean = false): void {
   addCol('mfa_recovery_requests', 'resolved_at', 'TEXT');
   addCol('mfa_recovery_requests', 'resolved_by', 'TEXT');
   addCol('mfa_recovery_requests', 'user_role', 'TEXT');
+  addCol('mfa_authenticators', 'totp_secret', 'TEXT');
+  addCol('mfa_authenticators', 'secret_key', 'TEXT');
+  addCol('mfa_authenticators', 'phone_number', 'TEXT');
+  addCol('mfa_authenticators', 'is_backup', 'INTEGER NOT NULL DEFAULT 0');
   addCol('users', 'mfa_reset_required', 'INTEGER DEFAULT 0');
   addCol('users', 'pending_totp_secret', 'TEXT');
   addCol('users', 'mfa_phone', 'TEXT');

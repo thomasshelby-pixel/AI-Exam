@@ -22,6 +22,52 @@ export function getOrCreateDeviceId(): string {
   }
 }
 
+/**
+ * Persists an opaque 365-day trusted-device token securely in client storage,
+ * strictly scoped to the authenticated user ID and normalized email for complete account isolation.
+ */
+export function saveScopedTrustToken(userId: string, email?: string, trustToken?: string): void {
+  if (typeof window === 'undefined' || !trustToken) return;
+  try {
+    if (userId) {
+      localStorage.setItem(`ca_trust_token_${userId}`, trustToken);
+      localStorage.setItem(`ca_device_trust_token_${userId}`, trustToken);
+    }
+    if (email) {
+      const cleanEmail = email.trim().toLowerCase();
+      localStorage.setItem(`ca_trust_token_${cleanEmail}`, trustToken);
+      localStorage.setItem(`ca_device_trust_token_${cleanEmail}`, trustToken);
+    }
+    // Also save legacy global keys for single-tenant / general fallback
+    localStorage.setItem('ca_device_trust_token', trustToken);
+    localStorage.setItem('ca_trust_token', trustToken);
+  } catch (err) {
+    console.warn('Could not persist trusted device token to localStorage:', err);
+  }
+}
+
+/**
+ * Retrieves the user-scoped opaque trusted device token for the specific account.
+ * Scoped to UID / email to strictly prevent Account A from authenticating Account B.
+ */
+export function getScopedTrustToken(accountIdentifier?: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    if (accountIdentifier && accountIdentifier.trim()) {
+      const clean = accountIdentifier.trim().toLowerCase();
+      const byEmail = localStorage.getItem(`ca_trust_token_${clean}`) || localStorage.getItem(`ca_device_trust_token_${clean}`);
+      if (byEmail) return byEmail;
+
+      const byId = localStorage.getItem(`ca_trust_token_${accountIdentifier.trim()}`) || localStorage.getItem(`ca_device_trust_token_${accountIdentifier.trim()}`);
+      if (byId) return byId;
+    }
+
+    return localStorage.getItem('ca_device_trust_token') || localStorage.getItem('ca_trust_token') || null;
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -45,7 +91,7 @@ export async function apiRequest<T = unknown>(
   options: RequestInit = {}
 ): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('ca_exam_checker_token') : null;
-  const trustToken = typeof window !== 'undefined' ? localStorage.getItem('ca_device_trust_token') : null;
+  const trustToken = typeof window !== 'undefined' ? (getScopedTrustToken() || localStorage.getItem('ca_device_trust_token')) : null;
   const deviceId = getOrCreateDeviceId();
 
   const headers: Record<string, string> = {

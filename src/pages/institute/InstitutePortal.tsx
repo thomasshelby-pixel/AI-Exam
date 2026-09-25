@@ -178,7 +178,12 @@ export const InstitutePortal: React.FC = () => {
   const [restrictedActionName, setRestrictedActionName] = useState<string>('');
 
   const requireActivePlan = (actionName: string, onAllowed: () => void) => {
-    if (dashboardData && dashboardData.hasActivePlan === false) {
+    const hasNoPlan =
+      dashboardData?.hasActivePlan === false ||
+      subscriptionData?.hasActivePlan === false ||
+      dashboardData?.metrics?.hasActivePlan === false;
+
+    if (hasNoPlan) {
       setRestrictedActionName(actionName);
       setShowNoPlanModal(true);
       return;
@@ -310,7 +315,10 @@ export const InstitutePortal: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isAuthenticated && (user?.role === 'INSTITUTE_ADMIN' || user?.role === 'SUPER_ADMIN')) {
+    const normRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
+    const isInst = normRole === 'INSTITUTE_ADMIN' || normRole === 'INSTITUTE';
+    const isSuper = normRole === 'SUPER_ADMIN' || normRole === 'ADMIN';
+    if (isAuthenticated && (isInst || isSuper)) {
       loadSectionData();
     }
   }, [activeSection, subId, isAuthenticated, user]);
@@ -494,6 +502,11 @@ export const InstitutePortal: React.FC = () => {
       setStudentToAddId('');
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setRestrictedActionName('Assign Student to Batch');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to add student to batch');
     } finally {
       setIsAddingStudentToBatch(false);
@@ -535,6 +548,11 @@ export const InstitutePortal: React.FC = () => {
       setShowMoveStudentModal(null);
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setRestrictedActionName('Move Student to Batch');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to move student');
     } finally {
       setIsMovingStudent(false);
@@ -677,12 +695,18 @@ export const InstitutePortal: React.FC = () => {
       setSuccessMsg('Mock Test scheduled successfully.');
       loadSectionData();
     } catch (err: unknown) {
+      if (err instanceof Error && (err.message.includes('No Active Plan') || (err as any).data?.code === 'SUBSCRIPTION_REQUIRED')) {
+        setRestrictedActionName('Schedule Mock Test');
+        setShowNoPlanModal(true);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : 'Failed to schedule test');
     }
   };
 
   // Check institute administrative MFA requirement
-  const isMfaMandatoryRole = user?.role === 'INSTITUTE_ADMIN';
+  const normUserRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
+  const isMfaMandatoryRole = normUserRole === 'INSTITUTE_ADMIN' || normUserRole === 'INSTITUTE';
   const isMfaEnrolled = Boolean(user?.mfaEnabled);
   const isMfaVerified = user?.mfaVerified === true;
   const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
@@ -765,7 +789,13 @@ export const InstitutePortal: React.FC = () => {
     );
   }
 
-  if (user?.role !== 'INSTITUTE_ADMIN' && user?.role !== 'SUPER_ADMIN') {
+  const isAuthorizedInstitutePortal =
+    normUserRole === 'INSTITUTE_ADMIN' ||
+    normUserRole === 'INSTITUTE' ||
+    normUserRole === 'SUPER_ADMIN' ||
+    normUserRole === 'ADMIN';
+
+  if (!isAuthorizedInstitutePortal) {
     return (
       <div className="min-h-[80vh] flex items-center justify-center p-4">
         <div className="bg-white border border-rose-200 rounded-xl p-8 max-w-md w-full text-center shadow-lg">
@@ -1183,14 +1213,14 @@ export const InstitutePortal: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => setShowBulkImportModal(true)}
+                        onClick={() => requireActivePlan('Bulk Import Students', () => setShowBulkImportModal(true))}
                         className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
                       >
                         <Upload className="w-3.5 h-3.5 text-slate-500" />
                         Bulk Import CSV
                       </button>
                       <button
-                        onClick={() => setShowAddStudentModal(true)}
+                        onClick={() => requireActivePlan('Enroll Student', () => setShowAddStudentModal(true))}
                         className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
@@ -1435,7 +1465,7 @@ export const InstitutePortal: React.FC = () => {
                           Edit Batch
                         </button>
                         <button
-                          onClick={() => setShowAddStudentToBatchModal(true)}
+                          onClick={() => requireActivePlan('Assign Student to Batch', () => setShowAddStudentToBatchModal(true))}
                           className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
                         >
                           <Plus className="w-4 h-4" />
@@ -1557,7 +1587,7 @@ export const InstitutePortal: React.FC = () => {
                       <p className="text-xs text-slate-500">Group students into syllabus classes and exam attempt batches</p>
                     </div>
                     <button
-                      onClick={() => setShowCreateBatchModal(true)}
+                      onClick={() => requireActivePlan('Create Batch', () => setShowCreateBatchModal(true))}
                       className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
@@ -1641,7 +1671,7 @@ export const InstitutePortal: React.FC = () => {
                       <p className="text-xs text-slate-500">Assign specific question sets with ICAI step marking rules</p>
                     </div>
                     <button
-                      onClick={() => setShowCreateTestModal(true)}
+                      onClick={() => requireActivePlan('Create Assignment', () => setShowCreateTestModal(true))}
                       className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
@@ -1676,7 +1706,7 @@ export const InstitutePortal: React.FC = () => {
                       <p className="text-xs text-slate-500">Full 3-hour timed exam papers with auto AI step-evaluation</p>
                     </div>
                     <button
-                      onClick={() => setShowCreateTestModal(true)}
+                      onClick={() => requireActivePlan('Schedule Mock Test', () => setShowCreateTestModal(true))}
                       className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
@@ -1716,7 +1746,7 @@ export const InstitutePortal: React.FC = () => {
                       </p>
                     </div>
                     <button
-                      onClick={() => setShowUploadMaterialModal(true)}
+                      onClick={() => requireActivePlan('Upload Study Material', () => setShowUploadMaterialModal(true))}
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
@@ -2616,6 +2646,60 @@ export const InstitutePortal: React.FC = () => {
                   {isBulkImporting ? 'Importing Students...' : 'Import Students'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* NO ACTIVE PLAN SUBSCRIPTION GATING MODAL                      */}
+      {/* ------------------------------------------------------------- */}
+      {showNoPlanModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-amber-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-800 relative">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-200">
+              <Calendar className="w-6 h-6" />
+            </div>
+
+            <div className="text-center mb-5">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200 mb-2">
+                Subscription Required
+              </span>
+              <h3 className="text-lg font-bold text-slate-900">
+                No Active Plan
+              </h3>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                You need an active subscription to perform this action.
+                Please activate a plan to continue.
+              </p>
+              {restrictedActionName && (
+                <div className="mt-3 p-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-500">
+                  Attempted Action: <span className="font-semibold text-slate-800">{restrictedActionName}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 justify-end">
+              <button
+                onClick={() => {
+                  setShowNoPlanModal(false);
+                  setRestrictedActionName('');
+                }}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold text-xs transition cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setShowNoPlanModal(false);
+                  setRestrictedActionName('');
+                  navigate('/institute/subscription');
+                }}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>View Plans & Activate</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         </div>

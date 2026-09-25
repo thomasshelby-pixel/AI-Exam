@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
-import { isDeviceTrusted, parseCookieValue } from './services/trustService.js';
+import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -229,12 +229,14 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       (req.query.deviceId as string)?.trim() ||
       rawCookies['ca_device_id'] ||
       parseCookieValue(req.headers.cookie, 'ca_device_id');
-    const trustToken =
-      (req.headers['x-device-trust-token'] as string)?.trim() ||
-      rawCookies['ca_trust_token'] ||
-      parseCookieValue(req.headers.cookie, 'ca_trust_token');
+    const candidateTokens = [
+      (req.headers['x-device-trust-token'] as string)?.trim(),
+      rawCookies['ca_trust_token'],
+      parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+    ].filter(Boolean) as string[];
 
-    const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
+    const trustResult = verifyUserDeviceTrust(user.id, deviceId, candidateTokens);
+    const deviceIsTrusted = trustResult.isTrusted;
 
     const normEmail = (user.email || '').toLowerCase().trim();
     // Invariable Principle of Least Privilege:
@@ -356,12 +358,14 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
       (req.query.deviceId as string)?.trim() ||
       rawCookies['ca_device_id'] ||
       parseCookieValue(req.headers.cookie, 'ca_device_id');
-    const trustToken =
-      (req.headers['x-device-trust-token'] as string)?.trim() ||
-      rawCookies['ca_trust_token'] ||
-      parseCookieValue(req.headers.cookie, 'ca_trust_token');
+    const candidateTokens = [
+      (req.headers['x-device-trust-token'] as string)?.trim(),
+      rawCookies['ca_trust_token'],
+      parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+    ].filter(Boolean) as string[];
 
-    const deviceIsTrusted = !!(user && deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
+    const trustResult = user ? verifyUserDeviceTrust(user.id, deviceId, candidateTokens) : { isTrusted: false };
+    const deviceIsTrusted = trustResult.isTrusted;
 
     if (user && (user.status === 'ACTIVE' || user.status === 'SUSPENDED')) {
       req.user = {
@@ -384,14 +388,15 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
-  const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase());
+  const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase().replace(/\s+/g, '_'));
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
     const normEmail = (req.user.email || '').toLowerCase().trim();
-    const userRole = (req.user.role || '').toUpperCase();
+    const rawRole = (req.user.role || '').toUpperCase();
+    const userRole = rawRole.replace(/\s+/g, '_');
 
     // STRICT ISOLATION DIRECTIVE:
     // priyatca15@gmail.com is strictly an MCQ_ADMIN and must NEVER receive Super Admin authorization.
@@ -410,7 +415,14 @@ export function requireRole(...allowedRoles: UserRole[]) {
       }
     }
 
-    const isAllowed = normalizedAllowed.includes(userRole);
+    const isInstitute = userRole === 'INSTITUTE_ADMIN' || userRole === 'INSTITUTE';
+    const isSuperAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+
+    const isAllowed =
+      normalizedAllowed.includes(userRole) ||
+      (normalizedAllowed.includes('INSTITUTE_ADMIN') && isInstitute) ||
+      (normalizedAllowed.includes('SUPER_ADMIN') && isSuperAdmin);
+
     if (!isAllowed) {
       if (normalizedAllowed.length === 1 && normalizedAllowed[0] === 'SUPER_ADMIN') {
         return res.status(403).json({
@@ -425,7 +437,7 @@ export function requireRole(...allowedRoles: UserRole[]) {
 
     // Server-Side Role-Based MFA Policy Enforcement
     // INSTITUTE_ADMIN, SUPER_ADMIN, and MCQ_ADMIN must have verified MFA to access privileged routes
-    if (userRole === 'INSTITUTE_ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'MCQ_ADMIN') {
+    if (isInstitute || isSuperAdmin || userRole === 'MCQ_ADMIN') {
       const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
 
       const rawCookies = (req as any).cookies || {};
@@ -434,17 +446,19 @@ export function requireRole(...allowedRoles: UserRole[]) {
         (req.query.deviceId as string)?.trim() ||
         rawCookies['ca_device_id'] ||
         parseCookieValue(req.headers.cookie, 'ca_device_id');
-      const trustToken =
-        (req.headers['x-device-trust-token'] as string)?.trim() ||
-        rawCookies['ca_trust_token'] ||
-        parseCookieValue(req.headers.cookie, 'ca_trust_token');
+      const candidateTokens = [
+        (req.headers['x-device-trust-token'] as string)?.trim(),
+        rawCookies['ca_trust_token'],
+        parseCookieValue(req.headers.cookie, 'ca_trust_token'),
+      ].filter(Boolean) as string[];
 
-      const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
+      const trustCheck = verifyUserDeviceTrust(req.user.id, deviceId, candidateTokens);
+      const deviceIsTrusted = trustCheck.isTrusted;
       const isMfaVerified = !!req.user.mfaVerified || deviceIsTrusted;
 
       // Super Admin's MFA verification is centralized through the main Super Admin authentication session.
       // If the Super Admin is authenticated and mfaVerified is true (or device is trusted), they have satisfied Super Admin MFA.
-      const isMfaSatisfied = userRole === 'SUPER_ADMIN'
+      const isMfaSatisfied = isSuperAdmin
         ? isMfaVerified
         : (Boolean(dbUser?.mfa_enabled) && isMfaVerified);
 

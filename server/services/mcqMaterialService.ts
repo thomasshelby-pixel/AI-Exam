@@ -340,7 +340,7 @@ export function checkMcqMaterialDuplicate(params: {
   const { fileHash, extractedText, course, subject, materialType, attempt, excludeId, overrideDuplicate, overrideReason } = params;
 
   // 1. Exact SHA-256 file check
-  let fileHashQuery = "SELECT * FROM mcq_materials WHERE file_hash = ? AND status != 'DELETED' AND id NOT IN (SELECT targetId FROM tombstones WHERE collectionName = 'mcq_materials')";
+  let fileHashQuery = "SELECT * FROM mcq_materials WHERE file_hash = ? AND status != 'DELETED' AND id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')";
   const fileHashParams: any[] = [fileHash];
   if (excludeId) {
     fileHashQuery += ' AND id != ?';
@@ -371,7 +371,7 @@ export function checkMcqMaterialDuplicate(params: {
 
   // 2. Content-level similarity check against same course and subject
   if (extractedText && extractedText.length > 80) {
-    let textQuery = "SELECT * FROM mcq_materials WHERE course = ? AND subject = ? AND status != 'DELETED' AND id NOT IN (SELECT targetId FROM tombstones WHERE collectionName = 'mcq_materials')";
+    let textQuery = "SELECT * FROM mcq_materials WHERE course = ? AND subject = ? AND status != 'DELETED' AND id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')";
     const textParams: any[] = [course, subject];
     if (excludeId) {
       textQuery += ' AND id != ?';

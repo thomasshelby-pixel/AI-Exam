@@ -165,6 +165,36 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
 }
 
 /**
+ * Checks multiple candidate trust tokens (e.g. from request body, X-Device-Trust-Token header, or cookie)
+ * for a specific user and device. Returns the valid token and expiry if found.
+ */
+export function verifyUserDeviceTrust(
+  userId: string,
+  deviceId?: string,
+  candidateTokens?: Array<string | undefined | null>
+): { isTrusted: boolean; trustToken?: string; expiresAt?: string } {
+  if (!userId || !deviceId || !candidateTokens || candidateTokens.length === 0) {
+    return { isTrusted: false };
+  }
+
+  const cleanDeviceId = deviceId.trim();
+  const validTokens = candidateTokens.filter((t): t is string => Boolean(t && typeof t === 'string' && t.trim().length > 0));
+
+  for (const token of validTokens) {
+    if (isDeviceTrusted(userId, cleanDeviceId, token)) {
+      const trustInfo = getDeviceTrustInfo(userId, cleanDeviceId, token);
+      return {
+        isTrusted: true,
+        trustToken: token,
+        expiresAt: trustInfo.expiresAt || undefined,
+      };
+    }
+  }
+
+  return { isTrusted: false };
+}
+
+/**
  * Returns detailed trust info for a user + device + trustToken combination.
  */
 export function getDeviceTrustInfo(

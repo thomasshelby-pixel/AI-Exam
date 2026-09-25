@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { useAuth } from '../../context/AuthContext.js';
-import { apiRequest } from '../../api/client.js';
+import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken, getScopedTrustToken } from '../../api/client.js';
 
 export interface ServerTotpSetupData {
   secretKey: string;
@@ -60,12 +60,14 @@ export const McqAdminLoginPage: React.FC = () => {
 
     try {
       // 1. Attempt login with device trust tokens if available in storage
-      const storedTrustToken = localStorage.getItem('ca_trust_token') || localStorage.getItem('ca_device_trust_token') || undefined;
+      const deviceId = getOrCreateDeviceId();
+      const storedTrustToken = getScopedTrustToken(email.trim().toLowerCase());
       const res = await apiRequest<any>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           password,
+          deviceId,
           trustToken: storedTrustToken,
         }),
       });
@@ -108,6 +110,9 @@ export const McqAdminLoginPage: React.FC = () => {
 
       // 3. Otherwise login succeeded directly (device trusted for 365 days)
       if (res.token && res.user) {
+        if (res.trustToken) {
+          saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
+        }
         localStorage.setItem('ca_exam_checker_token', res.token);
         localStorage.setItem('auth_token', res.token);
         localStorage.setItem('ca_token', res.token);
@@ -140,12 +145,14 @@ export const McqAdminLoginPage: React.FC = () => {
     setLoading(true);
 
     try {
+      const deviceId = getOrCreateDeviceId();
       const res = await apiRequest<any>('/api/auth/mfa/enroll/verify', {
         method: 'POST',
         body: JSON.stringify({
           otpCode: totpCode.trim(),
           mfaSessionToken,
           secretKey: totpSetup.secretKey,
+          deviceId,
           trustDevice,
         }),
       });
@@ -165,8 +172,7 @@ export const McqAdminLoginPage: React.FC = () => {
         setUser(res.user);
       }
       if (res.trustToken) {
-        localStorage.setItem('ca_trust_token', res.trustToken);
-        localStorage.setItem('ca_device_trust_token', res.trustToken);
+        saveScopedTrustToken(res.user?.id, email.trim().toLowerCase(), res.trustToken);
       }
 
       window.dispatchEvent(new Event('auth-changed'));
@@ -191,11 +197,13 @@ export const McqAdminLoginPage: React.FC = () => {
     setLoading(true);
 
     try {
+      const deviceId = getOrCreateDeviceId();
       const res = await apiRequest<any>('/api/auth/mfa/verify-challenge', {
         method: 'POST',
         body: JSON.stringify({
           mfaSessionToken,
           otpCode: totpCode.trim(),
+          deviceId,
           trustDevice,
         }),
       });
@@ -207,8 +215,7 @@ export const McqAdminLoginPage: React.FC = () => {
         setToken(res.token);
         setUser(res.user);
         if (res.trustToken) {
-          localStorage.setItem('ca_trust_token', res.trustToken);
-          localStorage.setItem('ca_device_trust_token', res.trustToken);
+          saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
         }
         window.dispatchEvent(new Event('auth-changed'));
         await refreshUser().catch(() => {});

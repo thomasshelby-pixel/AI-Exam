@@ -1073,6 +1073,19 @@ export const AdminPortal: React.FC = () => {
     user.id !== 'usr_mcq_admin_priyatca15'
   );
 
+  const isInstituteAdmin = Boolean(
+    isAuthenticated &&
+    user &&
+    ((user.role || '').toUpperCase().replace(/\s+/g, '_') === 'INSTITUTE_ADMIN' ||
+      (user.role || '').toUpperCase().replace(/\s+/g, '_') === 'INSTITUTE')
+  );
+
+  useEffect(() => {
+    if (isInstituteAdmin) {
+      navigate('/institute/dashboard', { replace: true });
+    }
+  }, [isInstituteAdmin, navigate]);
+
   const isMfaMandatoryRole = isSuperAdminAuthorized;
   const isMfaEnrolled = Boolean(user?.mfaEnabled);
   const isMfaVerified = user?.mfaVerified === true;
@@ -1175,6 +1188,10 @@ export const AdminPortal: React.FC = () => {
               <>
                 The account <span className="font-mono text-amber-300 font-semibold">{user?.email}</span> is strictly authorized for <strong>MCQ Arena Administration</strong> and is forbidden from accessing the Super Admin Portal, system settings, user management, or administrative recovery.
               </>
+            ) : isInstituteAdmin ? (
+              <>
+                The account <span className="font-mono text-indigo-300 font-semibold">{user?.email}</span> is authorized as an <strong>Institute Administrator</strong>. Please access the dedicated Institute Portal to manage your coaching academy, batches, students, and test series.
+              </>
             ) : (
               <>
                 Your current account role (<span className="font-semibold text-rose-400">{user?.role}</span>) does not have authorization to access the Super Administrator Portal. This administrative boundary is enforced server-side.
@@ -1202,6 +1219,13 @@ export const AdminPortal: React.FC = () => {
                 className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 cursor-pointer"
               >
                 Go to MCQ Admin Portal
+              </button>
+            ) : isInstituteAdmin ? (
+              <button
+                onClick={() => navigate('/institute/dashboard')}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm transition shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Go to Institute Portal
               </button>
             ) : (
               <button

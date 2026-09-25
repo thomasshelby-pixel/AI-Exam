@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx server/tests/evaluationIntegrity.test.ts && tsx server/tests/examinerProfileAndCsCma.test.ts && tsx server/tests/googleAuthAndSrnValidation.test.ts && tsx server/tests/mcqMaterialUploadAndDuplicate.test.ts"
+    "test": "tsx server/tests/evaluationIntegrity.test.ts && tsx server/tests/examinerProfileAndCsCma.test.ts && tsx server/tests/googleAuthAndSrnValidation.test.ts && tsx server/tests/mcqMaterialUploadAndDuplicate.test.ts && tsx server/tests/instituteSubscriptionGatingAndTrustedDevice.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
