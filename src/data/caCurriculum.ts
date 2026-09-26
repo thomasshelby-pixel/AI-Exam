@@ -522,3 +522,56 @@ export function getChapterTopics(course: string, subjectName: string, chapterNam
   return ['Not Applicable', ...targetChap.topics];
 }
 
+/**
+ * Exact canonical Source Categories for MCQ Arena & Material Library.
+ * Note: AI Generation is NOT a source category; it is tracked as a Generation Method.
+ */
+export const CANONICAL_SOURCE_CATEGORIES = [
+  'RTP',
+  'MTP',
+  'PYQ',
+  'ICAI Module',
+  'Self-Created',
+  'Conceptual Practice',
+  'Practical',
+  'Other',
+] as const;
+
+export type CanonicalSourceCategory = (typeof CANONICAL_SOURCE_CATEGORIES)[number];
+
+/**
+ * Returns true if the given Source Category requires the Attempt / Year field.
+ * Only RTP, MTP, and PYQ require Attempt / Year.
+ * All other source categories (ICAI Module, Self-Created, Conceptual Practice, Practical, Other) must NOT show it.
+ */
+export function isAttemptRequiredSource(sourceCategory?: string | null): boolean {
+  if (!sourceCategory) return false;
+  const upper = sourceCategory.toUpperCase().trim();
+  return upper === 'RTP' || upper === 'MTP' || upper === 'PYQ';
+}
+
+/**
+ * Suggested structured Attempt / Year values for RTP, MTP, and PYQ.
+ */
+export function getAttemptSuggestions(sourceCategory?: string | null): string[] {
+  if (!sourceCategory) return [];
+  const upper = sourceCategory.toUpperCase().trim();
+  if (upper === 'RTP') {
+    return ['September 2026', 'May 2026', 'January 2027', 'November 2025', 'May 2025'];
+  }
+  if (upper === 'MTP') {
+    return [
+      'May 2026 - Series 1',
+      'May 2026 - Series 2',
+      'September 2026 - Series 1',
+      'September 2026 - Series 2',
+      'November 2025 - Series 1',
+      'November 2025 - Series 2',
+    ];
+  }
+  if (upper === 'PYQ') {
+    return ['May 2025', 'September 2025', 'January 2026', 'November 2024', 'May 2024'];
+  }
+  return [];
+}
+

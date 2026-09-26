@@ -16,13 +16,15 @@ import {
 export type McqMaterialStatus = 'Draft' | 'Review' | 'Approved' | 'Published' | 'Archived' | 'DELETED';
 
 export type McqMaterialType =
-  | 'ICAI Module'
-  | 'PYQ'
   | 'RTP'
   | 'MTP'
-  | 'Conceptual'
+  | 'PYQ'
+  | 'ICAI Module'
+  | 'Self-Created'
+  | 'Conceptual Practice'
   | 'Practical'
-  | 'Other';
+  | 'Other'
+  | 'Conceptual';
 
 export interface McqMaterialRecord {
   id: string;
@@ -562,6 +564,9 @@ export async function saveMcqMaterial(params: {
     )
   `);
 
+  const isAttemptReq = ['RTP', 'MTP', 'PYQ'].includes((materialType || '').toUpperCase().trim());
+  const finalAttempt = isAttemptReq && attempt ? attempt.trim() : null;
+
   stmt.run(
     id,
     materialName ? materialName.trim() : 'Material',
@@ -571,7 +576,7 @@ export async function saveMcqMaterial(params: {
     topic ? topic.trim() : null,
     materialType ? materialType.trim() : 'MTP',
     source ? source.trim() : 'ICAI',
-    attempt ? attempt.trim() : null,
+    finalAttempt,
     applicableFrom ? applicableFrom.trim() : null,
     applicableTill ? applicableTill.trim() : null,
     amendmentVersion ? amendmentVersion.trim() : null,

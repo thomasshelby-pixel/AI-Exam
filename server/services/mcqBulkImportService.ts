@@ -164,6 +164,8 @@ export function validateBulkQuestions(
     subject?: string;
     chapter?: string;
     topic?: string;
+    questionType?: string;
+    difficulty?: string;
     source?: string;
     attempt?: string;
     sourceMaterialId?: string;
@@ -192,6 +194,18 @@ export function validateBulkQuestions(
   let caseCount = 0;
   let normalCount = 0;
 
+  // Question Type & Difficulty Modes from Import Settings
+  const configQType = (defaultValues.questionType || 'MIXED').toUpperCase().replace(/[\s-]+/g, '_');
+  const isModeSingle = configQType === 'SINGLE' || configQType === 'NORMAL';
+  const isModeCase = configQType === 'CASE_BASED' || configQType === 'CASE';
+  const isModeMixedQ = configQType === 'MIXED';
+
+  const configDiff = (defaultValues.difficulty || 'mixed').toLowerCase().trim();
+  const isDiffEasy = configDiff === 'easy';
+  const isDiffModerate = configDiff === 'moderate';
+  const isDiffHard = configDiff === 'hard';
+  const isDiffMixed = configDiff === 'mixed';
+
   // Intermediate bucket for Case ID consistency verification
   const caseBuckets = new Map<
     string,
@@ -218,14 +232,35 @@ export function validateBulkQuestions(
       rowObj[headerKeys[c]] = (row[c] || '').trim();
     }
 
-    // 1. QUESTION TYPE VALIDATION (Mandatory: NORMAL or CASE_BASED)
-    const rawQType = (rowObj.question_type || '').toUpperCase().replace(/[\s-]+/g, '_');
-    if (!rawQType) {
-      errors.push('Question Type is required. Must be explicitly "NORMAL" or "CASE_BASED".');
-    } else if (rawQType !== 'NORMAL' && rawQType !== 'CASE_BASED') {
-      errors.push(`Invalid Question Type "${rowObj.question_type}". Allowed values are strictly NORMAL or CASE_BASED.`);
+    // 1. QUESTION TYPE VALIDATION
+    // Mode Rules:
+    // Single MCQ -> rows must be NORMAL.
+    // Case-Based MCQ -> rows must be CASE_BASED.
+    // Mixed -> file may contain both, but each row MUST have explicit questionType.
+    const rawRowQType = (rowObj.question_type || '').toUpperCase().replace(/[\s-]+/g, '_');
+    let resolvedQType: 'NORMAL' | 'CASE_BASED' = 'NORMAL';
+
+    if (isModeSingle) {
+      if (rawRowQType && rawRowQType !== 'NORMAL') {
+        errors.push(`Row Question Type "${rowObj.question_type}" is invalid for Single MCQ import mode. All rows must be NORMAL.`);
+      }
+      resolvedQType = 'NORMAL';
+    } else if (isModeCase) {
+      if (rawRowQType && rawRowQType !== 'CASE_BASED') {
+        errors.push(`Row Question Type "${rowObj.question_type}" is invalid for Case-Based MCQ import mode. All rows must be CASE_BASED.`);
+      }
+      resolvedQType = 'CASE_BASED';
+    } else {
+      // Mixed mode: row MUST contain explicit questionType
+      if (!rawRowQType) {
+        errors.push('Question Type is required for every row in Mixed mode (must be explicitly NORMAL or CASE_BASED).');
+      } else if (rawRowQType !== 'NORMAL' && rawRowQType !== 'CASE_BASED') {
+        errors.push(`Invalid Question Type "${rowObj.question_type}". In Mixed mode, allowed values are strictly NORMAL or CASE_BASED.`);
+      } else {
+        resolvedQType = rawRowQType as 'NORMAL' | 'CASE_BASED';
+      }
     }
-    const isCaseBased = rawQType === 'CASE_BASED';
+    const isCaseBased = resolvedQType === 'CASE_BASED';
 
     // 2. METADATA PRIORITY: Row Explicit -> Import Default -> Validation Error
     const rawCourse = rowObj.course || defaultValues.course || '';
@@ -274,9 +309,43 @@ export function validateBulkQuestions(
       errors.push(`Invalid Correct Answer "${rowObj.correct_answer}". Must be A, B, C, or D.`);
     }
 
-    let diff = (rowObj.difficulty || 'moderate').trim().toLowerCase();
-    if (!['easy', 'moderate', 'hard'].includes(diff)) {
+    // DIFFICULTY VALIDATION
+    // If Easy -> every row must be Easy
+    // If Moderate -> every row must be Moderate
+    // If Hard -> every row must be Hard
+    // If Mixed -> each row must provide its own explicit difficulty
+    let diff: McqDifficulty = 'moderate';
+    const rowDiff = (rowObj.difficulty || '').trim().toLowerCase();
+
+    if (isDiffEasy) {
+      if (rowDiff && rowDiff !== 'easy') {
+        errors.push(`Row difficulty "${rowObj.difficulty}" conflicts with configured Easy difficulty mode.`);
+      }
+      diff = 'easy';
+    } else if (isDiffModerate) {
+      if (rowDiff && rowDiff !== 'moderate') {
+        errors.push(`Row difficulty "${rowObj.difficulty}" conflicts with configured Moderate difficulty mode.`);
+      }
       diff = 'moderate';
+    } else if (isDiffHard) {
+      if (rowDiff && rowDiff !== 'hard') {
+        errors.push(`Row difficulty "${rowObj.difficulty}" conflicts with configured Hard difficulty mode.`);
+      }
+      diff = 'hard';
+    } else if (isDiffMixed) {
+      if (!rowDiff) {
+        errors.push('Difficulty is required for every row in Mixed difficulty mode (Easy, Moderate, or Hard).');
+      } else if (!['easy', 'moderate', 'hard'].includes(rowDiff)) {
+        errors.push(`Invalid difficulty "${rowObj.difficulty}". Must be Easy, Moderate, or Hard.`);
+      } else {
+        diff = rowDiff as McqDifficulty;
+      }
+    } else {
+      if (['easy', 'moderate', 'hard'].includes(rowDiff)) {
+        diff = rowDiff as McqDifficulty;
+      } else {
+        diff = 'moderate';
+      }
     }
 
     // 4. CASE-BASED VS NORMAL ARCHITECTURAL CONSTRAINTS
@@ -341,8 +410,25 @@ export function validateBulkQuestions(
 
     const explanation = rowObj.explanation?.trim() || `Option (${ans}) is the correct answer according to ICAI syllabus provisions.`;
     const reference = rowObj.reference?.trim() || '';
-    const source = (rowObj.source?.trim() || defaultValues.source || 'ICAI Module') as McqSource;
-    const attempt = rowObj.attempt?.trim() || defaultValues.attempt || 'May 2026';
+
+    // SOURCE CATEGORY & CONDITIONAL ATTEMPT
+    // Canonical sources: RTP, MTP, PYQ, ICAI Module, Self-Created, Conceptual Practice, Practical, Other
+    const rawSource = rowObj.source?.trim() || defaultValues.source?.trim() || 'ICAI Module';
+    let source: McqSource = 'ICAI Module';
+    const cleanSource = rawSource.toLowerCase().replace(/[\s_-]+/g, '');
+    if (cleanSource === 'rtp') source = 'RTP';
+    else if (cleanSource === 'mtp') source = 'MTP';
+    else if (cleanSource === 'pyq') source = 'PYQ';
+    else if (cleanSource.includes('selfcreated') || cleanSource.includes('self')) source = 'Self-Created';
+    else if (cleanSource.includes('conceptualpractice') || cleanSource.includes('conceptual')) source = 'Conceptual Practice';
+    else if (cleanSource.includes('practical')) source = 'Practical';
+    else if (cleanSource.includes('module') || cleanSource.includes('icai')) source = 'ICAI Module';
+    else if (cleanSource === 'other') source = 'Other';
+    else source = 'ICAI Module';
+
+    // Attempt / Year ONLY when source is RTP, MTP, or PYQ
+    const isAttemptReq = source === 'RTP' || source === 'MTP' || source === 'PYQ';
+    const attempt = isAttemptReq ? (rowObj.attempt?.trim() || defaultValues.attempt?.trim() || 'May 2026') : undefined;
     const amendmentVersion = rowObj.amendment_version?.trim() || 'New Scheme 2024';
 
     validatedRows.push({
@@ -497,11 +583,11 @@ export function commitBulkQuestions(
     INSERT INTO mcq_cases (
       case_id, case_title, case_scenario, case_difficulty, course, subject,
       chapter, topic, source, attempt, applicable_from, applicable_till,
-      amendment_version, status, created_by, created_at, updated_at
+      amendment_version, generation_method, status, created_by, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, datetime('now'), datetime('now')
+      ?, 'IMPORTED', ?, ?, datetime('now'), datetime('now')
     )
     ON CONFLICT(case_id) DO UPDATE SET
       case_title = excluded.case_title,
@@ -511,6 +597,7 @@ export function commitBulkQuestions(
       subject = excluded.subject,
       chapter = excluded.chapter,
       topic = excluded.topic,
+      generation_method = 'IMPORTED',
       status = excluded.status,
       updated_at = datetime('now')
   `);
@@ -520,6 +607,7 @@ export function commitBulkQuestions(
       id, course, subject, chapter, topic, question_type,
       case_id, case_sequence, case_study_scenario,
       difficulty, source, attempt, applicable_from, applicable_till, amendment_version,
+      generation_method,
       question_text, option_a, option_b, option_c, option_d,
       correct_answer, explanation, reference, status, created_by,
       source_material_id, created_at, updated_at
@@ -527,6 +615,7 @@ export function commitBulkQuestions(
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
+      'IMPORTED',
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, datetime('now'), datetime('now')
