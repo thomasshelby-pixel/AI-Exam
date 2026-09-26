@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   FileText,
   Upload,
@@ -22,6 +22,7 @@ import {
   Info,
   Archive,
   ArrowRight,
+  Calendar,
 } from 'lucide-react';
 import {
   mcqApi,
@@ -30,22 +31,16 @@ import {
   McqMaterialPreviewResponse,
 } from '../../api/mcqClient.js';
 import { McqCourse } from '../../types/index.js';
-
-const COURSE_OPTIONS: { label: string; value: McqCourse }[] = [
-  { label: 'CA Foundation', value: 'CA_FOUNDATION' },
-  { label: 'CA Intermediate', value: 'CA_INTERMEDIATE' },
-  { label: 'CA Final', value: 'CA_FINAL' },
-];
-
-const MATERIAL_TYPES = [
-  'ICAI Module',
-  'PYQ',
-  'RTP',
-  'MTP',
-  'Conceptual',
-  'Practical',
-  'Other',
-];
+import {
+  CANONICAL_COURSE_OPTIONS,
+  getCourseSubjects,
+  getSubjectChapters,
+  getChapterTopics,
+  CANONICAL_SOURCE_CATEGORIES,
+  CanonicalSourceCategory,
+  isAttemptRequiredSource,
+  getAttemptSuggestions,
+} from '../../data/caCurriculum.js';
 
 const STATUS_OPTIONS: McqMaterialStatus[] = [
   'Draft',
@@ -54,31 +49,6 @@ const STATUS_OPTIONS: McqMaterialStatus[] = [
   'Published',
   'Archived',
 ];
-
-const CA_SUBJECTS: Record<McqCourse, string[]> = {
-  CA_FOUNDATION: [
-    'Accounting',
-    'Business Laws',
-    'Quantitative Aptitude',
-    'Business Economics',
-  ],
-  CA_INTERMEDIATE: [
-    'Advanced Accounting',
-    'Corporate and Other Laws',
-    'Taxation (Income Tax & GST)',
-    'Cost and Management Accounting',
-    'Auditing and Ethics',
-    'Financial Management and Strategic Management',
-  ],
-  CA_FINAL: [
-    'Financial Reporting (Ind AS)',
-    'Advanced Financial Management',
-    'Advanced Auditing and Professional Ethics',
-    'Direct Tax Laws and International Taxation',
-    'Indirect Tax Laws (GST & Customs)',
-    'Integrated Business Solutions',
-  ],
-};
 
 interface McqMaterialLibraryProps {
   onSelectForBulkImport?: (material: McqMaterial) => void;
@@ -117,7 +87,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     subject: string;
     chapter: string;
     topic: string;
-    materialType: string;
+    materialType: CanonicalSourceCategory;
     source: string;
     attempt: string;
     applicableFrom: string;
@@ -133,7 +103,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     topic: '',
     materialType: 'MTP',
     source: 'ICAI',
-    attempt: 'May 2026',
+    attempt: 'May 2026 - Series 1',
     applicableFrom: '2024-05-01',
     applicableTill: '2026-11-30',
     amendmentVersion: 'New Scheme 2024',
@@ -146,6 +116,51 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Cascading helpers for Upload Form
+  const courseSubjects = useMemo(() => {
+    return getCourseSubjects(formData.course);
+  }, [formData.course]);
+
+  const subjectChapters = useMemo(() => {
+    if (!formData.subject) return [];
+    return getSubjectChapters(formData.course, formData.subject);
+  }, [formData.course, formData.subject]);
+
+  const chapterTopics = useMemo(() => {
+    if (!formData.subject || !formData.chapter) return ['Not Applicable'];
+    return getChapterTopics(formData.course, formData.subject, formData.chapter);
+  }, [formData.course, formData.subject, formData.chapter]);
+
+  // Cascading helpers for filter bar
+  const filterCourseSubjects = useMemo(() => {
+    if (filterCourse === 'ALL') return [];
+    return getCourseSubjects(filterCourse);
+  }, [filterCourse]);
+
+  const handleCourseChange = (newCourse: McqCourse) => {
+    const subs = getCourseSubjects(newCourse);
+    const firstSub = subs[0] || '';
+    setFormData((prev) => ({
+      ...prev,
+      course: newCourse,
+      subject: firstSub,
+      chapter: '',
+      topic: '',
+    }));
+  };
+
+  const handleSourceCategoryChange = (newCat: CanonicalSourceCategory) => {
+    setFormData((prev) => {
+      const isReq = isAttemptRequiredSource(newCat);
+      return {
+        ...prev,
+        materialType: newCat,
+        source: newCat === 'Self-Created' ? 'Self-Created' : 'ICAI',
+        attempt: isReq ? (prev.attempt || getAttemptSuggestions(newCat)[0] || '') : '',
+      };
+    });
+  };
 
   useEffect(() => {
     loadMaterials();
@@ -433,7 +448,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-700/60 text-xs">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Course Level</label>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Course</label>
             <select
               value={filterCourse}
               onChange={(e) => {
@@ -444,7 +459,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="ALL">All Courses</option>
-              {COURSE_OPTIONS.map((c) => (
+              {CANONICAL_COURSE_OPTIONS.map((c) => (
                 <option key={c.value} value={c.value}>{c.label}</option>
               ))}
             </select>
@@ -458,22 +473,21 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="ALL">All Subjects</option>
-              {filterCourse !== 'ALL' &&
-                CA_SUBJECTS[filterCourse as McqCourse]?.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
+              {filterCourseSubjects.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
             </select>
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Material Type</label>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Source Category</label>
             <select
               value={filterType}
               onChange={(e) => { setFilterType(e.target.value); setPage(1); }}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="ALL">All Material Types</option>
-              {MATERIAL_TYPES.map((t) => (
+              <option value="ALL">All Source Categories</option>
+              {CANONICAL_SOURCE_CATEGORIES.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
@@ -502,9 +516,9 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
             <thead className="bg-slate-900/90 text-slate-400 font-bold uppercase text-[10px] tracking-wider border-b border-slate-700">
               <tr>
                 <th className="px-5 py-3.5">Material Name</th>
-                <th className="px-4 py-3.5">Type</th>
+                <th className="px-4 py-3.5">Source Category</th>
                 <th className="px-4 py-3.5">Course & Subject</th>
-                <th className="px-3 py-3.5">Attempt / Source</th>
+                <th className="px-3 py-3.5">Attempt / Year</th>
                 <th className="px-3 py-3.5">Format</th>
                 <th className="px-3 py-3.5">Status</th>
                 <th className="px-4 py-3.5 text-right">Actions</th>
@@ -747,20 +761,13 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                     </div>
 
                     <div>
-                      <label className="block font-bold text-slate-300 mb-1">Course Level *</label>
+                      <label className="block font-bold text-slate-300 mb-1">Course *</label>
                       <select
                         value={formData.course}
-                        onChange={(e) => {
-                          const lvl = e.target.value as McqCourse;
-                          setFormData({
-                            ...formData,
-                            course: lvl,
-                            subject: CA_SUBJECTS[lvl][0],
-                          });
-                        }}
+                        onChange={(e) => handleCourseChange(e.target.value as McqCourse)}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        {COURSE_OPTIONS.map((c) => (
+                        {CANONICAL_COURSE_OPTIONS.map((c) => (
                           <option key={c.value} value={c.value}>{c.label}</option>
                         ))}
                       </select>
@@ -770,49 +777,88 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                       <label className="block font-bold text-slate-300 mb-1">Subject *</label>
                       <select
                         value={formData.subject}
-                        onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                        onChange={(e) => setFormData((p) => ({ ...p, subject: e.target.value, chapter: '', topic: '' }))}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        {CA_SUBJECTS[formData.course]?.map((s) => (
+                        {courseSubjects.map((s) => (
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
                     </div>
 
                     <div>
-                      <label className="block font-bold text-slate-300 mb-1">Material Type *</label>
+                      <label className="block font-bold text-slate-300 mb-1">Chapter (Optional)</label>
                       <select
-                        value={formData.materialType}
-                        onChange={(e) => setFormData({ ...formData, materialType: e.target.value })}
+                        value={formData.chapter}
+                        onChange={(e) => setFormData((p) => ({ ...p, chapter: e.target.value, topic: '' }))}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        {MATERIAL_TYPES.map((t) => (
-                          <option key={t} value={t}>{t}</option>
+                        <option value="">All Chapters / General Paper</option>
+                        {subjectChapters.map((chap) => (
+                          <option key={chap} value={chap}>{chap}</option>
                         ))}
                       </select>
                     </div>
 
                     <div>
-                      <label className="block font-bold text-slate-300 mb-1">Source *</label>
-                      <input
-                        type="text"
-                        value={formData.source}
-                        onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-                        placeholder="ICAI / Board of Studies / Faculty"
+                      <label className="block font-bold text-slate-300 mb-1">Topic (Optional)</label>
+                      <select
+                        value={formData.topic}
+                        onChange={(e) => setFormData((p) => ({ ...p, topic: e.target.value }))}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                      >
+                        <option value="">Not Applicable / Full Chapter</option>
+                        {chapterTopics.filter((t) => t !== 'Not Applicable').map((top) => (
+                          <option key={top} value={top}>{top}</option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Attempt / Year</label>
-                      <input
-                        type="text"
-                        value={formData.attempt}
-                        onChange={(e) => setFormData({ ...formData, attempt: e.target.value })}
-                        placeholder="May 2026 / Sept 2026"
+                    <div className={isAttemptRequiredSource(formData.materialType) ? '' : 'sm:col-span-2'}>
+                      <label className="block font-bold text-slate-300 mb-1">Source Category *</label>
+                      <select
+                        value={formData.materialType}
+                        onChange={(e) => handleSourceCategoryChange(e.target.value as CanonicalSourceCategory)}
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                      >
+                        {CANONICAL_SOURCE_CATEGORIES.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
                     </div>
+
+                    {/* CONDITIONAL ATTEMPT / YEAR FIELD: Appears ONLY when Source Category is RTP, MTP, or PYQ */}
+                    {isAttemptRequiredSource(formData.materialType) && (
+                      <div>
+                        <label className="block font-bold text-amber-400 mb-1 flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>Attempt / Year (for {formData.materialType}) *</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.attempt}
+                          onChange={(e) => setFormData({ ...formData, attempt: e.target.value })}
+                          placeholder={formData.materialType === 'MTP' ? 'e.g. May 2026 - Series 1' : 'e.g. May 2026'}
+                          className="w-full bg-slate-950 border border-amber-500/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {getAttemptSuggestions(formData.materialType).slice(0, 3).map((sugg) => (
+                            <button
+                              key={sugg}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, attempt: sugg })}
+                              className={`text-[10px] px-2 py-0.5 rounded border transition cursor-pointer ${
+                                formData.attempt === sugg
+                                  ? 'bg-amber-600 text-white border-amber-600'
+                                  : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
+                              }`}
+                            >
+                              {sugg}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div>
                       <label className="block font-bold text-slate-300 mb-1">Amendment Version</label>
@@ -823,6 +869,26 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                         placeholder="New Scheme 2024 / Finance Act 2024"
                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-300 mb-1">Applicable Period</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          value={formData.applicableFrom}
+                          onChange={(e) => setFormData({ ...formData, applicableFrom: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white text-[11px]"
+                          title="Applicable From"
+                        />
+                        <input
+                          type="date"
+                          value={formData.applicableTill}
+                          onChange={(e) => setFormData({ ...formData, applicableTill: e.target.value })}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white text-[11px]"
+                          title="Applicable Till"
+                        />
+                      </div>
                     </div>
 
                     <div className="sm:col-span-2">
@@ -894,12 +960,14 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                     {/* Metadata Summary Card */}
                     <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                       <div><span className="text-slate-500 font-bold">File:</span> <span className="text-white">{previewResult.fileName}</span></div>
-                      <div><span className="text-slate-500 font-bold">Type:</span> <span className="text-white">{previewResult.fileType} {previewResult.fileType === 'PDF' && `(${previewResult.pageCount}p)`}</span></div>
+                      <div><span className="text-slate-500 font-bold">Format:</span> <span className="text-white">{previewResult.fileType} {previewResult.fileType === 'PDF' && `(${previewResult.pageCount}p)`}</span></div>
                       <div><span className="text-slate-500 font-bold">Size:</span> <span className="text-white">{(previewResult.fileSize / (1024 * 1024)).toFixed(2)} MB</span></div>
                       <div><span className="text-slate-500 font-bold">Course:</span> <span className="text-white">{formData.course.replace(/_/g, ' ')}</span></div>
                       <div><span className="text-slate-500 font-bold">Subject:</span> <span className="text-white">{formData.subject}</span></div>
-                      <div><span className="text-slate-500 font-bold">Type:</span> <span className="text-white">{formData.materialType}</span></div>
-                      <div><span className="text-slate-500 font-bold">Attempt:</span> <span className="text-white">{formData.attempt}</span></div>
+                      <div><span className="text-slate-500 font-bold">Source Category:</span> <span className="text-white">{formData.materialType}</span></div>
+                      {isAttemptRequiredSource(formData.materialType) && (
+                        <div><span className="text-slate-500 font-bold">Attempt:</span> <span className="text-white">{formData.attempt}</span></div>
+                      )}
                       <div><span className="text-slate-500 font-bold">Status:</span> <span className="text-white">{formData.status}</span></div>
                     </div>
 
@@ -995,10 +1063,10 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
 
             <div className="p-6 overflow-y-auto space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 text-[11px]">
-                <div><span className="text-slate-500 font-bold">Course:</span> <span className="text-white">{viewingMaterial.course}</span></div>
+                <div><span className="text-slate-500 font-bold">Course:</span> <span className="text-white">{viewingMaterial.course.replace(/_/g, ' ')}</span></div>
                 <div><span className="text-slate-500 font-bold">Subject:</span> <span className="text-white">{viewingMaterial.subject}</span></div>
-                <div><span className="text-slate-500 font-bold">Type:</span> <span className="text-white">{viewingMaterial.material_type}</span></div>
-                <div><span className="text-slate-500 font-bold">Attempt:</span> <span className="text-white">{viewingMaterial.attempt || 'General'}</span></div>
+                <div><span className="text-slate-500 font-bold">Source Category:</span> <span className="text-white">{viewingMaterial.material_type}</span></div>
+                <div><span className="text-slate-500 font-bold">Attempt / Year:</span> <span className="text-white">{viewingMaterial.attempt || 'General / Non-Attempt'}</span></div>
               </div>
 
               <div>
@@ -1048,7 +1116,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className={`grid ${isAttemptRequiredSource(editingMaterial.material_type) ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
               <div>
                 <label className="block font-bold text-slate-300 mb-1">Status</label>
                 <select
@@ -1062,15 +1130,20 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                 </select>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-300 mb-1">Attempt</label>
-                <input
-                  type="text"
-                  value={editingMaterial.attempt || ''}
-                  onChange={(e) => setEditingMaterial({ ...editingMaterial, attempt: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
-                />
-              </div>
+              {isAttemptRequiredSource(editingMaterial.material_type) && (
+                <div>
+                  <label className="block font-bold text-amber-400 mb-1 flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>Attempt / Year (for {editingMaterial.material_type})</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingMaterial.attempt || ''}
+                    onChange={(e) => setEditingMaterial({ ...editingMaterial, attempt: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+              )}
             </div>
 
             <div>

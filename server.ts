@@ -152,8 +152,59 @@ async function startServer() {
 
   // Vite middleware in development vs static file serving in production
   if (process.env.NODE_ENV !== 'production') {
+    // Intercept /@vite/client to provide a silent, zero-WebSocket stub in AI Studio preview environment (where HMR is disabled)
+    app.use('/@vite/client', (req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.send(`
+// Clean stub of Vite client for AI Studio preview environment (HMR is disabled by platform policy)
+const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  }
+  style.textContent = content;
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function injectQuery(url, queryToInject) {
+  if (url.indexOf('?') === -1) return url + '?' + queryToInject;
+  return url + '&' + queryToInject;
+}
+export class ErrorOverlay extends HTMLElement {}
+if (typeof customElements !== 'undefined' && !customElements.get('vite-error-overlay')) {
+  try {
+    customElements.define('vite-error-overlay', ErrorOverlay);
+  } catch (e) {}
+}
+export function createHotContext() {
+  return {
+    accept() {},
+    prune() {},
+    dispose() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    send() {},
+    data: {},
+  };
+}
+export default {};
+`);
+    });
+
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

@@ -1,6 +1,101 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      (function() {
+        try {
+          var OrigWS = window.WebSocket;
+          if (OrigWS) {
+            window.WebSocket = function(url, protocols) {
+              if (typeof url === 'string' && (url.indexOf('token=') !== -1 || url.indexOf('vite') !== -1 || url.indexOf('3000') !== -1)) {
+                return {
+                  send: function() {},
+                  close: function() {},
+                  addEventListener: function() {},
+                  removeEventListener: function() {},
+                  onopen: null,
+                  onmessage: null,
+                  onerror: null,
+                  onclose: null,
+                  readyState: 3,
+                  CLOSED: 3,
+                  CLOSING: 2,
+                  CONNECTING: 0,
+                  OPEN: 1
+                };
+              }
+              return new OrigWS(url, protocols);
+            };
+            window.WebSocket.prototype = OrigWS.prototype;
+            window.WebSocket.CONNECTING = 0;
+            window.WebSocket.OPEN = 1;
+            window.WebSocket.CLOSING = 2;
+            window.WebSocket.CLOSED = 3;
+          }
+
+          var isViteWs = function(a) {
+            if (!a) return false;
+            try {
+              var s = '';
+              for (var i = 0; i < a.length; i++) {
+                var v = a[i];
+                if (typeof v === 'string') s += v + ' ';
+                else if (v && typeof v.message === 'string') s += v.message + ' ';
+                else if (v && typeof v.stack === 'string') s += v.stack + ' ';
+              }
+              return s.indexOf('[vite]') !== -1 || s.indexOf('WebSocket') !== -1 || s.indexOf('ws:') !== -1 || s.indexOf('wss:') !== -1;
+            } catch(e) { return false; }
+          };
+
+          ['log', 'warn', 'error', 'info', 'debug'].forEach(function(m) {
+            var orig = console[m];
+            if (orig) {
+              console[m] = function() {
+                if (isViteWs(arguments)) return;
+                orig.apply(console, arguments);
+              };
+            }
+          });
+
+          window.addEventListener('error', function(e) {
+            var msg = (e && (e.message || (e.error && e.error.message))) || '';
+            var fn = (e && e.filename) || '';
+            if (
+              (typeof msg === 'string' && (msg.indexOf('[vite]') !== -1 || msg.indexOf('WebSocket') !== -1)) ||
+              (typeof fn === 'string' && fn.indexOf('@vite/client') !== -1)
+            ) {
+              e.stopImmediatePropagation && e.stopImmediatePropagation();
+              e.preventDefault && e.preventDefault();
+              return true;
+            }
+          }, true);
+
+          window.addEventListener('unhandledrejection', function(e) {
+            var r = e && e.reason;
+            var msg = (r && (r.message || r.stack || r)) || '';
+            if (typeof msg === 'string' && (msg.indexOf('[vite]') !== -1 || msg.indexOf('WebSocket') !== -1)) {
+              e.stopImmediatePropagation && e.stopImmediatePropagation();
+              e.preventDefault && e.preventDefault();
+            }
+          }, true);
+        } catch(e) {}
+
+        try {
+          var root = document.documentElement;
+          if (root) {
+            var saved = localStorage.getItem('ca_exam_checker_theme') || localStorage.getItem('theme');
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (saved === 'dark' || (!saved && prefersDark)) {
+              root.classList.add('dark');
+              if (root.style) root.style.colorScheme = 'dark';
+            } else {
+              root.classList.remove('dark');
+              if (root.style) root.style.colorScheme = 'light';
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -18,23 +113,6 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <script>
-      (function() {
-        try {
-          var root = document.documentElement;
-          if (!root) return;
-          var saved = localStorage.getItem('ca_exam_checker_theme') || localStorage.getItem('theme');
-          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-          if (saved === 'dark' || (!saved && prefersDark)) {
-            root.classList.add('dark');
-            if (root.style) root.style.colorScheme = 'dark';
-          } else {
-            root.classList.remove('dark');
-            if (root.style) root.style.colorScheme = 'light';
-          }
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

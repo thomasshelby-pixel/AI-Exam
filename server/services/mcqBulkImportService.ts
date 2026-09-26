@@ -200,7 +200,7 @@ export function validateBulkQuestions(
   const isModeCase = configQType === 'CASE_BASED' || configQType === 'CASE';
   const isModeMixedQ = configQType === 'MIXED';
 
-  const configDiff = (defaultValues.difficulty || 'mixed').toLowerCase().trim();
+  const configDiff = defaultValues.difficulty ? defaultValues.difficulty.toLowerCase().trim() : '';
   const isDiffEasy = configDiff === 'easy';
   const isDiffModerate = configDiff === 'moderate';
   const isDiffHard = configDiff === 'hard';
@@ -255,7 +255,7 @@ export function validateBulkQuestions(
       if (!rawRowQType) {
         errors.push('Question Type is required for every row in Mixed mode (must be explicitly NORMAL or CASE_BASED).');
       } else if (rawRowQType !== 'NORMAL' && rawRowQType !== 'CASE_BASED') {
-        errors.push(`Invalid Question Type "${rowObj.question_type}". In Mixed mode, allowed values are strictly NORMAL or CASE_BASED.`);
+        errors.push(`Invalid Question Type "${rowObj.question_type}". In Mixed mode, Allowed values are strictly NORMAL or CASE_BASED.`);
       } else {
         resolvedQType = rawRowQType as 'NORMAL' | 'CASE_BASED';
       }

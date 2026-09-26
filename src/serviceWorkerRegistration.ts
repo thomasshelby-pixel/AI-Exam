@@ -1,7 +1,7 @@
 import { registerSW } from 'virtual:pwa-register';
 
 export function registerAppServiceWorker() {
-  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !import.meta.env.DEV) {
     try {
       const updateSW = registerSW({
         immediate: true,

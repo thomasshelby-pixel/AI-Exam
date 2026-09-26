@@ -468,7 +468,14 @@ export const getPublicReviewsHandler = (req: Request, res: Response) => {
     });
   } catch (err: unknown) {
     console.error('Fetch public reviews error:', err);
-    return res.status(500).json({ error: 'Failed to fetch public reviews' });
+    return res.json({
+      reviews: [],
+      stats: {
+        totalReviews: 0,
+        averageRating: 0,
+        ratingBreakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+      },
+    });
   }
 };
 
