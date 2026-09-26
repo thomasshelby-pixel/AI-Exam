@@ -61,6 +61,7 @@ export const mcqApi = {
     }
   ) => {
     return apiRequest<{
+      questionId: string;
       isCorrect: boolean;
       correctAnswer: 'A' | 'B' | 'C' | 'D';
       explanation: string;
@@ -243,17 +244,64 @@ export const mcqApi = {
   },
 
   // Structured MCQ Bulk Import (CSV / XLSX)
-  validateBulkImport: async (csvText: string, defaultValues?: any) => {
+  validateBulkImport: async (
+    input: string | { csvText?: string; base64File?: string; fileFormat?: 'CSV' | 'XLSX'; defaultValues?: any },
+    defaultValues?: any
+  ) => {
+    let payload: any = {};
+    if (typeof input === 'string') {
+      payload = { csvText: input, defaultValues };
+    } else {
+      payload = input;
+    }
     return apiRequest<BulkImportPreviewResult>('/api/mcq/admin/bulk-import/validate', {
       method: 'POST',
-      body: JSON.stringify({ csvText, defaultValues }),
+      body: JSON.stringify(payload),
     });
   },
 
-  commitBulkImport: async (validRows: any[]) => {
-    return apiRequest<{ importedCount: number; importedIds: string[] }>('/api/mcq/admin/bulk-import/commit', {
+  commitBulkImport: async (validRows: any[], status: 'draft' | 'published' = 'draft') => {
+    return apiRequest<{ importedCount: number; casesCount: number; importedIds: string[] }>('/api/mcq/admin/bulk-import/commit', {
       method: 'POST',
-      body: JSON.stringify({ validRows }),
+      body: JSON.stringify({ validRows, status }),
+    });
+  },
+
+  // Case Bundles
+  getAdminCases: async (params: {
+    course?: string;
+    subject?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.course) q.set('course', params.course);
+    if (params.subject) q.set('subject', params.subject);
+    if (params.status) q.set('status', params.status);
+    if (params.search) q.set('search', params.search);
+    if (params.page) q.set('page', params.page.toString());
+    if (params.limit) q.set('limit', params.limit.toString());
+    return apiRequest<{ cases: any[]; total: number; page: number; totalPages: number }>(
+      `/api/mcq/admin/cases?${q.toString()}`
+    );
+  },
+
+  getAdminCase: async (id: string) => {
+    return apiRequest<{ case: any }>(`/api/mcq/admin/cases/${id}`);
+  },
+
+  bulkUpdateCaseStatus: async (ids: string[], status: McqStatus) => {
+    return apiRequest<{ updatedCount: number }>('/api/mcq/admin/cases/bulk-status', {
+      method: 'POST',
+      body: JSON.stringify({ ids, status }),
+    });
+  },
+
+  deleteAdminCase: async (id: string) => {
+    return apiRequest<{ success: boolean }>(`/api/mcq/admin/cases/${id}`, {
+      method: 'DELETE',
     });
   },
 };

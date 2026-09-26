@@ -246,82 +246,92 @@ export const McqPracticeSessionPage: React.FC = () => {
   const handleSelectOption = useCallback(async (option: 'A' | 'B' | 'C' | 'D') => {
     if (!session || !currentQuestion || session.status === 'completed') return;
 
+    const targetQuestionId = currentQuestion.id;
     const isPractice = session.sessionType === 'practice' || session.sessionType === 'quick';
     const alreadySelected = currentQuestion.userResponse?.selectedOption === option;
     const targetOption = alreadySelected && !isPractice ? null : option;
 
-    // Optimistic UI update on current question without whole-page blink
-    setQuestions((prev) => {
-      const copy = [...prev];
-      if (!copy[currentIndex]) return prev;
-      copy[currentIndex] = {
-        ...copy[currentIndex],
-        userResponse: {
-          ...copy[currentIndex].userResponse,
-          selectedOption: targetOption,
-        },
-      };
-      return copy;
-    });
+    // Optimistic UI update strictly targeted by immutable questionId
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === targetQuestionId
+          ? {
+              ...q,
+              userResponse: {
+                ...q.userResponse,
+                selectedOption: targetOption,
+              },
+            }
+          : q
+      )
+    );
 
     try {
       const res = await mcqApi.submitAnswer(session.id, {
-        questionId: currentQuestion.id,
+        questionId: targetQuestionId,
         selectedOption: targetOption,
         isMarkedForReview: currentQuestion.userResponse?.isMarkedForReview,
         eliminatedOptions: currentQuestion.userResponse?.eliminatedOptions,
         timeTakenSeconds: (currentQuestion.userResponse?.timeTakenSeconds || 0) + 5,
       });
 
-      // Update feedback if practice mode
-      setQuestions((prev) => {
-        const copy = [...prev];
-        if (!copy[currentIndex]) return prev;
-        copy[currentIndex] = {
-          ...copy[currentIndex],
-          correctAnswer: isPractice ? res.correctAnswer : copy[currentIndex].correctAnswer,
-          explanation: isPractice ? res.explanation : copy[currentIndex].explanation,
-          reference: isPractice ? res.reference : copy[currentIndex].reference,
-          userResponse: {
-            ...copy[currentIndex].userResponse,
-            selectedOption: targetOption,
-            isCorrect: res.isCorrect,
-          },
-        };
-        return copy;
-      });
+      // Strict validation: response must match targetQuestionId
+      if (res && res.questionId && res.questionId !== targetQuestionId) {
+        console.warn(`[MCQ Integrity] Mismatched questionId in response: ${res.questionId} vs expected: ${targetQuestionId}`);
+        return;
+      }
+
+      // Update feedback by questionId (IMMUTABLE ID, NEVER ARRAY INDEX)
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (q.id !== targetQuestionId) return q; // Prevents any delayed response from overwriting active question!
+          return {
+            ...q,
+            correctAnswer: isPractice ? res.correctAnswer : q.correctAnswer,
+            explanation: isPractice ? res.explanation : q.explanation,
+            reference: isPractice ? res.reference : q.reference,
+            userResponse: {
+              ...q.userResponse,
+              selectedOption: targetOption,
+              isCorrect: res.isCorrect,
+            },
+          };
+        })
+      );
     } catch (err) {
       console.error('Failed to record answer:', err);
     }
-  }, [session, currentQuestion, currentIndex]);
+  }, [session, currentQuestion]);
 
   // 2. TOGGLE ELIMINATE
   const handleToggleEliminate = useCallback(async (option: 'A' | 'B' | 'C' | 'D', e: React.MouseEvent) => {
     e.stopPropagation();
     if (!session || !currentQuestion || session.status === 'completed') return;
 
+    const targetQuestionId = currentQuestion.id;
     const currentEliminated = currentQuestion.userResponse?.eliminatedOptions || [];
     const updated = currentEliminated.includes(option)
       ? currentEliminated.filter((o) => o !== option)
       : [...currentEliminated, option];
 
-    setQuestions((prev) => {
-      const copy = [...prev];
-      if (!copy[currentIndex]) return prev;
-      copy[currentIndex] = {
-        ...copy[currentIndex],
-        userResponse: {
-          ...copy[currentIndex].userResponse,
-          selectedOption: copy[currentIndex].userResponse?.selectedOption || null,
-          eliminatedOptions: updated,
-        },
-      };
-      return copy;
-    });
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === targetQuestionId
+          ? {
+              ...q,
+              userResponse: {
+                ...q.userResponse,
+                selectedOption: q.userResponse?.selectedOption || null,
+                eliminatedOptions: updated,
+              },
+            }
+          : q
+      )
+    );
 
     try {
       await mcqApi.submitAnswer(session.id, {
-        questionId: currentQuestion.id,
+        questionId: targetQuestionId,
         selectedOption: currentQuestion.userResponse?.selectedOption || null,
         isMarkedForReview: currentQuestion.userResponse?.isMarkedForReview,
         eliminatedOptions: updated,
@@ -329,32 +339,34 @@ export const McqPracticeSessionPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to update eliminated options:', err);
     }
-  }, [session, currentQuestion, currentIndex]);
+  }, [session, currentQuestion]);
 
   // 3. TOGGLE REVIEW FLAG
   const handleToggleMarkReview = useCallback(async () => {
     if (!session || !currentQuestion || session.status === 'completed') return;
 
+    const targetQuestionId = currentQuestion.id;
     const currentStatus = !!currentQuestion.userResponse?.isMarkedForReview;
     const newStatus = !currentStatus;
 
-    setQuestions((prev) => {
-      const copy = [...prev];
-      if (!copy[currentIndex]) return prev;
-      copy[currentIndex] = {
-        ...copy[currentIndex],
-        userResponse: {
-          ...copy[currentIndex].userResponse,
-          selectedOption: copy[currentIndex].userResponse?.selectedOption || null,
-          isMarkedForReview: newStatus,
-        },
-      };
-      return copy;
-    });
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === targetQuestionId
+          ? {
+              ...q,
+              userResponse: {
+                ...q.userResponse,
+                selectedOption: q.userResponse?.selectedOption || null,
+                isMarkedForReview: newStatus,
+              },
+            }
+          : q
+      )
+    );
 
     try {
       await mcqApi.submitAnswer(session.id, {
-        questionId: currentQuestion.id,
+        questionId: targetQuestionId,
         selectedOption: currentQuestion.userResponse?.selectedOption || null,
         isMarkedForReview: newStatus,
         eliminatedOptions: currentQuestion.userResponse?.eliminatedOptions,
@@ -362,7 +374,7 @@ export const McqPracticeSessionPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to toggle review flag:', err);
     }
-  }, [session, currentQuestion, currentIndex]);
+  }, [session, currentQuestion]);
 
   // 4. TOGGLE BOOKMARK
   const handleToggleBookmark = useCallback(async () => {
@@ -631,15 +643,28 @@ export const McqPracticeSessionPage: React.FC = () => {
 
             {/* Scrollable Question Content */}
             <div className="p-6 md:p-8 flex-1 overflow-y-auto space-y-6">
-              {/* CASE STUDY SCENARIO (IF PRESENT) */}
-              {currentQuestion.caseStudyScenario && (
-                <div className="p-4 bg-indigo-950/40 border border-indigo-800/60 rounded-xl space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-300">
-                    <BookOpen className="w-4 h-4 text-indigo-400" /> ICAI Case Scenario
+              {/* CASE STUDY SCENARIO CARD */}
+              {(currentQuestion.caseStudyScenario || currentQuestion.caseId) && (
+                <div className="p-4.5 bg-gradient-to-br from-purple-950/50 to-indigo-950/40 border border-purple-800/70 rounded-2xl space-y-2.5 shadow-sm">
+                  <div className="flex items-center justify-between text-xs font-bold text-purple-300">
+                    <span className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-purple-400" />
+                      <span>
+                        {currentQuestion.caseTitle || 'ICAI Integrated Case Study Scenario'}
+                      </span>
+                    </span>
+                    {currentQuestion.caseId && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-purple-900/80 text-purple-200 border border-purple-700/60 font-mono text-[10px] font-bold">
+                        {currentQuestion.caseId}
+                        {currentQuestion.caseSequence ? ` • Question ${currentQuestion.caseSequence}` : ''}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-xs text-slate-300 whitespace-pre-line leading-relaxed">
-                    {currentQuestion.caseStudyScenario}
-                  </div>
+                  {currentQuestion.caseStudyScenario && (
+                    <div className="text-xs text-slate-200 whitespace-pre-line leading-relaxed bg-slate-900/70 p-4 rounded-xl border border-purple-900/50 max-h-80 overflow-y-auto">
+                      {currentQuestion.caseStudyScenario}
+                    </div>
+                  )}
                 </div>
               )}
 

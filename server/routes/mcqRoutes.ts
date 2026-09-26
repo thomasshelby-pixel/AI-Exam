@@ -17,6 +17,10 @@ import {
   deleteAdminQuestion,
   bulkUpdateQuestionStatus,
   getAdminStats,
+  getAdminCases,
+  getAdminCaseById,
+  bulkUpdateCaseStatus,
+  deleteAdminCase,
 } from '../services/mcqService.js';
 import {
   validateMaterialFile,
@@ -31,6 +35,7 @@ import {
 } from '../services/mcqMaterialService.js';
 import {
   parseCsvText,
+  parseXlsxBuffer,
   validateBulkQuestions,
   commitBulkQuestions,
 } from '../services/mcqBulkImportService.js';
@@ -519,40 +524,114 @@ router.get('/admin/materials/:id/download', requireMcqAdmin, (req: AuthRequest, 
 // MCQ ADMIN: STRUCTURED MCQ BULK IMPORT (CSV / XLSX)
 // ------------------------------------------
 
-// 8. Validate Bulk Import CSV
+// 8. Validate Bulk Import (CSV or XLSX)
 router.post('/admin/bulk-import/validate', requireMcqAdmin, (req: AuthRequest, res: Response) => {
   try {
-    const { csvText, defaultValues } = req.body;
-    if (!csvText || !csvText.trim()) {
-      return res.status(400).json({ error: 'Please provide CSV content to parse.' });
+    const { csvText, base64File, fileFormat, defaultValues } = req.body;
+
+    let parsedRows: string[][] = [];
+
+    if (fileFormat === 'XLSX' || (base64File && !csvText)) {
+      if (!base64File) {
+        return res.status(400).json({ error: 'Please provide XLSX file content.' });
+      }
+      const buffer = Buffer.from(base64File, 'base64');
+      parsedRows = parseXlsxBuffer(buffer);
+    } else {
+      if (!csvText || !csvText.trim()) {
+        return res.status(400).json({ error: 'Please provide CSV content to parse.' });
+      }
+      parsedRows = parseCsvText(csvText);
     }
 
-    const parsedRows = parseCsvText(csvText);
     if (parsedRows.length < 2) {
-      return res.status(400).json({ error: 'CSV must contain at least a header row and one question row.' });
+      return res.status(400).json({
+        error: 'File must contain at least a header row and one structured question row.',
+      });
     }
 
     const preview = validateBulkQuestions(parsedRows, defaultValues || {});
     return res.json(preview);
   } catch (err: any) {
     console.error('Bulk validate error:', err);
-    return res.status(500).json({ error: err.message || 'Failed to parse CSV content.' });
+    return res.status(500).json({ error: err.message || 'Failed to parse records.' });
   }
 });
 
-// 9. Commit Bulk Questions
+// 9. Commit Bulk Questions & Case Bundles (Supports status 'draft' or 'published')
 router.post('/admin/bulk-import/commit', requireMcqAdmin, (req: AuthRequest, res: Response) => {
   try {
-    const { validRows } = req.body;
+    const { validRows, status } = req.body;
     if (!Array.isArray(validRows) || validRows.length === 0) {
       return res.status(400).json({ error: 'No valid questions to commit.' });
     }
 
-    const result = commitBulkQuestions(validRows, req.user!.id);
+    const targetStatus = status === 'published' ? 'published' : 'draft';
+    const result = commitBulkQuestions(validRows, req.user!.id, targetStatus);
     return res.json(result);
   } catch (err: any) {
     console.error('Commit bulk questions error:', err);
     return res.status(500).json({ error: err.message || 'Failed to import bulk questions.' });
+  }
+});
+
+// ------------------------------------------
+// MCQ ADMIN: CASE BUNDLE APIS
+// ------------------------------------------
+
+// 10. List Case Bundles
+router.get('/admin/cases', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { course, subject, status, search, page, limit } = req.query;
+    const casesData = getAdminCases({
+      course: course as string,
+      subject: subject as string,
+      status: status as string,
+      search: search as string,
+      page: page ? parseInt(page as string, 10) : 1,
+      limit: limit ? parseInt(limit as string, 10) : 20,
+    });
+    return res.json(casesData);
+  } catch (err: any) {
+    console.error('Get admin cases error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to load case studies.' });
+  }
+});
+
+// 11. Get Single Case Bundle by ID
+router.get('/admin/cases/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const caseData = getAdminCaseById(req.params.id);
+    if (!caseData) {
+      return res.status(404).json({ error: 'Case bundle not found.' });
+    }
+    return res.json({ case: caseData });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to load case bundle.' });
+  }
+});
+
+// 12. Bulk Update Case Status (Publish / Draft)
+router.post('/admin/cases/bulk-status', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { ids, status } = req.body;
+    if (!Array.isArray(ids) || !status) {
+      return res.status(400).json({ error: 'Case IDs array and target status are required.' });
+    }
+    const result = bulkUpdateCaseStatus(ids, status);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to update case bundle status.' });
+  }
+});
+
+// 13. Delete Case Bundle
+router.delete('/admin/cases/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const result = deleteAdminCase(req.params.id);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to delete case bundle.' });
   }
 });
 

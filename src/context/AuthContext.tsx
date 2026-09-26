@@ -11,6 +11,13 @@ export interface SuspendedAccountInfo {
   revocationToken: string;
 }
 
+export interface LockedUserInfo {
+  email: string;
+  fullName: string;
+  role: string;
+  authProvider?: 'password' | 'google';
+}
+
 export interface MfaChallengeState {
   isOpen: boolean;
   mode: 'CHALLENGE' | 'ENROLL' | 'RECOVERY_CODE' | 'MANUAL_RECOVERY';
@@ -30,6 +37,12 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isSessionLocked: boolean;
+  lockedUser: LockedUserInfo | null;
+  lockSession: () => void;
+  resumeSessionWithPassword: (password: string) => Promise<User>;
+  resumeSessionWithGoogle: () => Promise<User>;
+  switchAccountOrLogout: () => Promise<void>;
   suspendedAccount: SuspendedAccountInfo | null;
   clearSuspension: () => void;
   mfaChallenge: MfaChallengeState | null;
@@ -87,6 +100,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [suspendedAccount, setSuspendedAccount] = useState<SuspendedAccountInfo | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
+
+  // Quick Resume State for Auto-Logout Inactivity Locking
+  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && sessionStorage.getItem('ca_session_locked') === 'true';
+  });
+  const [lockedUser, setLockedUser] = useState<LockedUserInfo | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const saved = sessionStorage.getItem('ca_locked_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
 
   const clearSuspension = () => setSuspendedAccount(null);
 
@@ -713,6 +743,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res;
   };
 
+  const lockSession = useCallback(() => {
+    if (!user && !lockedUser) return;
+    const info: LockedUserInfo = {
+      email: user?.email || lockedUser?.email || '',
+      fullName: user?.fullName || (user as any)?.name || lockedUser?.fullName || 'User',
+      role: user?.role || lockedUser?.role || 'STUDENT',
+      authProvider: 'password',
+    };
+    setLockedUser(info);
+    setIsSessionLocked(true);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('ca_session_locked', 'true');
+      sessionStorage.setItem('ca_locked_user', JSON.stringify(info));
+      localStorage.removeItem('ca_exam_checker_token');
+    }
+    setToken(null);
+  }, [user, lockedUser]);
+
+  const resumeSessionWithPassword = async (password: string): Promise<User> => {
+    const targetEmail = lockedUser?.email || user?.email;
+    if (!targetEmail) {
+      throw new Error('No locked session found. Please log in again.');
+    }
+    const isInst = (lockedUser?.role || user?.role || '').toUpperCase().includes('INSTITUTE');
+    let verifiedUser: User;
+    if (isInst) {
+      verifiedUser = await instituteLogin(targetEmail, password);
+    } else {
+      verifiedUser = await login(targetEmail, password);
+    }
+    setIsSessionLocked(false);
+    setLockedUser(null);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('ca_session_locked');
+      sessionStorage.removeItem('ca_locked_user');
+    }
+    return verifiedUser;
+  };
+
+  const resumeSessionWithGoogle = async (): Promise<User> => {
+    throw new Error('Google Sign-In has been discontinued. Please resume using your account password.');
+  };
+
+  const switchAccountOrLogout = async (): Promise<void> => {
+    setIsSessionLocked(false);
+    setLockedUser(null);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('ca_session_locked');
+      sessionStorage.removeItem('ca_locked_user');
+    }
+    await logout();
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' }).catch(() => {});
@@ -727,6 +810,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setProfile(null);
       setSuspendedAccount(null);
       setMfaChallenge(null);
+      setIsSessionLocked(false);
+      setLockedUser(null);
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('ca_session_locked');
+        sessionStorage.removeItem('ca_locked_user');
+      }
     }
   };
 
@@ -741,6 +830,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         isAuthenticated,
         isLoading,
+        isSessionLocked,
+        lockedUser,
+        lockSession,
+        resumeSessionWithPassword,
+        resumeSessionWithGoogle,
+        switchAccountOrLogout,
         suspendedAccount,
         clearSuspension,
         mfaChallenge,

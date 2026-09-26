@@ -32,6 +32,7 @@ import { StudentReviewCard } from '../../components/student/StudentReviewCard.js
 import { ProgressDashboard, EvaluationTrendPoint } from '../../components/student/ProgressDashboard.js';
 import { StudentPromoBanner } from '../../components/student/StudentPromoBanner.js';
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
+import { OfflineNotificationBanner } from '../../components/common/OfflineNotificationBanner.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -326,6 +327,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">
+      {/* Offline Alert Notification Banner */}
+      <OfflineNotificationBanner onRetrySuccess={fetchDashboard} />
+
       {/* Student Welcome Header Banner */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>

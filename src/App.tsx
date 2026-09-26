@@ -10,6 +10,7 @@ import {
 } from 'react-router-dom';
 import { ShieldAlert, Clock } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
+import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
 import { ThemeProvider } from './context/ThemeContext.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
@@ -368,7 +369,7 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
 
 // Protected Student Route Guard
 const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -376,6 +377,11 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
         <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  // Preserve workspace state when session is locked for quick resume
+  if (isSessionLocked) {
+    return <>{children}</>;
   }
 
   if (!isAuthenticated || !user) {
@@ -387,7 +393,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 // Protected MCQ Admin Route Guard
 const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -395,6 +401,11 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
         <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  // Preserve workspace state when session is locked for quick resume
+  if (isSessionLocked) {
+    return <>{children}</>;
   }
 
   if (!isAuthenticated || !user) {
@@ -412,7 +423,7 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
 // Protected Super Admin Route Guard
 // Automatically routes Institute Admin to Institute Portal rather than hitting 403 Access Denied
 const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
 
   if (isLoading) {
     return (
@@ -420,6 +431,11 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
         <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  // Preserve workspace state when session is locked for quick resume
+  if (isSessionLocked) {
+    return <>{children}</>;
   }
 
   if (!isAuthenticated || !user) {
@@ -448,31 +464,24 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
 
 const AppRoutes: React.FC = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isSessionLocked, lockSession } = useAuth();
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState<boolean>(false);
-  const [sessionTimedOut, setSessionTimedOut] = useState<boolean>(false);
 
   // Global 30-minute Inactivity Session Timeout Handler (Security Compliance)
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isSessionLocked) return;
 
     // 30 minutes in milliseconds
     const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
     let timeoutId: NodeJS.Timeout;
 
-    const performAutoLogout = async () => {
-      try {
-        await logout();
-      } catch (err) {
-        console.warn('[SessionTimeout] Logout failed:', err);
-      } finally {
-        setSessionTimedOut(true);
-      }
+    const performAutoLock = () => {
+      lockSession();
     };
 
     const resetTimer = () => {
       clearTimeout(timeoutId);
-      timeoutId = setTimeout(performAutoLogout, INACTIVITY_TIMEOUT_MS);
+      timeoutId = setTimeout(performAutoLock, INACTIVITY_TIMEOUT_MS);
     };
 
     const userActivityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
@@ -500,7 +509,7 @@ const AppRoutes: React.FC = () => {
         window.removeEventListener(event, handleActivity);
       });
     };
-  }, [isAuthenticated, logout]);
+  }, [isAuthenticated, isSessionLocked, lockSession]);
 
   return (
     <>
@@ -919,35 +928,8 @@ const AppRoutes: React.FC = () => {
         onSuccess={() => setIsCreditsModalOpen(false)}
       />
 
-      {/* Global Inactivity Session Timeout Compliance Modal */}
-      {sessionTimedOut && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 bg-amber-50 dark:bg-amber-950/40 rounded-full flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-              <ShieldAlert className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Session Timed Out</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
-                For your security and regulatory examination compliance, your session was automatically logged out after 30 minutes of inactivity.
-              </p>
-            </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200/80 dark:border-slate-700 flex items-center gap-2.5 text-left text-xs text-slate-600 dark:text-slate-300">
-              <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-              <span>Unsaved progress is protected. Please log in again to resume your examination workspace.</span>
-            </div>
-            <button
-              onClick={() => {
-                setSessionTimedOut(false);
-                navigate('/login');
-              }}
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm cursor-pointer"
-            >
-              Log In to Continue
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Global Inactivity Quick Resume Modal */}
+      <QuickResumeModal isOpen={isSessionLocked} />
     </>
   );
 };

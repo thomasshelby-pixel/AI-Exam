@@ -903,8 +903,18 @@ export interface ReviewEligibilityResponse {
 export type McqCourse = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL';
 export type McqQuestionType = 'normal' | 'case_based';
 export type McqDifficulty = 'easy' | 'moderate' | 'hard';
-export type McqSource = 'ICAI Module' | 'PYQ' | 'RTP' | 'MTP' | 'Conceptual' | 'Practical';
-export type McqStatus = 'draft' | 'review' | 'approved' | 'published' | 'archived';
+export type McqSource =
+  | 'RTP'
+  | 'MTP'
+  | 'PYQ'
+  | 'ICAI Module'
+  | 'Self-Created'
+  | 'Conceptual Practice'
+  | 'Other'
+  | 'Conceptual'
+  | 'Practical';
+export type McqStatus = 'draft' | 'review' | 'approved' | 'published' | 'archived' | 'deleted' | 'DELETED';
+export type McqGenerationMethod = 'MANUAL' | 'AI_GENERATED' | 'IMPORTED';
 
 export interface McqQuestion {
   id: string;
@@ -913,6 +923,9 @@ export interface McqQuestion {
   chapter: string;
   topic?: string;
   questionType: McqQuestionType;
+  caseId?: string;
+  caseTitle?: string;
+  caseSequence?: number;
   caseStudyScenario?: string;
   difficulty: McqDifficulty;
   source: McqSource;
@@ -920,6 +933,7 @@ export interface McqQuestion {
   applicableFrom?: string;
   applicableTill?: string;
   amendmentVersion?: string;
+  generationMethod?: McqGenerationMethod;
   questionText: string;
   optionA: string;
   optionB: string;
@@ -929,8 +943,52 @@ export interface McqQuestion {
   explanation: string;
   reference?: string;
   status: McqStatus;
+  source_material_id?: string;
+  sourceMaterialId?: string;
   createdBy?: string;
   reviewedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McqCase {
+  caseId: string;
+  caseTitle: string;
+  caseScenario: string;
+  caseDifficulty: McqDifficulty;
+  course: McqCourse;
+  subject: string;
+  chapter: string;
+  topic?: string;
+  source?: string;
+  attempt?: string;
+  applicableFrom?: string;
+  applicableTill?: string;
+  amendmentVersion?: string;
+  generationMethod?: McqGenerationMethod;
+  status: McqStatus;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  questions?: McqQuestion[];
+}
+
+export interface McqImportBatch {
+  id: string;
+  batchNumber?: string;
+  course: McqCourse;
+  subject?: string;
+  materialType: 'SINGLE' | 'CASE_BASED' | 'MIXED';
+  difficulty: McqDifficulty | 'mixed';
+  source: McqSource;
+  attempt?: string;
+  sourceMaterialId?: string;
+  generationMethod: McqGenerationMethod;
+  uploadedBy: string;
+  status: McqStatus;
+  rowCount: number;
+  validCount: number;
+  invalidCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -968,6 +1026,10 @@ export interface McqSession {
   timeSpentSeconds: number;
   durationSeconds?: number;
   status: McqSessionStatus;
+  currentQuestionId?: string | null;
+  currentQuestionIndex?: number;
+  currentCaseId?: string | null;
+  questionIds?: string[];
   createdAt: string;
   completedAt?: string;
   questions?: McqSessionQuestion[];

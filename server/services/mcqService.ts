@@ -18,6 +18,29 @@ import {
 // ==========================================
 export function initMcqTables() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS mcq_cases (
+      case_id TEXT PRIMARY KEY,
+      case_title TEXT NOT NULL,
+      case_scenario TEXT NOT NULL,
+      case_difficulty TEXT NOT NULL DEFAULT 'moderate',
+      course TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      chapter TEXT NOT NULL,
+      topic TEXT,
+      source TEXT DEFAULT 'ICAI Module',
+      attempt TEXT,
+      applicable_from TEXT,
+      applicable_till TEXT,
+      amendment_version TEXT,
+      generation_method TEXT DEFAULT 'MANUAL',
+      status TEXT NOT NULL DEFAULT 'published',
+      created_by TEXT DEFAULT 'MCQ_ADMIN',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcq_cases_filter ON mcq_cases(course, subject, chapter, status);
+
     CREATE TABLE IF NOT EXISTS mcq_questions (
       id TEXT PRIMARY KEY,
       course TEXT NOT NULL,
@@ -25,6 +48,8 @@ export function initMcqTables() {
       chapter TEXT NOT NULL,
       topic TEXT,
       question_type TEXT NOT NULL DEFAULT 'normal',
+      case_id TEXT,
+      case_sequence INTEGER,
       case_study_scenario TEXT,
       difficulty TEXT NOT NULL DEFAULT 'moderate',
       source TEXT NOT NULL DEFAULT 'ICAI Module',
@@ -32,6 +57,7 @@ export function initMcqTables() {
       applicable_from TEXT,
       applicable_till TEXT,
       amendment_version TEXT,
+      generation_method TEXT DEFAULT 'MANUAL',
       question_text TEXT NOT NULL,
       option_a TEXT NOT NULL,
       option_b TEXT NOT NULL,
@@ -41,8 +67,29 @@ export function initMcqTables() {
       explanation TEXT NOT NULL,
       reference TEXT,
       status TEXT NOT NULL DEFAULT 'published',
+      source_material_id TEXT,
       created_by TEXT DEFAULT 'MCQ_ADMIN',
       reviewed_by TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS mcq_import_batches (
+      id TEXT PRIMARY KEY,
+      batch_number TEXT,
+      course TEXT NOT NULL,
+      subject TEXT,
+      material_type TEXT DEFAULT 'MIXED',
+      difficulty TEXT DEFAULT 'mixed',
+      source TEXT DEFAULT 'ICAI Module',
+      attempt TEXT,
+      source_material_id TEXT,
+      generation_method TEXT DEFAULT 'IMPORTED',
+      uploaded_by TEXT DEFAULT 'MCQ_ADMIN',
+      status TEXT DEFAULT 'draft',
+      row_count INTEGER DEFAULT 0,
+      valid_count INTEGER DEFAULT 0,
+      invalid_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -125,15 +172,35 @@ export function initMcqTables() {
     CREATE INDEX IF NOT EXISTS idx_mcq_wrong_student ON mcq_wrong_vault(student_id, resolved);
   `);
 
-  // Ensure enhanced tracking columns for question bank duplicates / source referencing
+  // Ensure enhanced tracking columns for question bank duplicates / case bundles / source referencing
   try {
     const qCols = db.prepare('PRAGMA table_info(mcq_questions)').all() as any[];
+    if (!qCols.some((c) => c.name === 'case_id')) {
+      db.prepare('ALTER TABLE mcq_questions ADD COLUMN case_id TEXT').run();
+    }
+    if (!qCols.some((c) => c.name === 'case_sequence')) {
+      db.prepare('ALTER TABLE mcq_questions ADD COLUMN case_sequence INTEGER').run();
+    }
     if (!qCols.some((c) => c.name === 'source_material_id')) {
       db.prepare('ALTER TABLE mcq_questions ADD COLUMN source_material_id TEXT').run();
     }
     if (!qCols.some((c) => c.name === 'usage_count')) {
       db.prepare('ALTER TABLE mcq_questions ADD COLUMN usage_count INTEGER DEFAULT 1').run();
     }
+    if (!qCols.some((c) => c.name === 'generation_method')) {
+      db.prepare("ALTER TABLE mcq_questions ADD COLUMN generation_method TEXT DEFAULT 'MANUAL'").run();
+    }
+    const cCols = db.prepare('PRAGMA table_info(mcq_cases)').all() as any[];
+    if (!cCols.some((c) => c.name === 'source_material_id')) {
+      db.prepare('ALTER TABLE mcq_cases ADD COLUMN source_material_id TEXT').run();
+    }
+    if (!cCols.some((c) => c.name === 'generation_method')) {
+      db.prepare("ALTER TABLE mcq_cases ADD COLUMN generation_method TEXT DEFAULT 'MANUAL'").run();
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_mcq_case_id ON mcq_questions(case_id);
+      CREATE INDEX IF NOT EXISTS idx_mcq_case_seq ON mcq_questions(case_id, case_sequence);
+    `);
   } catch (colErr) {
     console.warn('[McqService] Column check error:', colErr);
   }
@@ -692,65 +759,134 @@ export function createSession(studentId: string, params: {
     durationMinutes,
   } = params;
 
-  // Strict SQL query construction:
-  // Must exclude any deleted questions AND any questions whose source material was deleted or tombstoned
-  const conditions: string[] = [
-    "status = 'published'",
-    "status != 'DELETED'",
-    "course = ?",
-    "(source_material_id IS NULL OR (source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))"
-  ];
-  const queryParams: any[] = [course];
+  let selectedQuestions: any[] = [];
+  let availableCount = 0;
 
-  if (subject && subject !== 'ALL') {
-    conditions.push('subject = ?');
-    queryParams.push(subject);
+  if (questionType === 'case_based') {
+    // ----------------------------------------------------
+    // CASE-BASED: Filtering & Randomization at Case Level
+    // ----------------------------------------------------
+    const caseConditions: string[] = [
+      "c.status = 'published'",
+      "c.status != 'DELETED'",
+      "c.course = ?",
+      "(c.source_material_id IS NULL OR (c.source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND c.source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))",
+      "EXISTS (SELECT 1 FROM mcq_questions q WHERE q.case_id = c.case_id AND q.status = 'published' AND q.status != 'DELETED')"
+    ];
+    const caseParams: any[] = [course];
+
+    if (subject && subject !== 'ALL') {
+      caseConditions.push('c.subject = ?');
+      caseParams.push(subject);
+    }
+    if (chapter && chapter !== 'ALL') {
+      caseConditions.push('c.chapter = ?');
+      caseParams.push(chapter);
+    }
+    if (topic && topic !== 'ALL') {
+      caseConditions.push('c.topic = ?');
+      caseParams.push(topic);
+    }
+    if (difficulty && difficulty !== 'mixed') {
+      caseConditions.push('c.case_difficulty = ?');
+      caseParams.push(difficulty);
+    }
+
+    const availableCases = db.prepare(`
+      SELECT * FROM mcq_cases c
+      WHERE ${caseConditions.join(' AND ')}
+      ORDER BY RANDOM()
+    `).all(...caseParams) as any[];
+
+    if (availableCases.length === 0) {
+      return {
+        error: 'Not enough case-based questions available for this selection. Please adjust your filters.',
+        availableCount: 0,
+      };
+    }
+
+    // For each case bundle, load child questions strictly in sequence order
+    for (const c of availableCases) {
+      const childQuestions = db.prepare(`
+        SELECT q.*, c.case_title, c.case_scenario as parent_case_scenario, c.case_difficulty
+        FROM mcq_questions q
+        JOIN mcq_cases c ON q.case_id = c.case_id
+        WHERE q.case_id = ? AND q.status = 'published' AND q.status != 'DELETED'
+        ORDER BY COALESCE(q.case_sequence, 999) ASC, q.id ASC
+      `).all(c.case_id) as any[];
+
+      for (const child of childQuestions) {
+        child.case_study_scenario = child.case_study_scenario || c.case_scenario;
+        child.case_title = c.case_title;
+        child.difficulty = c.case_difficulty || child.difficulty;
+        selectedQuestions.push(child);
+        if (selectedQuestions.length >= requestedCount) {
+          break;
+        }
+      }
+      if (selectedQuestions.length >= requestedCount) {
+        break;
+      }
+    }
+    availableCount = selectedQuestions.length;
+  } else {
+    // ----------------------------------------------------
+    // NORMAL OR MIXED: Query questions table
+    // ----------------------------------------------------
+    const conditions: string[] = [
+      "q.status = 'published'",
+      "q.status != 'DELETED'",
+      "q.course = ?",
+      "(q.source_material_id IS NULL OR (q.source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND q.source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))"
+    ];
+    const queryParams: any[] = [course];
+
+    if (subject && subject !== 'ALL') {
+      conditions.push('q.subject = ?');
+      queryParams.push(subject);
+    }
+    if (chapter && chapter !== 'ALL') {
+      conditions.push('q.chapter = ?');
+      queryParams.push(chapter);
+    }
+    if (topic && topic !== 'ALL') {
+      conditions.push('q.topic = ?');
+      queryParams.push(topic);
+    }
+    if (questionType === 'normal') {
+      conditions.push("(q.question_type = 'normal' OR q.question_type IS NULL)");
+      conditions.push("(q.case_id IS NULL OR q.case_id = '')");
+    }
+    if (difficulty && difficulty !== 'mixed') {
+      conditions.push('q.difficulty = ?');
+      queryParams.push(difficulty);
+    }
+
+    const countRow = db.prepare(`
+      SELECT count(*) as total FROM mcq_questions q
+      WHERE ${conditions.join(' AND ')}
+    `).get(...queryParams) as { total: number };
+
+    availableCount = countRow?.total || 0;
+
+    if (availableCount === 0) {
+      return {
+        error: 'Not enough questions available for this selection. Please adjust your filters.',
+        availableCount: 0,
+      };
+    }
+
+    const limit = Math.min(requestedCount, availableCount);
+
+    selectedQuestions = db.prepare(`
+      SELECT q.*, c.case_title, c.case_scenario as parent_case_scenario
+      FROM mcq_questions q
+      LEFT JOIN mcq_cases c ON q.case_id = c.case_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY RANDOM()
+      LIMIT ?
+    `).all(...queryParams, limit) as any[];
   }
-
-  if (chapter && chapter !== 'ALL') {
-    conditions.push('chapter = ?');
-    queryParams.push(chapter);
-  }
-
-  if (topic && topic !== 'ALL') {
-    conditions.push('topic = ?');
-    queryParams.push(topic);
-  }
-
-  if (questionType && questionType !== 'mixed') {
-    conditions.push('question_type = ?');
-    queryParams.push(questionType);
-  }
-
-  if (difficulty && difficulty !== 'mixed') {
-    conditions.push('difficulty = ?');
-    queryParams.push(difficulty);
-  }
-
-  // Count available
-  const countRow = db.prepare(`
-    SELECT count(*) as total FROM mcq_questions
-    WHERE ${conditions.join(' AND ')}
-  `).get(...queryParams) as { total: number };
-
-  const availableCount = countRow?.total || 0;
-
-  if (availableCount === 0) {
-    return {
-      error: 'Not enough questions available for this selection. Please adjust your filters.',
-      availableCount: 0,
-    };
-  }
-
-  const limit = Math.min(requestedCount, availableCount);
-
-  // Fetch randomized questions for session
-  const selectedQuestions = db.prepare(`
-    SELECT * FROM mcq_questions
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY RANDOM()
-    LIMIT ?
-  `).all(...queryParams, limit) as any[];
 
   const sessionId = `mcq_sess_${crypto.randomBytes(8).toString('hex')}`;
   const totalQuestions = selectedQuestions.length;
@@ -797,11 +933,17 @@ export function createSession(studentId: string, params: {
     chapter: q.chapter,
     topic: q.topic,
     questionType: q.question_type,
-    caseStudyScenario: q.case_study_scenario,
+    caseId: q.case_id || undefined,
+    caseTitle: q.case_title || undefined,
+    caseSequence: q.case_sequence != null ? q.case_sequence : undefined,
+    caseStudyScenario: q.case_study_scenario || q.parent_case_scenario || undefined,
     difficulty: q.difficulty,
     source: q.source,
     attempt: q.attempt,
-    amendmentVersion: q.amendment_version,
+    applicableFrom: q.applicable_from || undefined,
+    applicableTill: q.applicable_till || undefined,
+    amendmentVersion: q.amendment_version || undefined,
+    generationMethod: q.generation_method || undefined,
     questionText: q.question_text,
     optionA: q.option_a,
     optionB: q.option_b,
@@ -835,6 +977,10 @@ export function createSession(studentId: string, params: {
       timeSpentSeconds: 0,
       durationSeconds: sessionRow.duration_seconds,
       status: 'in_progress',
+      currentQuestionId: clientQuestions[0]?.id || null,
+      currentQuestionIndex: 0,
+      currentCaseId: clientQuestions[0]?.caseId || null,
+      questionIds: clientQuestions.map((q) => q.id),
       createdAt: sessionRow.created_at,
     },
     questions: clientQuestions,
@@ -849,11 +995,14 @@ export function getSession(sessionId: string, studentId: string) {
   if (!session) return null;
 
   const responses = db.prepare(`
-    SELECT r.*, q.course, q.subject, q.chapter, q.topic, q.question_type, q.case_study_scenario,
-           q.difficulty, q.source, q.attempt, q.amendment_version, q.question_text,
+    SELECT r.*, q.course, q.subject, q.chapter, q.topic, q.question_type, q.case_id, q.case_sequence,
+           q.case_study_scenario, c.case_title, c.case_scenario as parent_case_scenario,
+           q.difficulty, q.source, q.attempt, q.applicable_from, q.applicable_till,
+           q.amendment_version, q.generation_method, q.question_text,
            q.option_a, q.option_b, q.option_c, q.option_d, q.correct_answer, q.explanation, q.reference
     FROM mcq_user_responses r
     JOIN mcq_questions q ON q.id = r.question_id
+    LEFT JOIN mcq_cases c ON q.case_id = c.case_id
     WHERE r.session_id = ?
     ORDER BY r.id ASC
   `).all(sessionId) as any[];
@@ -879,11 +1028,17 @@ export function getSession(sessionId: string, studentId: string) {
       chapter: r.chapter,
       topic: r.topic,
       questionType: r.question_type,
-      caseStudyScenario: r.case_study_scenario,
+      caseId: r.case_id || undefined,
+      caseTitle: r.case_title || undefined,
+      caseSequence: r.case_sequence != null ? r.case_sequence : undefined,
+      caseStudyScenario: r.case_study_scenario || r.parent_case_scenario || undefined,
       difficulty: r.difficulty,
       source: r.source,
       attempt: r.attempt,
-      amendmentVersion: r.amendment_version,
+      applicableFrom: r.applicable_from || undefined,
+      applicableTill: r.applicable_till || undefined,
+      amendmentVersion: r.amendment_version || undefined,
+      generationMethod: r.generation_method || undefined,
       questionText: r.question_text,
       optionA: r.option_a,
       optionB: r.option_b,
@@ -902,6 +1057,9 @@ export function getSession(sessionId: string, studentId: string) {
       },
     };
   });
+
+  const firstUnanswered = questions.findIndex((q) => !q.userResponse?.selectedOption);
+  const currentIdx = firstUnanswered >= 0 ? firstUnanswered : 0;
 
   return {
     session: {
@@ -923,6 +1081,10 @@ export function getSession(sessionId: string, studentId: string) {
       timeSpentSeconds: session.time_spent_seconds,
       durationSeconds: session.duration_seconds,
       status: session.status,
+      currentQuestionId: questions[currentIdx]?.id || null,
+      currentQuestionIndex: currentIdx,
+      currentCaseId: questions[currentIdx]?.caseId || null,
+      questionIds: questions.map((q) => q.id),
       createdAt: session.created_at,
       completedAt: session.completed_at,
     },
@@ -971,6 +1133,7 @@ export function submitAnswer(sessionId: string, studentId: string, payload: {
   );
 
   return {
+    questionId: question.id,
     isCorrect: Boolean(isCorrect),
     correctAnswer: question.correct_answer,
     explanation: question.explanation,
@@ -1310,9 +1473,11 @@ export function getAdminQuestions(filters: {
 
   const countRow = db.prepare(`SELECT count(*) as total FROM mcq_questions WHERE ${conditions.join(' AND ')}`).get(...params) as { total: number };
   const rows = db.prepare(`
-    SELECT * FROM mcq_questions
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY created_at DESC
+    SELECT q.*, c.case_title, c.case_scenario as parent_case_scenario
+    FROM mcq_questions q
+    LEFT JOIN mcq_cases c ON q.case_id = c.case_id
+    WHERE ${conditions.map((c) => `q.${c}`).join(' AND ')}
+    ORDER BY q.created_at DESC
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as any[];
 
@@ -1324,7 +1489,10 @@ export function getAdminQuestions(filters: {
       chapter: q.chapter,
       topic: q.topic,
       questionType: q.question_type,
-      caseStudyScenario: q.case_study_scenario,
+      caseId: q.case_id || undefined,
+      caseSequence: q.case_sequence != null ? q.case_sequence : undefined,
+      caseTitle: q.case_title || undefined,
+      caseStudyScenario: q.case_study_scenario || q.parent_case_scenario || undefined,
       difficulty: q.difficulty,
       source: q.source,
       attempt: q.attempt,
@@ -1340,6 +1508,7 @@ export function getAdminQuestions(filters: {
       explanation: q.explanation,
       reference: q.reference,
       status: q.status,
+      sourceMaterialId: q.source_material_id || undefined,
       createdBy: q.created_by,
       reviewedBy: q.reviewed_by,
       createdAt: q.created_at,
@@ -1351,19 +1520,48 @@ export function getAdminQuestions(filters: {
   };
 }
 
+export function validateQuestionForPublish(data: {
+  correctAnswer?: string;
+  explanation?: string;
+}): { valid: boolean; error?: string } {
+  if (!data.correctAnswer || !['A', 'B', 'C', 'D'].includes(data.correctAnswer.trim().toUpperCase())) {
+    return {
+      valid: false,
+      error: 'Cannot publish question: correctAnswer must be strictly Option A, B, C, or D.',
+    };
+  }
+  if (!data.explanation || !data.explanation.trim()) {
+    return {
+      valid: false,
+      error: 'Cannot publish question: non-empty explanation is required for student learning.',
+    };
+  }
+  return { valid: true };
+}
+
 export function createAdminQuestion(data: any, createdBy: string) {
+  if (data.status === 'published') {
+    const v = validateQuestionForPublish({
+      correctAnswer: data.correctAnswer,
+      explanation: data.explanation,
+    });
+    if (!v.valid) {
+      throw new Error(v.error);
+    }
+  }
+
   const id = `mcq_${crypto.randomBytes(8).toString('hex')}`;
   db.prepare(`
     INSERT INTO mcq_questions (
-      id, course, subject, chapter, topic, question_type, case_study_scenario,
+      id, course, subject, chapter, topic, question_type, case_id, case_sequence, case_study_scenario,
       difficulty, source, attempt, applicable_from, applicable_till, amendment_version,
       question_text, option_a, option_b, option_c, option_d, correct_answer,
-      explanation, reference, status, created_by, created_at, updated_at
+      explanation, reference, status, source_material_id, created_by, created_at, updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     )
   `).run(
     id,
@@ -1371,11 +1569,13 @@ export function createAdminQuestion(data: any, createdBy: string) {
     data.subject,
     data.chapter,
     data.topic || null,
-    data.questionType || 'normal',
+    data.questionType || (data.caseId ? 'case_based' : 'normal'),
+    data.caseId || null,
+    data.caseSequence != null ? Number(data.caseSequence) : null,
     data.caseStudyScenario || null,
     data.difficulty || 'moderate',
     data.source || 'ICAI Module',
-    data.attempt || 'May 2025',
+    data.attempt || 'May 2026',
     data.applicableFrom || null,
     data.applicableTill || null,
     data.amendmentVersion || null,
@@ -1388,6 +1588,7 @@ export function createAdminQuestion(data: any, createdBy: string) {
     data.explanation,
     data.reference || null,
     data.status || 'published',
+    data.sourceMaterialId || data.source_material_id || null,
     createdBy
   );
 
@@ -1395,6 +1596,16 @@ export function createAdminQuestion(data: any, createdBy: string) {
 }
 
 export function updateAdminQuestion(id: string, data: any, reviewedBy?: string) {
+  if (data.status === 'published') {
+    const existing = db.prepare('SELECT * FROM mcq_questions WHERE id = ?').get(id) as any;
+    const ans = data.correctAnswer !== undefined ? data.correctAnswer : existing?.correct_answer;
+    const exp = data.explanation !== undefined ? data.explanation : existing?.explanation;
+    const v = validateQuestionForPublish({ correctAnswer: ans, explanation: exp });
+    if (!v.valid) {
+      throw new Error(`Cannot publish question (${id}): ${v.error}`);
+    }
+  }
+
   db.prepare(`
     UPDATE mcq_questions
     SET course = COALESCE(?, course),
@@ -1402,6 +1613,8 @@ export function updateAdminQuestion(id: string, data: any, reviewedBy?: string) 
         chapter = COALESCE(?, chapter),
         topic = COALESCE(?, topic),
         question_type = COALESCE(?, question_type),
+        case_id = COALESCE(?, case_id),
+        case_sequence = COALESCE(?, case_sequence),
         case_study_scenario = COALESCE(?, case_study_scenario),
         difficulty = COALESCE(?, difficulty),
         source = COALESCE(?, source),
@@ -1418,6 +1631,7 @@ export function updateAdminQuestion(id: string, data: any, reviewedBy?: string) 
         explanation = COALESCE(?, explanation),
         reference = COALESCE(?, reference),
         status = COALESCE(?, status),
+        source_material_id = COALESCE(?, source_material_id),
         reviewed_by = COALESCE(?, reviewed_by),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -1427,6 +1641,8 @@ export function updateAdminQuestion(id: string, data: any, reviewedBy?: string) 
     data.chapter,
     data.topic,
     data.questionType,
+    data.caseId,
+    data.caseSequence != null ? Number(data.caseSequence) : null,
     data.caseStudyScenario,
     data.difficulty,
     data.source,
@@ -1443,14 +1659,199 @@ export function updateAdminQuestion(id: string, data: any, reviewedBy?: string) 
     data.explanation,
     data.reference,
     data.status,
-    reviewedBy || null,
+    data.sourceMaterialId || data.source_material_id,
+    reviewedBy,
     id
   );
 
   return db.prepare('SELECT * FROM mcq_questions WHERE id = ?').get(id);
 }
 
+// ==========================================
+// CASE BUNDLE SERVICES
+// ==========================================
+export function getAdminCases(filters: {
+  course?: string;
+  subject?: string;
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const { course, subject, status, search, page = 1, limit = 20 } = filters;
+  const conditions: string[] = ["status != 'DELETED'"];
+  const params: any[] = [];
+
+  if (course && course !== 'ALL') {
+    conditions.push('course = ?');
+    params.push(course);
+  }
+  if (subject && subject !== 'ALL') {
+    conditions.push('subject = ?');
+    params.push(subject);
+  }
+  if (status && status !== 'ALL') {
+    conditions.push('status = ?');
+    params.push(status);
+  }
+  if (search && search.trim()) {
+    conditions.push('(case_title LIKE ? OR case_scenario LIKE ? OR case_id LIKE ?)');
+    const term = `%${search.trim()}%`;
+    params.push(term, term, term);
+  }
+
+  const offset = (page - 1) * limit;
+  const countRow = db.prepare(`SELECT count(*) as total FROM mcq_cases WHERE ${conditions.join(' AND ')}`).get(...params) as { total: number };
+  const cases = db.prepare(`
+    SELECT * FROM mcq_cases
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset) as any[];
+
+  // Attach child questions to each case
+  const casesWithQuestions = cases.map((c) => {
+    const childQuestions = db.prepare(`
+      SELECT * FROM mcq_questions
+      WHERE case_id = ? AND status != 'DELETED'
+      ORDER BY case_sequence ASC, created_at ASC
+    `).all(c.case_id) as any[];
+
+    return {
+      caseId: c.case_id,
+      caseTitle: c.case_title,
+      caseScenario: c.case_scenario,
+      caseDifficulty: c.case_difficulty,
+      course: c.course,
+      subject: c.subject,
+      chapter: c.chapter,
+      topic: c.topic,
+      source: c.source,
+      attempt: c.attempt,
+      applicableFrom: c.applicable_from,
+      applicableTill: c.applicable_till,
+      amendmentVersion: c.amendment_version,
+      status: c.status,
+      createdBy: c.created_by,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+      childQuestions: childQuestions.map((q) => ({
+        id: q.id,
+        course: q.course,
+        subject: q.subject,
+        chapter: q.chapter,
+        topic: q.topic,
+        questionType: q.question_type,
+        caseId: q.case_id,
+        caseSequence: q.case_sequence,
+        questionText: q.question_text,
+        optionA: q.option_a,
+        optionB: q.option_b,
+        optionC: q.option_c,
+        optionD: q.option_d,
+        correctAnswer: q.correct_answer,
+        explanation: q.explanation,
+        reference: q.reference,
+        status: q.status,
+      })),
+    };
+  });
+
+  return {
+    cases: casesWithQuestions,
+    total: countRow.total,
+    page,
+    totalPages: Math.ceil(countRow.total / limit),
+  };
+}
+
+export function getAdminCaseById(caseId: string) {
+  const c = db.prepare('SELECT * FROM mcq_cases WHERE case_id = ?').get(caseId) as any;
+  if (!c) return null;
+
+  const childQuestions = db.prepare(`
+    SELECT * FROM mcq_questions
+    WHERE case_id = ? AND status != 'DELETED'
+    ORDER BY case_sequence ASC, created_at ASC
+  `).all(caseId) as any[];
+
+  return {
+    caseId: c.case_id,
+    caseTitle: c.case_title,
+    caseScenario: c.case_scenario,
+    caseDifficulty: c.case_difficulty,
+    course: c.course,
+    subject: c.subject,
+    chapter: c.chapter,
+    topic: c.topic,
+    source: c.source,
+    attempt: c.attempt,
+    applicableFrom: c.applicable_from,
+    applicableTill: c.applicable_till,
+    amendmentVersion: c.amendment_version,
+    status: c.status,
+    createdBy: c.created_by,
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
+    childQuestions,
+  };
+}
+
+export function bulkUpdateCaseStatus(caseIds: string[], status: string) {
+  if (status === 'published') {
+    for (const cid of caseIds) {
+      const childQuestions = db.prepare('SELECT * FROM mcq_questions WHERE case_id = ? AND status != \'DELETED\'').all(cid) as any[];
+      for (const q of childQuestions) {
+        const v = validateQuestionForPublish({ correctAnswer: q.correct_answer, explanation: q.explanation });
+        if (!v.valid) {
+          throw new Error(`Cannot publish case (${cid}): Child question ${q.id} has error: ${v.error}`);
+        }
+      }
+    }
+  }
+
+  const updateCase = db.prepare(`UPDATE mcq_cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE case_id = ?`);
+  const updateQuestions = db.prepare(`UPDATE mcq_questions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE case_id = ?`);
+
+  db.exec('BEGIN TRANSACTION');
+  try {
+    for (const cid of caseIds) {
+      updateCase.run(status, cid);
+      updateQuestions.run(status, cid);
+    }
+    db.exec('COMMIT');
+    return { updatedCount: caseIds.length };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function deleteAdminCase(caseId: string) {
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.prepare(`UPDATE mcq_cases SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE case_id = ?`).run(caseId);
+    db.prepare(`UPDATE mcq_questions SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE case_id = ?`).run(caseId);
+    db.exec('COMMIT');
+    return { success: true };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 export function bulkUpdateQuestionStatus(ids: string[], status: McqStatus) {
+  if (status === 'published') {
+    for (const id of ids) {
+      const q = db.prepare('SELECT * FROM mcq_questions WHERE id = ?').get(id) as any;
+      if (!q) continue;
+      const v = validateQuestionForPublish({ correctAnswer: q.correct_answer, explanation: q.explanation });
+      if (!v.valid) {
+        throw new Error(`Cannot publish question (${id}): ${v.error}`);
+      }
+    }
+  }
+
   const update = db.prepare('UPDATE mcq_questions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
   for (const id of ids) {
     update.run(status, id);
