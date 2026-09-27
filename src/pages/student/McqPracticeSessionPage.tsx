@@ -23,6 +23,7 @@ import {
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { mcqApi } from '../../api/mcqClient.js';
 import { McqSession, McqSessionQuestion } from '../../types/index.js';
+import { FeatureUnavailable } from '../../components/common/FeatureUnavailable.js';
 
 // ==========================================
 // 1. ISOLATED TIMER COMPONENT (ZERO ROOT RERENDERS)
@@ -212,6 +213,7 @@ export const McqPracticeSessionPage: React.FC = () => {
   const [showPalette, setShowPalette] = useState<boolean>(false);
   const [showFinishModal, setShowFinishModal] = useState<boolean>(false);
   const [solutionFilter, setSolutionFilter] = useState<'ALL' | 'CORRECT' | 'INCORRECT' | 'SKIPPED'>('ALL');
+  const [sessionError, setSessionError] = useState<{ isFeatureBlocked?: boolean; message?: string } | null>(null);
 
   // Time tracking ref to prevent state-driven parent rerenders
   const timeSpentRef = useRef<number>(0);
@@ -220,6 +222,7 @@ export const McqPracticeSessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId) return;
     setLoading(true);
+    setSessionError(null);
     mcqApi
       .getSession(sessionId)
       .then((res) => {
@@ -227,8 +230,15 @@ export const McqPracticeSessionPage: React.FC = () => {
         setQuestions(res.questions);
         timeSpentRef.current = res.session.timeSpentSeconds || 0;
       })
-      .catch((err) => {
+      .catch((err: any) => {
         console.error('Failed to load session:', err);
+        const errMsg = err?.message || 'Failed to load session';
+        const isBlocked =
+          errMsg.toLowerCase().includes('feature unavailable') ||
+          errMsg.toLowerCase().includes('limited testing') ||
+          errMsg.toLowerCase().includes('maintenance') ||
+          err?.status === 403;
+        setSessionError({ isFeatureBlocked: isBlocked, message: errMsg });
       })
       .finally(() => {
         setLoading(false);
@@ -415,13 +425,39 @@ export const McqPracticeSessionPage: React.FC = () => {
     }
   }, [session]);
 
-  if (loading || !session) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
         <McqArenaLogo size="md" withGlow />
         <div className="mt-4 text-xs font-semibold text-slate-400 animate-pulse">
           Loading Arena Session...
         </div>
+      </div>
+    );
+  }
+
+  if (sessionError?.isFeatureBlocked) {
+    return (
+      <FeatureUnavailable
+        featureKey="mcq_arena"
+        featureName="MCQ Arena"
+        studentMessage={sessionError.message}
+        onBack={() => navigate('/arena')}
+      />
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center">
+        <McqArenaLogo size="md" withGlow />
+        <h2 className="mt-4 text-base font-bold text-white">{sessionError?.message || 'Session not found or unavailable'}</h2>
+        <button
+          onClick={() => navigate('/arena')}
+          className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+        >
+          Return to MCQ Arena
+        </button>
       </div>
     );
   }

@@ -4,9 +4,11 @@ import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '.
 import {
   getAllFeatures,
   getFeatureByKey,
+  createFeature,
   updateFeatureControl,
   addTesterToFeature,
   removeTesterFromFeature,
+  FeatureApplication,
 } from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
@@ -6152,10 +6154,12 @@ router.delete('/reviews/:id', async (req: AuthRequest, res: Response) => {
 // CENTRALIZED FEATURE CONTROL MANAGEMENT
 // ==========================================
 
-// 1. Get all features with their testers
+// 1. Get all features with their testers (optionally filter by ?application=CHECKER or ?application=MCQ_ARENA)
 router.get('/features', (req: AuthRequest, res: Response) => {
   try {
-    const features = getAllFeatures();
+    const appQuery = req.query.application as string | undefined;
+    const application = appQuery ? (appQuery.toUpperCase() as FeatureApplication) : undefined;
+    const features = getAllFeatures(application);
     res.json({ success: true, features });
   } catch (err: any) {
     console.error('Fetch features error:', err);
@@ -6163,10 +6167,53 @@ router.get('/features', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 2. Get specific feature by key
+// 2. Add New Feature definition
+router.post('/features', (req: AuthRequest, res: Response) => {
+  try {
+    const adminUser = { id: req.user!.id, email: req.user!.email };
+    const {
+      application,
+      featureKey,
+      featureName,
+      description,
+      status,
+      studentMessage,
+      displayInStudentDashboard,
+      displayOrder,
+    } = req.body;
+
+    const newFeature = createFeature(
+      {
+        application,
+        featureKey,
+        featureName,
+        description,
+        status,
+        studentMessage,
+        displayInStudentDashboard,
+        displayOrder,
+      },
+      adminUser,
+      req.ip
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Feature registered successfully.',
+      feature: newFeature,
+    });
+  } catch (err: any) {
+    console.error('Create feature error:', err);
+    res.status(400).json({ error: err.message || 'Failed to create new feature' });
+  }
+});
+
+// 3. Get specific feature by key (with optional ?application=)
 router.get('/features/:featureKey', (req: AuthRequest, res: Response) => {
   try {
-    const feature = getFeatureByKey(req.params.featureKey);
+    const appQuery = req.query.application as string | undefined;
+    const application = appQuery ? (appQuery.toUpperCase() as FeatureApplication) : undefined;
+    const feature = getFeatureByKey(req.params.featureKey, application);
     if (!feature) {
       return res.status(404).json({ error: 'Feature not found' });
     }
@@ -6177,14 +6224,30 @@ router.get('/features/:featureKey', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 3. Update feature status and/or custom student message
+// 4. Update feature status, student message, visibility, or metadata
 router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
   try {
-    const { status, studentMessage } = req.body;
+    const {
+      status,
+      studentMessage,
+      featureName,
+      description,
+      displayInStudentDashboard,
+      displayOrder,
+      application,
+    } = req.body;
     const adminUser = { id: req.user!.id, email: req.user!.email };
     const updated = updateFeatureControl(
       req.params.featureKey,
-      { status, studentMessage },
+      {
+        status,
+        studentMessage,
+        featureName,
+        description,
+        displayInStudentDashboard,
+        displayOrder,
+        application,
+      },
       adminUser,
       req.ip
     );
@@ -6199,15 +6262,21 @@ router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 4. Add tester email to feature testing allowlist
+// 5. Add tester email to feature testing allowlist
 router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) => {
   try {
-    const { email } = req.body;
+    const { email, application } = req.body;
     if (!email || typeof email !== 'string') {
       return res.status(400).json({ error: 'Valid tester email is required' });
     }
     const adminUser = { id: req.user!.id, email: req.user!.email };
-    const tester = addTesterToFeature(req.params.featureKey, email, adminUser, req.ip);
+    const tester = addTesterToFeature(
+      req.params.featureKey,
+      email,
+      adminUser,
+      req.ip,
+      application ? (application.toUpperCase() as FeatureApplication) : undefined
+    );
     res.status(201).json({
       success: true,
       message: 'Tester added successfully.',
@@ -6219,11 +6288,13 @@ router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) =
   }
 });
 
-// 5. Remove tester from feature testing allowlist
+// 6. Remove tester from feature testing allowlist
 router.delete('/features/:featureKey/testers/:testerId', (req: AuthRequest, res: Response) => {
   try {
     const adminUser = { id: req.user!.id, email: req.user!.email };
-    const result = removeTesterFromFeature(req.params.featureKey, req.params.testerId, adminUser, req.ip);
+    const appQuery = (req.query.application || req.body?.application) as string | undefined;
+    const application = appQuery ? (appQuery.toUpperCase() as FeatureApplication) : undefined;
+    const result = removeTesterFromFeature(req.params.featureKey, req.params.testerId, adminUser, req.ip, application);
     res.json({
       success: true,
       message: 'Tester removed successfully.',

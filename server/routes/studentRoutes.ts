@@ -34,6 +34,7 @@ import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../serv
 import { validateSrn } from '../utils/srnValidator.js';
 import { selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
+import { requireFeatureAccess } from '../services/featureControlService.js';
 
 const router = Router();
 
@@ -214,7 +215,7 @@ router.get('/examiner-profile', (req: AuthRequest, res: Response) => {
 
 // REAL WORKFLOW: "How AI will evaluate" / Pre-evaluation Dry Run & Preflight Inspection
 // Requirement 15 & 16: Executes backend preparation sequence and emits strict evaluation plan
-router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => {
+router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_answer_evaluation'), async (req: AuthRequest, res: Response) => {
   try {
     const {
       command, // can be 'How AI will evaluate'
@@ -439,7 +440,7 @@ router.post('/preflight-evaluation', async (req: AuthRequest, res: Response) => 
 const inFlightStudentEvaluations = new Set<string>();
 
 // 2. Upload and Evaluate Answer Sheet
-router.post('/evaluate', evaluationSubmissionRateLimiter, requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluation'), evaluationSubmissionRateLimiter, requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   const studentId = req.user!.id;
 
   // Prevent double deduction or concurrent submissions if user double-clicks Evaluate
@@ -1028,7 +1029,7 @@ router.get('/entitlement', (req: AuthRequest, res: Response) => {
 });
 
 // 4. Get Specific Evaluation Report Detail
-router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
+router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluation_report'), (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const userRole = req.user!.role;
@@ -1218,6 +1219,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
 // 4a. Download Checked Copy (Annotated Student Answer Sheet with Examiner Marks)
 router.get(
   ['/evaluations/:id/download-checked-copy', '/evaluations/:id/download-checked', '/evaluations/:id/checked-copy/download'],
+  requireFeatureAccess('CHECKER', 'checker_checked_copy'),
   async (req: AuthRequest, res: Response) => {
     try {
       const studentId = req.user!.id;
@@ -3638,5 +3640,21 @@ router.post('/review', async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: 'Failed to submit review. Please try again.' });
   }
 });
+
+// 15. Student Performance Analysis (Gated by Feature Control)
+router.get(
+  '/performance-analysis',
+  requireFeatureAccess('CHECKER', 'checker_performance_analysis'),
+  (req: AuthRequest, res: Response) => {
+    return res.json({
+      success: true,
+      message: 'Performance Analysis module active.',
+      analysis: {
+        coverageScore: 0,
+        chapterPerformance: [],
+      },
+    });
+  }
+);
 
 export default router;

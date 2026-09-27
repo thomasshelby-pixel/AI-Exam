@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts.js';
+import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
 import {
   ShieldCheck,
   Users,
@@ -19,6 +20,7 @@ import {
   Layers,
   BookOpen,
   Activity,
+  Sliders,
 } from 'lucide-react';
 
 interface AdminMetrics {
@@ -69,7 +71,7 @@ interface AuditLogItem {
 }
 
 export const AdminDashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'materials' | 'institutes' | 'audit'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'materials' | 'institutes' | 'audit' | 'features'>('overview');
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
@@ -259,11 +261,12 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Admin Tabs */}
-      <div className="flex border-b border-slate-200 gap-6 text-xs sm:text-sm font-semibold">
+      <div className="flex border-b border-slate-200 gap-6 text-xs sm:text-sm font-semibold overflow-x-auto">
         {[
           { id: 'overview', label: 'Platform Metrics' },
           { id: 'users', label: `Users & Roles (${users.length})` },
           { id: 'materials', label: `ICAI Question Materials (${materials.length})` },
+          { id: 'features', label: 'Feature Control' },
           { id: 'audit', label: `Security Audit Logs (${auditLogs.length})` },
         ].map((tab) => (
           <button
@@ -471,6 +474,13 @@ export const AdminDashboard: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Tab: Feature Control */}
+      {activeTab === 'features' && (
+        <div className="pt-2">
+          <AdminFeatureControlSection />
         </div>
       )}
 

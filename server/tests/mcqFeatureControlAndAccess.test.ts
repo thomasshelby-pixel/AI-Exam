@@ -8,6 +8,7 @@ import {
   updateFeatureControl,
   addTesterToFeature,
   removeTesterFromFeature,
+  createFeature,
   requireFeatureAccess,
 } from '../services/featureControlService.js';
 
@@ -358,6 +359,202 @@ runTest('TEST 17: Disabled feature blocks session creation and data exposure', (
   assert.strictEqual(responseData.status, 'DISABLED');
 });
 
+// TEST 18: COMING_SOON status blocks student access and returns coming_soon reason
+runTest('TEST 18: COMING_SOON status blocks student access with Coming Soon reason and message', () => {
+  updateFeatureControl('mcq_leaderboard', { status: 'COMING_SOON' }, superAdminUser);
+  const result = checkFeatureAccess(regularStudent, 'mcq_leaderboard');
+  assert.strictEqual(result.allowed, false, 'Student must be blocked when status is COMING_SOON');
+  assert.strictEqual(result.status, 'COMING_SOON');
+  assert.strictEqual(result.reason, 'coming_soon');
+  assert.ok(result.studentMessage.toLowerCase().includes('coming soon'));
+
+  // Super Admin still receives admin_override
+  const adminRes = checkFeatureAccess(superAdminUser, 'mcq_leaderboard');
+  assert.strictEqual(adminRes.allowed, true);
+  assert.strictEqual(adminRes.reason, 'admin_override');
+});
+
+// TEST 19: Super Admin can register a new feature with validation
+runTest('TEST 19: Super Admin can add a new feature for CA Exam Checker or MCQ Arena', () => {
+  const testKey = `feat_custom_test_${Date.now()}`;
+  const newFeat = createFeature(
+    {
+      application: 'CHECKER',
+      featureKey: testKey,
+      featureName: 'Automated Answer Audit',
+      description: 'Pilot automated answer validation engine',
+      status: 'TESTING',
+      studentMessage: 'Automated Answer Audit is in limited testing.',
+    },
+    superAdminUser
+  );
+
+  assert.strictEqual(newFeat.application, 'CHECKER');
+  assert.strictEqual(newFeat.feature_key, testKey);
+  assert.strictEqual(newFeat.status, 'TESTING');
+
+  // Verify duplicate key fails
+  assert.throws(() => {
+    createFeature(
+      {
+        application: 'CHECKER',
+        featureKey: testKey,
+        featureName: 'Duplicate Feature',
+      },
+      superAdminUser
+    );
+  }, /already exists/i);
+
+  // Clean up test feature
+  db.prepare('DELETE FROM feature_flags WHERE feature_key = ?').run(testKey);
+});
+
+// TEST 20: Unified application grouping for features
+runTest('TEST 20: Features are properly grouped by application (CHECKER and MCQ_ARENA)', () => {
+  const checkerFeatures = getAllFeatures('CHECKER');
+  const mcqFeatures = getAllFeatures('MCQ_ARENA');
+
+  assert.ok(checkerFeatures.length >= 3, 'Must have at least 3 Checker features');
+  assert.ok(mcqFeatures.length >= 4, 'Must have at least 4 MCQ Arena features');
+
+  assert.ok(checkerFeatures.every((f) => f.application === 'CHECKER'));
+  assert.ok(mcqFeatures.every((f) => f.application === 'MCQ_ARENA'));
+
+  const hasEval = checkerFeatures.some((f) => f.feature_key === 'checker_answer_evaluation');
+  const hasArena = mcqFeatures.some((f) => f.feature_key === 'mcq_arena');
+  assert.strictEqual(hasEval, true);
+  assert.strictEqual(hasArena, true);
+});
+
+// TEST 21: Scoped tester isolation between features
+runTest('TEST 21: Testers on one feature do not automatically receive access to other features', () => {
+  const isolatedEmail = `isolated.tester.${Date.now()}@example.com`;
+  // Ensure mcq_arena is in TESTING mode
+  updateFeatureControl('mcq_arena', { status: 'TESTING' }, superAdminUser);
+  // Add tester specifically to mcq_arena
+  addTesterToFeature('mcq_arena', isolatedEmail, superAdminUser);
+  // Put checker_checked_copy into TESTING
+  updateFeatureControl('checker_checked_copy', { status: 'TESTING' }, superAdminUser);
+
+  const isolatedUser = { id: 'usr_isolated', email: isolatedEmail, role: 'STUDENT' };
+
+  // Allowed on mcq_arena
+  const arenaAccess = checkFeatureAccess(isolatedUser, 'mcq_arena');
+  assert.strictEqual(arenaAccess.allowed, true);
+
+  // Blocked on checker_checked_copy because not allowlisted for it
+  const checkedCopyAccess = checkFeatureAccess(isolatedUser, 'CHECKER', 'checker_checked_copy');
+  assert.strictEqual(checkedCopyAccess.allowed, false);
+  assert.strictEqual(checkedCopyAccess.reason, 'limited_testing');
+
+  // Cleanup
+  removeTesterFromFeature('mcq_arena', isolatedEmail, superAdminUser);
+  updateFeatureControl('checker_checked_copy', { status: 'ENABLED' }, superAdminUser);
+});
+
+// TEST 22: Backend middleware enforces Checker AI feature flags
+runTest('TEST 22: Backend middleware strictly enforces CA Exam Checker feature flags', () => {
+  updateFeatureControl('checker_answer_evaluation', { status: 'DISABLED' }, superAdminUser);
+  const middleware = requireFeatureAccess('CHECKER', 'checker_answer_evaluation');
+
+  let nextCalled = false;
+  let status = 0;
+  const mockReq: any = { user: regularStudent };
+  const mockRes: any = {
+    status(code: number) {
+      status = code;
+      return { json() {} };
+    },
+  };
+  middleware(mockReq, mockRes, () => {
+    nextCalled = true;
+  });
+
+  assert.strictEqual(nextCalled, false, 'Student must not proceed when answer evaluation is DISABLED');
+  assert.strictEqual(status, 403);
+
+  // Re-enable
+  updateFeatureControl('checker_answer_evaluation', { status: 'ENABLED' }, superAdminUser);
+});
+
+// TEST 23: Direct status updates for all four statuses persist in DB and return updated record
+runTest('TEST 23: Super Admin can update feature to all four valid statuses (ENABLED, TESTING, DISABLED, COMING_SOON)', () => {
+  const statuses: Array<'ENABLED' | 'TESTING' | 'DISABLED' | 'COMING_SOON'> = [
+    'ENABLED',
+    'TESTING',
+    'DISABLED',
+    'COMING_SOON',
+  ];
+
+  for (const s of statuses) {
+    const updated = updateFeatureControl('mcq_arena', { status: s }, superAdminUser);
+    assert.strictEqual(updated.status, s, `Feature status must be updated to ${s}`);
+
+    // Verify directly in database
+    const row = db.prepare('SELECT status FROM feature_flags WHERE feature_key = ?').get('mcq_arena') as { status: string };
+    assert.strictEqual(row.status, s, `Database must contain status ${s}`);
+  }
+});
+
+// TEST 24: Complete sequential cycle: COMING_SOON -> ENABLED -> TESTING -> DISABLED -> COMING_SOON -> TESTING -> ENABLED
+runTest('TEST 24: MCQ Arena full status cycle transitions seamlessly and accurately', () => {
+  // 1. COMING_SOON -> ENABLED
+  updateFeatureControl('mcq_arena', { status: 'COMING_SOON' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, false);
+  updateFeatureControl('mcq_arena', { status: 'ENABLED' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, true);
+
+  // 2. ENABLED -> TESTING
+  updateFeatureControl('mcq_arena', { status: 'TESTING' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, false);
+  assert.strictEqual(checkFeatureAccess(tester1, 'mcq_arena').allowed, true);
+
+  // 3. TESTING -> DISABLED
+  updateFeatureControl('mcq_arena', { status: 'DISABLED' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(tester1, 'mcq_arena').allowed, false);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, false);
+
+  // 4. DISABLED -> COMING_SOON
+  updateFeatureControl('mcq_arena', { status: 'COMING_SOON' }, superAdminUser);
+  const csAccess = checkFeatureAccess(regularStudent, 'mcq_arena');
+  assert.strictEqual(csAccess.allowed, false);
+  assert.strictEqual(csAccess.status, 'COMING_SOON');
+
+  // 5. COMING_SOON -> TESTING
+  updateFeatureControl('mcq_arena', { status: 'TESTING' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(tester1, 'mcq_arena').allowed, true);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, false);
+
+  // 6. TESTING -> ENABLED
+  updateFeatureControl('mcq_arena', { status: 'ENABLED' }, superAdminUser);
+  assert.strictEqual(checkFeatureAccess(regularStudent, 'mcq_arena').allowed, true);
+  assert.strictEqual(checkFeatureAccess(tester1, 'mcq_arena').allowed, true);
+});
+
+// TEST 25: Backend strictly rejects invalid status values
+runTest('TEST 25: Backend updateFeatureControl rejects invalid status values', () => {
+  assert.throws(() => {
+    updateFeatureControl('mcq_arena', { status: 'INVALID_STATUS' as any }, superAdminUser);
+  }, /invalid feature status/i);
+
+  assert.throws(() => {
+    updateFeatureControl('mcq_arena', { status: 'FOOBAR' as any }, superAdminUser);
+  }, /invalid feature status/i);
+});
+
+// TEST 26: Status update does not duplicate database rows
+runTest('TEST 26: Updating feature status modifies the SAME existing row without creating duplicates', () => {
+  const countBefore = (db.prepare('SELECT count(*) as cnt FROM feature_flags WHERE feature_key = ?').get('mcq_arena') as any).cnt;
+  assert.strictEqual(countBefore, 1);
+
+  updateFeatureControl('mcq_arena', { status: 'DISABLED' }, superAdminUser);
+  updateFeatureControl('mcq_arena', { status: 'TESTING' }, superAdminUser);
+  updateFeatureControl('mcq_arena', { status: 'ENABLED' }, superAdminUser);
+
+  const countAfter = (db.prepare('SELECT count(*) as cnt FROM feature_flags WHERE feature_key = ?').get('mcq_arena') as any).cnt;
+  assert.strictEqual(countAfter, 1, 'Feature record count must strictly remain 1');
+});
+
 // Reset initial state to TESTING with initial testers
 updateFeatureControl(
   'mcq_arena',
@@ -370,5 +567,5 @@ updateFeatureControl(
 );
 
 console.log('========================================================================');
-console.log('✅ ALL 17 / 17 FEATURE CONTROL & ACCESS SYSTEM TESTS PASSED CLEANLY!');
+console.log('✅ ALL 26 / 26 FEATURE CONTROL & ACCESS SYSTEM TESTS PASSED CLEANLY!');
 console.log('========================================================================');

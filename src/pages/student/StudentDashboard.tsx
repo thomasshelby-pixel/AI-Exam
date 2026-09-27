@@ -34,6 +34,7 @@ import { ProgressDashboard, EvaluationTrendPoint } from '../../components/studen
 import { StudentPromoBanner } from '../../components/student/StudentPromoBanner.js';
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { OfflineNotificationBanner } from '../../components/common/OfflineNotificationBanner.js';
+import { featureApi } from '../../api/featureClient.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -162,6 +163,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isSubmittingPaper, setIsSubmittingPaper] = useState<boolean>(false);
   const [paperSubmitError, setPaperSubmitError] = useState<string>('');
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [arenaStatus, setArenaStatus] = useState<string | null>(null);
 
   const studentProfile = profile as {
     icai_registration_number?: string;
@@ -171,11 +173,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const fetchDashboard = async () => {
     try {
-      const [dashRes, refRes, testsRes, matsRes] = await Promise.all([
+      const [dashRes, refRes, testsRes, matsRes, arenaAccess] = await Promise.all([
         apiRequest<DashboardData>('/api/student/dashboard'),
         apiRequest<any>('/api/student/referral/status').catch(() => null),
         apiRequest<{ tests: any[] }>('/api/student/institute/my-tests').catch(() => ({ tests: [] })),
         apiRequest<{ materials: any[] }>('/api/student/institute-materials').catch(() => ({ materials: [] })),
+        featureApi.checkAccess('mcq_arena').catch(() => null),
       ]);
       setData(dashRes);
       if (refRes) {
@@ -183,6 +186,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       }
       setInstituteTests(testsRes?.tests || []);
       setInstituteMaterials(matsRes?.materials || []);
+      if (arenaAccess) {
+        setArenaStatus(arenaAccess.status);
+      }
     } catch (err) {
       console.error('Failed to load dashboard:', err);
     } finally {
@@ -513,9 +519,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-black uppercase tracking-widest text-blue-300">MCQ ARENA</span>
-              <span className="px-2 py-0.5 bg-blue-500/30 text-blue-200 text-[10px] font-bold rounded-full border border-blue-400/30">
-                CA Practice Platform
-              </span>
+              {arenaStatus === 'TESTING' ? (
+                <span className="px-2 py-0.5 bg-amber-500/30 text-amber-200 text-[10px] font-bold rounded-full border border-amber-400/30">
+                  Limited Testing
+                </span>
+              ) : arenaStatus === 'DISABLED' ? (
+                <span className="px-2 py-0.5 bg-rose-500/30 text-rose-200 text-[10px] font-bold rounded-full border border-rose-400/30">
+                  Maintenance
+                </span>
+              ) : arenaStatus === 'COMING_SOON' ? (
+                <span className="px-2 py-0.5 bg-sky-500/30 text-sky-200 text-[10px] font-bold rounded-full border border-sky-400/30">
+                  Coming Soon
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 bg-blue-500/30 text-blue-200 text-[10px] font-bold rounded-full border border-blue-400/30">
+                  CA Practice Platform
+                </span>
+              )}
             </div>
             <h3 className="text-base sm:text-lg font-black text-white group-hover:text-blue-200 transition-colors">
               Practice Smarter. Improve Every Day.

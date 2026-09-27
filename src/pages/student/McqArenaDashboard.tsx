@@ -42,7 +42,7 @@ export const McqArenaDashboard: React.FC = () => {
     checking: boolean;
     allowed: boolean;
     featureName?: string;
-    status?: 'TESTING' | 'DISABLED' | 'ENABLED';
+    status?: 'TESTING' | 'DISABLED' | 'ENABLED' | 'COMING_SOON';
     studentMessage?: string;
   }>({
     checking: true,
