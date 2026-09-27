@@ -10,6 +10,7 @@ import {
   DEFAULT_LEGAL_SETTINGS,
 } from './services/legalConstants.js';
 import { initMcqTables, seedMcqAdminAndQuestions } from './services/mcqService.js';
+import { initFeatureFlagsTable } from './services/featureControlService.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -1876,6 +1877,9 @@ function seedInitialData() {
   // 12. Initialize MCQ Arena Tables & Seed Admin / Verified CA Questions
   initMcqTables();
   seedMcqAdminAndQuestions();
+
+  // 13. Initialize Centralized Feature Control & Student Access System
+  initFeatureFlagsTable();
 }
 
 function seedMcqScoringRules() {

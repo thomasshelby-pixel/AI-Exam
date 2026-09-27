@@ -1,6 +1,13 @@
 import { Router, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
+import {
+  getAllFeatures,
+  getFeatureByKey,
+  updateFeatureControl,
+  addTesterToFeature,
+  removeTesterFromFeature,
+} from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
@@ -6138,6 +6145,93 @@ router.delete('/reviews/:id', async (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Delete review error:', error);
     return res.status(500).json({ error: 'Failed to delete review' });
+  }
+});
+
+// ==========================================
+// CENTRALIZED FEATURE CONTROL MANAGEMENT
+// ==========================================
+
+// 1. Get all features with their testers
+router.get('/features', (req: AuthRequest, res: Response) => {
+  try {
+    const features = getAllFeatures();
+    res.json({ success: true, features });
+  } catch (err: any) {
+    console.error('Fetch features error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch feature controls' });
+  }
+});
+
+// 2. Get specific feature by key
+router.get('/features/:featureKey', (req: AuthRequest, res: Response) => {
+  try {
+    const feature = getFeatureByKey(req.params.featureKey);
+    if (!feature) {
+      return res.status(404).json({ error: 'Feature not found' });
+    }
+    res.json({ success: true, feature });
+  } catch (err: any) {
+    console.error('Fetch feature error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch feature control' });
+  }
+});
+
+// 3. Update feature status and/or custom student message
+router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
+  try {
+    const { status, studentMessage } = req.body;
+    const adminUser = { id: req.user!.id, email: req.user!.email };
+    const updated = updateFeatureControl(
+      req.params.featureKey,
+      { status, studentMessage },
+      adminUser,
+      req.ip
+    );
+    res.json({
+      success: true,
+      message: 'Feature settings updated successfully.',
+      feature: updated,
+    });
+  } catch (err: any) {
+    console.error('Update feature error:', err);
+    res.status(400).json({ error: err.message || 'Failed to update feature settings' });
+  }
+});
+
+// 4. Add tester email to feature testing allowlist
+router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Valid tester email is required' });
+    }
+    const adminUser = { id: req.user!.id, email: req.user!.email };
+    const tester = addTesterToFeature(req.params.featureKey, email, adminUser, req.ip);
+    res.status(201).json({
+      success: true,
+      message: 'Tester added successfully.',
+      tester,
+    });
+  } catch (err: any) {
+    console.error('Add tester error:', err);
+    res.status(400).json({ error: err.message || 'Failed to add tester' });
+  }
+});
+
+// 5. Remove tester from feature testing allowlist
+router.delete('/features/:featureKey/testers/:testerId', (req: AuthRequest, res: Response) => {
+  try {
+    const adminUser = { id: req.user!.id, email: req.user!.email };
+    const result = removeTesterFromFeature(req.params.featureKey, req.params.testerId, adminUser, req.ip);
+    res.json({
+      success: true,
+      message: 'Tester removed successfully.',
+      removedEmail: result.removedEmail,
+    });
+  } catch (err: any) {
+    console.error('Remove tester error:', err);
+    res.status(400).json({ error: err.message || 'Failed to remove tester' });
   }
 });
 

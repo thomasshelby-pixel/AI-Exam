@@ -24,6 +24,8 @@ import { McqAiComingSoonModal } from '../../components/mcq/McqAiComingSoonModal.
 import { mcqApi } from '../../api/mcqClient.js';
 import { McqStudentProgress, McqSessionType } from '../../types/index.js';
 import { useAuth } from '../../context/AuthContext.js';
+import { featureApi, FeatureAccessResult } from '../../api/featureClient.js';
+import { FeatureUnavailable } from '../../components/common/FeatureUnavailable.js';
 
 export const McqArenaDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -35,9 +37,59 @@ export const McqArenaDashboard: React.FC = () => {
   const [filterSessionType, setFilterSessionType] = useState<McqSessionType>('practice');
   const [aiModalOpen, setAiModalOpen] = useState<boolean>(false);
 
+  // Centralized Feature Access State
+  const [accessState, setAccessState] = useState<{
+    checking: boolean;
+    allowed: boolean;
+    featureName?: string;
+    status?: 'TESTING' | 'DISABLED' | 'ENABLED';
+    studentMessage?: string;
+  }>({
+    checking: true,
+    allowed: false,
+  });
+
   useEffect(() => {
-    loadProgress();
+    checkAccessAndLoad();
   }, []);
+
+  const checkAccessAndLoad = async () => {
+    try {
+      const access = await featureApi.checkAccess('mcq_arena');
+      if (!access.allowed) {
+        setAccessState({
+          checking: false,
+          allowed: false,
+          featureName: access.featureName || 'MCQ Arena',
+          status: access.status,
+          studentMessage: access.studentMessage,
+        });
+        setLoading(false);
+        return;
+      }
+
+      setAccessState({
+        checking: false,
+        allowed: true,
+        featureName: access.featureName,
+        status: access.status,
+      });
+
+      // ONLY load question bank / progress data if backend permits access
+      loadProgress();
+    } catch (err) {
+      console.error('Failed to verify MCQ Arena access:', err);
+      setAccessState({
+        checking: false,
+        allowed: false,
+        featureName: 'MCQ Arena',
+        status: 'TESTING',
+        studentMessage:
+          "MCQ Arena is currently under development and limited testing. We're working on improving the question bank, practice experience and overall system. Public access will be available soon.",
+      });
+      setLoading(false);
+    }
+  };
 
   const loadProgress = async () => {
     setLoading(true);
@@ -55,6 +107,29 @@ export const McqArenaDashboard: React.FC = () => {
     setFilterSessionType(type);
     setFilterModalOpen(true);
   };
+
+  // 1. Initial Access Verification State
+  if (accessState.checking) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+        <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+        <p className="text-sm font-semibold text-slate-300">Checking feature availability...</p>
+      </div>
+    );
+  }
+
+  // 2. Feature Gated / Unavailable State (Testing / Maintenance)
+  if (!accessState.allowed) {
+    return (
+      <FeatureUnavailable
+        featureKey="mcq_arena"
+        featureName={accessState.featureName || 'MCQ Arena'}
+        status={accessState.status || 'TESTING'}
+        studentMessage={accessState.studentMessage}
+        onBack={() => navigate('/student/dashboard')}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">

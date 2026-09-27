@@ -15,6 +15,7 @@ import { AdminPricingSection } from './AdminPricingSection.js';
 import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
+import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -68,6 +69,7 @@ import {
   Menu,
   Target,
   Zap,
+  Sliders,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -1314,6 +1316,7 @@ export const AdminPortal: React.FC = () => {
   // Navigation Items for Admin Sidebar
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'feature-control', label: 'Feature Control', icon: Sliders },
     { id: 'mcq-arena', label: 'MCQ Admin Portal', icon: Target },
     { id: 'reviews', label: 'Student Reviews', icon: Star, badge: pendingReviewsCount },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
@@ -1740,6 +1743,11 @@ export const AdminPortal: React.FC = () => {
 
           {!loadingData && (
             <>
+              {/* FEATURE CONTROL & STUDENT ACCESS SYSTEM */}
+              {activeSection === 'feature-control' && (
+                <AdminFeatureControlSection />
+              )}
+
               {/* STUDENT REVIEWS & FEEDBACK MODERATION */}
               {activeSection === 'reviews' && (
                 <AdminReviewsSection
@@ -1807,14 +1815,24 @@ export const AdminPortal: React.FC = () => {
                         Direct Super Admin management of the CA MCQ Question Bank, ICAI marking schemes, chapter mapping, and arena analytics without creating separate credentials or second MFA.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => navigate('/mcq-admin')}
-                      className="px-4 py-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-                    >
-                      <Zap className="w-4 h-4 text-slate-950" />
-                      Open MCQ Admin Portal →
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => navigate('/admin/feature-control')}
+                        className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                      >
+                        <Sliders className="w-4 h-4 text-amber-400" />
+                        Feature Control
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/mcq-admin')}
+                        className="px-4 py-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                      >
+                        <Zap className="w-4 h-4 text-slate-950" />
+                        Open MCQ Admin Portal →
+                      </button>
+                    </div>
                   </div>
 
                   {/* Top Stats Metrics */}

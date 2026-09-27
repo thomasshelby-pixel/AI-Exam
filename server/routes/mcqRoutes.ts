@@ -1,5 +1,6 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { authenticateToken, AuthRequest, requireMcqAdmin } from '../auth.js';
+import { requireFeatureAccess } from '../services/featureControlService.js';
 import {
   getCurriculumStats,
   createSession,
@@ -48,6 +49,19 @@ const router = Router();
 // (STRICTLY NO PUBLIC MCQ ACCESS)
 // ==========================================
 router.use(authenticateToken);
+
+// ==========================================
+// FEATURE ACCESS POLICY ENFORCEMENT
+// Normal students: strictly gated by MCQ Arena feature status (ENABLED / TESTING / DISABLED)
+// Admin routes (/admin/*): bypass student feature gating and enforce requireMcqAdmin
+// ==========================================
+const enforceStudentMcqAccess = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/admin')) {
+    return next();
+  }
+  return requireFeatureAccess('mcq_arena')(req, res, next);
+};
+router.use(enforceStudentMcqAccess);
 
 // ------------------------------------------
 // STUDENT ROUTES

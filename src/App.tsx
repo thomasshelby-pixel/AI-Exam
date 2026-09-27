@@ -885,6 +885,14 @@ const AppRoutes: React.FC = () => {
           }
         />
         <Route
+          path="/mcq-arena"
+          element={
+            <ProtectedStudentRoute>
+              <McqArenaDashboard />
+            </ProtectedStudentRoute>
+          }
+        />
+        <Route
           path="/arena/session/:sessionId"
           element={
             <ProtectedStudentRoute>
