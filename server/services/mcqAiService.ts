@@ -74,7 +74,12 @@ const auditMetrics: McqAiAuditMetrics = {
 let mcqAiClient: GoogleGenAI | null = null;
 
 export function getMcqAiModel(): string {
-  return process.env.MCQ_AI_MODEL?.trim() || 'gemini-3.1-flash-lite';
+  const envModel = process.env.MCQ_AI_MODEL?.trim();
+  // Guard against accidental secret/API key duplication in MCQ_AI_MODEL
+  if (envModel && !envModel.startsWith('AQ.') && !envModel.startsWith('AIza') && envModel.length < 60) {
+    return envModel;
+  }
+  return 'gemini-3.1-flash-lite';
 }
 
 export function isMcqAiConfigured(): boolean {

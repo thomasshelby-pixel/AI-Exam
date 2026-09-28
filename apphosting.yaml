@@ -7,6 +7,10 @@ runConfig:
   cpu: 1
   memoryMiB: 1024
 
+scripts:
+  buildCommand: npm run build
+  runCommand: node dist/server.cjs
+
 env:
   - variable: SMTP_HOST
     value: smtp.resend.com

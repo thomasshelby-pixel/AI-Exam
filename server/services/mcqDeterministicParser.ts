@@ -1,15 +1,15 @@
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import { db } from '../db.js';
 import { PDFDocument } from 'pdf-lib';
 
-const require = createRequire(import.meta.url);
-
 let PDFParseClass: any = null;
 try {
-  const pdfParsePkg = require('pdf-parse');
-  PDFParseClass = pdfParsePkg.PDFParse || pdfParsePkg;
+  const req = typeof require === 'function' ? require : undefined;
+  if (req) {
+    const pdfParsePkg = req('pdf-parse');
+    PDFParseClass = pdfParsePkg?.PDFParse || pdfParsePkg?.default || pdfParsePkg;
+  }
 } catch (e) {
   console.warn('[PDF Parser] pdf-parse module load note:', e);
 }
