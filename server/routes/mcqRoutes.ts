@@ -16,6 +16,9 @@ import {
   createAdminQuestion,
   updateAdminQuestion,
   deleteAdminQuestion,
+  deleteAdminQuestions,
+  getMatchingQuestionsSummary,
+  deleteAllMatchingQuestions,
   bulkUpdateQuestionStatus,
   getAdminStats,
   getAdminCases,
@@ -285,10 +288,44 @@ router.put('/admin/questions/:id', requireMcqAdmin, (req: AuthRequest, res: Resp
 
 router.delete('/admin/questions/:id', requireMcqAdmin, (req: AuthRequest, res: Response) => {
   try {
-    const result = deleteAdminQuestion(req.params.id);
+    const adminId = req.user?.id || 'system';
+    const result = deleteAdminQuestion(req.params.id, adminId);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to delete question' });
+  }
+});
+
+router.post('/admin/questions/bulk-delete', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: 'IDs array is required for bulk deletion.' });
+    }
+    const adminId = req.user?.id || 'system';
+    const result = deleteAdminQuestions(ids, adminId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to bulk delete questions' });
+  }
+});
+
+router.post('/admin/questions/delete-all-summary', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const summary = getMatchingQuestionsSummary(req.body || {});
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to calculate delete-all summary' });
+  }
+});
+
+router.post('/admin/questions/delete-all-matching', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const adminId = req.user?.id || 'system';
+    const result = deleteAllMatchingQuestions(req.body || {}, adminId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to delete matching questions' });
   }
 });
 

@@ -153,6 +153,70 @@ export const mcqApi = {
     });
   },
 
+  bulkDeleteQuestions: async (ids: string[]) => {
+    return apiRequest<{
+      success: boolean;
+      deletedCount: number;
+      normalCount: number;
+      caseCount: number;
+      affectedCasesCount: number;
+      publishedCount: number;
+      draftOrReviewCount: number;
+    }>('/api/mcq/admin/questions/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  },
+
+  getDeleteAllSummary: async (filters: {
+    course?: string;
+    subject?: string;
+    status?: string;
+    search?: string;
+    questionType?: string;
+    difficulty?: string;
+    chapter?: string;
+    topic?: string;
+  }) => {
+    return apiRequest<{
+      totalMatching: number;
+      normalCount: number;
+      caseCount: number;
+      affectedCasesCount: number;
+      publishedCount: number;
+      draftOrReviewCount: number;
+      hasActiveFilters: boolean;
+    }>('/api/mcq/admin/questions/delete-all-summary', {
+      method: 'POST',
+      body: JSON.stringify(filters),
+    });
+  },
+
+  deleteAllMatchingQuestions: async (filters: {
+    course?: string;
+    subject?: string;
+    status?: string;
+    search?: string;
+    questionType?: string;
+    difficulty?: string;
+    chapter?: string;
+    topic?: string;
+    allowUnfiltered?: boolean;
+  }) => {
+    return apiRequest<{
+      success: boolean;
+      deletedCount: number;
+      normalCount: number;
+      caseCount: number;
+      affectedCasesCount: number;
+      publishedCount: number;
+      draftOrReviewCount: number;
+    }>('/api/mcq/admin/questions/delete-all-matching', {
+      method: 'POST',
+      body: JSON.stringify(filters),
+    });
+  },
+
   bulkUpdateStatus: async (ids: string[], status: McqStatus) => {
     return apiRequest<{ updatedCount: number }>('/api/mcq/admin/questions/bulk-status', {
       method: 'POST',

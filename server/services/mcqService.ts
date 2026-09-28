@@ -1439,44 +1439,152 @@ export function resolveWrongQuestion(studentId: string, questionId: string) {
 // ==========================================
 // 10. MCQ ADMIN OPERATIONS
 // ==========================================
-export function getAdminQuestions(filters: {
+export interface AdminQuestionFilters {
   course?: string;
   subject?: string;
+  chapter?: string;
+  topic?: string;
+  questionType?: string;
+  difficulty?: string;
+  source?: string;
+  attempt?: string;
   status?: string;
+  caseId?: string;
   search?: string;
   page?: number;
   limit?: number;
-}) {
-  const { course, subject, status, search, page = 1, limit = 20 } = filters;
-  const conditions: string[] = ["status != 'DELETED'"];
+  allowUnfiltered?: boolean;
+}
+
+export function buildQuestionFilterConditions(filters: AdminQuestionFilters, tablePrefix: string = '') {
+  const {
+    course,
+    subject,
+    chapter,
+    topic,
+    questionType,
+    difficulty,
+    source,
+    attempt,
+    status,
+    caseId,
+    search,
+  } = filters;
+
+  const p = tablePrefix ? `${tablePrefix}.` : '';
+  const conditions: string[] = [`${p}status != 'DELETED'`];
   const params: any[] = [];
+  let filterCount = 0;
 
   if (course && course !== 'ALL') {
-    conditions.push('course = ?');
+    conditions.push(`${p}course = ?`);
     params.push(course);
+    filterCount++;
   }
   if (subject && subject !== 'ALL') {
-    conditions.push('subject = ?');
+    conditions.push(`${p}subject = ?`);
     params.push(subject);
+    filterCount++;
+  }
+  if (chapter && chapter !== 'ALL' && chapter.trim()) {
+    conditions.push(`${p}chapter = ?`);
+    params.push(chapter.trim());
+    filterCount++;
+  }
+  if (topic && topic !== 'ALL' && topic.trim()) {
+    conditions.push(`${p}topic = ?`);
+    params.push(topic.trim());
+    filterCount++;
+  }
+  if (questionType && questionType !== 'ALL') {
+    conditions.push(`${p}question_type = ?`);
+    params.push(questionType);
+    filterCount++;
+  }
+  if (difficulty && difficulty !== 'ALL') {
+    conditions.push(`${p}difficulty = ?`);
+    params.push(difficulty);
+    filterCount++;
+  }
+  if (source && source !== 'ALL') {
+    conditions.push(`${p}source = ?`);
+    params.push(source);
+    filterCount++;
+  }
+  if (attempt && attempt !== 'ALL' && attempt.trim()) {
+    conditions.push(`${p}attempt = ?`);
+    params.push(attempt.trim());
+    filterCount++;
   }
   if (status && status !== 'ALL') {
-    conditions.push('status = ?');
+    conditions.push(`${p}status = ?`);
     params.push(status);
+    filterCount++;
+  }
+  if (caseId && caseId !== 'ALL' && caseId.trim()) {
+    conditions.push(`${p}case_id = ?`);
+    params.push(caseId.trim());
+    filterCount++;
   }
   if (search && search.trim()) {
-    conditions.push('(question_text LIKE ? OR chapter LIKE ? OR topic LIKE ? OR reference LIKE ?)');
+    conditions.push(`(${p}question_text LIKE ? OR ${p}chapter LIKE ? OR ${p}topic LIKE ? OR ${p}reference LIKE ?)`);
     const term = `%${search.trim()}%`;
     params.push(term, term, term, term);
+    filterCount++;
   }
+
+  return { conditions, params, filterCount };
+}
+
+export function getMatchingQuestionsSummary(filters: AdminQuestionFilters) {
+  const { conditions, params, filterCount } = buildQuestionFilterConditions(filters);
+  const rows = db.prepare(`
+    SELECT id, case_id, question_type, status
+    FROM mcq_questions
+    WHERE ${conditions.join(' AND ')}
+  `).all(...params) as any[];
+
+  let normalCount = 0;
+  let caseCount = 0;
+  let publishedCount = 0;
+  let draftOrReviewCount = 0;
+  const affectedCaseIds = new Set<string>();
+
+  for (const q of rows) {
+    if (q.question_type === 'normal') normalCount++;
+    else if (q.question_type === 'case_based') caseCount++;
+
+    if (q.status === 'published') publishedCount++;
+    else if (q.status === 'draft' || q.status === 'review') draftOrReviewCount++;
+
+    if (q.case_id) affectedCaseIds.add(q.case_id);
+  }
+
+  return {
+    totalMatching: rows.length,
+    normalCount,
+    caseCount,
+    affectedCasesCount: affectedCaseIds.size,
+    publishedCount,
+    draftOrReviewCount,
+    hasActiveFilters: filterCount > 0,
+    filters,
+  };
+}
+
+export function getAdminQuestions(filters: AdminQuestionFilters) {
+  const { page = 1, limit = 20 } = filters;
+  const { conditions: plainConditions, params } = buildQuestionFilterConditions(filters);
+  const { conditions: tableConditions } = buildQuestionFilterConditions(filters, 'q');
 
   const offset = (page - 1) * limit;
 
-  const countRow = db.prepare(`SELECT count(*) as total FROM mcq_questions WHERE ${conditions.join(' AND ')}`).get(...params) as { total: number };
+  const countRow = db.prepare(`SELECT count(*) as total FROM mcq_questions WHERE ${plainConditions.join(' AND ')}`).get(...params) as { total: number };
   const rows = db.prepare(`
     SELECT q.*, c.case_title, c.case_scenario as parent_case_scenario
     FROM mcq_questions q
     LEFT JOIN mcq_cases c ON q.case_id = c.case_id
-    WHERE ${conditions.map((c) => `q.${c}`).join(' AND ')}
+    WHERE ${tableConditions.join(' AND ')}
     ORDER BY q.created_at DESC
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as any[];
@@ -1859,14 +1967,161 @@ export function bulkUpdateQuestionStatus(ids: string[], status: McqStatus) {
   return { updatedCount: ids.length };
 }
 
-export function deleteAdminQuestion(id: string) {
-  try {
-    db.prepare("UPDATE mcq_questions SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-    db.prepare('DELETE FROM mcq_questions WHERE id = ?').run(id);
-  } catch (err) {
-    console.warn('[McqService] Delete question warning:', err);
+export interface DeleteQuestionsResult {
+  success: boolean;
+  deletedCount: number;
+  normalCount: number;
+  caseCount: number;
+  affectedCasesCount: number;
+  publishedCount: number;
+  draftOrReviewCount: number;
+}
+
+export function deleteAdminQuestions(ids: string[], adminUserId: string = 'system'): DeleteQuestionsResult {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return {
+      success: true,
+      deletedCount: 0,
+      normalCount: 0,
+      caseCount: 0,
+      affectedCasesCount: 0,
+      publishedCount: 0,
+      draftOrReviewCount: 0,
+    };
   }
-  return { success: true };
+
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return {
+      success: true,
+      deletedCount: 0,
+      normalCount: 0,
+      caseCount: 0,
+      affectedCasesCount: 0,
+      publishedCount: 0,
+      draftOrReviewCount: 0,
+    };
+  }
+
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const questions = db.prepare(`SELECT id, case_id, question_type, status FROM mcq_questions WHERE id IN (${placeholders}) AND status != 'DELETED'`).all(...uniqueIds) as any[];
+
+  if (questions.length === 0) {
+    return {
+      success: true,
+      deletedCount: 0,
+      normalCount: 0,
+      caseCount: 0,
+      affectedCasesCount: 0,
+      publishedCount: 0,
+      draftOrReviewCount: 0,
+    };
+  }
+
+  let normalCount = 0;
+  let caseCount = 0;
+  let publishedCount = 0;
+  let draftOrReviewCount = 0;
+  const affectedCaseIds = new Set<string>();
+
+  for (const q of questions) {
+    if (q.question_type === 'normal') normalCount++;
+    else if (q.question_type === 'case_based') caseCount++;
+
+    if (q.status === 'published') publishedCount++;
+    else if (q.status === 'draft' || q.status === 'review') draftOrReviewCount++;
+
+    if (q.case_id) affectedCaseIds.add(q.case_id);
+  }
+
+  const qIds = questions.map((q) => q.id);
+  const qPlaceholders = qIds.map(() => '?').join(',');
+
+  db.exec('BEGIN TRANSACTION');
+  try {
+    // 1. Soft-delete mark first
+    db.prepare(`UPDATE mcq_questions SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE id IN (${qPlaceholders})`).run(...qIds);
+    // 2. Hard-delete from table
+    db.prepare(`DELETE FROM mcq_questions WHERE id IN (${qPlaceholders})`).run(...qIds);
+
+    // 3. For affected cases, check if any remaining non-deleted child questions exist
+    for (const caseId of affectedCaseIds) {
+      const remainingRow = db.prepare(`SELECT count(*) as count FROM mcq_questions WHERE case_id = ? AND status != 'DELETED'`).get(caseId) as any;
+      if (!remainingRow || remainingRow.count === 0) {
+        db.prepare(`UPDATE mcq_cases SET status = 'DELETED', updated_at = CURRENT_TIMESTAMP WHERE case_id = ?`).run(caseId);
+        db.prepare(`DELETE FROM mcq_cases WHERE case_id = ?`).run(caseId);
+      }
+    }
+
+    // 4. Record audit log
+    try {
+      const logId = 'log_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        VALUES (?, ?, 'MCQ_QUESTIONS_BULK_DELETE', 'mcq_questions', ?, ?, CURRENT_TIMESTAMP)
+      `).run(
+        logId,
+        adminUserId,
+        qIds.length === 1 ? qIds[0] : `bulk_${qIds.length}`,
+        JSON.stringify({
+          deletedCount: qIds.length,
+          normalCount,
+          caseCount,
+          affectedCasesCount: affectedCaseIds.size,
+          publishedCount,
+          draftOrReviewCount,
+          deletedIds: qIds.slice(0, 50),
+        })
+      );
+    } catch (auditErr) {
+      console.warn('[McqService] Audit log write warning:', auditErr);
+    }
+
+    db.exec('COMMIT');
+
+    return {
+      success: true,
+      deletedCount: qIds.length,
+      normalCount,
+      caseCount,
+      affectedCasesCount: affectedCaseIds.size,
+      publishedCount,
+      draftOrReviewCount,
+    };
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function deleteAdminQuestion(id: string, adminUserId?: string) {
+  const res = deleteAdminQuestions([id], adminUserId);
+  return { success: res.deletedCount > 0 || res.success };
+}
+
+export function deleteAllMatchingQuestions(filters: AdminQuestionFilters, adminUserId: string = 'system'): DeleteQuestionsResult {
+  const { conditions, params, filterCount } = buildQuestionFilterConditions(filters);
+
+  // Safety protection against accidental total database wipe
+  if (filterCount === 0 && !filters.allowUnfiltered) {
+    throw new Error('Safety Block: Delete All requires active filters (course, subject, status, or search). Unfiltered deletion is blocked.');
+  }
+
+  const rows = db.prepare(`SELECT id FROM mcq_questions WHERE ${conditions.join(' AND ')}`).all(...params) as { id: string }[];
+  if (rows.length === 0) {
+    return {
+      success: true,
+      deletedCount: 0,
+      normalCount: 0,
+      caseCount: 0,
+      affectedCasesCount: 0,
+      publishedCount: 0,
+      draftOrReviewCount: 0,
+    };
+  }
+
+  const ids = rows.map((r) => r.id);
+  return deleteAdminQuestions(ids, adminUserId);
 }
 
 export function getAdminStats(): McqAdminStats {

@@ -81,9 +81,20 @@ export const McqAdminPortal: React.FC = () => {
   const [loadingQuestions, setLoadingQuestions] = useState<boolean>(false);
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [filterCourse, setFilterCourse] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Bulk selection and deletion states
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
+  const [selectAllMatching, setSelectAllMatching] = useState<boolean>(false);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState<boolean>(false);
+  const [deleteAllModalOpen, setDeleteAllModalOpen] = useState<boolean>(false);
+  const [deleteAllSummary, setDeleteAllSummary] = useState<any>(null);
+  const [loadingDeleteAllSummary, setLoadingDeleteAllSummary] = useState<boolean>(false);
+  const [bulkActionProcessing, setBulkActionProcessing] = useState<boolean>(false);
+  const [bulkFeedback, setBulkFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Selected question for viewing / editing
   const [editingQuestion, setEditingQuestion] = useState<Partial<McqQuestion> | null>(null);
@@ -164,12 +175,13 @@ export const McqAdminPortal: React.FC = () => {
       const res = await mcqApi.getAdminQuestions({
         course: filterCourse !== 'ALL' ? filterCourse : undefined,
         status: filterStatus !== 'ALL' ? filterStatus : undefined,
-        search: searchQuery || undefined,
+        search: searchQuery.trim() || undefined,
         page,
         limit: 15,
       });
       setQuestions(res.questions || []);
       setTotalPages(res.totalPages || 1);
+      setTotalCount(res.total || 0);
     } catch (err: any) {
       if (err?.status === 401 || err?.statusCode === 401) {
         navigate('/mcq-admin/login', { replace: true });
@@ -184,7 +196,138 @@ export const McqAdminPortal: React.FC = () => {
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
+    setSelectedQuestionIds([]);
+    setSelectAllMatching(false);
     loadQuestions();
+  };
+
+  // Selection states & helpers
+  const allVisibleSelected = questions.length > 0 && questions.every((q) => selectedQuestionIds.includes(q.id));
+  const isIndeterminate = questions.some((q) => selectedQuestionIds.includes(q.id)) && !allVisibleSelected;
+
+  const handleToggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      const visibleIds = new Set(questions.map((q) => q.id));
+      setSelectedQuestionIds((prev) => prev.filter((id) => !visibleIds.has(id)));
+      setSelectAllMatching(false);
+    } else {
+      const newSelected = new Set([...selectedQuestionIds, ...questions.map((q) => q.id)]);
+      setSelectedQuestionIds(Array.from(newSelected));
+    }
+  };
+
+  const handleToggleSelectQuestion = (id: string) => {
+    setSelectedQuestionIds((prev) => {
+      if (prev.includes(id)) {
+        setSelectAllMatching(false);
+        return prev.filter((i) => i !== id);
+      } else {
+        return [...prev, id];
+      }
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedQuestionIds([]);
+    setSelectAllMatching(false);
+  };
+
+  const getSelectedQuestionsBreakdown = () => {
+    const selectedQuestions = questions.filter((q) => selectedQuestionIds.includes(q.id));
+    const normalCount = selectedQuestions.filter((q) => q.questionType === 'normal').length;
+    const caseCount = selectedQuestions.filter((q) => q.questionType === 'case_based').length;
+    const affectedCases = new Set(selectedQuestions.map((q) => q.caseId).filter(Boolean)).size;
+    const publishedCount = selectedQuestions.filter((q) => q.status === 'published').length;
+    const draftOrReviewCount = selectedQuestions.filter((q) => q.status === 'draft' || q.status === 'review').length;
+    return {
+      count: selectedQuestionIds.length,
+      normalCount,
+      caseCount,
+      affectedCases,
+      publishedCount,
+      draftOrReviewCount,
+    };
+  };
+
+  const handleOpenDeleteAllModal = async () => {
+    setDeleteAllModalOpen(true);
+    setLoadingDeleteAllSummary(true);
+    try {
+      const summary = await mcqApi.getDeleteAllSummary({
+        course: filterCourse !== 'ALL' ? filterCourse : undefined,
+        status: filterStatus !== 'ALL' ? filterStatus : undefined,
+        search: searchQuery.trim() || undefined,
+      });
+      setDeleteAllSummary(summary);
+    } catch (err: any) {
+      console.error('Failed to load delete-all summary:', err);
+      setDeleteAllSummary(null);
+    } finally {
+      setLoadingDeleteAllSummary(false);
+    }
+  };
+
+  const executeBulkDelete = async () => {
+    setBulkActionProcessing(true);
+    try {
+      let result;
+      if (selectAllMatching) {
+        result = await mcqApi.deleteAllMatchingQuestions({
+          course: filterCourse !== 'ALL' ? filterCourse : undefined,
+          status: filterStatus !== 'ALL' ? filterStatus : undefined,
+          search: searchQuery.trim() || undefined,
+        });
+      } else {
+        result = await mcqApi.bulkDeleteQuestions(selectedQuestionIds);
+      }
+      setBulkDeleteModalOpen(false);
+      setSelectedQuestionIds([]);
+      setSelectAllMatching(false);
+      setBulkFeedback({
+        type: 'success',
+        message: `Successfully deleted ${result.deletedCount} question${result.deletedCount === 1 ? '' : 's'}${result.caseCount > 0 ? ` (${result.caseCount} case-based, ${result.affectedCasesCount} case studies affected)` : ''}.`,
+      });
+      setTimeout(() => setBulkFeedback(null), 5000);
+      loadQuestions();
+      loadStats();
+    } catch (err: any) {
+      setBulkFeedback({
+        type: 'error',
+        message: err.message || 'Failed to delete selected questions.',
+      });
+      setTimeout(() => setBulkFeedback(null), 6000);
+    } finally {
+      setBulkActionProcessing(false);
+    }
+  };
+
+  const executeDeleteAllMatching = async () => {
+    setBulkActionProcessing(true);
+    try {
+      const result = await mcqApi.deleteAllMatchingQuestions({
+        course: filterCourse !== 'ALL' ? filterCourse : undefined,
+        status: filterStatus !== 'ALL' ? filterStatus : undefined,
+        search: searchQuery.trim() || undefined,
+      });
+      setDeleteAllModalOpen(false);
+      setSelectedQuestionIds([]);
+      setSelectAllMatching(false);
+      setBulkFeedback({
+        type: 'success',
+        message: `Successfully deleted all ${result.deletedCount} question${result.deletedCount === 1 ? '' : 's'} matching the active filters.`,
+      });
+      setTimeout(() => setBulkFeedback(null), 5000);
+      loadQuestions();
+      loadStats();
+    } catch (err: any) {
+      setBulkFeedback({
+        type: 'error',
+        message: err.message || 'Failed to delete all matching questions.',
+      });
+      setTimeout(() => setBulkFeedback(null), 6000);
+    } finally {
+      setBulkActionProcessing(false);
+    }
   };
 
   const handleCreateQuestion = async (e: React.FormEvent) => {
@@ -234,13 +377,30 @@ export const McqAdminPortal: React.FC = () => {
   };
 
   const handleDeleteQuestion = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this MCQ from the question bank?')) return;
+    const q = questions.find((item) => item.id === id);
+    const isCase = q?.questionType === 'case_based';
+    const confirmMsg = isCase
+      ? 'Are you sure you want to delete this case-based question? If this is the last question in the case, the parent case study will also be deleted.'
+      : 'Are you sure you want to delete this MCQ from the question bank?';
+
+    if (!window.confirm(confirmMsg)) return;
+
     try {
       await mcqApi.deleteAdminQuestion(id);
+      setSelectedQuestionIds((prev) => prev.filter((i) => i !== id));
+      setBulkFeedback({
+        type: 'success',
+        message: 'Question deleted successfully.',
+      });
+      setTimeout(() => setBulkFeedback(null), 4000);
       loadQuestions();
       loadStats();
     } catch (err: any) {
-      alert(`Delete failed: ${err.message}`);
+      setBulkFeedback({
+        type: 'error',
+        message: `Delete failed: ${err.message}`,
+      });
+      setTimeout(() => setBulkFeedback(null), 5000);
     }
   };
 
@@ -699,6 +859,69 @@ export const McqAdminPortal: React.FC = () => {
         {/* TAB 2: QUESTION BANK */}
         {activeTab === 'bank' && (
           <div className="space-y-4">
+            {/* Feedback Alert Banner */}
+            {bulkFeedback && (
+              <div
+                className={`p-3.5 px-4 rounded-xl border text-xs flex items-center justify-between gap-3 animate-fadeIn ${
+                  bulkFeedback.type === 'success'
+                    ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
+                    : 'bg-rose-950/40 border-rose-800/80 text-rose-300'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {bulkFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{bulkFeedback.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBulkFeedback(null)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Bulk Action Bar (Visible when >= 1 selected) */}
+            {(selectedQuestionIds.length > 0 || selectAllMatching) && (
+              <div className="bg-slate-900 border border-blue-500/50 p-3.5 px-5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-lg shadow-blue-950/50 animate-fadeIn">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
+                  <span className="text-xs font-bold text-white">
+                    {selectAllMatching ? totalCount : selectedQuestionIds.length} question
+                    {(selectAllMatching ? totalCount : selectedQuestionIds.length) === 1 ? '' : 's'} selected
+                    {selectAllMatching && (
+                      <span className="ml-1.5 text-[11px] text-blue-300 font-normal">
+                        (all matching current active filters)
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setBulkDeleteModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Selected</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearSelection}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    Clear Selection
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Filter Bar */}
             <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700/80 flex flex-col md:flex-row items-center justify-between gap-4">
               <form onSubmit={handleSearchSubmit} className="relative w-full md:w-80">
@@ -712,12 +935,14 @@ export const McqAdminPortal: React.FC = () => {
                 />
               </form>
 
-              <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
                 <select
                   value={filterCourse}
                   onChange={(e) => {
                     setFilterCourse(e.target.value);
                     setPage(1);
+                    setSelectedQuestionIds([]);
+                    setSelectAllMatching(false);
                   }}
                   className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-semibold text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -732,6 +957,8 @@ export const McqAdminPortal: React.FC = () => {
                   onChange={(e) => {
                     setFilterStatus(e.target.value);
                     setPage(1);
+                    setSelectedQuestionIds([]);
+                    setSelectAllMatching(false);
                   }}
                   className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-semibold text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -741,15 +968,73 @@ export const McqAdminPortal: React.FC = () => {
                   <option value="draft">Draft</option>
                   <option value="archived">Archived</option>
                 </select>
+
+                <button
+                  type="button"
+                  onClick={handleOpenDeleteAllModal}
+                  title="Delete all questions matching current active filters"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-rose-950/70 hover:bg-rose-900/90 text-rose-300 hover:text-white border border-rose-800/80 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Delete All</span>
+                </button>
               </div>
             </div>
 
             {/* Questions Table */}
             <div className="bg-slate-800/80 rounded-2xl border border-slate-700/80 overflow-hidden shadow-sm">
+              {/* Select-All Semantics Banner when page is selected */}
+              {allVisibleSelected && totalCount > questions.length && (
+                <div className="bg-blue-950/80 border-b border-blue-800/80 px-4 py-2.5 text-xs text-blue-200 flex items-center justify-between">
+                  <div>
+                    {selectAllMatching ? (
+                      <span>
+                        All <strong>{totalCount}</strong> questions matching current active filters are selected.
+                      </span>
+                    ) : (
+                      <span>
+                        All <strong>{questions.length}</strong> questions on this page are selected.
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    {selectAllMatching ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelectAllMatching(false)}
+                        className="font-bold text-white underline hover:text-blue-300 cursor-pointer ml-3"
+                      >
+                        Select only this page
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setSelectAllMatching(true)}
+                        className="font-bold text-white underline hover:text-blue-300 cursor-pointer ml-3"
+                      >
+                        Select all {totalCount} matching questions
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-900/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-700/60">
                     <tr>
+                      <th className="py-3 px-4 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all questions on this page"
+                          checked={allVisibleSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = isIndeterminate;
+                          }}
+                          onChange={handleToggleSelectAllVisible}
+                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-700 bg-slate-900 cursor-pointer"
+                        />
+                      </th>
                       <th className="py-3 px-4">Course & Subject</th>
                       <th className="py-3 px-4">Question</th>
                       <th className="py-3 px-4">Type</th>
@@ -762,19 +1047,33 @@ export const McqAdminPortal: React.FC = () => {
                   <tbody className="divide-y divide-slate-700/40">
                     {loadingQuestions ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-400">
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
                           Loading questions...
                         </td>
                       </tr>
                     ) : questions.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-400">
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
                           No questions matching the selected filters.
                         </td>
                       </tr>
                     ) : (
                       questions.map((q) => (
-                        <tr key={q.id} className="hover:bg-slate-750/50 transition-colors">
+                        <tr
+                          key={q.id}
+                          className={`hover:bg-slate-750/50 transition-colors ${
+                            selectedQuestionIds.includes(q.id) ? 'bg-blue-950/20' : ''
+                          }`}
+                        >
+                          <td className="py-3.5 px-4 text-center">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select question ${q.id}`}
+                              checked={selectedQuestionIds.includes(q.id)}
+                              onChange={() => handleToggleSelectQuestion(q.id)}
+                              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-700 bg-slate-900 cursor-pointer"
+                            />
+                          </td>
                           <td className="py-3.5 px-4 font-semibold text-slate-200">
                             <div>{q.course.replace('CA_', '')}</div>
                             <div className="text-[10px] text-slate-400 truncate max-w-xs">{q.subject}</div>
@@ -1597,6 +1896,234 @@ export const McqAdminPortal: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* BULK DELETE CONFIRMATION MODAL */}
+      {bulkDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+                <Trash2 className="w-6 h-6 text-rose-500" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Selected Questions?</h3>
+                <p className="text-xs text-slate-400">
+                  You are about to delete{' '}
+                  <strong className="text-rose-300">
+                    {selectAllMatching ? totalCount : selectedQuestionIds.length}
+                  </strong>{' '}
+                  question{(selectAllMatching ? totalCount : selectedQuestionIds.length) === 1 ? '' : 's'}.
+                </p>
+              </div>
+            </div>
+
+            {/* Breakdown Card */}
+            {(() => {
+              const breakdown = getSelectedQuestionsBreakdown();
+              const displayCount = selectAllMatching ? totalCount : breakdown.count;
+              return (
+                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pb-1 border-b border-slate-800 flex justify-between">
+                    <span>Selection Breakdown</span>
+                    <span className="text-rose-400 font-mono font-bold">{displayCount} Total</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-slate-300 pt-1">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Normal MCQs:</span>
+                      <span className="font-semibold">{selectAllMatching ? 'Matching filters' : breakdown.normalCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Case-Based:</span>
+                      <span className="font-semibold">{selectAllMatching ? 'Matching filters' : breakdown.caseCount}</span>
+                    </div>
+                    {breakdown.affectedCases > 0 && !selectAllMatching && (
+                      <div className="flex justify-between col-span-2 text-amber-300">
+                        <span>Affected Case Studies:</span>
+                        <span className="font-bold">{breakdown.affectedCases} cases</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Published:</span>
+                      <span className="font-semibold text-emerald-400">{selectAllMatching ? 'Matching filters' : breakdown.publishedCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Draft / Review:</span>
+                      <span className="font-semibold text-amber-400">{selectAllMatching ? 'Matching filters' : breakdown.draftOrReviewCount}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <p className="text-xs text-rose-300/90 leading-relaxed bg-rose-950/30 border border-rose-800/40 p-3 rounded-xl">
+              ⚠️ Warning: This action cannot be undone. Questions will be permanently deleted from active student practice and curriculum question banks.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteModalOpen(false)}
+                disabled={bulkActionProcessing}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeBulkDelete}
+                disabled={bulkActionProcessing}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {bulkActionProcessing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete {selectAllMatching ? totalCount : selectedQuestionIds.length} Questions</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE ALL MATCHING CONFIRMATION MODAL */}
+      {deleteAllModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+                <Trash2 className="w-6 h-6 text-rose-500" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete All Matching Questions?</h3>
+                <p className="text-xs text-slate-400">
+                  Deletes all questions strictly matching current active filters.
+                </p>
+              </div>
+            </div>
+
+            {/* Active Filters Display */}
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pb-1 border-b border-slate-800">
+                Current Active Filters
+              </div>
+              <div className="space-y-1 text-slate-300">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Course:</span>
+                  <span className="font-semibold text-slate-200">
+                    {filterCourse === 'ALL' ? 'All Courses' : filterCourse.replace('CA_', 'CA ')}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Status:</span>
+                  <span className="font-semibold text-slate-200">
+                    {filterStatus === 'ALL' ? 'All Statuses' : filterStatus}
+                  </span>
+                </div>
+                {searchQuery.trim() && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Search:</span>
+                    <span className="font-semibold text-blue-300 truncate max-w-[200px]">"{searchQuery.trim()}"</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Matching Questions Summary */}
+            {loadingDeleteAllSummary ? (
+              <div className="p-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+                <span>Evaluating matching questions...</span>
+              </div>
+            ) : deleteAllSummary ? (
+              <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
+                <div className="flex items-center justify-between font-bold pb-1 border-b border-slate-800">
+                  <span className="text-slate-300">Matching Questions:</span>
+                  <span className="text-rose-400 text-sm font-mono">{deleteAllSummary.totalMatching}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-slate-400 pt-1">
+                  <div className="flex justify-between">
+                    <span>Normal MCQs:</span>
+                    <span className="font-semibold text-slate-200">{deleteAllSummary.normalCount}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Case-Based:</span>
+                    <span className="font-semibold text-slate-200">{deleteAllSummary.caseCount}</span>
+                  </div>
+                  {deleteAllSummary.affectedCasesCount > 0 && (
+                    <div className="flex justify-between col-span-2 text-amber-300">
+                      <span>Affected Cases:</span>
+                      <span className="font-bold">{deleteAllSummary.affectedCasesCount} cases</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Published:</span>
+                    <span className="font-semibold text-emerald-400">{deleteAllSummary.publishedCount}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Draft / Review:</span>
+                    <span className="font-semibold text-amber-400">{deleteAllSummary.draftOrReviewCount}</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Safety Warning */}
+            {filterCourse === 'ALL' && filterStatus === 'ALL' && !searchQuery.trim() ? (
+              <div className="p-3 bg-amber-950/40 border border-amber-600/40 rounded-xl text-xs text-amber-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong>Safety Protection Active:</strong> No specific filters are selected. To prevent accidental full-database deletion, please filter by Course or Status or Search term before proceeding.
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-rose-300/90 leading-relaxed bg-rose-950/30 border border-rose-800/40 p-3 rounded-xl">
+                ⚠️ Warning: This will delete all {deleteAllSummary?.totalMatching ?? 0} questions matching the current filters.
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteAllModalOpen(false)}
+                disabled={bulkActionProcessing}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteAllMatching}
+                disabled={
+                  bulkActionProcessing ||
+                  loadingDeleteAllSummary ||
+                  !deleteAllSummary ||
+                  deleteAllSummary.totalMatching === 0 ||
+                  (filterCourse === 'ALL' && filterStatus === 'ALL' && !searchQuery.trim())
+                }
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {bulkActionProcessing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting All...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete All {deleteAllSummary?.totalMatching ?? ''}</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
