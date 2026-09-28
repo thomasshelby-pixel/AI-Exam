@@ -135,6 +135,8 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     status: 'Draft',
   });
 
+  const isAttemptRequiredForUpload = isAttemptRequiredSource(formData.materialType);
+
   const [formError, setFormError] = useState<string | null>(null);
   const [submittingMaterial, setSubmittingMaterial] = useState<boolean>(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -218,6 +220,7 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     loadMaterials();
   };
 
+  // File input handler for PDF/TXT source documents (accept=".pdf,.txt,application/pdf,text/plain")
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormError(null);
     const file = e.target.files?.[0];

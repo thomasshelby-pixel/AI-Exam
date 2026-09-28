@@ -46,6 +46,9 @@ export interface ExtractedQuestionDraft {
   needsReview: boolean;
   reviewReason?: string;
   validationErrors: string[];
+  explanationSource?: 'SOURCE' | 'AI_GENERATED_DRAFT' | 'MISSING';
+  answerSource?: 'SOURCE' | 'AI_MAPPED' | 'MISSING';
+  aiAssisted?: boolean;
 }
 
 export interface CaseGroupDraft {
@@ -91,6 +94,10 @@ export interface MaterialProcessingResult {
   rawTextSnippet: string;
   pdfDiagnosis?: PdfExtractionDiagnosis;
   rejectionReasons?: string[];
+  aiAssistedCount?: number;
+  sourceExtractedCount?: number;
+  aiExplanationDraftCount?: number;
+  aiAuditNotes?: string[];
 }
 
 /**
@@ -411,15 +418,26 @@ export async function extractTextFromPdfBufferDeterministic(
       let textResult: any = null;
 
       if (typeof PDFParseClass === 'function') {
+        const originalWarn = console.warn;
         try {
-          parserInstance = new PDFParseClass(uint8);
-          if (parserInstance && typeof parserInstance.getText === 'function') {
-            textResult = await parserInstance.getText();
-            if (parserInstance.destroy) await parserInstance.destroy();
+          console.warn = (...args: any[]) => {
+            if (typeof args[0] === 'string' && (args[0].includes('standardFontDataUrl') || args[0].includes('UnknownErrorException'))) {
+              return; // Suppress internal pdf.js node font data url warning
+            }
+            originalWarn(...args);
+          };
+          try {
+            parserInstance = new PDFParseClass(uint8);
+            if (parserInstance && typeof parserInstance.getText === 'function') {
+              textResult = await parserInstance.getText();
+              if (parserInstance.destroy) await parserInstance.destroy();
+            }
+          } catch {
+            // If not a constructor, try invoking directly
+            textResult = await PDFParseClass(buffer);
           }
-        } catch {
-          // If not a constructor, try invoking directly
-          textResult = await PDFParseClass(buffer);
+        } finally {
+          console.warn = originalWarn;
         }
       }
 
@@ -990,6 +1008,9 @@ export function parseMaterialTextDeterministic(params: {
     needsChapterReviewCount,
     duplicateCount,
     rejectedCount,
+    sourceExtractedCount: questions.filter((q) => q.explanationSource === 'SOURCE').length,
+    aiAssistedCount: 0,
+    aiExplanationDraftCount: 0,
     chapterDistribution,
     questions,
     cases: Array.from(casesMap.values()),
@@ -1245,5 +1266,8 @@ function parseSingleQuestionBlockDeterministic(params: {
     needsReview,
     reviewReason,
     validationErrors,
+    explanationSource: explanation && explanation.trim().length > 0 ? 'SOURCE' : 'MISSING',
+    answerSource: correctAnswer && ['A', 'B', 'C', 'D'].includes(correctAnswer) ? 'SOURCE' : 'MISSING',
+    aiAssisted: false,
   };
 }

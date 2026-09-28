@@ -98,6 +98,7 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState<number>(0);
   const [reviewFilter, setReviewFilter] = useState<'ALL' | 'NEEDS_REVIEW' | 'DUPLICATES'>('ALL');
   const [editSuccessMsg, setEditSuccessMsg] = useState<string | null>(null);
+  const [aiAssistanceEnabled, setAiAssistanceEnabled] = useState<boolean>(false);
 
   // STEP 7: Approve State
   const [approving, setApproving] = useState<boolean>(false);
@@ -213,6 +214,7 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
         attempt: isAttemptVisible ? attempt : undefined,
         fileBase64,
         originalFilename: selectedFile.name,
+        enableAiAssistance: aiAssistanceEnabled,
       });
 
       setValidationTasks((prev) => prev.map((t) => ({ ...t, done: true })));
@@ -387,9 +389,15 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-black text-white">Material Content Workflow</h3>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  100% AI-Free • Rule-Based
-                </span>
+                {aiAssistanceEnabled ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    Rule-Based + Optional AI Assistance
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    100% Rule-Based
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
                 Upload official ICAI papers & modules into the canonical Question Bank.
@@ -647,6 +655,28 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
                 </div>
               )}
 
+              {/* Optional Low-Cost AI Assistance Toggle */}
+              <div className="p-4 bg-slate-900/90 border border-slate-700/80 rounded-xl space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white">AI Assistance for Unresolved Items (Low-Cost Flash-Lite)</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-800 text-slate-400 border border-slate-700">Optional</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 max-w-xl">
+                      Deterministic rule-based parser always runs first. When enabled, low-cost Gemini Flash-Lite assists only with genuinely unresolved structure or missing explanation drafts. Official source answers and existing explanations are never overridden.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAiAssistanceEnabled(!aiAssistanceEnabled)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${aiAssistanceEnabled ? 'bg-blue-600' : 'bg-slate-700'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${aiAssistanceEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+              </div>
+
               <div className="pt-4 flex items-center justify-between">
                 <button
                   onClick={() => setCurrentStep(1)}
@@ -805,6 +835,28 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
                   <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between">
                     <span className="text-slate-400">Rejected Non-MCQ:</span>
                     <span className="font-bold text-slate-500">{processedData.rejectedCount || 0}</span>
+                  </div>
+                </div>
+
+                {/* AI Assistance & Explanation Provenance Transparency */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400">Source Explanations:</span>
+                    <span className="font-bold text-emerald-400">
+                      {processedData.sourceExtractedCount ?? 0}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400">AI Explanation Drafts:</span>
+                    <span className="font-bold text-purple-400">
+                      {processedData.aiExplanationDraftCount ?? 0}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400">AI Assisted Items:</span>
+                    <span className="font-bold text-blue-400">
+                      {processedData.aiAssistedCount ?? 0}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1120,9 +1172,17 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
                 {/* Correct Answer & Explanation */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                      Correct Answer *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[10px] font-bold uppercase text-slate-400">
+                        Correct Answer *
+                      </label>
+                      {currentQuestion.answerSource === 'SOURCE' && (
+                        <span className="text-[10px] font-bold text-emerald-400">✓ Source</span>
+                      )}
+                      {currentQuestion.answerSource === 'AI_MAPPED' && (
+                        <span className="text-[10px] font-bold text-purple-400">🤖 AI Mapped</span>
+                      )}
+                    </div>
                     <select
                       value={currentQuestion.correctAnswer}
                       onChange={(e) => handleUpdateQuestion({ correctAnswer: e.target.value as any })}
@@ -1137,9 +1197,19 @@ export const AdminMaterialUploadWizard: React.FC<AdminMaterialUploadWizardProps>
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
-                      Statutory Explanation
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[10px] font-bold uppercase text-slate-400">
+                        Statutory Explanation
+                      </label>
+                      {currentQuestion.explanationSource === 'SOURCE' && (
+                        <span className="text-[10px] font-bold text-emerald-400">✓ Source</span>
+                      )}
+                      {currentQuestion.explanationSource === 'AI_GENERATED_DRAFT' && (
+                        <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-1.5 py-0.2 rounded">
+                          🤖 AI Draft — Needs Review
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={currentQuestion.explanation}

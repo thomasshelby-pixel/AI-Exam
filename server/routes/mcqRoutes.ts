@@ -48,6 +48,13 @@ import {
 } from '../services/mcqBulkImportService.js';
 import { computeFileHash } from '../services/materialDuplicateProtectionService.js';
 import { parseMaterialTextDeterministic } from '../services/mcqDeterministicParser.js';
+import {
+  applyOptionalAiAssistance,
+  getMcqAiStatus,
+  getMcqAiAuditMetrics,
+  assistExplanationDraft,
+  assistSourceAnswerMapping,
+} from '../services/mcqAiService.js';
 import { db } from '../db.js';
 
 const router = Router();
@@ -437,6 +444,7 @@ router.post('/admin/material-flow/process', requireMcqAdmin, async (req: AuthReq
       fileBase64,
       originalFilename,
       mimeType,
+      enableAiAssistance,
     } = req.body;
 
     if (!materialName || !course || !subject || !sourceCategory) {
@@ -459,7 +467,7 @@ router.post('/admin/material-flow/process', requireMcqAdmin, async (req: AuthReq
     // 2. Safe text extraction (Deterministic, zero AI)
     const extraction = await extractTextSafely(buffer, valResult.fileType, valResult.sanitizedFilename);
 
-    // 3. Deterministic MCQ & Case Study extraction
+    // 3. Deterministic MCQ & Case Study extraction (Local First)
     const parsedResult = parseMaterialTextDeterministic({
       rawText: extraction.extractedText,
       course,
@@ -470,10 +478,51 @@ router.post('/admin/material-flow/process', requireMcqAdmin, async (req: AuthReq
       pdfDiagnosis: extraction.pdfDiagnosis,
     });
 
+    let finalQuestions = parsedResult.questions;
+    let aiAssistedCount = 0;
+    let sourceExtractedCount = parsedResult.sourceExtractedCount || 0;
+    let aiExplanationDraftCount = 0;
+    let aiAuditNotes: string[] = [];
+
+    // 4. Optional MCQ Gemini Assistance for Unresolved Items (Strictly Server-Side, Opt-in)
+    if (enableAiAssistance) {
+      const aiResult = await applyOptionalAiAssistance({
+        questions: finalQuestions,
+        rawText: extraction.extractedText,
+        course,
+        subject,
+        enableAi: true,
+      });
+
+      finalQuestions = aiResult.questions;
+      aiAssistedCount = aiResult.aiAssistedCount;
+      sourceExtractedCount = aiResult.sourceExtractedCount;
+      aiExplanationDraftCount = aiResult.aiExplanationDraftCount;
+      aiAuditNotes = aiResult.aiAuditNotes;
+    }
+
+    // Recalculate audit counts accurately
+    let validCount = 0;
+    let needsReviewCount = 0;
+    for (const q of finalQuestions) {
+      if (q.needsReview || q.validationErrors.length > 0) {
+        needsReviewCount++;
+      } else {
+        validCount++;
+      }
+    }
+
     const fileHash = computeFileHash(buffer);
 
     return res.json({
       ...parsedResult,
+      validCount,
+      needsReviewCount,
+      questions: finalQuestions,
+      aiAssistedCount,
+      sourceExtractedCount,
+      aiExplanationDraftCount,
+      aiAuditNotes,
       fileHash,
       fileType: valResult.fileType,
       fileName: valResult.sanitizedFilename,
@@ -484,6 +533,50 @@ router.post('/admin/material-flow/process', requireMcqAdmin, async (req: AuthReq
   } catch (err: any) {
     console.error('Material flow process error:', err);
     return res.status(500).json({ error: err.message || 'Failed to process material file.' });
+  }
+});
+
+/**
+ * MCQ Arena AI Status & Health Endpoint (Admin Only, Server-Side)
+ * Never exposes credentials to client or public.
+ */
+router.get('/admin/ai/status', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const status = getMcqAiStatus();
+    const metrics = getMcqAiAuditMetrics();
+    return res.json({
+      ...status,
+      metrics,
+    });
+  } catch (err: any) {
+    console.error('MCQ AI Status check error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve MCQ AI status.' });
+  }
+});
+
+/**
+ * On-demand AI Assistance for Unresolved Candidates (Admin Only, Selective)
+ * Allows Admin to process only selected unresolved items without full material re-upload.
+ */
+router.post('/admin/material-flow/assist-unresolved', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const { questions, subject } = req.body;
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: 'Valid questions array is required.' });
+    }
+
+    const aiResult = await applyOptionalAiAssistance({
+      questions,
+      rawText: '',
+      course: '',
+      subject: subject || '',
+      enableAi: true,
+    });
+
+    return res.json(aiResult);
+  } catch (err: any) {
+    console.error('On-demand AI assistance error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to execute on-demand AI assistance.' });
   }
 });
 
@@ -539,31 +632,35 @@ router.post('/admin/material-flow/save-draft', requireMcqAdmin, async (req: Auth
     }
 
     // Save Cases as Draft
-    if (Array.isArray(cases)) {
+    if (Array.isArray(cases) && cases.length > 0) {
       const insertCaseStmt = db.prepare(`
         INSERT INTO mcq_cases (
-          id, case_id, course, subject, chapter, case_title, case_scenario, difficulty, status, created_by, created_at, updated_at
+          case_id, case_title, case_scenario, case_difficulty, course, subject, chapter, source_material_id, status, created_by, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
         ON CONFLICT(case_id) DO UPDATE SET
           case_title = excluded.case_title,
           case_scenario = excluded.case_scenario,
+          case_difficulty = excluded.case_difficulty,
+          course = excluded.course,
+          subject = excluded.subject,
+          chapter = excluded.chapter,
+          source_material_id = excluded.source_material_id,
           status = 'draft',
           updated_at = CURRENT_TIMESTAMP
       `);
 
       for (const cs of cases) {
-        const cDbId = `case_db_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         insertCaseStmt.run(
-          cDbId,
           cs.caseId,
-          course,
-          subject,
-          cs.chapter || 'General',
           cs.caseTitle || `${materialName} - ${cs.caseId}`,
           cs.caseScenario,
           cs.difficulty || 'moderate',
+          course,
+          subject,
+          cs.chapter || 'General',
+          materialId,
           req.user!.id
         );
       }

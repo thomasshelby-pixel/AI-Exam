@@ -331,13 +331,13 @@ export function extractRetryDelayMs(errMsg: string, defaultMs = 30000): number {
   return defaultMs;
 }
 
-export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string) {
+export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string, silent = false) {
   const existing = providerCreditExhaustedUntil.get(provider);
   const now = Date.now();
-  // Keep provider marked credit-exhausted for 24 hours so we do not repeatedly retry depleted accounts
-  providerCreditExhaustedUntil.set(provider, now + 24 * 60 * 60 * 1000);
-  if (!existing || now > existing) {
-    console.warn(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${reason || 'credit balance too low'}`);
+  // Keep provider marked credit-exhausted for 10 minutes so we can periodically retry if balance is restored
+  providerCreditExhaustedUntil.set(provider, now + 10 * 60 * 1000);
+  if (!silent && (!existing || now > existing)) {
+    console.info(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${reason || 'credit balance too low'}`);
   }
   try {
     db.prepare(
@@ -348,6 +348,11 @@ export function markProviderCreditExhausted(provider: ModelProviderType, reason?
 
 export function clearProviderCreditExhausted(provider: ModelProviderType) {
   providerCreditExhaustedUntil.delete(provider);
+  try {
+    db.prepare(
+      "UPDATE model_configs SET status = 'AVAILABLE', health_details = 'Ready for evaluation' WHERE provider = ? AND status = 'INSUFFICIENT_CREDITS'"
+    ).run(provider);
+  } catch {}
 }
 
 export function isProviderCreditExhausted(provider: ModelProviderType): boolean {
@@ -402,9 +407,15 @@ try {
   }
 
   const creditExhaustedRows = db.prepare("SELECT id, provider, health_details FROM model_configs WHERE status = 'INSUFFICIENT_CREDITS'").all() as { id: string; provider: ModelProviderType; health_details?: string }[];
-  for (const r of creditExhaustedRows) {
-    markProviderCreditExhausted(r.provider, r.health_details || 'Restored credit exhaustion state from DB');
-    markModelTemporarilyUnavailable(r.id, 24 * 60 * 60 * 1000, 'Provider account credit balance depleted');
+  if (creditExhaustedRows.length > 0) {
+    const providersSeen = new Set<ModelProviderType>();
+    for (const r of creditExhaustedRows) {
+      if (!providersSeen.has(r.provider)) {
+        providersSeen.add(r.provider);
+        markProviderCreditExhausted(r.provider, r.health_details || 'Restored credit exhaustion state from DB', true);
+      }
+      markModelTemporarilyUnavailable(r.id, 10 * 60 * 1000, 'Provider account credit balance depleted');
+    }
   }
 } catch {
   // Ignore if DB not ready yet
@@ -852,19 +863,23 @@ export function determineModelRouting(context?: {
   };
 
   let defaultGemini = 'gemini-3.8-flash';
-  if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-3.1-flash-lite';
-  }
-  if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-flash-latest';
-  }
-  if (isModelCoolingDown(defaultGemini)) {
-    defaultGemini = 'gemini-3.1-pro-preview';
+  if (isModelCoolingDown(defaultGemini) || !isModelUsable(defaultGemini)) {
+    const usableGemini = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.7-flash'].find((m) => isModelUsable(m));
+    if (usableGemini) {
+      defaultGemini = usableGemini;
+    }
   }
 
   let selectedModel = defaultGemini;
+  // If Gemini provider is credit exhausted or unusable, pick first healthy usable model across providers
+  if (!isModelUsable(selectedModel)) {
+    const firstUsable = ['gpt-5.6-terra', 'claude-sonnet-5', 'gpt-5.6-sol', 'claude-opus-5'].find((m) => isModelUsable(m));
+    if (firstUsable) {
+      selectedModel = firstUsable;
+    }
+  }
   let thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = defaultGemini === 'gemini-3.1-flash-lite' ? 'LOW' : 'MEDIUM';
-  let routingReason = `Primary CA Evaluation: ${defaultGemini} for step-marking and ICAI compliance`;
+  let routingReason = `Primary CA Evaluation: ${selectedModel} for step-marking and ICAI compliance`;
 
   // 1. Honor explicit admin selection if configured, active, and usable
   if (adminModel && APPROVED_MODELS.some((m) => m.id === adminModel) && isModelUsable(adminModel)) {
@@ -1199,15 +1214,16 @@ export interface ModelHealthResult {
  */
 export async function testModelHealth(
   modelId: string,
-  targetStage: HealthCheckStage = 'EVALUATION_READINESS'
+  targetStage: HealthCheckStage = 'EVALUATION_READINESS',
+  bypassCircuitBreaker = true
 ): Promise<ModelHealthResult> {
   const provider = getProviderForModel(modelId);
   const overallStart = Date.now();
 
   const resultDetails: NonNullable<ModelHealthResult['details']> = {};
 
-  // STAGE 0: FAST-CHECK PROVIDER CIRCUIT BREAKER
-  if (isProviderCreditExhausted(provider)) {
+  // STAGE 0: FAST-CHECK PROVIDER CIRCUIT BREAKER (skipped on explicit manual test)
+  if (!bypassCircuitBreaker && isProviderCreditExhausted(provider)) {
     return {
       success: false,
       latencyMs: 0,

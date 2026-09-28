@@ -284,11 +284,24 @@ export const mcqApi = {
     fileBase64: string;
     originalFilename: string;
     mimeType?: string;
+    enableAiAssistance?: boolean;
   }) => {
     return apiRequest<MaterialFlowProcessResponse>('/api/mcq/admin/material-flow/process', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+
+  getAiStatus: async () => {
+    return apiRequest<{
+      configured: boolean;
+      checkerAiUntouched: boolean;
+      model: string;
+      isServerSideOnly: boolean;
+      maxQuestionsPerJob: number;
+      maxBatchSize: number;
+      metrics?: any;
+    }>('/api/mcq/admin/ai/status');
   },
 
   saveMaterialDraft: async (data: {
@@ -572,6 +585,9 @@ export interface ExtractedQuestionDraft {
   needsReview: boolean;
   reviewReason?: string;
   validationErrors: string[];
+  explanationSource?: 'SOURCE' | 'AI_GENERATED_DRAFT' | 'MISSING';
+  answerSource?: 'SOURCE' | 'AI_MAPPED' | 'MISSING';
+  aiAssisted?: boolean;
 }
 
 export interface CaseGroupDraft {
@@ -596,6 +612,10 @@ export interface MaterialFlowProcessResponse {
   chapterAssignedCount?: number;
   needsChapterReviewCount?: number;
   rejectedCount?: number;
+  aiAssistedCount?: number;
+  sourceExtractedCount?: number;
+  aiExplanationDraftCount?: number;
+  aiAuditNotes?: string[];
   chapterDistribution: Record<string, number>;
   questions: ExtractedQuestionDraft[];
   cases: CaseGroupDraft[];
