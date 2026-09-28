@@ -4,7 +4,7 @@ import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import { db, recordLocalTombstone, removeLocalTombstone } from '../db.js';
 import { syncRecordToFirestore, permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
-import { extractMaterialFromPDF } from '../gemini.js';
+import { extractTextFromPdfBufferDeterministic, PdfExtractionDiagnosis } from './mcqDeterministicParser.js';
 import {
   computeFileHash,
   computeContentHash,
@@ -97,15 +97,31 @@ export function initMcqMaterialTables(): void {
     CREATE INDEX IF NOT EXISTS idx_mcq_mat_status ON mcq_materials(status);
   `);
 
-  // Ensure source_material_id exists on mcq_questions
+  // Ensure source_material_id and source_page exist on mcq_questions
   try {
     const colCheck = db.prepare("PRAGMA table_info(mcq_questions)").all() as any[];
     const hasSourceMat = colCheck.some((c) => c.name === 'source_material_id');
     if (!hasSourceMat) {
       db.exec('ALTER TABLE mcq_questions ADD COLUMN source_material_id TEXT;');
     }
+    const hasSourcePage = colCheck.some((c) => c.name === 'source_page');
+    if (!hasSourcePage) {
+      db.exec('ALTER TABLE mcq_questions ADD COLUMN source_page INTEGER;');
+    }
+
+    // Junction table for multi-material referencing
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mcq_question_materials (
+        question_id TEXT NOT NULL,
+        material_id TEXT NOT NULL,
+        source_page INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (question_id, material_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcq_qm_mat ON mcq_question_materials(material_id);
+    `);
   } catch (err) {
-    console.warn('Column source_material_id check/alter note:', err);
+    console.warn('Column source_material_id / source_page check/alter note:', err);
   }
 }
 
@@ -250,7 +266,7 @@ export async function extractTextSafely(
   buffer: Buffer,
   fileType: 'PDF' | 'TXT',
   originalFilename: string
-): Promise<{ extractedText: string; pageCount: number; titleHint?: string }> {
+): Promise<{ extractedText: string; pageCount: number; titleHint?: string; pdfDiagnosis?: PdfExtractionDiagnosis }> {
   if (fileType === 'TXT') {
     // UTF-8 decode
     let text = buffer.toString('utf-8');
@@ -264,41 +280,33 @@ export async function extractTextSafely(
     };
   }
 
-  // For PDF:
+  // For PDF (100% AI-free, deterministic rule-based local extraction)
   try {
-    const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
-    const pageCount = pdfDoc.getPageCount();
-
-    // Use Gemini for high-fidelity digitization and OCR
-    const base64 = buffer.toString('base64');
-    const extractionResult = await extractMaterialFromPDF(base64, 'application/pdf', 'COMPLETE_SUITE');
-
-    let combinedText = '';
-    if (extractionResult.questionPaperText) {
-      combinedText += extractionResult.questionPaperText;
-    }
-    if (extractionResult.suggestedAnswersText) {
-      combinedText += `\n\n=== SUGGESTED ANSWERS & MODEL SOLUTIONS ===\n\n${extractionResult.suggestedAnswersText}`;
-    }
-    if (extractionResult.markingSchemeText) {
-      combinedText += `\n\n=== MARKING SCHEME & STEP ALLOCATIONS ===\n\n${extractionResult.markingSchemeText}`;
-    }
-
-    // Fallback if AI extraction returned minimal text: extract basic string tokens
-    if (!combinedText || combinedText.trim().length < 50) {
-      combinedText = `[PDF Document: ${originalFilename} (${pageCount} pages). Ground truth text indexed for evaluation and question extraction.]`;
-    }
+    const { text, pageCount, diagnosis } = await extractTextFromPdfBufferDeterministic(buffer, originalFilename);
 
     return {
-      extractedText: combinedText.trim(),
+      extractedText: text.trim(),
       pageCount,
-      titleHint: extractionResult.extractedTitle,
+      pdfDiagnosis: diagnosis,
     };
   } catch (err: any) {
-    console.warn('PDF AI extraction warning, falling back to document metadata:', err);
+    console.warn('[PDF Safe Extract] Error:', err);
     return {
-      extractedText: `[PDF Document: ${originalFilename}. Text extraction complete.]`,
+      extractedText: '',
       pageCount: 1,
+      pdfDiagnosis: {
+        pageCount: 1,
+        pagesWithText: 0,
+        totalExtractedChars: 0,
+        totalExtractedLines: 0,
+        zeroTextPages: [1],
+        lowTextPages: [],
+        candidateMarkersFound: 0,
+        isImageBasedOrScanned: true,
+        status: 'IMAGE_BASED',
+        diagnosisMessage:
+          'This PDF appears to be image-based or contains no extractable text. Automatic rule-based MCQ extraction is not available for this document.',
+      },
     };
   }
 }
@@ -693,9 +701,12 @@ export function listMcqMaterials(filters: {
   const total = totalRow?.total || 0;
 
   const rows = db.prepare(`
-    SELECT * FROM mcq_materials
+    SELECT m.*,
+      (SELECT count(*) FROM mcq_questions q WHERE q.source_material_id = m.id AND q.status != 'DELETED') as linked_mcq_count,
+      (SELECT count(*) FROM mcq_cases c WHERE c.source_material_id = m.id AND c.status != 'DELETED') as linked_case_count
+    FROM mcq_materials m
     ${whereClause}
-    ORDER BY created_at DESC
+    ORDER BY m.created_at DESC
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as unknown as McqMaterialRecord[];
 
@@ -769,7 +780,51 @@ export function updateMcqMaterial(
   return updated;
 }
 
-export async function deleteMcqMaterial(id: string): Promise<boolean> {
+export function getMaterialLinkedSummary(id: string) {
+  const mat = db.prepare("SELECT id, material_name FROM mcq_materials WHERE id = ?").get(id) as any;
+  const qCount = (db.prepare("SELECT count(*) as count FROM mcq_questions WHERE source_material_id = ? AND status != 'DELETED'").get(id) as any)?.count || 0;
+  const cCount = (db.prepare("SELECT count(*) as count FROM mcq_cases WHERE source_material_id = ? AND status != 'DELETED'").get(id) as any)?.count || 0;
+  return {
+    materialId: id,
+    materialName: mat?.material_name || id,
+    linkedQuestionsCount: qCount,
+    linkedCasesCount: cCount,
+  };
+}
+
+export function getMaterialsBulkStats(ids: string[]) {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return {
+      totalMaterials: 0,
+      linkedQuestionsCount: 0,
+      linkedCasesCount: 0,
+      items: [],
+    };
+  }
+
+  const items = uniqueIds.map((id) => getMaterialLinkedSummary(id));
+  const totalQuestions = items.reduce((acc, it) => acc + it.linkedQuestionsCount, 0);
+  const totalCases = items.reduce((acc, it) => acc + it.linkedCasesCount, 0);
+
+  return {
+    totalMaterials: items.length,
+    linkedQuestionsCount: totalQuestions,
+    linkedCasesCount: totalCases,
+    items,
+  };
+}
+
+export async function deleteMcqMaterial(
+  id: string,
+  options?: {
+    linkedAction?: 'keep_intact' | 'unlink' | 'archive' | 'delete_linked';
+    deletedBy?: string;
+  }
+): Promise<boolean> {
+  const linkedAction = options?.linkedAction || 'keep_intact';
+  const deletedBy = options?.deletedBy || 'MCQ_ADMIN';
+
   const record = (db.prepare('SELECT * FROM mcq_materials WHERE id = ?').get(id) as unknown as McqMaterialRecord) || null;
   if (!record) {
     const isAlreadyTombstoned = db.prepare("SELECT 1 FROM tombstones WHERE collection_name = 'mcq_materials' AND entity_id = ?").get(id);
@@ -802,27 +857,92 @@ export async function deleteMcqMaterial(id: string): Promise<boolean> {
   // 4. Hard-delete from SQLite table
   db.prepare('DELETE FROM mcq_materials WHERE id = ?').run(id);
 
-  // 5. CRITICAL CASCADE: Prevent questions generated from this material from reappearing in student pool
+  // 5. Configured Linked Content Policy
+  // DO NOT automatically delete linked MCQs unless explicitly requested ('delete_linked').
+  // Default safe behavior: 'keep_intact' keeps linked MCQs intact with traceable metadata.
+  // 'unlink' clears the source_material_id while keeping MCQs intact.
+  // 'archive' sets questions and cases status to 'archived'.
   try {
-    db.prepare("UPDATE mcq_questions SET status = 'DELETED', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
-    db.prepare('DELETE FROM mcq_questions WHERE source_material_id = ?').run(id);
+    if (linkedAction === 'unlink') {
+      db.prepare("UPDATE mcq_questions SET source_material_id = NULL, updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+      db.prepare("UPDATE mcq_cases SET source_material_id = NULL, updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+    } else if (linkedAction === 'archive') {
+      db.prepare("UPDATE mcq_questions SET status = 'archived', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+      db.prepare("UPDATE mcq_cases SET status = 'archived', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+    } else if (linkedAction === 'delete_linked') {
+      db.prepare("UPDATE mcq_questions SET status = 'DELETED', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+      db.prepare('DELETE FROM mcq_questions WHERE source_material_id = ?').run(id);
+      db.prepare("UPDATE mcq_cases SET status = 'DELETED', updated_at = datetime('now') WHERE source_material_id = ?").run(id);
+      db.prepare('DELETE FROM mcq_cases WHERE source_material_id = ?').run(id);
+    }
+    // 'keep_intact' (default safe) does not delete questions; questions remain intact and published.
   } catch (cascErr) {
-    console.warn('[McqMaterialService] Cascade question delete notice:', cascErr);
+    console.warn('[McqMaterialService] Linked content policy update notice:', cascErr);
   }
 
   // 6. Write audit log
   try {
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, ip_address, created_at)
-      VALUES (?, 'MCQ_ADMIN', 'MCQ_MATERIAL_DELETED', 'MCQ_MATERIAL', ?, ?, '127.0.0.1', datetime('now'))
+      VALUES (?, ?, 'MCQ_MATERIAL_DELETED', 'MCQ_MATERIAL', ?, ?, '127.0.0.1', datetime('now'))
     `).run(
       `aud_${crypto.randomBytes(8).toString('hex')}`,
+      deletedBy,
       id,
-      JSON.stringify({ materialId: id, materialName: record.material_name, fileHash: record.file_hash })
+      JSON.stringify({
+        materialId: id,
+        materialName: record.material_name,
+        fileHash: record.file_hash,
+        linkedAction,
+        deletedBy,
+        deletedAt: new Date().toISOString(),
+      })
     );
   } catch {}
 
   return true;
+}
+
+export async function deleteMcqMaterialsBulk(
+  ids: string[],
+  options?: {
+    linkedAction?: 'keep_intact' | 'unlink' | 'archive' | 'delete_linked';
+    deletedBy?: string;
+  }
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  totalRequested: number;
+  results: Array<{ id: string; success: boolean; error?: string }>;
+}> {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return { success: true, deletedCount: 0, totalRequested: 0, results: [] };
+  }
+
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  const results: Array<{ id: string; success: boolean; error?: string }> = [];
+  let deletedCount = 0;
+
+  for (const id of uniqueIds) {
+    try {
+      const res = await deleteMcqMaterial(id, options);
+      if (res) {
+        deletedCount++;
+        results.push({ id, success: true });
+      } else {
+        results.push({ id, success: false, error: 'Material not found or already deleted' });
+      }
+    } catch (err: any) {
+      results.push({ id, success: false, error: err.message || 'Deletion failed' });
+    }
+  }
+
+  return {
+    success: results.some((r) => r.success),
+    deletedCount,
+    totalRequested: uniqueIds.length,
+    results,
+  };
 }
 
 export function getMaterialFileStream(id: string): { buffer: Buffer; fileName: string; mimeType: string } | null {

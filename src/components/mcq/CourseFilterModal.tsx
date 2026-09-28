@@ -40,11 +40,35 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
   const [selectedCourse, setSelectedCourse] = useState<McqCourse>('CA_INTERMEDIATE');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedChapter, setSelectedChapter] = useState<string>('ALL');
+  const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
   const [selectedType, setSelectedType] = useState<McqQuestionType | 'mixed'>('mixed');
   const [selectedDifficulty, setSelectedDifficulty] = useState<McqDifficulty | 'mixed'>('mixed');
+  const [selectedSource, setSelectedSource] = useState<string>('All Sources');
+  const [selectedAttempt, setSelectedAttempt] = useState<string>('');
   const [sessionType, setSessionType] = useState<McqSessionType>(defaultSessionType);
   const [questionCount, setQuestionCount] = useState<number>(defaultSessionType === 'quick' ? 5 : 10);
   const [durationMinutes, setDurationMinutes] = useState<number>(defaultSessionType === 'mock' ? 20 : 0);
+
+  const SOURCE_OPTIONS = [
+    'All Sources',
+    'RTP',
+    'MTP',
+    'PYQ',
+    'ICAI Module',
+    'Self-Created',
+    'Conceptual',
+    'Practical',
+    'Other',
+  ];
+
+  const isAttemptVisible = selectedSource === 'RTP' || selectedSource === 'MTP' || selectedSource === 'PYQ';
+
+  const handleSourceChange = (newSource: string) => {
+    setSelectedSource(newSource);
+    if (newSource !== 'RTP' && newSource !== 'MTP' && newSource !== 'PYQ') {
+      setSelectedAttempt('');
+    }
+  };
 
   useEffect(() => {
     setSessionType(defaultSessionType);
@@ -115,6 +139,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
       setSelectedSubject('');
     }
     setSelectedChapter('ALL');
+    setSelectedChapters([]);
   }, [selectedCourse, availableSubjects]);
 
   // Available chapters for selected course & subject
@@ -132,19 +157,65 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
     return Array.from(chapters);
   }, [selectedCourse, selectedSubject, stats]);
 
+  const handleToggleChapter = (ch: string) => {
+    setSelectedChapters((prev) => {
+      if (prev.includes(ch)) {
+        return prev.filter((item) => item !== ch);
+      } else {
+        return [...prev, ch];
+      }
+    });
+  };
+
+  const handleSelectAllChapters = () => {
+    setSelectedChapters([...availableChapters]);
+  };
+
+  const handleClearAllChapters = () => {
+    setSelectedChapters([]);
+  };
+
   // Calculate live matching questions count based on current filters
   const matchingQuestionsCount = useMemo(() => {
     let count = 0;
     for (const s of stats) {
       if (s.course !== selectedCourse) continue;
       if (selectedSubject && s.subject.toLowerCase().trim() !== selectedSubject.toLowerCase().trim()) continue;
-      if (selectedChapter !== 'ALL' && s.chapter !== selectedChapter) continue;
+      
+      // Multi-chapter or single chapter check
+      if (selectedChapters.length > 0) {
+        if (!selectedChapters.includes(s.chapter)) continue;
+      } else if (selectedChapter !== 'ALL' && s.chapter !== selectedChapter) {
+        continue;
+      }
+
       if (selectedType !== 'mixed' && s.question_type !== selectedType) continue;
       if (selectedDifficulty !== 'mixed' && s.difficulty !== selectedDifficulty) continue;
+
+      if (selectedSource !== 'All Sources') {
+        const itemSource = s.source || 'ICAI Module';
+        if (itemSource !== selectedSource) continue;
+      }
+
+      if (selectedAttempt.trim()) {
+        const itemAttempt = (s.attempt || '').trim();
+        if (itemAttempt !== selectedAttempt.trim()) continue;
+      }
+
       count += s.count;
     }
     return count;
-  }, [stats, selectedCourse, selectedSubject, selectedChapter, selectedType, selectedDifficulty]);
+  }, [
+    stats,
+    selectedCourse,
+    selectedSubject,
+    selectedChapter,
+    selectedChapters,
+    selectedType,
+    selectedDifficulty,
+    selectedSource,
+    selectedAttempt,
+  ]);
 
   const handleStartSession = async () => {
     setErrorMsg(null);
@@ -154,9 +225,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
     }
 
     if (matchingQuestionsCount === 0) {
-      setErrorMsg(
-        'Not enough questions available for this selection. Please adjust your filters (e.g. choose "All Chapters" or "Mixed" difficulty).'
-      );
+      setErrorMsg('No questions are currently available for your selected filters.');
       return;
     }
 
@@ -165,9 +234,12 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
       const res = await mcqApi.createSession({
         course: selectedCourse,
         subject: selectedSubject,
-        chapter: selectedChapter !== 'ALL' ? selectedChapter : undefined,
+        chapter: selectedChapters.length === 1 ? selectedChapters[0] : (selectedChapter !== 'ALL' ? selectedChapter : undefined),
+        chapters: selectedChapters.length > 0 ? selectedChapters : undefined,
         questionType: selectedType,
         difficulty: selectedDifficulty,
+        sourceCategory: selectedSource !== 'All Sources' ? selectedSource : undefined,
+        attempt: selectedAttempt.trim() ? selectedAttempt.trim() : undefined,
         sessionType,
         requestedCount: questionCount,
         durationMinutes: sessionType === 'mock' ? durationMinutes : undefined,
@@ -331,23 +403,77 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
             </div>
           </div>
 
-          {/* 3. SELECT CHAPTER */}
+          {/* 3. SELECT CHAPTER(S) */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
-              <Layers className="w-4 h-4 text-purple-400" /> 3. Select Chapter / Topic
-            </label>
-            <select
-              value={selectedChapter}
-              onChange={(e) => setSelectedChapter(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">All Chapters & Topics (Comprehensive ICAI Mix)</option>
-              {availableChapters.map((ch) => (
-                <option key={ch} value={ch}>
-                  {ch}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-purple-400" /> 3. Select Chapter(s)
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllChapters}
+                  className="text-[11px] font-bold text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-600">•</span>
+                <button
+                  type="button"
+                  onClick={handleClearAllChapters}
+                  className="text-[11px] font-bold text-slate-400 hover:text-white transition-colors"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            {availableChapters.length === 0 ? (
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-500 text-center">
+                Select a Subject first to view available chapters.
+              </div>
+            ) : (
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 max-h-36 overflow-y-auto space-y-1.5">
+                <div
+                  onClick={() => setSelectedChapters([])}
+                  className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition ${
+                    selectedChapters.length === 0
+                      ? 'bg-purple-950/40 text-purple-300 border border-purple-800/60 font-bold'
+                      : 'text-slate-400 hover:bg-slate-900 hover:text-white'
+                  }`}
+                >
+                  <span>All Chapters & Topics ({availableChapters.length} Total)</span>
+                  {selectedChapters.length === 0 && <CheckCircle className="w-3.5 h-3.5 text-purple-400" />}
+                </div>
+                {availableChapters.map((ch) => {
+                  const isChecked = selectedChapters.includes(ch);
+                  return (
+                    <div
+                      key={ch}
+                      onClick={() => handleToggleChapter(ch)}
+                      className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition ${
+                        isChecked
+                          ? 'bg-purple-950/40 text-purple-300 border border-purple-800/60 font-bold'
+                          : 'text-slate-400 hover:bg-slate-900 hover:text-white'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{ch}</span>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-purple-600 focus:ring-purple-500 cursor-pointer pointer-events-none"
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="text-[11px] text-slate-500 mt-1">
+              {selectedChapters.length === 0
+                ? 'All chapters included in practice session'
+                : `${selectedChapters.length} chapter${selectedChapters.length > 1 ? 's' : ''} specifically selected`}
+            </div>
           </div>
 
           {/* 4. QUESTION TYPE & 5. DIFFICULTY */}
@@ -360,14 +486,14 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
               <div className="grid grid-cols-3 gap-1.5">
                 {[
                   { id: 'mixed', label: 'Mixed' },
-                  { id: 'normal', label: 'Direct' },
-                  { id: 'case_based', label: 'Case Study' },
+                  { id: 'normal', label: 'Single MCQ' },
+                  { id: 'case_based', label: 'Case-Based' },
                 ].map((t) => (
                   <button
                     key={t.id}
                     type="button"
                     onClick={() => setSelectedType(t.id as any)}
-                    className={`py-2 px-2 text-xs font-bold rounded-lg border text-center transition-all ${
+                    className={`py-2 px-2 text-xs font-bold rounded-lg border text-center transition-all cursor-pointer ${
                       selectedType === t.id
                         ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
                         : 'border-slate-800 text-slate-400 bg-slate-950 hover:bg-slate-850'
@@ -388,14 +514,14 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
                 {[
                   { id: 'mixed', label: 'Mixed' },
                   { id: 'easy', label: 'Easy' },
-                  { id: 'moderate', label: 'Mod' },
+                  { id: 'moderate', label: 'Moderate' },
                   { id: 'hard', label: 'Hard' },
                 ].map((d) => (
                   <button
                     key={d.id}
                     type="button"
                     onClick={() => setSelectedDifficulty(d.id as any)}
-                    className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition-all ${
+                    className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition-all cursor-pointer ${
                       selectedDifficulty === d.id
                         ? 'bg-amber-600 text-white border-amber-500 shadow-sm'
                         : 'border-slate-800 text-slate-400 bg-slate-950 hover:bg-slate-850'
@@ -408,11 +534,47 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
             </div>
           </div>
 
-          {/* 6. NUMBER OF QUESTIONS & 7. EXAM DURATION */}
+          {/* 6. SOURCE & 7. ATTEMPT CONDITIONAL FILTER */}
+          <div className={`grid ${isAttemptVisible ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4`}>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                6. Source Category
+              </label>
+              <select
+                value={selectedSource}
+                onChange={(e) => handleSourceChange(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {SOURCE_OPTIONS.map((src) => (
+                  <option key={src} value={src}>
+                    {src}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* CONDITIONAL ATTEMPT: Visible ONLY when Source is RTP, MTP, or PYQ */}
+            {isAttemptVisible && (
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-amber-400 mb-1.5 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" /> Attempt / Year (for {selectedSource})
+                </label>
+                <input
+                  type="text"
+                  value={selectedAttempt}
+                  onChange={(e) => setSelectedAttempt(e.target.value)}
+                  placeholder="e.g. May 2026 / Nov 2025"
+                  className="w-full px-3.5 py-2 bg-slate-950 border border-amber-500/60 rounded-xl text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-amber-500 placeholder-slate-600"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 8. NUMBER OF QUESTIONS & 9. EXAM DURATION */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                6. Number of Questions
+                Number of Questions
               </label>
               <div className="flex gap-2">
                 {[5, 10, 15, 20].map((num) => (
@@ -420,7 +582,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
                     key={num}
                     type="button"
                     onClick={() => setQuestionCount(num)}
-                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${
+                    className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                       questionCount === num
                         ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
                         : 'border-slate-800 text-slate-400 bg-slate-950 hover:bg-slate-850'
@@ -435,7 +597,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
             {sessionType === 'mock' && (
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-amber-400" /> 7. Exam Duration
+                  <Clock className="w-3.5 h-3.5 text-amber-400" /> Exam Duration
                 </label>
                 <div className="flex gap-2">
                   {[15, 20, 30, 45].map((mins) => (
@@ -443,7 +605,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
                       key={mins}
                       type="button"
                       onClick={() => setDurationMinutes(mins)}
-                      className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${
+                      className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
                         durationMinutes === mins
                           ? 'bg-amber-500 text-slate-950 font-black border-amber-400'
                           : 'border-slate-800 text-slate-400 bg-slate-950 hover:bg-slate-850'
@@ -457,7 +619,7 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
             )}
           </div>
 
-          {/* REAL-TIME MATCHING BADGE */}
+          {/* REAL-TIME MATCHING BADGE & HONEST AVAILABILITY */}
           <div className="flex items-center justify-between p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 text-xs">
             <span className="text-slate-400 font-medium">
               Available in pool matching criteria:
@@ -469,7 +631,9 @@ export const CourseFilterModal: React.FC<CourseFilterModalProps> = ({
                   : 'bg-rose-950/80 text-rose-300 border border-rose-800'
               }`}
             >
-              {matchingQuestionsCount} Questions
+              {matchingQuestionsCount > 0
+                ? `${matchingQuestionsCount} Questions Available`
+                : 'No questions are currently available for your selected filters.'}
             </span>
           </div>
         </div>

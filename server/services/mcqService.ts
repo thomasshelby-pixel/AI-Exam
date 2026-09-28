@@ -712,21 +712,19 @@ export function seedMcqAdminAndQuestions() {
 // ==========================================
 export function getCurriculumStats() {
   const rows = db.prepare(`
-    SELECT course, subject, chapter, question_type, difficulty, count(*) as count
+    SELECT course, subject, chapter, question_type, difficulty, COALESCE(source, 'ICAI Module') as source, attempt, count(*) as count
     FROM mcq_questions
     WHERE status = 'published'
       AND status != 'DELETED'
-      AND (source_material_id IS NULL OR (
-        source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED')
-        AND source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')
-      ))
-    GROUP BY course, subject, chapter, question_type, difficulty
+    GROUP BY course, subject, chapter, question_type, difficulty, source, attempt
   `).all() as Array<{
     course: string;
     subject: string;
     chapter: string;
     question_type: string;
     difficulty: string;
+    source: string;
+    attempt: string | null;
     count: number;
   }>;
 
@@ -740,9 +738,13 @@ export function createSession(studentId: string, params: {
   course: McqCourse;
   subject: string;
   chapter?: string;
+  chapters?: string[];
   topic?: string;
   questionType?: McqQuestionType | 'mixed';
   difficulty?: McqDifficulty | 'mixed';
+  source?: string;
+  sourceCategory?: string;
+  attempt?: string;
   sessionType: McqSessionType;
   requestedCount?: number;
   durationMinutes?: number;
@@ -751,9 +753,13 @@ export function createSession(studentId: string, params: {
     course,
     subject,
     chapter,
+    chapters,
     topic,
     questionType = 'mixed',
     difficulty = 'mixed',
+    source,
+    sourceCategory,
+    attempt,
     sessionType = 'practice',
     requestedCount = 10,
     durationMinutes,
@@ -761,6 +767,12 @@ export function createSession(studentId: string, params: {
 
   let selectedQuestions: any[] = [];
   let availableCount = 0;
+
+  const effectiveChapters = (chapters && chapters.length > 0)
+    ? chapters.filter((c) => c && c !== 'ALL')
+    : (chapter && chapter !== 'ALL' ? [chapter] : []);
+
+  const effSource = source || sourceCategory;
 
   if (questionType === 'case_based') {
     // ----------------------------------------------------
@@ -770,7 +782,6 @@ export function createSession(studentId: string, params: {
       "c.status = 'published'",
       "c.status != 'DELETED'",
       "c.course = ?",
-      "(c.source_material_id IS NULL OR (c.source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND c.source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))",
       "EXISTS (SELECT 1 FROM mcq_questions q WHERE q.case_id = c.case_id AND q.status = 'published' AND q.status != 'DELETED')"
     ];
     const caseParams: any[] = [course];
@@ -779,9 +790,10 @@ export function createSession(studentId: string, params: {
       caseConditions.push('c.subject = ?');
       caseParams.push(subject);
     }
-    if (chapter && chapter !== 'ALL') {
-      caseConditions.push('c.chapter = ?');
-      caseParams.push(chapter);
+    if (effectiveChapters.length > 0) {
+      const ph = effectiveChapters.map(() => '?').join(',');
+      caseConditions.push(`c.chapter IN (${ph})`);
+      caseParams.push(...effectiveChapters);
     }
     if (topic && topic !== 'ALL') {
       caseConditions.push('c.topic = ?');
@@ -790,6 +802,14 @@ export function createSession(studentId: string, params: {
     if (difficulty && difficulty !== 'mixed') {
       caseConditions.push('c.case_difficulty = ?');
       caseParams.push(difficulty);
+    }
+    if (effSource && effSource !== 'ALL' && effSource !== 'All Sources') {
+      caseConditions.push('c.source = ?');
+      caseParams.push(effSource);
+    }
+    if (attempt && attempt.trim()) {
+      caseConditions.push('c.attempt = ?');
+      caseParams.push(attempt.trim());
     }
 
     const availableCases = db.prepare(`
@@ -837,7 +857,6 @@ export function createSession(studentId: string, params: {
       "q.status = 'published'",
       "q.status != 'DELETED'",
       "q.course = ?",
-      "(q.source_material_id IS NULL OR (q.source_material_id NOT IN (SELECT id FROM mcq_materials WHERE status = 'DELETED') AND q.source_material_id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name = 'mcq_materials')))"
     ];
     const queryParams: any[] = [course];
 
@@ -845,9 +864,10 @@ export function createSession(studentId: string, params: {
       conditions.push('q.subject = ?');
       queryParams.push(subject);
     }
-    if (chapter && chapter !== 'ALL') {
-      conditions.push('q.chapter = ?');
-      queryParams.push(chapter);
+    if (effectiveChapters.length > 0) {
+      const ph = effectiveChapters.map(() => '?').join(',');
+      conditions.push(`q.chapter IN (${ph})`);
+      queryParams.push(...effectiveChapters);
     }
     if (topic && topic !== 'ALL') {
       conditions.push('q.topic = ?');
@@ -860,6 +880,14 @@ export function createSession(studentId: string, params: {
     if (difficulty && difficulty !== 'mixed') {
       conditions.push('q.difficulty = ?');
       queryParams.push(difficulty);
+    }
+    if (effSource && effSource !== 'ALL' && effSource !== 'All Sources') {
+      conditions.push('q.source = ?');
+      queryParams.push(effSource);
+    }
+    if (attempt && attempt.trim()) {
+      conditions.push('q.attempt = ?');
+      queryParams.push(attempt.trim());
     }
 
     const countRow = db.prepare(`
@@ -1110,7 +1138,9 @@ export function submitAnswer(sessionId: string, studentId: string, payload: {
   const question = db.prepare('SELECT * FROM mcq_questions WHERE id = ?').get(questionId) as any;
   if (!question) throw new Error('Question not found');
 
-  const isCorrect = selectedOption ? (selectedOption === question.correct_answer ? 1 : 0) : 0;
+  const normSelected = (selectedOption || '').trim().toUpperCase();
+  const normCorrect = (question.correct_answer || '').trim().toUpperCase();
+  const isCorrect = normSelected && normSelected === normCorrect ? 1 : 0;
 
   db.prepare(`
     UPDATE mcq_user_responses

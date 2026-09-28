@@ -41,6 +41,7 @@ import {
   isAttemptRequiredSource,
   getAttemptSuggestions,
 } from '../../data/caCurriculum.js';
+import { AdminMaterialUploadWizard } from './AdminMaterialUploadWizard.js';
 
 const STATUS_OPTIONS: McqMaterialStatus[] = [
   'Draft',
@@ -72,6 +73,29 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [viewingMaterial, setViewingMaterial] = useState<McqMaterial | null>(null);
   const [editingMaterial, setEditingMaterial] = useState<McqMaterial | null>(null);
+
+  // Selection & Bulk Deletion State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'bulk';
+    targetMaterial?: McqMaterial;
+    targetIds: string[];
+    totalMaterials: number;
+    linkedQuestionsCount: number;
+    linkedCasesCount: number;
+    loadingSummary: boolean;
+    deleting: boolean;
+  }>({
+    isOpen: false,
+    type: 'single',
+    targetIds: [],
+    totalMaterials: 0,
+    linkedQuestionsCount: 0,
+    linkedCasesCount: 0,
+    loadingSummary: false,
+    deleting: false,
+  });
 
   // Upload Form State
   const [uploadStep, setUploadStep] = useState<'form' | 'preview'>('form');
@@ -337,18 +361,94 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     }
   };
 
-  const handleDeleteMaterial = async (id: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to permanently delete "${name}"? Attached disk files will be erased.`)) {
-      return;
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllVisible = () => {
+    if (selectedIds.length === materials.length && materials.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(materials.map((m) => m.id));
     }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds([]);
+  };
+
+  const triggerSingleDelete = async (material: McqMaterial) => {
+    setDeleteConfirmModal({
+      isOpen: true,
+      type: 'single',
+      targetMaterial: material,
+      targetIds: [material.id],
+      totalMaterials: 1,
+      linkedQuestionsCount: material.linked_mcq_count ?? material.linkedMcqCount ?? 0,
+      linkedCasesCount: material.linked_case_count ?? material.linkedCaseCount ?? 0,
+      loadingSummary: true,
+      deleting: false,
+    });
+
     try {
-      await mcqApi.deleteMaterial(id);
-      setActionSuccess(`Material "${name}" deleted.`);
-      setTimeout(() => setActionSuccess(null), 3000);
+      const summary = await mcqApi.getMaterialLinkedSummary(material.id);
+      setDeleteConfirmModal((prev) => ({
+        ...prev,
+        linkedQuestionsCount: summary.linkedQuestionsCount,
+        linkedCasesCount: summary.linkedCasesCount,
+        loadingSummary: false,
+      }));
+    } catch {
+      setDeleteConfirmModal((prev) => ({ ...prev, loadingSummary: false }));
+    }
+  };
+
+  const triggerBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    setDeleteConfirmModal({
+      isOpen: true,
+      type: 'bulk',
+      targetIds: selectedIds,
+      totalMaterials: selectedIds.length,
+      linkedQuestionsCount: 0,
+      linkedCasesCount: 0,
+      loadingSummary: true,
+      deleting: false,
+    });
+
+    try {
+      const summary = await mcqApi.getBulkMaterialsLinkedSummary(selectedIds);
+      setDeleteConfirmModal((prev) => ({
+        ...prev,
+        linkedQuestionsCount: summary.linkedQuestionsCount,
+        linkedCasesCount: summary.linkedCasesCount,
+        loadingSummary: false,
+      }));
+    } catch {
+      setDeleteConfirmModal((prev) => ({ ...prev, loadingSummary: false }));
+    }
+  };
+
+  const executeDelete = async (linkedAction: 'unlink' | 'archive') => {
+    setDeleteConfirmModal((prev) => ({ ...prev, deleting: true }));
+    try {
+      if (deleteConfirmModal.type === 'single') {
+        const id = deleteConfirmModal.targetIds[0];
+        await mcqApi.deleteMaterial(id, linkedAction);
+        setActionSuccess(`Material deleted successfully (${linkedAction === 'archive' ? 'Linked MCQs archived' : 'Linked MCQs kept intact'}).`);
+      } else {
+        const res = await mcqApi.bulkDeleteMaterials(deleteConfirmModal.targetIds, linkedAction);
+        setActionSuccess(`${res.deletedCount} materials deleted successfully (${linkedAction === 'archive' ? 'Linked MCQs archived' : 'Linked MCQs kept intact'}).`);
+      }
+      setSelectedIds([]);
+      setDeleteConfirmModal((prev) => ({ ...prev, isOpen: false, deleting: false }));
+      setTimeout(() => setActionSuccess(null), 4000);
       loadMaterials();
-      if (viewingMaterial?.id === id) setViewingMaterial(null);
     } catch (err: any) {
       alert(`Delete failed: ${err.message}`);
+      setDeleteConfirmModal((prev) => ({ ...prev, deleting: false }));
     }
   };
 
@@ -509,17 +609,55 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
         </div>
       </div>
 
+      {/* Bulk Action Bar */}
+      {selectedIds.length > 0 && (
+        <div className="p-3 bg-blue-950/70 border border-blue-700/80 rounded-2xl flex items-center justify-between text-xs text-blue-200 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-blue-400" />
+            <span>
+              <strong>Selected: {selectedIds.length}</strong> material{selectedIds.length > 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleClearSelection}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl transition cursor-pointer"
+            >
+              Clear Selection
+            </button>
+            <button
+              onClick={triggerBulkDelete}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md transition cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Materials Table */}
       <div className="bg-slate-800/80 rounded-2xl border border-slate-700/80 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-900/90 text-slate-400 font-bold uppercase text-[10px] tracking-wider border-b border-slate-700">
               <tr>
-                <th className="px-5 py-3.5">Material Name</th>
-                <th className="px-4 py-3.5">Source Category</th>
+                <th className="px-4 py-3.5 w-10">
+                  <input
+                    type="checkbox"
+                    checked={materials.length > 0 && selectedIds.length === materials.length}
+                    onChange={handleSelectAllVisible}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    title="Select All Visible"
+                  />
+                </th>
+                <th className="px-4 py-3.5">Material Name</th>
                 <th className="px-4 py-3.5">Course & Subject</th>
+                <th className="px-3 py-3.5">Chapter / Topic</th>
+                <th className="px-3 py-3.5">Source Category</th>
                 <th className="px-3 py-3.5">Attempt / Year</th>
                 <th className="px-3 py-3.5">Format</th>
+                <th className="px-3 py-3.5">Linked MCQs</th>
                 <th className="px-3 py-3.5">Status</th>
                 <th className="px-4 py-3.5 text-right">Actions</th>
               </tr>
@@ -527,14 +665,14 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
             <tbody className="divide-y divide-slate-700/60 text-slate-300">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
                     <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-400" />
                     Loading Material Library...
                   </td>
                 </tr>
               ) : materials.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
                     <BookOpen className="w-8 h-8 mx-auto mb-2 text-slate-600" />
                     <p className="font-semibold text-slate-300 text-sm">No source materials found.</p>
                     <p className="text-xs text-slate-500 mt-1">
@@ -544,20 +682,28 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                 </tr>
               ) : (
                 materials.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-700/30 transition-colors">
-                    <td className="px-5 py-3.5">
+                  <tr
+                    key={item.id}
+                    className={`hover:bg-slate-700/30 transition-colors ${
+                      selectedIds.includes(item.id) ? 'bg-blue-950/20' : ''
+                    }`}
+                  >
+                    <td className="px-4 py-3.5">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(item.id)}
+                        onChange={() => handleToggleSelect(item.id)}
+                        className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
+
+                    <td className="px-4 py-3.5">
                       <div className="font-bold text-white max-w-xs truncate" title={item.material_name}>
                         {item.material_name}
                       </div>
                       <div className="text-[11px] text-slate-400 mt-0.5 truncate max-w-xs font-mono">
-                        {item.file_name} • {(item.file_size / (1024 * 1024)).toFixed(2)} MB
+                        {item.file_name} • {(item.file_size / (1024 * 1024)).toFixed(2)} MB • {new Date(item.created_at).toLocaleDateString()}
                       </div>
-                    </td>
-
-                    <td className="px-4 py-3.5">
-                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-900 text-slate-300 border border-slate-700">
-                        {item.material_type}
-                      </span>
                     </td>
 
                     <td className="px-4 py-3.5">
@@ -565,6 +711,19 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                         {item.course.replace(/_/g, ' ')}
                       </div>
                       <div className="text-[11px] text-slate-400">{item.subject}</div>
+                    </td>
+
+                    <td className="px-3 py-3.5">
+                      <div className="text-slate-300 font-medium">{item.chapter || 'All Chapters'}</div>
+                      {item.topic && item.topic !== 'Not Applicable' && (
+                        <div className="text-[10px] text-slate-500 truncate max-w-[140px]">{item.topic}</div>
+                      )}
+                    </td>
+
+                    <td className="px-3 py-3.5">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-900 text-slate-300 border border-slate-700">
+                        {item.material_type}
+                      </span>
                     </td>
 
                     <td className="px-3 py-3.5">
@@ -585,6 +744,17 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                     </td>
 
                     <td className="px-3 py-3.5">
+                      <div className="font-bold text-blue-300">
+                        {(item.linked_mcq_count ?? item.linkedMcqCount ?? 0)} MCQs
+                      </div>
+                      {(item.linked_case_count ?? item.linkedCaseCount ?? 0) > 0 && (
+                        <div className="text-[10px] text-purple-300 font-semibold">
+                          {(item.linked_case_count ?? item.linkedCaseCount)} Cases
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="px-3 py-3.5">
                       {getStatusBadge(item.status)}
                     </td>
 
@@ -592,28 +762,28 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => setViewingMaterial(item)}
-                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition"
+                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition cursor-pointer"
                           title="Preview Extracted Content"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleDownload(item.id, item.file_name)}
-                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-blue-300 rounded-lg transition"
+                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-blue-300 rounded-lg transition cursor-pointer"
                           title="Download Source Document"
                         >
                           <Download className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => setEditingMaterial(item)}
-                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 rounded-lg transition"
+                          className="p-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 rounded-lg transition cursor-pointer"
                           title="Edit Metadata & Status"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleDeleteMaterial(item.id, item.material_name)}
-                          className="p-1.5 bg-slate-700 hover:bg-red-900/60 text-red-300 rounded-lg transition"
+                          onClick={() => triggerSingleDelete(item)}
+                          className="p-1.5 bg-slate-700 hover:bg-red-900/60 text-red-300 rounded-lg transition cursor-pointer"
                           title="Delete Material"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -652,395 +822,16 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
         )}
       </div>
 
-      {/* UPLOAD MATERIAL MODAL (PDF / TXT ONLY) */}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-sm">
-                    {uploadStep === 'form' ? 'Upload Source Document' : 'Material Content Preview & Duplicate Verification'}
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    {uploadStep === 'form' ? 'Supported formats: PDF, TXT (Maximum: 50MB)' : 'Review extracted ground truth before saving'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-4">
-              {formError && (
-                <div className="p-3 bg-red-500/20 border border-red-500/40 text-red-200 rounded-xl flex items-start gap-2">
-                  <ShieldAlert className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
-                  <span>{formError}</span>
-                </div>
-              )}
-
-              {uploadStep === 'form' ? (
-                <>
-                  {/* Format Notice */}
-                  <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-2.5 text-blue-200">
-                    <Info className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />
-                    <div>
-                      <span className="font-bold">Source Material Document:</span> Accepts authentic <strong>PDF (.pdf)</strong> and <strong>TXT (.txt)</strong> source papers.
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        For structured question spreadsheets with answer keys, switch to the <em>"Bulk Import MCQs (CSV / XLSX)"</em> tab.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* File Upload Zone */}
-                  <div>
-                    <label className="block font-bold text-slate-300 mb-1.5">
-                      Select Source Document (PDF or TXT) *
-                    </label>
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      accept=".pdf,.txt,application/pdf,text/plain"
-                      onChange={handleFileChange}
-                      className="hidden"
-                    />
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition ${
-                        selectedFile
-                          ? 'border-emerald-500/50 bg-emerald-500/5'
-                          : 'border-slate-700 hover:border-blue-500/50 bg-slate-950/40'
-                      }`}
-                    >
-                      {selectedFile ? (
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-                            <FileCheck className="w-5 h-5" />
-                          </div>
-                          <div className="text-left">
-                            <div className="font-bold text-white text-sm">{selectedFile.name}</div>
-                            <div className="text-[11px] text-emerald-400">
-                              {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • {selectedFile.name.endsWith('.pdf') ? 'PDF Document' : 'Plain Text Document'}
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1" />
-                          <div className="font-semibold text-slate-200 text-xs">
-                            Click to browse or drag & drop PDF or TXT
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            PDF (up to 50MB) or TXT (up to 15MB)
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Metadata Fields */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                    <div className="sm:col-span-2">
-                      <label className="block font-bold text-slate-300 mb-1">Material Name *</label>
-                      <input
-                        type="text"
-                        value={formData.materialName}
-                        onChange={(e) => setFormData({ ...formData, materialName: e.target.value })}
-                        placeholder="e.g. CA Inter Corporate Laws MTP Series 1 — May 2026"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Course *</label>
-                      <select
-                        value={formData.course}
-                        onChange={(e) => handleCourseChange(e.target.value as McqCourse)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {CANONICAL_COURSE_OPTIONS.map((c) => (
-                          <option key={c.value} value={c.value}>{c.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Subject *</label>
-                      <select
-                        value={formData.subject}
-                        onChange={(e) => setFormData((p) => ({ ...p, subject: e.target.value, chapter: '', topic: '' }))}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {courseSubjects.map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Chapter (Optional)</label>
-                      <select
-                        value={formData.chapter}
-                        onChange={(e) => setFormData((p) => ({ ...p, chapter: e.target.value, topic: '' }))}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">All Chapters / General Paper</option>
-                        {subjectChapters.map((chap) => (
-                          <option key={chap} value={chap}>{chap}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Topic (Optional)</label>
-                      <select
-                        value={formData.topic}
-                        onChange={(e) => setFormData((p) => ({ ...p, topic: e.target.value }))}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Not Applicable / Full Chapter</option>
-                        {chapterTopics.filter((t) => t !== 'Not Applicable').map((top) => (
-                          <option key={top} value={top}>{top}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className={isAttemptRequiredSource(formData.materialType) ? '' : 'sm:col-span-2'}>
-                      <label className="block font-bold text-slate-300 mb-1">Source Category *</label>
-                      <select
-                        value={formData.materialType}
-                        onChange={(e) => handleSourceCategoryChange(e.target.value as CanonicalSourceCategory)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {CANONICAL_SOURCE_CATEGORIES.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* CONDITIONAL ATTEMPT / YEAR FIELD: Appears ONLY when Source Category is RTP, MTP, or PYQ */}
-                    {isAttemptRequiredSource(formData.materialType) && (
-                      <div>
-                        <label className="block font-bold text-amber-400 mb-1 flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5" />
-                          <span>Attempt / Year (for {formData.materialType}) *</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.attempt}
-                          onChange={(e) => setFormData({ ...formData, attempt: e.target.value })}
-                          placeholder={formData.materialType === 'MTP' ? 'e.g. May 2026 - Series 1' : 'e.g. May 2026'}
-                          className="w-full bg-slate-950 border border-amber-500/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                        />
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {getAttemptSuggestions(formData.materialType).slice(0, 3).map((sugg) => (
-                            <button
-                              key={sugg}
-                              type="button"
-                              onClick={() => setFormData({ ...formData, attempt: sugg })}
-                              className={`text-[10px] px-2 py-0.5 rounded border transition cursor-pointer ${
-                                formData.attempt === sugg
-                                  ? 'bg-amber-600 text-white border-amber-600'
-                                  : 'bg-slate-900 text-slate-400 border-slate-700 hover:text-white'
-                              }`}
-                            >
-                              {sugg}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Amendment Version</label>
-                      <input
-                        type="text"
-                        value={formData.amendmentVersion}
-                        onChange={(e) => setFormData({ ...formData, amendmentVersion: e.target.value })}
-                        placeholder="New Scheme 2024 / Finance Act 2024"
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-300 mb-1">Applicable Period</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={formData.applicableFrom}
-                          onChange={(e) => setFormData({ ...formData, applicableFrom: e.target.value })}
-                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white text-[11px]"
-                          title="Applicable From"
-                        />
-                        <input
-                          type="date"
-                          value={formData.applicableTill}
-                          onChange={(e) => setFormData({ ...formData, applicableTill: e.target.value })}
-                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-white text-[11px]"
-                          title="Applicable Till"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block font-bold text-slate-300 mb-1">Description / Notes</label>
-                      <textarea
-                        rows={2}
-                        value={formData.description}
-                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                        placeholder="Optional details, paper code, chapters covered..."
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-                </>
-              ) : (
-                /* PREVIEW SCREEN */
-                previewResult && (
-                  <div className="space-y-4">
-                    {/* Duplicate Status Banner */}
-                    {previewResult.duplicateCheck.status === 'EXACT_DUPLICATE' && (
-                      <div className="p-4 bg-red-500/20 border-2 border-red-500/60 rounded-xl text-red-200">
-                        <div className="flex items-center gap-2 font-bold text-sm">
-                          <ShieldAlert className="w-5 h-5 text-red-400" />
-                          <span>Exact Duplicate Detected</span>
-                        </div>
-                        <p className="mt-1 text-xs">{previewResult.duplicateCheck.message}</p>
-                        <p className="mt-2 text-[11px] text-red-300 bg-red-950/60 p-2 rounded">
-                          Exact file checksum or content already exists in the database. Exact duplicate uploads are blocked to preserve database integrity.
-                        </p>
-                      </div>
-                    )}
-
-                    {previewResult.duplicateCheck.status === 'POSSIBLE_DUPLICATE' && (
-                      <div className="p-4 bg-amber-500/20 border-2 border-amber-500/60 rounded-xl text-amber-200">
-                        <div className="flex items-center gap-2 font-bold text-sm">
-                          <AlertTriangle className="w-5 h-5 text-amber-400" />
-                          <span>Possible Duplicate ({previewResult.duplicateCheck.similarity}% Similarity)</span>
-                        </div>
-                        <p className="mt-1 text-xs">{previewResult.duplicateCheck.message}</p>
-                        <div className="mt-3 bg-amber-950/60 p-3 rounded-lg border border-amber-500/30">
-                          <label className="block font-bold text-amber-300 mb-1 text-[11px]">
-                            Admin Override Justification (Audited) *
-                          </label>
-                          <input
-                            type="text"
-                            value={overrideReason}
-                            onChange={(e) => setOverrideReason(e.target.value)}
-                            placeholder="e.g. Distinct mock questions / revised answers for this attempt"
-                            className="w-full bg-slate-900 border border-amber-500/50 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {previewResult.duplicateCheck.status === 'NEW' && (
-                      <div className="p-3 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-200 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>Document verified unique! No collisions found.</span>
-                      </div>
-                    )}
-
-                    {previewResult.duplicateCheck.status === 'SIMILAR' && (
-                      <div className="p-3 bg-blue-500/20 border border-blue-500/40 rounded-xl text-blue-200 flex items-center gap-2">
-                        <Info className="w-4 h-4 text-blue-400 shrink-0" />
-                        <span>Syllabus overlap detected for this subject, but questions are distinct. Ready to save.</span>
-                      </div>
-                    )}
-
-                    {/* Metadata Summary Card */}
-                    <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                      <div><span className="text-slate-500 font-bold">File:</span> <span className="text-white">{previewResult.fileName}</span></div>
-                      <div><span className="text-slate-500 font-bold">Format:</span> <span className="text-white">{previewResult.fileType} {previewResult.fileType === 'PDF' && `(${previewResult.pageCount}p)`}</span></div>
-                      <div><span className="text-slate-500 font-bold">Size:</span> <span className="text-white">{(previewResult.fileSize / (1024 * 1024)).toFixed(2)} MB</span></div>
-                      <div><span className="text-slate-500 font-bold">Course:</span> <span className="text-white">{formData.course.replace(/_/g, ' ')}</span></div>
-                      <div><span className="text-slate-500 font-bold">Subject:</span> <span className="text-white">{formData.subject}</span></div>
-                      <div><span className="text-slate-500 font-bold">Source Category:</span> <span className="text-white">{formData.materialType}</span></div>
-                      {isAttemptRequiredSource(formData.materialType) && (
-                        <div><span className="text-slate-500 font-bold">Attempt:</span> <span className="text-white">{formData.attempt}</span></div>
-                      )}
-                      <div><span className="text-slate-500 font-bold">Status:</span> <span className="text-white">{formData.status}</span></div>
-                    </div>
-
-                    {/* Extracted Text Preview */}
-                    <div>
-                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 mb-1.5">
-                        <span>Extracted Content Preview (Ground Truth)</span>
-                        <span>{previewResult.fullExtractedText.length} characters</span>
-                      </div>
-                      <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 max-h-56 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                        {previewResult.extractedTextSnippet}
-                        {previewResult.fullExtractedText.length > 1500 && (
-                          <div className="text-slate-500 italic mt-2">
-                            ... [full document text ({previewResult.fullExtractedText.length} chars) will be saved and indexed for question extraction]
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
-              {uploadStep === 'form' ? (
-                <>
-                  <button
-                    onClick={() => setShowUploadModal(false)}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    disabled={!selectedFile || !formData.materialName.trim() || validatingDoc}
-                    onClick={handleValidateAndPreview}
-                    className="flex items-center gap-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl disabled:opacity-50 transition cursor-pointer"
-                  >
-                    {validatingDoc ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
-                    <span>Validate & Preview Material</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setUploadStep('form')}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition"
-                  >
-                    ← Back to Details
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <button
-                      disabled={submittingMaterial || previewResult?.duplicateCheck.status === 'EXACT_DUPLICATE'}
-                      onClick={() => handleSaveMaterial('Draft', previewResult?.duplicateCheck.status === 'POSSIBLE_DUPLICATE')}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-bold rounded-xl disabled:opacity-50 transition cursor-pointer"
-                    >
-                      Save as Draft
-                    </button>
-                    <button
-                      disabled={submittingMaterial || previewResult?.duplicateCheck.status === 'EXACT_DUPLICATE'}
-                      onClick={() => handleSaveMaterial('Published', previewResult?.duplicateCheck.status === 'POSSIBLE_DUPLICATE')}
-                      className="flex items-center gap-1.5 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl disabled:opacity-50 transition cursor-pointer"
-                    >
-                      {submittingMaterial ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-4 h-4" />}
-                      <span>Save & Publish</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 8-STEP ADMIN CONTENT FLOW WIZARD (Upload -> Process -> Review -> Publish) */}
+      <AdminMaterialUploadWizard
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onComplete={() => {
+          setShowUploadModal(false);
+          loadMaterials();
+          setActionSuccess("Material and questions successfully processed, approved, and published to Question Bank.");
+        }}
+      />
 
       {/* VIEW EXTRACTED CONTENT MODAL */}
       {viewingMaterial && (
@@ -1184,6 +975,108 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
               >
                 Save Changes
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION DIALOG (SINGLE & BULK WITH CONFIGURED LINKED MCQ POLICY) */}
+      {deleteConfirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150 text-slate-100">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">
+                    {deleteConfirmModal.type === 'single' ? 'Delete Material?' : 'Delete Selected Materials?'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {deleteConfirmModal.type === 'single'
+                      ? 'This action will remove the material from the active Material Library.'
+                      : `You selected ${deleteConfirmModal.totalMaterials} materials to remove from the active Material Library.`}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeleteConfirmModal((p) => ({ ...p, isOpen: false }))}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {deleteConfirmModal.type === 'single' && deleteConfirmModal.targetMaterial && (
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl">
+                <div className="text-[11px] text-slate-400">You are about to delete:</div>
+                <div className="font-bold text-white text-xs mt-0.5 truncate">
+                  "{deleteConfirmModal.targetMaterial.material_name}"
+                </div>
+              </div>
+            )}
+
+            {/* Impact Box */}
+            <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-3">
+              <div className="text-xs font-bold text-slate-300">Impact on Linked Content:</div>
+              {deleteConfirmModal.loadingSummary ? (
+                <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                  <span>Calculating linked questions and cases...</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
+                    <div className="text-2xl font-black text-blue-400">
+                      {deleteConfirmModal.linkedQuestionsCount}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 font-medium">Linked MCQs</div>
+                  </div>
+                  <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
+                    <div className="text-2xl font-black text-purple-400">
+                      {deleteConfirmModal.linkedCasesCount}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 font-medium">Linked Cases</div>
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-400 pt-1 leading-relaxed">
+                <strong>Configured Safety Policy:</strong> Deleting a material does NOT automatically delete linked questions.
+                Linked questions can remain intact in the Question Bank (unlinked from this material) or be archived.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <div className="text-xs font-bold text-slate-300 mb-2">What should happen to linked MCQs?</div>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => executeDelete('unlink')}
+                  disabled={deleteConfirmModal.deleting}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition cursor-pointer disabled:opacity-50 text-left flex items-center justify-between"
+                >
+                  <span>Keep Linked MCQs but Unlink Material</span>
+                  <span className="text-[10px] text-blue-200 uppercase font-semibold">Recommended</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeDelete('archive')}
+                  disabled={deleteConfirmModal.deleting}
+                  className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition cursor-pointer disabled:opacity-50 text-left flex items-center justify-between"
+                >
+                  <span>Archive Linked MCQs</span>
+                  <span className="text-[10px] text-amber-200 uppercase font-semibold">Hide from active practice</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmModal((p) => ({ ...p, isOpen: false }))}
+                  disabled={deleteConfirmModal.deleting}
+                  className="w-full py-2 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

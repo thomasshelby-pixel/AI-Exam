@@ -19,6 +19,8 @@ export interface CurriculumStatRow {
   chapter: string;
   question_type: string;
   difficulty: string;
+  source?: string;
+  attempt?: string | null;
   count: number;
 }
 
@@ -33,9 +35,13 @@ export const mcqApi = {
     course: McqCourse;
     subject: string;
     chapter?: string;
+    chapters?: string[];
     topic?: string;
     questionType?: McqQuestionType | 'mixed';
     difficulty?: McqDifficulty | 'mixed';
+    source?: string;
+    sourceCategory?: string;
+    attempt?: string;
     sessionType: McqSessionType;
     requestedCount?: number;
     durationMinutes?: number;
@@ -268,6 +274,65 @@ export const mcqApi = {
     });
   },
 
+  // 8-Step Reference Content Flow
+  processMaterialFlow: async (data: {
+    materialName: string;
+    course: string;
+    subject: string;
+    sourceCategory: string;
+    attempt?: string;
+    fileBase64: string;
+    originalFilename: string;
+    mimeType?: string;
+  }) => {
+    return apiRequest<MaterialFlowProcessResponse>('/api/mcq/admin/material-flow/process', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  saveMaterialDraft: async (data: {
+    materialName: string;
+    course: string;
+    subject: string;
+    sourceCategory: string;
+    attempt?: string;
+    description?: string;
+    fileBase64?: string;
+    originalFilename?: string;
+    mimeType?: string;
+    questions: ExtractedQuestionDraft[];
+    cases: CaseGroupDraft[];
+  }) => {
+    return apiRequest<{ success: boolean; materialId: string; savedQuestionCount: number; savedQuestionIds: string[]; status: string }>(
+      '/api/mcq/admin/material-flow/save-draft',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  approveMaterialQuestions: async (data: { questionIds: string[]; caseIds?: string[] }) => {
+    return apiRequest<{ success: boolean; approvedCount: number; status: string }>(
+      '/api/mcq/admin/material-flow/approve',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  publishMaterialQuestions: async (data: { questionIds: string[]; materialId?: string; caseIds?: string[] }) => {
+    return apiRequest<{ success: boolean; publishedCount: number; status: string }>(
+      '/api/mcq/admin/material-flow/publish',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
   getMaterials: async (params: {
     course?: string;
     subject?: string;
@@ -301,9 +366,48 @@ export const mcqApi = {
     });
   },
 
-  deleteMaterial: async (id: string) => {
-    return apiRequest<{ success: boolean }>(`/api/mcq/admin/materials/${id}`, {
+  deleteMaterial: async (id: string, linkedAction?: 'keep_intact' | 'unlink' | 'archive') => {
+    return apiRequest<{ success: boolean; materialId?: string }>(`/api/mcq/admin/materials/${id}`, {
       method: 'DELETE',
+      body: JSON.stringify({ linkedAction: linkedAction || 'keep_intact' }),
+    });
+  },
+
+  getMaterialLinkedSummary: async (id: string) => {
+    return apiRequest<{
+      materialId: string;
+      materialName: string;
+      linkedQuestionsCount: number;
+      linkedCasesCount: number;
+    }>(`/api/mcq/admin/materials/${id}/linked-summary`);
+  },
+
+  getBulkMaterialsLinkedSummary: async (materialIds: string[]) => {
+    return apiRequest<{
+      totalMaterials: number;
+      linkedQuestionsCount: number;
+      linkedCasesCount: number;
+      items: Array<{
+        materialId: string;
+        materialName: string;
+        linkedQuestionsCount: number;
+        linkedCasesCount: number;
+      }>;
+    }>('/api/mcq/admin/materials/linked-summary', {
+      method: 'POST',
+      body: JSON.stringify({ materialIds }),
+    });
+  },
+
+  bulkDeleteMaterials: async (materialIds: string[], linkedAction?: 'keep_intact' | 'unlink' | 'archive') => {
+    return apiRequest<{
+      success: boolean;
+      deletedCount: number;
+      totalRequested: number;
+      results: Array<{ id: string; success: boolean; error?: string }>;
+    }>('/api/mcq/admin/materials/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ materialIds, linkedAction: linkedAction || 'keep_intact' }),
     });
   },
 
@@ -397,6 +501,10 @@ export interface McqMaterial {
   uploaded_by: string;
   created_at: string;
   updated_at: string;
+  linked_mcq_count?: number;
+  linked_case_count?: number;
+  linkedMcqCount?: number;
+  linkedCaseCount?: number;
 }
 
 export interface McqMaterialPreviewResponse {
@@ -431,4 +539,87 @@ export interface BulkImportPreviewResult {
   }>;
   detectedColumns: string[];
 }
+
+export interface ExtractedQuestionDraft {
+  id: string;
+  tempId: string;
+  course: string;
+  subject: string;
+  chapter: string;
+  topic: string;
+  questionType: 'normal' | 'case_based';
+  caseId?: string;
+  caseTitle?: string;
+  caseScenario?: string;
+  caseSequence?: number;
+  difficulty: 'easy' | 'moderate' | 'hard';
+  source: string;
+  attempt?: string;
+  questionText: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  correctAnswer: 'A' | 'B' | 'C' | 'D' | '';
+  explanation: string;
+  reference: string;
+  sourceMaterialName: string;
+  sourceMaterialId?: string;
+  sourcePage?: number;
+  isDuplicate: boolean;
+  duplicateExistingId?: string;
+  duplicateExistingSource?: string;
+  needsReview: boolean;
+  reviewReason?: string;
+  validationErrors: string[];
+}
+
+export interface CaseGroupDraft {
+  caseId: string;
+  caseTitle: string;
+  caseScenario: string;
+  chapter: string;
+  difficulty: 'easy' | 'moderate' | 'hard';
+  questions: ExtractedQuestionDraft[];
+}
+
+export interface MaterialFlowProcessResponse {
+  materialName: string;
+  course: string;
+  subject: string;
+  sourceCategory: string;
+  attempt?: string;
+  totalDetected: number;
+  normalCount: number;
+  caseBasedCount: number;
+  validCount?: number;
+  chapterAssignedCount?: number;
+  needsChapterReviewCount?: number;
+  rejectedCount?: number;
+  chapterDistribution: Record<string, number>;
+  questions: ExtractedQuestionDraft[];
+  cases: CaseGroupDraft[];
+  rawTextSnippet: string;
+  needsReviewCount: number;
+  duplicateCount: number;
+  fileHash: string;
+  fileType: 'PDF' | 'TXT';
+  fileName: string;
+  fileSize: number;
+  pageCount: number;
+  rejectionReasons?: string[];
+  pdfDiagnosis?: {
+    pageCount: number;
+    pagesWithText: number;
+    totalExtractedChars: number;
+    totalExtractedLines: number;
+    zeroTextPages: number[];
+    lowTextPages: number[];
+    candidateMarkersFound: number;
+    isImageBasedOrScanned: boolean;
+    status: 'SUCCESS' | 'IMAGE_BASED' | 'EMPTY' | 'PARSER_ISSUE';
+    diagnosisMessage: string;
+  };
+}
+
 

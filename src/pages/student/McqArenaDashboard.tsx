@@ -299,7 +299,7 @@ export const McqArenaDashboard: React.FC = () => {
                 📝 Mock Test
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Full exam simulation with real countdown clock, official ICAI negative marking rules, and end-of-test evaluation.
+                Full exam simulation with real countdown clock, configured marking rules, and end-of-test evaluation.
               </p>
             </div>
             <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold text-purple-600 dark:text-purple-400">
@@ -372,7 +372,7 @@ export const McqArenaDashboard: React.FC = () => {
                 🎯 Weak Areas
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Filter by hardest difficulties or low-accuracy topics to turn vulnerabilities into guaranteed scoring opportunities.
+                Filter by hardest difficulties or low-accuracy topics. Focus on low-accuracy chapters and topics.
               </p>
             </div>
             <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs font-bold text-sky-600 dark:text-sky-400">

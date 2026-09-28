@@ -35,6 +35,9 @@ import {
   getMcqMaterialById,
   updateMcqMaterial,
   deleteMcqMaterial,
+  getMaterialLinkedSummary,
+  getMaterialsBulkStats,
+  deleteMcqMaterialsBulk,
   getMaterialFileStream,
 } from '../services/mcqMaterialService.js';
 import {
@@ -44,6 +47,8 @@ import {
   commitBulkQuestions,
 } from '../services/mcqBulkImportService.js';
 import { computeFileHash } from '../services/materialDuplicateProtectionService.js';
+import { parseMaterialTextDeterministic } from '../services/mcqDeterministicParser.js';
+import { db } from '../db.js';
 
 const router = Router();
 
@@ -84,7 +89,21 @@ router.get('/curriculum', (req: AuthRequest, res: Response) => {
 router.post('/sessions/create', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { course, subject, chapter, topic, questionType, difficulty, sessionType, requestedCount, durationMinutes } = req.body;
+    const {
+      course,
+      subject,
+      chapter,
+      chapters,
+      topic,
+      questionType,
+      difficulty,
+      source,
+      sourceCategory,
+      attempt,
+      sessionType,
+      requestedCount,
+      durationMinutes,
+    } = req.body;
 
     if (!course || !subject) {
       return res.status(400).json({ error: 'Please select Course and Subject to begin.' });
@@ -94,9 +113,12 @@ router.post('/sessions/create', (req: AuthRequest, res: Response) => {
       course,
       subject,
       chapter,
+      chapters,
       topic,
       questionType,
       difficulty,
+      source: source || sourceCategory,
+      attempt,
       sessionType: sessionType || 'practice',
       requestedCount: requestedCount ? parseInt(requestedCount, 10) : 10,
       durationMinutes: durationMinutes ? parseInt(durationMinutes, 10) : undefined,
@@ -398,6 +420,369 @@ router.post('/admin/materials/validate-preview', requireMcqAdmin, async (req: Au
   }
 });
 
+// ==========================================
+// 8-STEP ADMIN CONTENT FLOW (Upload -> Process -> Review -> Publish)
+// 100% Deterministic, Rule-Based, ZERO AI
+// ==========================================
+
+// 1. Step 3: Validate & Process PDF/TXT
+router.post('/admin/material-flow/process', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      materialName,
+      course,
+      subject,
+      sourceCategory,
+      attempt,
+      fileBase64,
+      originalFilename,
+      mimeType,
+    } = req.body;
+
+    if (!materialName || !course || !subject || !sourceCategory) {
+      return res.status(400).json({ error: 'Material Name, Course, Subject, and Source Category are required.' });
+    }
+
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'Please upload a PDF or TXT source document.' });
+    }
+
+    const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    // 1. File validation: strictly PDF or TXT
+    const valResult = await validateMaterialFile(buffer, originalFilename || 'material_doc', mimeType);
+    if (!valResult.valid || !valResult.fileType) {
+      return res.status(400).json({ error: valResult.error || 'Invalid file format. Supported formats: PDF, TXT.' });
+    }
+
+    // 2. Safe text extraction (Deterministic, zero AI)
+    const extraction = await extractTextSafely(buffer, valResult.fileType, valResult.sanitizedFilename);
+
+    // 3. Deterministic MCQ & Case Study extraction
+    const parsedResult = parseMaterialTextDeterministic({
+      rawText: extraction.extractedText,
+      course,
+      subject,
+      sourceCategory,
+      attempt,
+      materialName,
+      pdfDiagnosis: extraction.pdfDiagnosis,
+    });
+
+    const fileHash = computeFileHash(buffer);
+
+    return res.json({
+      ...parsedResult,
+      fileHash,
+      fileType: valResult.fileType,
+      fileName: valResult.sanitizedFilename,
+      fileSize: buffer.length,
+      pageCount: extraction.pageCount,
+      pdfDiagnosis: extraction.pdfDiagnosis,
+    });
+  } catch (err: any) {
+    console.error('Material flow process error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to process material file.' });
+  }
+});
+
+// 2. Step 5: Save as Draft
+router.post('/admin/material-flow/save-draft', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      materialName,
+      course,
+      subject,
+      sourceCategory,
+      attempt,
+      description,
+      fileBase64,
+      originalFilename,
+      mimeType,
+      questions,
+      cases,
+    } = req.body;
+
+    if (!materialName || !course || !subject || !Array.isArray(questions)) {
+      return res.status(400).json({ error: 'Material metadata and questions list are required.' });
+    }
+
+    let materialId = `mat_${crypto.randomUUID().slice(0, 12)}`;
+    let fileBuffer: Buffer | undefined;
+
+    if (fileBase64) {
+      const cleanBase64 = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+      fileBuffer = Buffer.from(cleanBase64, 'base64');
+    }
+
+    // Save Material Record as Draft
+    if (fileBuffer) {
+      const valResult = await validateMaterialFile(fileBuffer, originalFilename || 'material_doc', mimeType);
+      const savedMat = await saveMcqMaterial({
+        materialName,
+        course,
+        subject,
+        materialType: sourceCategory || 'ICAI Module',
+        source: sourceCategory === 'Self-Created' ? 'Self-Created' : 'ICAI',
+        attempt,
+        description,
+        status: 'Draft',
+        fileBuffer,
+        originalFilename: valResult.sanitizedFilename || 'material.pdf',
+        fileType: valResult.fileType || 'PDF',
+        pageCount: 1,
+        extractedText: '',
+        uploadedBy: req.user!.id,
+      });
+      materialId = savedMat.id;
+    }
+
+    // Save Cases as Draft
+    if (Array.isArray(cases)) {
+      const insertCaseStmt = db.prepare(`
+        INSERT INTO mcq_cases (
+          id, case_id, course, subject, chapter, case_title, case_scenario, difficulty, status, created_by, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(case_id) DO UPDATE SET
+          case_title = excluded.case_title,
+          case_scenario = excluded.case_scenario,
+          status = 'draft',
+          updated_at = CURRENT_TIMESTAMP
+      `);
+
+      for (const cs of cases) {
+        const cDbId = `case_db_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        insertCaseStmt.run(
+          cDbId,
+          cs.caseId,
+          course,
+          subject,
+          cs.chapter || 'General',
+          cs.caseTitle || `${materialName} - ${cs.caseId}`,
+          cs.caseScenario,
+          cs.difficulty || 'moderate',
+          req.user!.id
+        );
+      }
+    }
+
+    // Save Questions as Draft
+    const insertQStmt = db.prepare(`
+      INSERT INTO mcq_questions (
+        id, course, subject, chapter, topic, question_type, case_id, case_sequence, case_study_scenario,
+        difficulty, source, attempt, question_text, option_a, option_b, option_c, option_d,
+        correct_answer, explanation, reference, status, source_material_id, source_page,
+        created_by, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, 'draft', ?, ?,
+        ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        course = excluded.course,
+        subject = excluded.subject,
+        chapter = excluded.chapter,
+        topic = excluded.topic,
+        question_type = excluded.question_type,
+        case_id = excluded.case_id,
+        case_sequence = excluded.case_sequence,
+        case_study_scenario = excluded.case_study_scenario,
+        difficulty = excluded.difficulty,
+        source = excluded.source,
+        attempt = excluded.attempt,
+        question_text = excluded.question_text,
+        option_a = excluded.option_a,
+        option_b = excluded.option_b,
+        option_c = excluded.option_c,
+        option_d = excluded.option_d,
+        correct_answer = excluded.correct_answer,
+        explanation = excluded.explanation,
+        reference = excluded.reference,
+        status = 'draft',
+        source_material_id = excluded.source_material_id,
+        source_page = excluded.source_page,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+
+    // Multi-material junction recording
+    const insertJunctionStmt = db.prepare(`
+      INSERT OR IGNORE INTO mcq_question_materials (question_id, material_id, source_page, created_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+
+    const savedQuestionIds: string[] = [];
+
+    for (const q of questions) {
+      const qId = q.id || `mcq_${crypto.randomUUID().slice(0, 16)}`;
+      insertQStmt.run(
+        qId,
+        course,
+        subject,
+        q.chapter || 'General',
+        q.topic || 'Core Concept',
+        q.questionType || 'normal',
+        q.caseId || null,
+        q.caseSequence || null,
+        q.caseScenario || null,
+        q.difficulty || 'moderate',
+        sourceCategory || 'ICAI Module',
+        attempt || null,
+        q.questionText,
+        q.optionA,
+        q.optionB,
+        q.optionC || 'None of the above',
+        q.optionD || 'All of the above',
+        q.correctAnswer || 'A',
+        q.explanation || `As per authoritative ICAI study guidelines for ${subject}.`,
+        q.reference || `${sourceCategory}${attempt ? ` ${attempt}` : ''}`,
+        materialId,
+        q.sourcePage || null,
+        req.user!.id
+      );
+
+      insertJunctionStmt.run(qId, materialId, q.sourcePage || null);
+      savedQuestionIds.push(qId);
+    }
+
+    return res.json({
+      success: true,
+      materialId,
+      savedQuestionCount: savedQuestionIds.length,
+      savedQuestionIds,
+      status: 'draft',
+    });
+  } catch (err: any) {
+    console.error('Save material flow draft error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to save material drafts.' });
+  }
+});
+
+// 3. Step 7: Approve Questions
+router.post('/admin/material-flow/approve', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { questionIds, caseIds } = req.body;
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
+      return res.status(400).json({ error: 'questionIds array is required.' });
+    }
+
+    // Validation pass on all questions
+    const placeholders = questionIds.map(() => '?').join(',');
+    const questions = db.prepare(`SELECT * FROM mcq_questions WHERE id IN (${placeholders})`).all(...questionIds) as any[];
+
+    const validationErrors: string[] = [];
+    for (const q of questions) {
+      if (!q.question_text || q.question_text.trim().length < 5) {
+        validationErrors.push(`Question ${q.id}: Question text too short or empty.`);
+      }
+      if (!q.option_a || !q.option_b) {
+        validationErrors.push(`Question ${q.id}: Missing options A or B.`);
+      }
+      if (!['A', 'B', 'C', 'D'].includes((q.correct_answer || '').trim().toUpperCase())) {
+        validationErrors.push(`Question ${q.id}: Invalid or missing correct answer (must be A, B, C, or D).`);
+      }
+      if (!q.course || !q.subject) {
+        validationErrors.push(`Question ${q.id}: Missing course or subject metadata.`);
+      }
+      if (q.question_type === 'case_based') {
+        if (!q.case_id || !q.case_sequence) {
+          validationErrors.push(`Question ${q.id}: Case-based question requires Case ID and Sequence.`);
+        }
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Validation failed for some questions prior to approval.',
+        validationErrors,
+      });
+    }
+
+    // Transition questions to approved
+    db.prepare(`
+      UPDATE mcq_questions
+      SET status = 'approved',
+          reviewed_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `).run(req.user!.id, ...questionIds);
+
+    // Transition cases if specified
+    if (Array.isArray(caseIds) && caseIds.length > 0) {
+      const casePlaceholders = caseIds.map(() => '?').join(',');
+      db.prepare(`
+        UPDATE mcq_cases
+        SET status = 'approved',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE case_id IN (${casePlaceholders})
+      `).run(...caseIds);
+    }
+
+    return res.json({
+      success: true,
+      approvedCount: questionIds.length,
+      status: 'approved',
+    });
+  } catch (err: any) {
+    console.error('Approve questions error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to approve questions.' });
+  }
+});
+
+// 4. Step 8: Publish Questions
+router.post('/admin/material-flow/publish', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { questionIds, materialId, caseIds } = req.body;
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
+      return res.status(400).json({ error: 'questionIds array is required.' });
+    }
+
+    const placeholders = questionIds.map(() => '?').join(',');
+
+    // Ensure questions are approved or valid draft
+    db.prepare(`
+      UPDATE mcq_questions
+      SET status = 'published',
+          reviewed_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `).run(req.user!.id, ...questionIds);
+
+    // Publish material record
+    if (materialId) {
+      db.prepare(`
+        UPDATE mcq_materials
+        SET status = 'Published',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(materialId);
+    }
+
+    // Publish parent cases
+    if (Array.isArray(caseIds) && caseIds.length > 0) {
+      const casePlaceholders = caseIds.map(() => '?').join(',');
+      db.prepare(`
+        UPDATE mcq_cases
+        SET status = 'published',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE case_id IN (${casePlaceholders})
+      `).run(...caseIds);
+    }
+
+    return res.json({
+      success: true,
+      publishedCount: questionIds.length,
+      status: 'published',
+    });
+  } catch (err: any) {
+    console.error('Publish questions error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to publish questions.' });
+  }
+});
+
 // 2. Save New Material
 router.post('/admin/materials', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
   try {
@@ -538,16 +923,63 @@ router.put('/admin/materials/:id', requireMcqAdmin, (req: AuthRequest, res: Resp
   }
 });
 
-// 6. Delete Material
+// 5b. Get Single Material Linked Summary
+router.get('/admin/materials/:id/linked-summary', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const summary = getMaterialLinkedSummary(req.params.id);
+    return res.json(summary);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch linked summary' });
+  }
+});
+
+// 5c. Get Bulk Materials Linked Summary
+router.post('/admin/materials/linked-summary', requireMcqAdmin, (req: AuthRequest, res: Response) => {
+  try {
+    const { materialIds } = req.body;
+    if (!Array.isArray(materialIds)) {
+      return res.status(400).json({ error: 'materialIds array is required.' });
+    }
+    const summary = getMaterialsBulkStats(materialIds);
+    return res.json(summary);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to fetch bulk linked summary' });
+  }
+});
+
+// 6. Delete Material (Single Delete with Configurable Linked MCQ Policy)
 router.delete('/admin/materials/:id', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const success = await deleteMcqMaterial(req.params.id);
+    const linkedAction = (req.body?.linkedAction || req.query?.linkedAction || 'keep_intact') as any;
+    const adminId = req.user?.id || 'MCQ_ADMIN';
+    const success = await deleteMcqMaterial(req.params.id, {
+      linkedAction,
+      deletedBy: adminId,
+    });
     if (!success) {
       return res.status(404).json({ error: 'Material not found.' });
     }
-    return res.json({ success: true });
+    return res.json({ success: true, materialId: req.params.id, linkedAction });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Failed to delete material.' });
+    return res.status(500).json({ error: err.message || 'Failed to delete material.' });
+  }
+});
+
+// 6b. Bulk Delete Materials (Atomic, Idempotent, with Configurable Linked MCQ Policy)
+router.post('/admin/materials/bulk-delete', requireMcqAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const { materialIds, linkedAction } = req.body;
+    if (!Array.isArray(materialIds) || materialIds.length === 0) {
+      return res.status(400).json({ error: 'materialIds array is required for bulk deletion.' });
+    }
+    const adminId = req.user?.id || 'MCQ_ADMIN';
+    const result = await deleteMcqMaterialsBulk(materialIds, {
+      linkedAction: linkedAction || 'keep_intact',
+      deletedBy: adminId,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to bulk delete materials.' });
   }
 });
 
