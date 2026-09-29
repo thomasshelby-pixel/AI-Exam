@@ -68,10 +68,26 @@ export async function hydrateFromFirestore(): Promise<void> {
     const tombstones = await getAllFirestoreDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
     const localTombstones = getAllLocalTombstoneSet();
     const tombstoneSet = new Set<string>(localTombstones);
+    const PROTECTED_CORE_IDS = new Set([
+      'usr_super_admin_001',
+      'usr_user_at9767',
+      'usr_student_demo_001',
+      'usr_bf97ebeeae7273b7',
+      'usr_mcq_admin_priyatca15',
+    ]);
+    const PROTECTED_CORE_EMAILS = new Set([
+      'caexamchecker.support@gmail.com',
+      'at9767676@gmail.com',
+      'student@caexamchecker.ai',
+      'adityakumart484@gmail.com',
+      'priyatca15@gmail.com',
+    ]);
+
     for (const t of tombstones) {
       const col = t.collectionName || '';
       const tid = t.targetId || t.id;
       if (col && tid) {
+        if (PROTECTED_CORE_IDS.has(tid)) continue;
         tombstoneSet.add(`${col}_${tid}`);
         tombstoneSet.add(`${col}:${tid}`);
         tombstoneSet.add(tid);
@@ -83,9 +99,10 @@ export async function hydrateFromFirestore(): Promise<void> {
     const users = await getAllFirestoreDocs<any>('users');
     let uHydrated = 0;
     for (const u of users) {
-      if (tombstoneSet.has(`users_${u.id}`)) continue;
+      let normEmail = String(u.email || '').trim().toLowerCase();
+      const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
+      if (!isProtected && tombstoneSet.has(`users_${u.id}`)) continue;
       try {
-        let normEmail = String(u.email || '').trim().toLowerCase();
         let targetId = u.id;
         let targetRole = u.role || 'STUDENT';
         let targetStatus = u.status || 'ACTIVE';
@@ -356,7 +373,8 @@ export async function hydrateFromFirestore(): Promise<void> {
     const evaluations = await getAllFirestoreDocs<any>('evaluations');
     let evHydrated = 0;
     for (const ev of evaluations) {
-      if (tombstoneSet.has(`evaluations_${ev.id}`)) {
+      const isProtectedEval = PROTECTED_CORE_IDS.has(ev.student_id);
+      if (!isProtectedEval && tombstoneSet.has(`evaluations_${ev.id}`)) {
         try {
           db.prepare('DELETE FROM evaluations WHERE id = ?').run(ev.id);
         } catch {}
@@ -373,9 +391,10 @@ export async function hydrateFromFirestore(): Promise<void> {
             status, result_json, error_message, document_validation_status, rejection_reason,
             original_filename, current_evaluation_version_id, evaluation_version,
             admin_review_status, admin_reviewed_at, admin_reviewer_id, admin_reviewer_email, admin_review_notes,
-            created_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            account_classification, created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
+            student_id = excluded.student_id,
             status = excluded.status,
             total_marks = excluded.total_marks,
             maximum_marks = excluded.maximum_marks,
@@ -393,6 +412,7 @@ export async function hydrateFromFirestore(): Promise<void> {
             admin_reviewer_id = excluded.admin_reviewer_id,
             admin_reviewer_email = excluded.admin_reviewer_email,
             admin_review_notes = excluded.admin_review_notes,
+            account_classification = COALESCE(excluded.account_classification, evaluations.account_classification, 'NORMAL'),
             completed_at = excluded.completed_at
         `).run(
           ev.id, ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
@@ -410,6 +430,7 @@ export async function hydrateFromFirestore(): Promise<void> {
           ev.admin_reviewer_id || null,
           ev.admin_reviewer_email || null,
           ev.admin_review_notes || null,
+          ev.account_classification || 'NORMAL',
           ev.created_at || new Date().toISOString(), ev.completed_at || null
         );
         evHydrated++;
@@ -504,6 +525,25 @@ export async function hydrateFromFirestore(): Promise<void> {
         );
       } catch (verErr) {
         console.warn(`[FirestoreSync] Failed to hydrate evaluation_version ${evVer.id}:`, verErr);
+      }
+    }
+
+    // 7b3. Hydrate Student Disclaimer Acknowledgements
+    const disclaimers = await getAllFirestoreDocs<any>('student_disclaimer_acknowledgements');
+    for (const d of disclaimers) {
+      try {
+        db.prepare(`
+          INSERT INTO student_disclaimer_acknowledgements (
+            id, student_id, version, acknowledged_at, ip_address, user_agent, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(student_id, version) DO UPDATE SET
+            acknowledged_at = excluded.acknowledged_at
+        `).run(
+          d.id, d.student_id, d.version || 'v1.0', d.acknowledged_at || d.created_at || new Date().toISOString(),
+          d.ip_address || null, d.user_agent || null, d.created_at || null
+        );
+      } catch (err) {
+        console.warn(`[FirestoreSync] Failed to hydrate disclaimer ack ${d.id}:`, err);
       }
     }
 
@@ -940,6 +980,31 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       const localSettings = db.prepare('SELECT * FROM legal_settings').all() as any[];
       for (const ls of localSettings) {
         await setFirestoreDoc('legal_settings', ls.key, ls);
+      }
+    }
+
+    // Ensure all existing local evaluations are backed up to Cloud Firestore so they survive container restarts
+    const localEvals = db.prepare('SELECT * FROM evaluations').all() as any[];
+    if (localEvals.length > 0) {
+      const existingFsEvals = await getAllFirestoreDocs<any>('evaluations');
+      const fsEvalMap = new Set(existingFsEvals.map((e) => e.id));
+      const PROTECTED_CORE_IDS = new Set([
+        'usr_super_admin_001',
+        'usr_user_at9767',
+        'usr_student_demo_001',
+        'usr_bf97ebeeae7273b7',
+        'usr_mcq_admin_priyatca15',
+      ]);
+      let evSynced = 0;
+      for (const le of localEvals) {
+        const isProtectedEval = PROTECTED_CORE_IDS.has(le.student_id);
+        if (!fsEvalMap.has(le.id) && (isProtectedEval || !tombstoneSet.has(`evaluations_${le.id}`))) {
+          await setFirestoreDoc('evaluations', le.id, le);
+          evSynced++;
+        }
+      }
+      if (evSynced > 0) {
+        console.log(`[FirestoreSync] Synced ${evSynced} local evaluation(s) to Cloud Firestore.`);
       }
     }
   } catch (err) {

@@ -81,16 +81,16 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   };
 
   const filtered = evaluations.filter((ev) => {
-    if (levelFilter !== 'ALL' && ev.level !== levelFilter) return false;
+    if (levelFilter !== 'ALL' && (ev.level || '').toUpperCase() !== levelFilter.toUpperCase()) return false;
     if (sourceFilter !== 'ALL') {
-      const src = ev.evaluation_source || 'PUBLIC';
-      if (src !== sourceFilter) return false;
+      const src = (ev.evaluation_source || 'PUBLIC').toUpperCase();
+      if (src !== sourceFilter.toUpperCase()) return false;
     }
     if (search.trim()) {
       const q = search.toLowerCase();
       return (
-        ev.subject_name.toLowerCase().includes(q) ||
-        ev.material_type.toLowerCase().includes(q) ||
+        (ev.subject_name || '').toLowerCase().includes(q) ||
+        (ev.material_type || '').toLowerCase().includes(q) ||
         (ev.institute_name && ev.institute_name.toLowerCase().includes(q))
       );
     }

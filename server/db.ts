@@ -369,6 +369,21 @@ export function initDatabase() {
       FOREIGN KEY (student_id) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS student_disclaimer_acknowledgements (
+      id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      version TEXT NOT NULL,
+      acknowledged_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(student_id, version),
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_disclaimer_student_version 
+      ON student_disclaimer_acknowledgements(student_id, version);
+
     CREATE TABLE IF NOT EXISTS institute_assignments (
       id TEXT PRIMARY KEY,
       institute_id TEXT NOT NULL,

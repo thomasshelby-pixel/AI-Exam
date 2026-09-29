@@ -387,8 +387,9 @@ export function optionalAuthenticateToken(req: AuthRequest, res: Response, next:
   next();
 }
 
-export function requireRole(...allowedRoles: UserRole[]) {
-  const normalizedAllowed = allowedRoles.map((r) => r.toUpperCase().replace(/\s+/g, '_'));
+export function requireRole(...allowedRoles: (UserRole | UserRole[])[]) {
+  const flatRoles = allowedRoles.flat(Infinity) as UserRole[];
+  const normalizedAllowed = flatRoles.map((r) => String(r).toUpperCase().replace(/\s+/g, '_'));
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });

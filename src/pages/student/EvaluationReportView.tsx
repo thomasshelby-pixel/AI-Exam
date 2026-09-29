@@ -1144,10 +1144,10 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       {/* Advisory & Compliance Disclaimer */}
       <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed print:bg-white print:border-gray-200 print:text-gray-500">
         <p className="font-semibold text-slate-700 dark:text-slate-300 print:text-gray-700 mb-1">
-          Academic Benchmark & Verification Notice
+          AI-Assisted Evaluation Notice
         </p>
         <p>
-          This evaluation is an AI-powered diagnostic benchmark generated according to published ICAI Suggested Answers, Marking Schemes, and Accounting/Tax Standards. CA Exam Checker is an independent educational technology platform and is not affiliated with, authorized, or endorsed by the Institute of Chartered Accountants of India (ICAI). Official marks are awarded exclusively by ICAI-appointed examiners during examination sessions.
+          AI-Assisted Evaluation — This evaluation is provided for educational and diagnostic purposes and may contain occasional errors. Official ICAI material should be referred to for authoritative guidance. CA Exam Checker AI is an independent academic diagnostic tool not affiliated with or endorsed by ICAI.
         </p>
       </div>
 

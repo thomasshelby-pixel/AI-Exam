@@ -84,11 +84,11 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
     });
   }
 
-  // Required logic: if role === "super_admin": allow else deny
-  if (userRole !== 'SUPER_ADMIN') {
+  // Required logic: if role is SUPER_ADMIN or ADMIN: allow else deny
+  if (userRole !== 'SUPER_ADMIN' && userRole !== 'ADMIN') {
     return res.status(403).json({
-      error: `Access denied. Super Administrator authorization required. Role '${req.user?.role}' is forbidden from this resource.`,
-      code: 'FORBIDDEN_SUPER_ADMIN_REQUIRED',
+      error: `Access denied. Administrator authorization required. Role '${req.user?.role}' is forbidden from this resource.`,
+      code: 'FORBIDDEN_ADMIN_REQUIRED',
     });
   }
 
@@ -118,9 +118,11 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
     // Recent evaluations
     const recentEvaluations = db.prepare(`
       SELECT e.id, e.subject_name, e.level, e.total_marks, e.maximum_marks, e.percentage,
-             e.status, e.created_at, u.full_name as student_name, u.email as student_email
+             e.status, e.created_at,
+             COALESCE(u.full_name, 'Student Candidate') as student_name,
+             COALESCE(u.email, 'student@caexamchecker.ai') as student_email
       FROM evaluations e
-      JOIN users u ON u.id = e.student_id
+      LEFT JOIN users u ON u.id = e.student_id
       ORDER BY e.created_at DESC
       LIMIT 8
     `).all();
@@ -2495,16 +2497,17 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     const { status, level, search, classification, source } = req.query;
     let query = `
       SELECT e.id, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
-             e.paper, e.attempt, e.evaluation_source, e.institute_id, e.sponsoring_institute_id,
+             e.paper, e.attempt, COALESCE(e.evaluation_source, 'PUBLIC') as evaluation_source, e.institute_id, e.sponsoring_institute_id,
              e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
              e.grade, e.confidence_score, e.status, e.document_validation_status,
              e.original_filename, COALESCE(e.account_classification, 'NORMAL') as account_classification,
              e.created_at, e.completed_at,
-             u.full_name as student_name, u.email as student_email,
+             COALESCE(u.full_name, 'Student Candidate') as student_name,
+             COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
              p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
-      JOIN users u ON u.id = e.student_id
+      LEFT JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
       WHERE 1=1
@@ -2512,19 +2515,19 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     const params: any[] = [];
 
     if (status && status !== 'ALL') {
-      query += ' AND e.status = ?';
+      query += ' AND UPPER(e.status) = UPPER(?)';
       params.push(status);
     }
     if (level && level !== 'ALL') {
-      query += ' AND e.level = ?';
+      query += ' AND UPPER(e.level) = UPPER(?)';
       params.push(level);
     }
     if (classification && classification !== 'ALL') {
-      query += " AND COALESCE(e.account_classification, 'NORMAL') = ?";
+      query += " AND UPPER(COALESCE(e.account_classification, 'NORMAL')) = UPPER(?)";
       params.push(classification);
     }
     if (source && source !== 'ALL') {
-      query += ' AND e.evaluation_source = ?';
+      query += " AND UPPER(COALESCE(e.evaluation_source, 'PUBLIC')) = UPPER(?)";
       params.push(source);
     }
     if (search) {
@@ -2544,10 +2547,13 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
 router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
   try {
     const evaluation = db.prepare(`
-      SELECT e.*, u.full_name as student_name, u.email as student_email, p.icai_registration_number,
+      SELECT e.*,
+             COALESCE(u.full_name, 'Student Candidate') as student_name,
+             COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
+             p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
-      JOIN users u ON u.id = e.student_id
+      LEFT JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
       WHERE e.id = ?

@@ -45,19 +45,50 @@ import { McqAdminPortal } from './pages/admin/McqAdminPortal.js';
 import { McqAdminLoginPage } from './pages/auth/McqAdminLoginPage.js';
 import { EvaluationResult } from './types/index.js';
 import { apiRequest } from './api/client.js';
+import { EvaluationDisclaimerModal } from './components/student/EvaluationDisclaimerModal.js';
 
-// Wrapper for Evaluation Report that fetches data if directly navigated
+// Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
 const EvaluationReportWrapper: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // If result was already passed directly via navigation state, initialize with it
+  // If result was passed via navigation state
   const passedResult = (location.state as any)?.result as EvaluationResult | undefined;
-  const [report, setReport] = useState<EvaluationResult | null>(passedResult || null);
-  const [loading, setLoading] = useState<boolean>(!passedResult);
+  const [report, setReport] = useState<EvaluationResult | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isCheckingDisclaimer, setIsCheckingDisclaimer] = useState<boolean>(true);
+  const [isDisclaimerAcknowledged, setIsDisclaimerAcknowledged] = useState<boolean>(false);
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const [error, setError] = useState<string>('');
+
+  // Step 1: Verify disclaimer status before rendering any evaluation content
+  const checkDisclaimerStatus = useCallback(async () => {
+    try {
+      setIsCheckingDisclaimer(true);
+      const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
+      if (res.acknowledged) {
+        setIsDisclaimerAcknowledged(true);
+        if (passedResult) {
+          setReport(passedResult);
+          setLoading(false);
+        }
+      } else {
+        setIsDisclaimerAcknowledged(false);
+        setLoading(false);
+      }
+    } catch {
+      // In case of error checking disclaimer, enforce modal for safety
+      setIsDisclaimerAcknowledged(false);
+      setLoading(false);
+    } finally {
+      setIsCheckingDisclaimer(false);
+    }
+  }, [passedResult]);
+
+  useEffect(() => {
+    checkDisclaimerStatus();
+  }, [checkDisclaimerStatus]);
 
   const fetchReport = useCallback(async (isPolling = false) => {
     if (!id) return;
@@ -126,29 +157,84 @@ const EvaluationReportWrapper: React.FC = () => {
         setLoading(false);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load report');
+      const msg = err instanceof Error ? err.message : 'Failed to load report';
+      if (msg.includes('disclaimer') || msg.includes('DISCLAIMER_REQUIRED')) {
+        setIsDisclaimerAcknowledged(false);
+        setLoading(false);
+        return;
+      }
+      setError(msg);
       setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
-    if (!id) return;
-    if (passedResult) {
+    if (!id || isCheckingDisclaimer || !isDisclaimerAcknowledged) return;
+    if (report) {
       setLoading(false);
       return;
     }
     fetchReport();
-  }, [id, passedResult, fetchReport]);
+  }, [id, isCheckingDisclaimer, isDisclaimerAcknowledged, report, fetchReport]);
+
+  // While disclaimer status is loading, render neutral loading state (NO evaluation flash)
+  if (isCheckingDisclaimer) {
+    return (
+      <div className="py-24 flex flex-col items-center justify-center gap-4 text-center px-4">
+        <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <div>
+          <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+            Verifying evaluation access permissions...
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Validating student exam advisory acknowledgement status.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // If disclaimer is not acknowledged, BLOCK evaluation and show mandatory modal
+  if (!isDisclaimerAcknowledged) {
+    return (
+      <>
+        <div className="py-24 flex flex-col items-center justify-center gap-4 text-center px-4">
+          <div className="w-10 h-10 border-3 border-amber-600 border-t-transparent rounded-full animate-spin"></div>
+          <div>
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+              Evaluation Disclaimer Required
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Please review and acknowledge the evaluation advisory terms to access this report.
+            </p>
+          </div>
+        </div>
+        <EvaluationDisclaimerModal
+          isOpen={true}
+          onAcknowledged={() => {
+            setIsDisclaimerAcknowledged(true);
+            if (passedResult) {
+              setReport(passedResult);
+              setLoading(false);
+            } else {
+              setLoading(true);
+              fetchReport();
+            }
+          }}
+        />
+      </>
+    );
+  }
 
   if (loading) {
     return (
       <div className="py-24 flex flex-col items-center justify-center gap-4 text-center px-4">
         <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
         <div>
-          <p className="text-sm font-bold text-slate-800">
+          <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
             {processingStatus || 'Loading verified evaluation report...'}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Validating step marks, working notes calculations, and examiner remarks.
           </p>
         </div>
@@ -158,12 +244,12 @@ const EvaluationReportWrapper: React.FC = () => {
 
   if (error || !report) {
     return (
-      <div className="max-w-md mx-auto my-20 p-6 bg-white border border-rose-200 rounded-xl text-center space-y-4 shadow-sm">
-        <p className="text-sm font-bold text-rose-600">{error || 'Report not available'}</p>
+      <div className="max-w-md mx-auto my-20 p-6 bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900 rounded-xl text-center space-y-4 shadow-sm">
+        <p className="text-sm font-bold text-rose-600 dark:text-rose-400">{error || 'Report not available'}</p>
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={() => navigate('/student/dashboard')}
-            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold cursor-pointer"
           >
             Dashboard
           </button>

@@ -488,7 +488,8 @@ export const AdminPortal: React.FC = () => {
 
   useEffect(() => {
     const normEmail = (user?.email || '').toLowerCase().trim();
-    if (isAuthenticated && (user?.role || '').toUpperCase() === 'SUPER_ADMIN' && normEmail !== 'priyatca15@gmail.com' && user?.id !== 'usr_mcq_admin_priyatca15') {
+    const roleUpper = (user?.role || '').toUpperCase();
+    if (isAuthenticated && (roleUpper === 'SUPER_ADMIN' || roleUpper === 'ADMIN') && normEmail !== 'priyatca15@gmail.com' && user?.id !== 'usr_mcq_admin_priyatca15') {
       loadActiveSectionData();
     }
   }, [
@@ -2594,14 +2595,14 @@ export const AdminPortal: React.FC = () => {
                     (ev.subject_name || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
                     (ev.paper || '').toLowerCase().includes(evalSearch.toLowerCase()) ||
                     (ev.institute_name || '').toLowerCase().includes(evalSearch.toLowerCase());
-                  const matchesLevel = evalLevelFilter === 'ALL' || (ev.level || '').toUpperCase() === evalLevelFilter;
-                  const matchesStatus = evalStatusFilter === 'ALL' || (ev.status || '').toUpperCase() === evalStatusFilter;
+                  const matchesLevel = evalLevelFilter === 'ALL' || (ev.level || '').toUpperCase() === evalLevelFilter.toUpperCase();
+                  const matchesStatus = evalStatusFilter === 'ALL' || (ev.status || '').toUpperCase() === evalStatusFilter.toUpperCase();
                   const matchesClassification =
                     evalClassificationFilter === 'ALL' ||
-                    (ev.account_classification || 'NORMAL') === evalClassificationFilter;
+                    (ev.account_classification || 'NORMAL').toUpperCase() === evalClassificationFilter.toUpperCase();
                   const matchesSource =
                     evalSourceFilter === 'ALL' ||
-                    (ev.evaluation_source || 'PUBLIC') === evalSourceFilter;
+                    (ev.evaluation_source || 'PUBLIC').toUpperCase() === evalSourceFilter.toUpperCase();
                   return matchesSearch && matchesLevel && matchesStatus && matchesClassification && matchesSource;
                 });
 

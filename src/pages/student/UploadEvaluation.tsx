@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { ExamSelector } from '../../components/common/ExamSelector.js';
+import { EvaluationDisclaimerModal } from '../../components/student/EvaluationDisclaimerModal.js';
 
 interface UploadEvaluationProps {
   onEvaluationComplete: (evaluationId: string, result: EvaluationResult) => void;
@@ -152,6 +153,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Progress states
   const [showProTipsModal, setShowProTipsModal] = useState<boolean>(false);
+  const [showDisclaimerModal, setShowDisclaimerModal] = useState<boolean>(false);
+  const [checkingDisclaimer, setCheckingDisclaimer] = useState<boolean>(false);
   const [evalStep, setEvalStep] = useState<EvaluationStep>('IDLE');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
@@ -503,6 +506,54 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       processFile(e.dataTransfer.files[0]);
     }
+  };
+
+  // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
+  const handleCheckAnswerSheetClick = async () => {
+    if (!file || !fileBase64) {
+      setErrorMessage('Please upload your handwritten CA answer sheet file (PDF or image).');
+      return;
+    }
+
+    if (!materialAvailable) {
+      setErrorMessage(
+        evaluationSource === 'INSTITUTE'
+          ? 'No test materials are available for this coaching institute. Please contact your faculty to upload test questions.'
+          : 'Evaluation material is not available for the selected paper and attempt yet. Please try again once the required material has been uploaded.'
+      );
+      return;
+    }
+
+    if (!hasAccess) {
+      if (evaluationSource === 'INSTITUTE') {
+        setErrorMessage('You are not actively enrolled in this coaching institute.');
+      } else {
+        onOpenCreditsModal();
+      }
+      return;
+    }
+
+    // Step 0: Check mandatory disclaimer status
+    try {
+      setCheckingDisclaimer(true);
+      const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
+      if (!res.acknowledged) {
+        setShowDisclaimerModal(true);
+        return;
+      }
+      // If already acknowledged, proceed with evaluation
+      await handleStartEvaluation();
+    } catch (err: unknown) {
+      console.warn('[UploadEvaluation] Error checking disclaimer status:', err);
+      setShowDisclaimerModal(true);
+    } finally {
+      setCheckingDisclaimer(false);
+    }
+  };
+
+  const handleDisclaimerAcknowledged = async () => {
+    setShowDisclaimerModal(false);
+    await handleStartEvaluation();
   };
 
   // Submit evaluation
@@ -1427,8 +1478,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               <div className="pt-1">
                 <button
                   id="start-evaluation-btn"
-                  onClick={handleStartEvaluation}
-                  disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial}
+                  onClick={handleCheckAnswerSheetClick}
+                  disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial || checkingDisclaimer}
                   className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     evaluationSource === 'INSTITUTE'
                       ? 'bg-indigo-600 hover:bg-indigo-700'
@@ -1440,6 +1491,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       <span>Evaluating Answer Sheet...</span>
                     </>
+                  ) : checkingDisclaimer ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verifying Evaluation Access...</span>
+                    </>
                   ) : !materialAvailable && !checkingMaterial ? (
                     <span>Evaluation Material Pending for this Attempt</span>
                   ) : (
@@ -1447,8 +1503,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       <Sparkles className="w-4 h-4" />
                       <span>
                         {evaluationSource === 'INSTITUTE'
-                          ? 'Start Institute Evaluation (0 Credits)'
-                          : 'Start ICAI Step Evaluation'}
+                          ? 'Check Answer Sheet (Institute - 0 Credits)'
+                          : 'Check Answer Sheet'}
                       </span>
                       <ArrowRight className="w-4 h-4" />
                     </>
@@ -1611,6 +1667,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           </div>
         </div>
       )}
+
+      {/* Mandatory Student Evaluation Disclaimer Modal */}
+      <EvaluationDisclaimerModal
+        isOpen={showDisclaimerModal}
+        onAcknowledged={handleDisclaimerAcknowledged}
+      />
     </div>
   );
 };
