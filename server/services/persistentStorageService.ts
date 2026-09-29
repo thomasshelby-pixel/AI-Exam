@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { db } from '../db.js';
 import {
   uploadFileToCloudStorage,
   downloadFileFromCloudStorage,
@@ -71,6 +72,35 @@ export async function savePersistentFile(
     console.warn('[PersistentStorage] Warning writing local cache:', err);
   }
 
+  // 2. Persistently backup binary to durable SQLite persistent_file_blobs table
+  try {
+    db.prepare(`
+      INSERT INTO persistent_file_blobs (
+        file_id, filename, mime_type, file_size, category, owner_user_id, evaluation_id, data, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(file_id) DO UPDATE SET
+        filename = excluded.filename,
+        mime_type = excluded.mime_type,
+        file_size = excluded.file_size,
+        category = excluded.category,
+        owner_user_id = excluded.owner_user_id,
+        evaluation_id = excluded.evaluation_id,
+        data = excluded.data,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      safeFileId,
+      safeFilename,
+      mimeType,
+      buffer.length,
+      category,
+      context?.ownerUserId || null,
+      context?.evaluationId || (safeFileId.startsWith('eval_') ? safeFileId.split('_')[0] + '_' + safeFileId.split('_')[1] : null),
+      buffer
+    );
+  } catch (dbErr) {
+    console.warn('[PersistentStorage] Notice writing blob to SQLite table:', dbErr);
+  }
+
   const uploadOptions: UploadOptions = {
     fileId: safeFileId,
     filename: safeFilename,
@@ -83,16 +113,17 @@ export async function savePersistentFile(
     category,
   };
 
-  // 2. Upload / mirror to Firebase Cloud Storage & record structured metadata in Firestore
+  // 3. Upload / mirror to Firebase Cloud Storage & record structured metadata in Firestore
   const metadata = await uploadFileToCloudStorage(uploadOptions);
 
   return metadata;
 }
 
 /**
- * Retrieves a file. First checks local working directory.
- * If absent (e.g., after application restart or fresh deployment),
- * downloads from Firebase Cloud Storage and restores it.
+ * Retrieves a file. Checks:
+ * 1. Local working directory / cache
+ * 2. SQLite persistent_file_blobs database table
+ * 3. Firebase Cloud Storage (re-hydrating local disk & SQLite on retrieval)
  */
 export async function getPersistentFile(
   fileId: string,
@@ -110,6 +141,7 @@ export async function getPersistentFile(
     path.join(UPLOADS_DIR, `${safeFileId}_report.pdf`),
     path.join(DATA_UPLOADS_DIR, `${safeFileId}_original.pdf`),
     path.join(DATA_UPLOADS_DIR, `${safeFileId}_checked_copy.pdf`),
+    path.join(DATA_UPLOADS_DIR, `${safeFileId}_report.pdf`),
   ];
 
   for (const p of candidatePaths) {
@@ -120,22 +152,56 @@ export async function getPersistentFile(
           return { buffer: buf };
         }
       } catch {
-        // continue to Cloud Storage
+        // continue
       }
     }
   }
 
-  // 2. Download from Firebase Cloud Storage
+  // 2. Check SQLite persistent_file_blobs database table
+  try {
+    const blobRow = db.prepare(`
+      SELECT data, filename, mime_type, category
+      FROM persistent_file_blobs
+      WHERE file_id = ? OR file_id = ? OR file_id = ? OR file_id = ?
+      LIMIT 1
+    `).get(safeFileId, fileId, `${safeFileId}_original`, `${safeFileId}_checked_copy`) as any;
+
+    if (blobRow && blobRow.data) {
+      const buf = Buffer.isBuffer(blobRow.data) ? blobRow.data : Buffer.from(blobRow.data);
+      if (buf.length > 0) {
+        // Restore local working disk caches
+        try {
+          const targetFilename = blobRow.filename || safeFilename;
+          fs.writeFileSync(path.join(UPLOADS_DIR, targetFilename), buf);
+          fs.writeFileSync(path.join(DATA_UPLOADS_DIR, targetFilename), buf);
+        } catch {}
+        return { buffer: buf };
+      }
+    }
+  } catch (dbErr) {
+    console.warn(`[PersistentStorage] Notice reading SQLite blob for ${fileId}:`, dbErr);
+  }
+
+  // 3. Download from Firebase Cloud Storage
   try {
     const downloaded = await downloadFileFromCloudStorage(fileId);
     if (downloaded && downloaded.buffer.length > 0) {
-      // Repopulate local working directory
+      // Repopulate local working directory and SQLite
       try {
         const targetFilename = downloaded.metadata?.originalFilename
           ? sanitizeFilename(downloaded.metadata.originalFilename)
           : safeFilename;
         const targetPath = path.join(UPLOADS_DIR, targetFilename);
         fs.writeFileSync(targetPath, downloaded.buffer);
+        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, targetFilename), downloaded.buffer);
+
+        // Also save to SQLite blob table for instant offline recovery
+        db.prepare(`
+          INSERT INTO persistent_file_blobs (
+            file_id, filename, mime_type, file_size, category, data, updated_at
+          ) VALUES (?, ?, ?, ?, 'GENERAL_DOCUMENT', ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(file_id) DO UPDATE SET data = excluded.data, file_size = excluded.file_size, updated_at = CURRENT_TIMESTAMP
+        `).run(safeFileId, targetFilename, downloaded.metadata?.mimeType || 'application/pdf', downloaded.buffer.length, downloaded.buffer);
       } catch {
         // ignore
       }
@@ -149,11 +215,19 @@ export async function getPersistentFile(
 }
 
 /**
- * Permanently deletes a file from Firebase Cloud Storage,
+ * Permanently deletes a file from SQLite, Firebase Cloud Storage,
  * deletes its Firestore metadata record, and removes any local file traces.
  */
 export async function deletePersistentFile(fileId: string, explicitPath?: string): Promise<boolean> {
   let deletedFromDisk = false;
+  const safeFileId = path.basename(fileId).replace(/[^a-zA-Z0-9._\-]/g, '');
+
+  // 1. Remove from SQLite persistent_file_blobs
+  try {
+    db.prepare('DELETE FROM persistent_file_blobs WHERE file_id = ? OR file_id = ?').run(safeFileId, fileId);
+  } catch (dbErr) {
+    console.warn(`[PersistentStorage] Error deleting blob ${fileId} from SQLite:`, dbErr);
+  }
 
   // 1. Remove from local directories
   const dirs = [UPLOADS_DIR, DATA_UPLOADS_DIR];

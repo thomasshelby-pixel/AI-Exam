@@ -58,30 +58,72 @@ export function getStudentOwnershipParams(studentId: string, studentEmail: strin
   return [studentId, normEmail, normEmail, normEmail, normEmail];
 }
 
-// Disclaimer Acknowledgement Status Check
-router.get('/disclaimer/status', (req: AuthRequest, res: Response) => {
+/**
+ * Authoritative check across student_disclaimer_acknowledgements and student_disclaimers
+ */
+export function isStudentDisclaimerAcknowledged(studentId: string, studentEmail: string, version: string = CURRENT_DISCLAIMER_VERSION): boolean {
+  const normEmail = (studentEmail || '').toLowerCase().trim();
+  const ack = db.prepare(`
+    SELECT d.id
+    FROM student_disclaimer_acknowledgements d
+    LEFT JOIN users u ON u.id = d.student_id
+    WHERE (d.student_id = ? OR (u.email IS NOT NULL AND LOWER(u.email) = ?))
+      AND d.version = ?
+    LIMIT 1
+  `).get(studentId, normEmail, version);
+  if (ack) return true;
+
+  const legacy = db.prepare(`
+    SELECT d.student_id
+    FROM student_disclaimers d
+    LEFT JOIN users u ON u.id = d.student_id
+    WHERE (d.student_id = ? OR (u.email IS NOT NULL AND LOWER(u.email) = ?))
+      AND d.disclaimer_version = ?
+    LIMIT 1
+  `).get(studentId, normEmail, version);
+  return Boolean(legacy);
+}
+
+// Disclaimer Acknowledgement Status Check (Supports both /disclaimer/status and /disclaimer-status)
+router.get(['/disclaimer/status', '/disclaimer-status'], (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
 
-    // Check by user id or user email
+    // Check by user id or user email in student_disclaimer_acknowledgements
     const ack = db.prepare(`
-      SELECT d.*
+      SELECT d.id, d.version, d.acknowledged_at
       FROM student_disclaimer_acknowledgements d
       LEFT JOIN users u ON u.id = d.student_id
-      WHERE ${buildStudentOwnershipSql('d', 'u')}
+      WHERE (d.student_id = ? OR (u.email IS NOT NULL AND LOWER(u.email) = ?))
         AND d.version = ?
       LIMIT 1
-    `).get(...getStudentOwnershipParams(studentId, studentEmail), CURRENT_DISCLAIMER_VERSION) as {
+    `).get(studentId, studentEmail, CURRENT_DISCLAIMER_VERSION) as {
       id: string;
       version: string;
       acknowledged_at: string;
     } | undefined;
 
+    // Fallback check in student_disclaimers for multi-store consistency
+    const legacyAck = !ack ? db.prepare(`
+      SELECT d.student_id as id, d.disclaimer_version as version, d.acknowledged_at
+      FROM student_disclaimers d
+      LEFT JOIN users u ON u.id = d.student_id
+      WHERE (d.student_id = ? OR (u.email IS NOT NULL AND LOWER(u.email) = ?))
+        AND d.disclaimer_version = ?
+      LIMIT 1
+    `).get(studentId, studentEmail, CURRENT_DISCLAIMER_VERSION) as {
+      id: string;
+      version: string;
+      acknowledged_at: string;
+    } | undefined : null;
+
+    const activeAck = ack || legacyAck;
+
     return res.json({
-      acknowledged: Boolean(ack),
+      acknowledged: Boolean(activeAck),
       currentVersion: CURRENT_DISCLAIMER_VERSION,
-      acknowledgedAt: ack?.acknowledged_at || null,
+      acknowledgedAt: activeAck?.acknowledged_at || null,
     });
   } catch (err: unknown) {
     console.error('Check disclaimer status error:', err);
@@ -89,12 +131,12 @@ router.get('/disclaimer/status', (req: AuthRequest, res: Response) => {
   }
 });
 
-// Acknowledge Disclaimer
-router.post('/disclaimer/acknowledge', async (req: AuthRequest, res: Response) => {
+// Acknowledge Disclaimer (Supports both /disclaimer/acknowledge and /acknowledge-disclaimer)
+router.post(['/disclaimer/acknowledge', '/acknowledge-disclaimer'], async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { version } = req.body;
-    const targetVersion = version || CURRENT_DISCLAIMER_VERSION;
+    const bodyVersion = req.body?.version || req.body?.disclaimerVersion;
+    const targetVersion = bodyVersion || CURRENT_DISCLAIMER_VERSION;
 
     if (targetVersion !== CURRENT_DISCLAIMER_VERSION) {
       return res.status(400).json({
@@ -109,6 +151,7 @@ router.post('/disclaimer/acknowledge', async (req: AuthRequest, res: Response) =
     const userAgent = req.headers['user-agent'] || null;
     const now = new Date().toISOString();
 
+    // 1. Write to student_disclaimer_acknowledgements
     db.prepare(`
       INSERT INTO student_disclaimer_acknowledgements (
         id, student_id, version, acknowledged_at, ip_address, user_agent
@@ -119,11 +162,30 @@ router.post('/disclaimer/acknowledge', async (req: AuthRequest, res: Response) =
         user_agent = excluded.user_agent
     `).run(ackId, studentId, targetVersion, now, ipAddress, userAgent);
 
-    // Sync to Firestore for durable persistence
+    // 2. Also write to student_disclaimers table for multi-store consistency
+    db.prepare(`
+      INSERT INTO student_disclaimers (
+        student_id, disclaimer_version, acknowledged_at, ip_address, user_agent
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(student_id) DO UPDATE SET
+        disclaimer_version = excluded.disclaimer_version,
+        acknowledged_at = excluded.acknowledged_at,
+        ip_address = excluded.ip_address,
+        user_agent = excluded.user_agent
+    `).run(studentId, targetVersion, now, ipAddress, userAgent);
+
+    // 3. Sync to Firestore for durable persistence across server restarts
     syncRecordToFirestore('student_disclaimer_acknowledgements', `${studentId}_${targetVersion}`, {
       id: ackId,
       student_id: studentId,
       version: targetVersion,
+      acknowledged_at: now,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+    });
+    syncRecordToFirestore('student_disclaimers', studentId, {
+      student_id: studentId,
+      disclaimer_version: targetVersion,
       acknowledged_at: now,
       ip_address: ipAddress,
       user_agent: userAgent,
@@ -138,6 +200,23 @@ router.post('/disclaimer/acknowledge', async (req: AuthRequest, res: Response) =
   } catch (err: unknown) {
     console.error('Acknowledge disclaimer error:', err);
     return res.status(500).json({ error: 'Failed to record disclaimer acknowledgement' });
+  }
+});
+
+// Reset Disclaimer Acknowledgement for authenticated test account
+router.post('/disclaimer/reset', (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    db.prepare('DELETE FROM student_disclaimer_acknowledgements WHERE student_id = ?').run(studentId);
+    db.prepare('DELETE FROM student_disclaimers WHERE student_id = ?').run(studentId);
+    return res.json({
+      success: true,
+      message: 'Disclaimer acknowledgement reset for current student account',
+      studentId,
+    });
+  } catch (err: unknown) {
+    console.error('Reset disclaimer error:', err);
+    return res.status(500).json({ error: 'Failed to reset disclaimer acknowledgement' });
   }
 });
 
@@ -588,16 +667,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Step 0: Check mandatory evaluation disclaimer acknowledgement
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
-    const disclaimerAck = db.prepare(`
-      SELECT d.id
-      FROM student_disclaimer_acknowledgements d
-      LEFT JOIN users u ON u.id = d.student_id
-      WHERE ${buildStudentOwnershipSql('d', 'u')}
-        AND d.version = ?
-      LIMIT 1
-    `).get(...getStudentOwnershipParams(studentId, studentEmail), CURRENT_DISCLAIMER_VERSION);
-
-    if (!disclaimerAck) {
+    if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
       return res.status(403).json({
         error: 'Mandatory evaluation disclaimer must be acknowledged before submitting answer sheets for evaluation.',
         code: 'DISCLAIMER_REQUIRED',
@@ -1182,16 +1252,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
 
     // Enforce disclaimer check for student access to evaluation data
     if (roleStr === 'STUDENT') {
-      const disclaimerAck = db.prepare(`
-        SELECT d.id
-        FROM student_disclaimer_acknowledgements d
-        LEFT JOIN users u ON u.id = d.student_id
-        WHERE ${buildStudentOwnershipSql('d', 'u')}
-          AND d.version = ?
-        LIMIT 1
-      `).get(...getStudentOwnershipParams(studentId, studentEmail), CURRENT_DISCLAIMER_VERSION);
-
-      if (!disclaimerAck) {
+      if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
         return res.status(403).json({
           error: 'Mandatory evaluation disclaimer must be acknowledged before accessing evaluation reports.',
           code: 'DISCLAIMER_REQUIRED',
@@ -1391,16 +1452,7 @@ router.get(
       const roleStr = String(userRole);
       if (roleStr === 'STUDENT') {
         const studentEmail = req.user!.email?.toLowerCase().trim() || '';
-        const disclaimerAck = db.prepare(`
-          SELECT d.id
-          FROM student_disclaimer_acknowledgements d
-          LEFT JOIN users u ON u.id = d.student_id
-          WHERE ${buildStudentOwnershipSql('d', 'u')}
-            AND d.version = ?
-          LIMIT 1
-        `).get(...getStudentOwnershipParams(studentId, studentEmail), CURRENT_DISCLAIMER_VERSION);
-
-        if (!disclaimerAck) {
+        if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
           return res.status(403).json({
             error: 'Mandatory evaluation disclaimer must be acknowledged before downloading checked copies.',
             code: 'DISCLAIMER_REQUIRED',
@@ -1609,16 +1661,7 @@ router.get(
       const roleStr = String(userRole);
       if (roleStr === 'STUDENT') {
         const studentEmail = req.user!.email?.toLowerCase().trim() || '';
-        const disclaimerAck = db.prepare(`
-          SELECT d.id
-          FROM student_disclaimer_acknowledgements d
-          LEFT JOIN users u ON u.id = d.student_id
-          WHERE ${buildStudentOwnershipSql('d', 'u')}
-            AND d.version = ?
-          LIMIT 1
-        `).get(...getStudentOwnershipParams(studentId, studentEmail), CURRENT_DISCLAIMER_VERSION);
-
-        if (!disclaimerAck) {
+        if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
           return res.status(403).json({
             error: 'Mandatory evaluation disclaimer must be acknowledged before downloading detailed evaluation reports.',
             code: 'DISCLAIMER_REQUIRED',

@@ -45,7 +45,7 @@ import { McqAdminPortal } from './pages/admin/McqAdminPortal.js';
 import { McqAdminLoginPage } from './pages/auth/McqAdminLoginPage.js';
 import { EvaluationResult } from './types/index.js';
 import { apiRequest } from './api/client.js';
-import { EvaluationDisclaimerModal } from './components/student/EvaluationDisclaimerModal.js';
+import { DisclaimerModal } from './components/student/DisclaimerModal.js';
 
 // Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
 const EvaluationReportWrapper: React.FC = () => {
@@ -209,9 +209,9 @@ const EvaluationReportWrapper: React.FC = () => {
             </p>
           </div>
         </div>
-        <EvaluationDisclaimerModal
+        <DisclaimerModal
           isOpen={true}
-          onAcknowledged={() => {
+          onAcknowledge={() => {
             setIsDisclaimerAcknowledged(true);
             if (passedResult) {
               setReport(passedResult);

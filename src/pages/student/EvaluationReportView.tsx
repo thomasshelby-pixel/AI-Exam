@@ -388,6 +388,14 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
         </div>
       )}
 
+      {/* AI-Assisted Evaluation Advisory Notice (Post-acknowledgment, non-blocking) */}
+      <div className="bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl p-3 text-amber-900 dark:text-amber-200 flex items-center gap-2.5 text-xs print:hidden shadow-2xs">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+        <span className="flex-1">
+          <strong className="font-semibold">AI-Assisted Evaluation:</strong> This diagnostic assessment is provided for educational and self-assessment purposes and may contain occasional errors. Please review the step breakdown against official ICAI materials.
+        </span>
+      </div>
+
       {/* Official ICAI Pattern Report Header Card */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-6 shadow-sm relative overflow-hidden print:border print:border-gray-300 print:bg-white print:text-black min-w-0">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-200 dark:border-slate-800 print:border-gray-300">

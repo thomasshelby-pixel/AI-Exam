@@ -4,6 +4,7 @@ import { db, recordLocalTombstone, getAllLocalTombstoneSet } from '../db.js';
 import {
   getFirestoreDb,
   setFirestoreDoc,
+  getFirestoreDoc,
   deleteFirestoreDoc,
   getAllFirestoreDocs,
   recordTombstone,
@@ -15,7 +16,18 @@ import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupSer
 import { initMfaRecoveryTables } from './mfaRecoveryService.js';
 
 /**
+ * Safely converts an arbitrary value into a valid SQLite parameter string or null.
+ */
+export function safeSqliteString(val: any): string | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') return JSON.stringify(val);
+  return String(val);
+}
+
+/**
  * Asynchronously mirrors an inserted or updated record from SQLite to Cloud Firestore.
+ * Ensures local SQLite data cannot overwrite newer Firestore data or resurrect tombstoned records.
  */
 export async function syncRecordToFirestore(collectionName: string, id: string, data: Record<string, any>) {
   try {
@@ -23,6 +35,16 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
     if (tombstoned) {
       console.log(`[FirestoreSync] Skipping sync for tombstoned record ${collectionName}/${id}`);
       return;
+    }
+    // Verify Firestore is authoritative: local data must not overwrite newer Firestore data
+    const existingDoc = await getFirestoreDoc<any>(collectionName, id);
+    if (existingDoc) {
+      const fsTime = new Date(existingDoc._updatedAt || existingDoc.updated_at || existingDoc.completed_at || existingDoc.created_at || 0).getTime();
+      const localTime = new Date(data.updated_at || data._updatedAt || data.completed_at || data.created_at || 0).getTime();
+      if (fsTime > localTime && fsTime > 0) {
+        console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
+        return;
+      }
     }
     await setFirestoreDoc(collectionName, id, data);
   } catch (err) {
@@ -370,13 +392,19 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 7. Hydrate Evaluations (Student Submissions, Grades, Annotations)
+    // Cloud Firestore is the true authoritative source of evaluations.
     const evaluations = await getAllFirestoreDocs<any>('evaluations');
     let evHydrated = 0;
+    const fsEvalMap = new Set<string>();
+
     for (const ev of evaluations) {
-      const isProtectedEval = PROTECTED_CORE_IDS.has(ev.student_id);
-      if (!isProtectedEval && tombstoneSet.has(`evaluations_${ev.id}`)) {
+      fsEvalMap.add(ev.id);
+      // Tombstoned evaluations must always be deleted and skipped, with NO protected account bypass
+      if (tombstoneSet.has(`evaluations_${ev.id}`) || tombstoneSet.has(ev.id)) {
         try {
           db.prepare('DELETE FROM evaluations WHERE id = ?').run(ev.id);
+          db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(ev.id);
+          db.prepare('DELETE FROM recheck_requests WHERE evaluation_id = ?').run(ev.id);
         } catch {}
         continue;
       }
@@ -436,6 +464,22 @@ export async function hydrateFromFirestore(): Promise<void> {
         evHydrated++;
       } catch (evErr) {
         console.warn(`[FirestoreSync] Failed to insert evaluation ${ev.id}:`, evErr);
+      }
+    }
+
+    // Authoritative Reconciliation:
+    // When Firestore contains evaluations, local SQLite must NOT retain stale or deleted evaluations.
+    if (evaluations.length > 0) {
+      const localEvals = db.prepare('SELECT id FROM evaluations').all() as { id: string }[];
+      for (const le of localEvals) {
+        if (!fsEvalMap.has(le.id) || tombstoneSet.has(`evaluations_${le.id}`) || tombstoneSet.has(le.id)) {
+          try {
+            db.prepare('DELETE FROM evaluations WHERE id = ?').run(le.id);
+            db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(le.id);
+            db.prepare('DELETE FROM recheck_requests WHERE evaluation_id = ?').run(le.id);
+            console.log(`[FirestoreSync] Pruned stale/deleted local evaluation ${le.id} not present in authoritative Firestore.`);
+          } catch {}
+        }
       }
     }
 
@@ -529,22 +573,70 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 7b3. Hydrate Student Disclaimer Acknowledgements
-    const disclaimers = await getAllFirestoreDocs<any>('student_disclaimer_acknowledgements');
-    for (const d of disclaimers) {
-      try {
-        db.prepare(`
-          INSERT INTO student_disclaimer_acknowledgements (
-            id, student_id, version, acknowledged_at, ip_address, user_agent, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
-          ON CONFLICT(student_id, version) DO UPDATE SET
-            acknowledged_at = excluded.acknowledged_at
-        `).run(
-          d.id, d.student_id, d.version || 'v1.0', d.acknowledged_at || d.created_at || new Date().toISOString(),
-          d.ip_address || null, d.user_agent || null, d.created_at || null
-        );
-      } catch (err) {
-        console.warn(`[FirestoreSync] Failed to hydrate disclaimer ack ${d.id}:`, err);
+    try {
+      const disclaimers = await getAllFirestoreDocs<any>('student_disclaimer_acknowledgements');
+      for (const d of disclaimers) {
+        try {
+          const ackId = d.id || `dack_${d.student_id}_${d.version || 'v1.0'}`;
+          const ackVer = d.version || 'v1.0';
+          const ackTime = d.acknowledged_at || d.created_at || new Date().toISOString();
+          db.prepare(`
+            INSERT INTO student_disclaimer_acknowledgements (
+              id, student_id, version, acknowledged_at, ip_address, user_agent, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+            ON CONFLICT(student_id, version) DO UPDATE SET
+              acknowledged_at = excluded.acknowledged_at
+          `).run(
+            ackId, d.student_id, ackVer, ackTime,
+            d.ip_address || null, d.user_agent || null, d.created_at || null
+          );
+
+          // Mirror into student_disclaimers
+          db.prepare(`
+            INSERT INTO student_disclaimers (
+              student_id, disclaimer_version, acknowledged_at, ip_address, user_agent
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(student_id) DO UPDATE SET
+              disclaimer_version = excluded.disclaimer_version,
+              acknowledged_at = excluded.acknowledged_at
+          `).run(d.student_id, ackVer, ackTime, d.ip_address || null, d.user_agent || null);
+        } catch (err) {
+          console.warn(`[FirestoreSync] Failed to hydrate disclaimer ack ${d.id}:`, err);
+        }
       }
+    } catch (err) {
+      console.warn('[FirestoreSync] Failed to fetch student_disclaimer_acknowledgements:', err);
+    }
+
+    try {
+      const legacyDisclaimers = await getAllFirestoreDocs<any>('student_disclaimers');
+      for (const ld of legacyDisclaimers) {
+        try {
+          const sId = ld.student_id || ld.id;
+          const sVer = ld.disclaimer_version || 'v1.0';
+          const sTime = ld.acknowledged_at || new Date().toISOString();
+          db.prepare(`
+            INSERT INTO student_disclaimers (
+              student_id, disclaimer_version, acknowledged_at, ip_address, user_agent
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(student_id) DO UPDATE SET
+              disclaimer_version = excluded.disclaimer_version,
+              acknowledged_at = excluded.acknowledged_at
+          `).run(sId, sVer, sTime, ld.ip_address || null, ld.user_agent || null);
+
+          db.prepare(`
+            INSERT INTO student_disclaimer_acknowledgements (
+              id, student_id, version, acknowledged_at, ip_address, user_agent, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(student_id, version) DO UPDATE SET
+              acknowledged_at = excluded.acknowledged_at
+          `).run(`dack_${sId}_${sVer}`, sId, sVer, sTime, ld.ip_address || null, ld.user_agent || null);
+        } catch (err) {
+          console.warn(`[FirestoreSync] Failed to hydrate student_disclaimer ${ld.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('[FirestoreSync] Failed to fetch student_disclaimers:', err);
     }
 
     // 7c. Hydrate Payment Orders & Transactions & Purchases
@@ -983,29 +1075,25 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       }
     }
 
-    // Ensure all existing local evaluations are backed up to Cloud Firestore so they survive container restarts
-    const localEvals = db.prepare('SELECT * FROM evaluations').all() as any[];
-    if (localEvals.length > 0) {
-      const existingFsEvals = await getAllFirestoreDocs<any>('evaluations');
-      const fsEvalMap = new Set(existingFsEvals.map((e) => e.id));
-      const PROTECTED_CORE_IDS = new Set([
-        'usr_super_admin_001',
-        'usr_user_at9767',
-        'usr_student_demo_001',
-        'usr_bf97ebeeae7273b7',
-        'usr_mcq_admin_priyatca15',
-      ]);
+    // Ensure baseline evaluations only seed if Cloud Firestore is completely empty.
+    // If evaluations already exist in Firestore, Firestore is the true authoritative source,
+    // and local SQLite must NOT re-seed or resurrect stale/deleted records.
+    const existingFsEvals = await getAllFirestoreDocs<any>('evaluations');
+    if (existingFsEvals.length === 0) {
+      console.log('[FirestoreSync] Initializing baseline evaluations to empty Cloud Firestore...');
+      const localEvals = db.prepare('SELECT * FROM evaluations').all() as any[];
       let evSynced = 0;
       for (const le of localEvals) {
-        const isProtectedEval = PROTECTED_CORE_IDS.has(le.student_id);
-        if (!fsEvalMap.has(le.id) && (isProtectedEval || !tombstoneSet.has(`evaluations_${le.id}`))) {
+        if (!tombstoneSet.has(`evaluations_${le.id}`) && !tombstoneSet.has(le.id)) {
           await setFirestoreDoc('evaluations', le.id, le);
           evSynced++;
         }
       }
       if (evSynced > 0) {
-        console.log(`[FirestoreSync] Synced ${evSynced} local evaluation(s) to Cloud Firestore.`);
+        console.log(`[FirestoreSync] Seeded ${evSynced} baseline evaluation(s) to empty Cloud Firestore.`);
       }
+    } else {
+      console.log('[FirestoreSync] Authoritative evaluations exist in Cloud Firestore; skipping baseline evaluation re-seeding to prevent reintroducing stale or deleted records.');
     }
   } catch (err) {
     console.warn('[FirestoreSync] Baseline seeding warning:', err);

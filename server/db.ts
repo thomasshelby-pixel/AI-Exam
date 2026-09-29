@@ -96,6 +96,18 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       try { fs.unlinkSync(DB_FILE); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
+      try { fs.unlinkSync(`${DB_FILE}-journal`); } catch {}
+
+      // Retain at most 2 corrupt backups to prevent disk exhaustion
+      try {
+        const corruptFiles = fs.readdirSync(DATA_DIR)
+          .filter((f) => f.startsWith('ca_exam_checker.corrupt.') && f.endsWith('.db'))
+          .sort()
+          .reverse();
+        for (let i = 2; i < corruptFiles.length; i++) {
+          try { fs.unlinkSync(path.join(DATA_DIR, corruptFiles[i])); } catch {}
+        }
+      } catch {}
     } catch (bkErr) {
       console.error('[DB Integrity] Failed during backup/unlink:', bkErr);
     }
@@ -584,6 +596,30 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_deletion_requests_user ON account_deletion_requests(user_id, status);
 
+    CREATE TABLE IF NOT EXISTS persistent_file_blobs (
+      file_id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      owner_user_id TEXT,
+      evaluation_id TEXT,
+      data BLOB NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_persistent_file_eval ON persistent_file_blobs(evaluation_id);
+    CREATE INDEX IF NOT EXISTS idx_persistent_file_owner ON persistent_file_blobs(owner_user_id);
+
+    CREATE TABLE IF NOT EXISTS student_disclaimers (
+      student_id TEXT PRIMARY KEY,
+      disclaimer_version TEXT NOT NULL,
+      acknowledged_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      ip_address TEXT,
+      user_agent TEXT,
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS reviews (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -897,6 +933,16 @@ function runMigrations() {
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
   addColumnIfNotExists('evaluation_materials', 'institute_id', "TEXT");
+
+  // Evaluations idempotency and content hash columns
+  addColumnIfNotExists('evaluations', 'content_hash', "TEXT");
+  addColumnIfNotExists('evaluations', 'idempotency_key', "TEXT");
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_evaluations_content_hash ON evaluations(student_id, content_hash);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_idempotency ON evaluations(student_id, idempotency_key);
+    `);
+  } catch {}
 
   // Role-Based MFA columns on users
   addColumnIfNotExists('users', 'mfa_enabled', "INTEGER NOT NULL DEFAULT 0");
@@ -3408,6 +3454,10 @@ export function seedSampleReviews() {
     ];
 
     for (const r of sampleReviews) {
+      // Ensure user exists before inserting review to satisfy foreign key constraint
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(r.user_id);
+      if (!userExists) continue;
+
       db.prepare(`
         INSERT OR IGNORE INTO reviews (
           id, user_id, student_name, student_email, display_name, ca_level,

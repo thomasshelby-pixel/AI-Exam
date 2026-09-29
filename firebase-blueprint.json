@@ -308,6 +308,19 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "evaluation_id", "version_number", "version_tag", "status", "total_marks", "maximum_marks"]
+    },
+    "StudentDisclaimer": {
+      "title": "StudentDisclaimer",
+      "description": "Student mandatory academic diagnostic assessment disclaimer acknowledgments.",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "disclaimer_version": { "type": "string" },
+        "acknowledged_at": { "type": "string", "format": "date-time" },
+        "ip_address": { "type": "string" },
+        "user_agent": { "type": "string" }
+      },
+      "required": ["student_id", "disclaimer_version"]
     }
   },
   "firestore": {
@@ -318,6 +331,14 @@
     "/student_profiles/{userId}": {
       "schema": { "$ref": "#/entities/StudentProfile" },
       "description": "Student profile metadata and personal evaluation credits."
+    },
+    "/student_disclaimers/{studentId}": {
+      "schema": { "$ref": "#/entities/StudentDisclaimer" },
+      "description": "Mandatory student disclaimer acceptance records."
+    },
+    "/student_disclaimer_acknowledgements/{ackId}": {
+      "schema": { "$ref": "#/entities/StudentDisclaimer" },
+      "description": "Mandatory student disclaimer acceptance versioned records."
     },
     "/institutes/{instituteId}": {
       "schema": { "$ref": "#/entities/Institute" },

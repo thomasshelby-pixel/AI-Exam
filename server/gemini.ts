@@ -772,6 +772,63 @@ Zero negative marking applies for this paper.`;
    - Core Consistency: Anchored strictly to the verified official suggested answers and marking scheme.`;
 
   const evaluationPrompt = `
+MANDATORY EVALUATOR INSTRUCTION:
+"You are an examiner-style evaluator, not a binary answer matcher.
+
+Evaluate the student's answer criterion-by-criterion against the supplied
+Question Paper, Suggested Answer and Marking Scheme.
+
+Do not award zero merely because one component of the answer is incorrect.
+
+Evaluate independently scorable components such as principle, provision,
+application, calculation, working and conclusion whenever the supplied
+marking scheme allocates marks to them.
+
+Where a component is independently correct, award the corresponding credit
+permitted by the marking scheme.
+
+Do not invent marks, criteria, provisions, references, calculations, facts or
+legal reasoning.
+
+Do not infer a maximum mark from page layout, UI, previous questions or
+defaults.
+
+The maximum marks must come from the supplied question/marking structure.
+
+Do not deduct twice for the same underlying mistake.
+
+If reasoning is wrong but the conclusion is independently correct, evaluate
+the two aspects separately.
+
+If reasoning is correct but the final conclusion/calculation is wrong,
+evaluate the correct work separately from the incorrect result.
+
+Minor wording, spelling or presentation differences must not automatically
+destroy substantive credit when the intended meaning is clearly correct.
+
+However, do not infer correctness merely from keyword overlap.
+
+When the evidence is insufficient or genuinely ambiguous, do not guess.
+
+Use the configured conservative/review behaviour.
+
+Before finalizing the score, perform a verification pass:
+
+1. Question identity
+2. Maximum marks
+3. Criterion allocation
+4. Student evidence
+5. Awarded marks
+6. Deductions
+7. Double-deduction check
+8. Total score
+9. Source consistency
+10. Partial-credit consistency
+
+Never exceed the prescribed maximum marks.
+Never produce an invalid negative score.
+Never silently fabricate certainty."
+
 You are an expert Senior CA Examination Evaluator conducting comprehensive step-wise evaluation of a student's answer sheet.
 
 EVALUATION PARAMETERS:
@@ -1145,8 +1202,6 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             questions: activeQuestions,
             structuredMarkingEvidence: activeQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
             scoreCalculationAudit,
-            evaluationStandardDisclaimer:
-              'This evaluation is an AI-powered diagnostic benchmark based on verified reference materials and marking guidelines. CA Exam Checker AI is an independent academic assessment platform and is not affiliated with, endorsed by, or representing the Institute of Chartered Accountants of India (ICAI).',
             isMcqPaper: false,
             modelUsed: 'authoritative-ensemble-v4',
             modelDisplayName: 'CA Evaluator Engine v4 (Structure-Enforced)',
@@ -1683,8 +1738,6 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     scoreCalculationAudit,
     modeBreakdown: multiMode.modeBreakdown,
     checkingMode: params.checkingMode,
-    evaluationStandardDisclaimer:
-      'This evaluation is an AI-powered diagnostic benchmark based on verified reference materials and marking guidelines. CA Exam Checker AI is an independent academic assessment platform and is not affiliated with, endorsed by, or representing the Institute of Chartered Accountants of India (ICAI).',
     isMcqPaper: isMcqOnly,
     mtpSeries: params.mtpSeries,
     mcqScoringRuleApplied: {
@@ -1741,7 +1794,6 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
   hardenedResult.latencyMs = evaluationResult.latencyMs;
   hardenedResult.fallbackOccurred = evaluationResult.fallbackOccurred;
   hardenedResult.fallbackReason = evaluationResult.fallbackReason;
-  hardenedResult.evaluationStandardDisclaimer = evaluationResult.evaluationStandardDisclaimer;
   hardenedResult.isMcqPaper = evaluationResult.isMcqPaper;
   hardenedResult.mtpSeries = evaluationResult.mtpSeries;
   hardenedResult.mcqScoringRuleApplied = evaluationResult.mcqScoringRuleApplied;

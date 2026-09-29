@@ -188,6 +188,8 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
     });
   };
 
+  const isFormAttemptRequired = isAttemptRequiredSource(formData.materialType);
+
   useEffect(() => {
     loadMaterials();
   }, [filterCourse, filterSubject, filterType, filterStatus, page]);
@@ -517,6 +519,14 @@ export const McqMaterialLibrary: React.FC<McqMaterialLibraryProps> = ({ onSelect
           <Plus className="w-4 h-4" />
           <span>Upload Material (PDF / TXT)</span>
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.txt,application/pdf,text/plain"
+          onChange={handleFileChange}
+          className="hidden"
+          aria-hidden="true"
+        />
       </div>
 
       {actionSuccess && (

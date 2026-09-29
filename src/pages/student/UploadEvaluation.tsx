@@ -29,7 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { ExamSelector } from '../../components/common/ExamSelector.js';
-import { EvaluationDisclaimerModal } from '../../components/student/EvaluationDisclaimerModal.js';
+import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
 
 interface UploadEvaluationProps {
   onEvaluationComplete: (evaluationId: string, result: EvaluationResult) => void;
@@ -1669,9 +1669,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       )}
 
       {/* Mandatory Student Evaluation Disclaimer Modal */}
-      <EvaluationDisclaimerModal
+      <DisclaimerModal
         isOpen={showDisclaimerModal}
-        onAcknowledged={handleDisclaimerAcknowledged}
+        onAcknowledge={handleDisclaimerAcknowledged}
       />
     </div>
   );

@@ -29,6 +29,17 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Student Disclaimers & Mandatory Acknowledgments
+    match /student_disclaimers/{studentId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /student_disclaimer_acknowledgements/{ackId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Institutes & Batches
     match /institutes/{instituteId} {
       allow read: if true;
