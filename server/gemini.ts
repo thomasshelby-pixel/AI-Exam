@@ -27,6 +27,7 @@ import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageServi
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
+import { deduplicateQuestionList, toCanonicalQuestionId } from './services/canonicalQuestionService.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -1051,18 +1052,32 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             }
           );
 
-          // 2. Evaluate descriptive sub-questions using targeted chunks
-          const attemptedDescriptive = coverageMap.attemptedQuestions.filter((a) => !a.isMcq);
+          // 2. Evaluate descriptive sub-questions using targeted chunks with strict canonical deduplication
+          const rawAttemptedDescriptive = coverageMap.attemptedQuestions.filter((a) => !a.isMcq);
+          const attemptedDescriptive = deduplicateQuestionList(rawAttemptedDescriptive, paperStructure.subQuestions);
           const descriptiveQuestions: QuestionEvaluation[] = [];
+          const evaluatedCanonicalIds = new Set<string>();
           const concurrency = 3;
 
           for (let i = 0; i < attemptedDescriptive.length; i += concurrency) {
             const batch = attemptedDescriptive.slice(i, i + concurrency);
             const batchResults = await Promise.all(
               batch.map(async (mapping) => {
+                const canonId = toCanonicalQuestionId(mapping.questionNumber, mapping.subQuestionNumber);
+                if (evaluatedCanonicalIds.has(canonId)) {
+                  return null;
+                }
+                evaluatedCanonicalIds.add(canonId);
+
                 let subQ = paperStructure.subQuestions.find(
-                  (s) => s.fullQuestionCode.toLowerCase() === mapping.fullQuestionCode.toLowerCase()
+                  (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber) === canonId
                 );
+
+                if (!subQ) {
+                  subQ = paperStructure.subQuestions.find(
+                    (s) => s.fullQuestionCode.toLowerCase() === mapping.fullQuestionCode.toLowerCase()
+                  );
+                }
 
                 if (!subQ) {
                   subQ = paperStructure.subQuestions.find(
@@ -1073,7 +1088,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 if (!subQ) {
-                  const fallbackMax = mapping.fullQuestionCode.includes('5(a)') ? 10 : mapping.fullQuestionCode.includes('5(b)') ? 5 : 5;
+                  const fallbackMax = mapping.fullQuestionCode.includes('5(a)') ? 10 : mapping.fullQuestionCode.includes('5(b)') ? 5 : 4;
                   subQ = {
                     section: 'A',
                     questionNumber: mapping.questionNumber,
@@ -1099,10 +1114,15 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 });
               })
             );
-            descriptiveQuestions.push(...batchResults);
+            for (const r of batchResults) {
+              if (r) descriptiveQuestions.push(r);
+            }
           }
 
-          const allQuestions = [...mcqQuestions, ...descriptiveQuestions];
+          const allQuestions = deduplicateQuestionList(
+            [...mcqQuestions, ...descriptiveQuestions],
+            paperStructure.subQuestions
+          );
 
           // Ensure all questions carry precise source grounding references
           const questionSourceId = params.sourceFormat === 'COMBINED' ? params.combinedSourceMaterialId : params.questionMaterialId;
@@ -1651,12 +1671,15 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     };
 
     questions.push(qItem);
-    calculatedTotal += awarded;
   }
 
-  // Overall paper total
+  // Canonical Deduplication in single model fallback
+  const dedupedQuestions = deduplicateQuestionList(questions);
+
+  // Overall paper total calculated strictly from unique canonical questions
+  calculatedTotal = dedupedQuestions.reduce((sum, q) => sum + (q.marksAwarded || 0), 0);
   calculatedTotal = Math.max(0, Math.round(calculatedTotal * 4) / 4);
-  const maxTotal = Number(parsed.maximumMarks) || (questions.reduce((sum, q) => sum + q.maximumMarks, 0) || 100);
+  const maxTotal = Number(parsed.maximumMarks) || (dedupedQuestions.reduce((sum, q) => sum + q.maximumMarks, 0) || 100);
   calculatedTotal = Math.min(calculatedTotal, maxTotal);
   const percentage = Math.round((calculatedTotal / maxTotal) * 1000) / 10;
 
@@ -1673,7 +1696,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 
   // Apply authoritative multiMode philosophy in fallback path
   const multiMode = applyMultiModeMarkingPhilosophy(
-    questions,
+    dedupedQuestions,
     (params.checkingMode as any) || 'standard'
   );
   const activeQuestions = multiMode.activeQuestions;

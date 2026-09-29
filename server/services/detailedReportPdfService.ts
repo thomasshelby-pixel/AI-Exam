@@ -1,5 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopyService.js';
+import { deduplicateQuestionList } from './canonicalQuestionService.js';
 
 function wrapText(text: string, maxChars: number = 80): string[] {
   if (!text) return [];

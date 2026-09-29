@@ -8,6 +8,11 @@ import {
 } from '../../src/types/index.js';
 import { applyDeterministicMcqScoring } from './deterministicMcqScorer.js';
 import { calculateDynamicAiConfidence } from './dynamicConfidenceEngine.js';
+import {
+  deduplicateQuestionList,
+  validateQuestionDeduplication,
+  toCanonicalQuestionId,
+} from './canonicalQuestionService.js';
 
 export type ZeroScoreReason =
   | 'NO_ANSWER'
@@ -845,12 +850,16 @@ export function processEvaluationIntegrity(
 
   const presentationAllowed = isPresentationMarkingAllowed(markingSchemeText, questionPaperText);
   const rawQuestions: any[] = Array.isArray(rawResult.questions) ? rawResult.questions : [];
+  const authoritativeSubQs = options.paperStructure?.subQuestions;
+
+  // Pre-deduplicate raw questions to eliminate duplicate input occurrences and parent-child container overlaps
+  const preDedupedRaw = deduplicateQuestionList(rawQuestions, authoritativeSubQs);
 
   let rejectedPresentationDeductionsCount = 0;
   const processedQuestions: QuestionEvaluation[] = [];
 
-  for (let idx = 0; idx < rawQuestions.length; idx++) {
-    const rawQ = rawQuestions[idx];
+  for (let idx = 0; idx < preDedupedRaw.length; idx++) {
+    const rawQ = preDedupedRaw[idx];
     const qNum = String(rawQ.questionNumber || idx + 1);
     const subQ = rawQ.subQuestion ? String(rawQ.subQuestion) : undefined;
     const maxMarks = Math.max(0.5, Number(rawQ.maximumMarks) || 5);
@@ -1006,9 +1015,18 @@ export function processEvaluationIntegrity(
     subjectKey: options.subjectKey || rawResult.subjectKey,
   });
 
+  // Step D.3: Final Deduplication & Canonical Exactly-Once Enforcement
+  const finalQuestions = deduplicateQuestionList(scoredQuestions, authoritativeSubQs);
+
+  // Structural Validation: Every canonical question ID MUST have occurrence count === 1
+  const deduplicationValidation = validateQuestionDeduplication(finalQuestions);
+  if (!deduplicationValidation.isValid) {
+    throw new Error(`DEDUPLICATION_VALIDATION_ERROR: ${deduplicationValidation.details}`);
+  }
+
   // Step E: Paper total calculation and authoritative denominator balance
-  const totalAwarded = scoredQuestions.reduce((acc, q) => acc + q.marksAwarded, 0);
-  const evaluatedQuestionsMax = scoredQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
+  const totalAwarded = finalQuestions.reduce((acc, q) => acc + q.marksAwarded, 0);
+  const evaluatedQuestionsMax = finalQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
   const roundedAwarded = Math.round(totalAwarded * 4) / 4;
 
   // Determine official paper maximum marks (Default 100 marks for CA exams unless specifically configured)
@@ -1045,12 +1063,12 @@ export function processEvaluationIntegrity(
   const coverageMap = options.coverageMap || rawResult.coverageMap;
 
   const dynamicConfidence = calculateDynamicAiConfidence({
-    questions: scoredQuestions,
+    questions: finalQuestions,
     totalPages: rawResult.totalPages || (coverageMap ? coverageMap.totalPages : 1),
     coveredPages: coverageMap ? coverageMap.coveredPages : [],
     referenceCompletenessRatio: 1.0,
-    hasHandwritingIssues: scoredQuestions.some((q) => q.status === 'unclear'),
-    hasUnresolvedConflicts: scoredQuestions.some((q) => q.modeDifferenceCategory === 'REVIEW_REQUIRED'),
+    hasHandwritingIssues: finalQuestions.some((q) => q.status === 'unclear'),
+    hasUnresolvedConflicts: finalQuestions.some((q) => q.modeDifferenceCategory === 'REVIEW_REQUIRED'),
     checkedCopyConsistent: true,
     totalPaperMaxMarks: officialPaperMaxMarks,
   });
@@ -1094,9 +1112,9 @@ export function processEvaluationIntegrity(
       'Show distinct working notes for all key steps.',
       'Always state the statutory or standard principle before drawing conclusions.',
     ],
-    questions: scoredQuestions,
-    structuredMarkingEvidence: scoredQuestions.map((q) => q.structuredEvidence!),
-    scoreCalculationAudit: scoredQuestions.map((q) => ({
+    questions: finalQuestions,
+    structuredMarkingEvidence: finalQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
+    scoreCalculationAudit: finalQuestions.map((q) => ({
       questionNumber: q.questionNumber,
       subQuestion: q.subQuestion,
       maxMarks: q.maximumMarks,

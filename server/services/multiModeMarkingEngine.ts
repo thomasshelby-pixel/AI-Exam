@@ -1,5 +1,6 @@
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { AuthoritativePaperStructure } from './paperStructureService.js';
+import { deduplicateQuestionList } from './canonicalQuestionService.js';
 
 export interface ModeScoreSummary {
   checkingMode: 'standard' | 'strict' | 'lenient';
@@ -56,11 +57,15 @@ export function applyMultiModeMarkingPhilosophy(
       ? paperStructure
       : paperStructure?.totalPaperMaxMarks || 100;
 
-  // Verify attemptedMaxMarks across the immutable question set
-  const attemptedMaxMarks = baseQuestions.reduce((sum, q) => sum + (Number(q.maximumMarks) || 0), 0);
+  const authoritativeSubQuestions = typeof paperStructure === 'object' ? paperStructure?.subQuestions : undefined;
+  // Enforce Canonical Exactly-Once Rule & Parent/Child Deduplication
+  const dedupedQuestions = deduplicateQuestionList(baseQuestions, authoritativeSubQuestions);
+
+  // Verify attemptedMaxMarks across the immutable, deduplicated question set
+  const attemptedMaxMarks = dedupedQuestions.reduce((sum, q) => sum + (Number(q.maximumMarks) || 0), 0);
 
   // 1. Build Standard Questions (Balanced ICAI step-marking)
-  const standardQuestions: QuestionEvaluation[] = baseQuestions.map((q) => {
+  const standardQuestions: QuestionEvaluation[] = dedupedQuestions.map((q) => {
     const qMax = Number(q.maximumMarks) || 0;
     const comps = (q.markingComponents || []).map((c) => ({
       ...c,

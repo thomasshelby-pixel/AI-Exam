@@ -2,6 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { getGemini, generateContentWithResilience } from '../gemini.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
+import { toCanonicalQuestionId } from './canonicalQuestionService.js';
 
 // In-memory cache: 1 Answer Sheet = 1 Authoritative Coverage Map
 const coverageMapCache = new Map<string, AnswerCoverageMap>();
@@ -119,7 +120,10 @@ export async function buildAnswerSheetCoverageMap(
 
   for (const pageRec of pageRecords) {
     for (const det of pageRec.detectedQuestions) {
-      const code = det.fullQuestionCode;
+      const code = det.isMcq
+        ? `MCQ${det.questionNumber}`
+        : toCanonicalQuestionId(det.questionNumber, det.subQuestionNumber);
+
       if (!mappingMap.has(code)) {
         mappingMap.set(code, {
           fullQuestionCode: code,
@@ -143,6 +147,38 @@ export async function buildAnswerSheetCoverageMap(
           existing.studentSelectedOption = det.studentSelectedOption;
         }
       }
+    }
+  }
+
+  // Parent / Child Rule: If child sub-questions are attempted or defined (e.g. Q3(b), Q4(a), Q5(a), Q6(b)),
+  // prune any parent container question (e.g. Q3, Q4, Q5, Q6) so it is NEVER evaluated as a duplicate question.
+  const questionNumbersWithChildren = new Set<string>();
+  for (const mapping of mappingMap.values()) {
+    if (!mapping.isMcq && mapping.subQuestionNumber) {
+      questionNumbersWithChildren.add(mapping.questionNumber);
+    }
+  }
+  for (const sq of paperStructure.subQuestions) {
+    if (!sq.isMcq && sq.subQuestionNumber) {
+      questionNumbersWithChildren.add(sq.questionNumber);
+    }
+  }
+
+  for (const [key, mapping] of Array.from(mappingMap.entries())) {
+    if (!mapping.isMcq && !mapping.subQuestionNumber && questionNumbersWithChildren.has(mapping.questionNumber)) {
+      // Find the first child sub-question to transfer any pages if necessary
+      const child = Array.from(mappingMap.values()).find(
+        (m) => !m.isMcq && m.questionNumber === mapping.questionNumber && m.subQuestionNumber
+      );
+      if (child) {
+        for (const p of mapping.pages) {
+          if (!child.pages.includes(p)) {
+            child.pages.push(p);
+          }
+        }
+        child.pages.sort((a, b) => a - b);
+      }
+      mappingMap.delete(key);
     }
   }
 

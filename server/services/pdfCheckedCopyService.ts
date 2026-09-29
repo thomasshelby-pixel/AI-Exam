@@ -1,5 +1,6 @@
 import { generateDetailedReportPdf as generateDetailedReportPdfImpl } from './detailedReportPdfService.js';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { deduplicateQuestionList } from './canonicalQuestionService.js';
 
 export interface EvaluationData {
   id: string;
@@ -148,6 +149,7 @@ export function buildStructuredAnnotations(
   totalPages: number
 ): StructuredAnnotationsResult {
   const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
+  const questions = deduplicateQuestionList(rawQuestions);
   const safeTotalPages = Math.max(1, totalPages);
   const totalAwarded = evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0;
   const maxMarks = evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100;
@@ -159,7 +161,7 @@ export function buildStructuredAnnotations(
     pagesMap.set(p, []);
   }
 
-  rawQuestions.forEach((q, idx) => {
+  questions.forEach((q, idx) => {
     let targetPage = Number(q.pageNumber);
     if (!targetPage || targetPage < 1 || targetPage > safeTotalPages) {
       targetPage = (idx % safeTotalPages) + 1;
@@ -700,13 +702,14 @@ export async function generateOriginalSubmissionPdf(
 
   tY -= 20;
 
-  const questions = resultJson?.questionWiseBreakdown || resultJson?.questions || [
+  const rawCoverQuestions = resultJson?.questionWiseBreakdown || resultJson?.questions || [
     { questionNumber: '1', maxMarks: 20 },
     { questionNumber: '2', maxMarks: 15 },
     { questionNumber: '3', maxMarks: 15 },
     { questionNumber: '4', maxMarks: 15 },
     { questionNumber: '5', maxMarks: 15 },
   ];
+  const questions = deduplicateQuestionList(rawCoverQuestions);
 
   questions.forEach((q: any, idx: number) => {
     const isEven = idx % 2 === 0;

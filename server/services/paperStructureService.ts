@@ -272,13 +272,38 @@ function buildTaxationPaperStructure(options: {
 
   // If parsedExplicit contains sub-sub questions (like Q6(a)(1) or Q6(a)(2)), remove parent placeholder like Q6(a)
   const hasSubSub = (parentCode: string) => parsedExplicit.some((pe) => pe.fullQuestionCode.startsWith(parentCode + '('));
-  const finalSubQuestions = subQuestions.filter((sq) => !hasSubSub(sq.fullQuestionCode));
+  let finalSubQuestions = subQuestions.filter((sq) => !hasSubSub(sq.fullQuestionCode));
+
+  // Determine question numbers that already have sub-questions (e.g. '2', '3', '4', '5', '6', '7', '8')
+  const qNumsWithChildren = new Set<string>();
+  for (const sq of finalSubQuestions) {
+    if (!sq.isMcq && sq.subQuestionNumber) {
+      qNumsWithChildren.add(sq.questionNumber);
+    }
+  }
 
   for (const pe of parsedExplicit) {
-    if (!finalSubQuestions.some((s) => s.fullQuestionCode === pe.fullQuestionCode)) {
+    // If pe has subQuestionNumber, record its parent
+    if (!pe.isMcq && pe.subQuestionNumber) {
+      qNumsWithChildren.add(pe.questionNumber);
+    }
+    // NEVER push a parent question (e.g. Q3, Q4, Q5) into finalSubQuestions if child sub-questions exist
+    if (!pe.isMcq && !pe.subQuestionNumber && qNumsWithChildren.has(pe.questionNumber)) {
+      continue;
+    }
+    if (!finalSubQuestions.some((s) => s.fullQuestionCode.toLowerCase() === pe.fullQuestionCode.toLowerCase())) {
       finalSubQuestions.push(pe);
     }
   }
+
+  // Filter out any parent questions if child sub-questions exist
+  finalSubQuestions = finalSubQuestions.filter((sq) => {
+    if (sq.isMcq) return true;
+    if (!sq.subQuestionNumber && qNumsWithChildren.has(sq.questionNumber)) {
+      return false; // Parent container must not be in evaluable leaf sub-questions
+    }
+    return true;
+  });
 
   // Group into Questions
   const questionsMap = new Map<string, PaperStructureQuestion>();
@@ -405,6 +430,21 @@ function buildGenericPaperStructure(options: {
       });
     }
   }
+
+  // Filter out parent questions from subQuestions if children exist
+  const genericChildren = new Set<string>();
+  for (const sq of subQuestions) {
+    if (!sq.isMcq && sq.subQuestionNumber) {
+      genericChildren.add(sq.questionNumber);
+    }
+  }
+  subQuestions = subQuestions.filter((sq) => {
+    if (sq.isMcq) return true;
+    if (!sq.subQuestionNumber && genericChildren.has(sq.questionNumber)) {
+      return false; // Exclude parent from leaf evaluable sub-questions
+    }
+    return true;
+  });
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
   for (const sq of subQuestions) {

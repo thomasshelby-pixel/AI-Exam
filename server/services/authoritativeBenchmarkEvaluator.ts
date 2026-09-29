@@ -1,6 +1,8 @@
 import type { EvaluateAnswerSheetParams } from '../gemini.js';
 import { ModelExecutionResult } from '../models/modelRegistry.js';
 import { MarkingComponent, MarkingComponentType } from '../../src/types/index.js';
+import { getAuthoritativePaperStructure } from './paperStructureService.js';
+import { deduplicateQuestionList } from './canonicalQuestionService.js';
 
 interface RawBenchmarkQuestion {
   questionNumber: string;
@@ -121,19 +123,37 @@ export function generateAuthoritativeBenchmarkEvaluation(
       }
     }
 
-    // Descriptive Questions (70 Marks Total)
-    const descriptiveSpecs = [
-      { qNum: 'Q1(a)', max: 10, title: isAccountsOrCost ? 'Comprehensive Accounting / Ledger Schedule' : isTaxation ? 'Total Income & Tax Liability Computation' : 'Corporate Governance / Statutory Provision Scenario', pages: [2, 3] },
-      { qNum: 'Q1(b)', max: 4, title: isAccountsOrCost ? 'Accounting Standard Disclosure & Note' : isTaxation ? 'TDS / TCS Compliance Treatment' : 'Director Disqualification & Legal Validity', pages: [4] },
-      { qNum: 'Q2(a)', max: 7, title: isAccountsOrCost ? 'Journal Entries & Adjustment Working' : isTaxation ? 'Capital Gains Section 54 Exemption Analysis' : 'Audit Evidence / Substantive Procedure (SA 500)', pages: [5, 6] },
-      { qNum: 'Q2(b)', max: 7, title: isAccountsOrCost ? 'Ratio / Cost Sheet Schedule Preparation' : isTaxation ? 'Set-off & Carry Forward of Losses' : 'Auditor Reporting Duty under Section 143', pages: [7] },
-      { qNum: 'Q3(a)', max: 7, title: isAccountsOrCost ? 'Cash Flow / Funds Flow Operating Activity' : isTaxation ? 'Profits & Gains of Business (PGBP) Deductions' : 'Internal Financial Control Evaluation', pages: [8, 9] },
-      { qNum: 'Q3(b)', max: 7, title: isAccountsOrCost ? 'Branch / Departmental Accounting Allocation' : isTaxation ? 'Residential Status & Global Income Scope' : 'Related Party Transactions (Section 188)', pages: [10] },
-      { qNum: 'Q4(a)', max: 7, title: isAccountsOrCost ? 'Amalgamation / Absorption Purchase Consideration' : isTaxation ? 'Income from Other Sources (Section 56(2)(x))' : 'Audit Planning & Materiality (SA 320)', pages: [11, 12] },
-      { qNum: 'Q4(b)', max: 7, title: isAccountsOrCost ? 'Valuation of Inventories (AS 2 / Ind AS 2)' : isTaxation ? 'Clubbing of Income Provisions (Sec 60-64)' : 'CARO 2020 Reporting Clauses', pages: [13] },
-      { qNum: 'Q5(a)', max: 7, title: isAccountsOrCost ? 'Financial Statement Preparation (Schedule III)' : isTaxation ? 'Advance Tax & Interest Computation (234A/B/C)' : 'Code of Ethics & Professional Misconduct', pages: [14, 15] },
-      { qNum: 'Q5(b)', max: 7, title: isAccountsOrCost ? 'Revenue Recognition Criteria (AS 9)' : isTaxation ? 'Filing of Returns & Updated Return (Sec 139(8A))' : 'Compromises, Arrangements & Fast Track Mergers', pages: [16] },
-    ];
+    // Descriptive Questions derived dynamically from authoritative Paper Structure
+    const paperStruct = getAuthoritativePaperStructure({
+      level: params.level,
+      paper: params.paper || params.subjectName,
+      subjectName: params.subjectName,
+      questionPaperText: params.referenceQuestionPaperText,
+      markingSchemeText: params.markingSchemeText,
+      suggestedAnswersText: params.referenceSuggestedAnswersText,
+      officialPaperMaxMarks: paperMaxMarks,
+    });
+
+    const authDescriptive = paperStruct.subQuestions.filter((s) => !s.isMcq);
+    const descriptiveSpecs = authDescriptive.length > 0
+      ? authDescriptive.map((sq, idx) => ({
+          qNum: sq.fullQuestionCode,
+          max: sq.maximumMarks,
+          title: sq.topic || `Descriptive Question ${sq.fullQuestionCode}`,
+          pages: [Math.min(16, 2 + Math.floor(idx * 1.4))],
+        }))
+      : [
+          { qNum: 'Q1(a)', max: 10, title: isAccountsOrCost ? 'Comprehensive Accounting / Ledger Schedule' : isTaxation ? 'Total Income & Tax Liability Computation' : 'Corporate Governance / Statutory Provision Scenario', pages: [2, 3] },
+          { qNum: 'Q1(b)', max: 4, title: isAccountsOrCost ? 'Accounting Standard Disclosure & Note' : isTaxation ? 'TDS / TCS Compliance Treatment' : 'Director Disqualification & Legal Validity', pages: [4] },
+          { qNum: 'Q2(a)', max: 7, title: isAccountsOrCost ? 'Journal Entries & Adjustment Working' : isTaxation ? 'Capital Gains Section 54 Exemption Analysis' : 'Audit Evidence / Substantive Procedure (SA 500)', pages: [5, 6] },
+          { qNum: 'Q2(b)', max: 7, title: isAccountsOrCost ? 'Ratio / Cost Sheet Schedule Preparation' : isTaxation ? 'Set-off & Carry Forward of Losses' : 'Auditor Reporting Duty under Section 143', pages: [7] },
+          { qNum: 'Q3(a)', max: 6, title: isAccountsOrCost ? 'Cash Flow / Funds Flow Operating Activity' : isTaxation ? 'Taxable Salary Computation' : 'Internal Financial Control Evaluation', pages: [8, 9] },
+          { qNum: 'Q3(b)', max: 4, title: isAccountsOrCost ? 'Branch / Departmental Accounting Allocation' : isTaxation ? 'Return Filing Requirements u/s 139(1)' : 'Related Party Transactions (Section 188)', pages: [10] },
+          { qNum: 'Q4(a)', max: 6, title: isAccountsOrCost ? 'Amalgamation / Absorption Purchase Consideration' : isTaxation ? 'Gross Total Income & Losses u/s 115BAC' : 'Audit Planning & Materiality (SA 320)', pages: [11, 12] },
+          { qNum: 'Q4(b)', max: 4, title: isAccountsOrCost ? 'Valuation of Inventories (AS 2 / Ind AS 2)' : isTaxation ? 'Updated Return u/s 139(8A) / TDS & TCS' : 'CARO 2020 Reporting Clauses', pages: [13] },
+          { qNum: 'Q5(a)', max: 10, title: isAccountsOrCost ? 'Financial Statement Preparation (Schedule III)' : isTaxation ? 'Net GST Payable in Cash (M/s Rudra)' : 'Code of Ethics & Professional Misconduct', pages: [14, 15] },
+          { qNum: 'Q5(b)', max: 5, title: isAccountsOrCost ? 'Revenue Recognition Criteria (AS 9)' : isTaxation ? 'Taxability of Indian Railways Services' : 'Compromises, Arrangements & Fast Track Mergers', pages: [16] },
+        ];
 
     for (const spec of descriptiveSpecs) {
       const qTargetAwarded = Math.round(spec.max * baseStandardRatio * 2) / 2;
