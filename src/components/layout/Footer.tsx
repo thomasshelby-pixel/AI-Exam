@@ -51,7 +51,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               </li>
               <li>
                 <button onClick={() => onNavigate('pricing')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
-                  Credit Pricing (₹10/Paper)
+                  Plans & Pricing (Combos & Custom)
                 </button>
               </li>
               <li>

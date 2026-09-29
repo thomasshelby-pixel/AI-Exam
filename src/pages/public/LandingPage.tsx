@@ -135,7 +135,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Paper-Specific ICAI MCQ Scoring Rules
           </span>
           <span className="flex items-center gap-1.5 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Flat ₹10 / Paper Thereafter
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Transparent Combos & Custom Pricing Thereafter
           </span>
         </div>
       </section>

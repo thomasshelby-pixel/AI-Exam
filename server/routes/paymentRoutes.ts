@@ -15,17 +15,37 @@ const router = Router();
 router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { quantity } = req.body;
+    const { purchaseType, courseLevel } = req.body;
 
-    const creditQuantity = Number(quantity);
-    if (!creditQuantity || creditQuantity < 1) {
-      return res.status(400).json({ error: 'Please specify a valid quantity of credits (minimum 1).' });
+    let orderResult;
+    if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
+      const normalizedLevel = courseLevel === 'FOUNDATION' ? 'FOUNDATION' : 'INTERMEDIATE';
+      orderResult = await createRazorpayOrder({
+        studentId,
+        purchaseType,
+        courseLevel: normalizedLevel,
+      });
+    } else {
+      // Custom evaluation purchase
+      const rawQty = req.body.quantity;
+      if (rawQty === undefined || rawQty === null || rawQty === '') {
+        return res.status(400).json({ error: 'Please specify a valid quantity of evaluations.' });
+      }
+
+      const numQty = Number(rawQty);
+      if (!Number.isInteger(numQty) || numQty < 1) {
+        return res.status(400).json({ error: 'Evaluation quantity must be a positive whole integer (minimum 1).' });
+      }
+      if (numQty > 500) {
+        return res.status(400).json({ error: 'Evaluation quantity exceeds safe application limit of 500 per order.' });
+      }
+
+      orderResult = await createRazorpayOrder({
+        studentId,
+        purchaseType: 'CUSTOM',
+        quantity: numQty,
+      });
     }
-
-    const orderResult = await createRazorpayOrder({
-      studentId,
-      quantity: creditQuantity,
-    });
 
     return res.json({
       success: true,

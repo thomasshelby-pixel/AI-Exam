@@ -276,7 +276,7 @@ const EvaluationReportWrapper: React.FC = () => {
 // Main layout for public and student screens
 const PublicAndStudentLayout: React.FC<{
   children: React.ReactNode;
-  onOpenCreditsModal: () => void;
+  onOpenCreditsModal: (config?: any) => void;
 }> = ({ children, onOpenCreditsModal }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -552,6 +552,12 @@ const AppRoutes: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated, isSessionLocked, lockSession } = useAuth();
   const [isCreditsModalOpen, setIsCreditsModalOpen] = useState<boolean>(false);
+  const [creditsModalConfig, setCreditsModalConfig] = useState<any>(undefined);
+
+  const handleOpenCreditsModal = (config?: any) => {
+    setCreditsModalConfig(config);
+    setIsCreditsModalOpen(true);
+  };
 
   // Global 30-minute Inactivity Session Timeout Handler (Security Compliance)
   useEffect(() => {
@@ -688,10 +694,10 @@ const AppRoutes: React.FC = () => {
         <Route
           path="/pricing"
           element={
-            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+            <PublicAndStudentLayout onOpenCreditsModal={handleOpenCreditsModal}>
               <PricingPage
                 onNavigateRegister={() => navigate('/register')}
-                onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
+                onOpenCreditsModal={handleOpenCreditsModal}
                 isLoggedIn={isAuthenticated}
               />
             </PublicAndStudentLayout>
@@ -1018,8 +1024,15 @@ const AppRoutes: React.FC = () => {
       {/* Global Real Razorpay Checkout Modal */}
       <CreditPurchaseModal
         isOpen={isCreditsModalOpen}
-        onClose={() => setIsCreditsModalOpen(false)}
-        onSuccess={() => setIsCreditsModalOpen(false)}
+        onClose={() => {
+          setIsCreditsModalOpen(false);
+          setCreditsModalConfig(undefined);
+        }}
+        onSuccess={() => {
+          setIsCreditsModalOpen(false);
+          setCreditsModalConfig(undefined);
+        }}
+        initialConfig={creditsModalConfig}
       />
 
       {/* Global Inactivity Quick Resume Modal */}

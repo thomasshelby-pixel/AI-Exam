@@ -19,9 +19,43 @@ export function getRazorpayKeyId(): string {
   return getCleanEnv('RAZORPAY_KEY_ID');
 }
 
+export const CUSTOM_PRICE_PER_EVALUATION_INR = 35; // ₹35 per evaluation
+
+export const COMBO_PLANS = {
+  COMBO_1: {
+    id: 'COMBO_1',
+    name: 'Combo 1',
+    FOUNDATION: {
+      evaluations: 4,
+      priceINR: 119,
+    },
+    INTERMEDIATE: {
+      evaluations: 6,
+      priceINR: 175,
+    },
+  },
+  COMBO_2: {
+    id: 'COMBO_2',
+    name: 'Combo 2',
+    FOUNDATION: {
+      evaluations: 8,
+      priceINR: 219,
+    },
+    INTERMEDIATE: {
+      evaluations: 12,
+      priceINR: 329,
+    },
+  },
+} as const;
+
+export type PurchaseType = 'CUSTOM' | 'COMBO_1' | 'COMBO_2';
+export type CourseLevel = 'FOUNDATION' | 'INTERMEDIATE';
+
 export interface CreateOrderParams {
   studentId: string;
-  quantity: number; // Number of credits
+  purchaseType?: PurchaseType;
+  courseLevel?: CourseLevel;
+  quantity?: number; // Number of credits (for CUSTOM)
   receiptNote?: string;
 }
 
@@ -29,23 +63,49 @@ export interface RazorpayOrderResult {
   orderId: string;
   razorpayOrderId: string;
   amountPaise: number;
+  amountINR: number;
   currency: string;
   keyId: string;
   quantity: number;
+  purchaseType: PurchaseType;
+  courseLevel?: CourseLevel;
+  description: string;
 }
 
 /**
  * Creates a real Razorpay Order via Razorpay API and persists internal order record.
+ * Prices and amounts are calculated and validated strictly SERVER-SIDE.
  */
 export async function createRazorpayOrder(params: CreateOrderParams): Promise<RazorpayOrderResult> {
-  const { studentId, quantity } = params;
+  const { studentId } = params;
+  const purchaseType: PurchaseType = params.purchaseType || 'CUSTOM';
+  let courseLevel: CourseLevel | undefined = undefined;
 
-  if (quantity < 1 || quantity > 1000) {
-    throw new Error('Quantity must be between 1 and 1000 credits.');
+  let finalQuantity = 0;
+  let finalAmountINR = 0;
+  let purposeDescription = '';
+
+  if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
+    courseLevel = params.courseLevel === 'FOUNDATION' ? 'FOUNDATION' : 'INTERMEDIATE';
+    const plan = COMBO_PLANS[purchaseType][courseLevel];
+    finalQuantity = plan.evaluations;
+    finalAmountINR = plan.priceINR;
+    purposeDescription = `CA Exam Checker AI - ${purchaseType === 'COMBO_1' ? 'Combo 1' : 'Combo 2'} (${courseLevel === 'FOUNDATION' ? 'Foundation' : 'Intermediate'} - ${finalQuantity} Evaluations @ ₹${finalAmountINR})`;
+  } else {
+    // Custom evaluation purchase
+    const qty = params.quantity;
+    if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) {
+      throw new Error('Custom evaluation quantity must be a positive integer (minimum 1).');
+    }
+    if (qty > 500) {
+      throw new Error('Quantity exceeds safe application limit of 500 evaluations per order.');
+    }
+    finalQuantity = qty;
+    finalAmountINR = qty * CUSTOM_PRICE_PER_EVALUATION_INR;
+    purposeDescription = `CA Exam Checker AI - Custom Purchase (${finalQuantity} Evaluations @ ₹${CUSTOM_PRICE_PER_EVALUATION_INR} = ₹${finalAmountINR})`;
   }
 
-  // Pricing: 1 credit = ₹10 (1000 paise), 10 credits = ₹100 (10000 paise)
-  const amountPaise = quantity * 10 * 100; // in paise
+  const amountPaise = finalAmountINR * 100; // in paise
   const internalOrderId = `ord_${crypto.randomBytes(8).toString('hex')}`;
 
   let razorpayOrderId = '';
@@ -67,8 +127,11 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
         receipt: internalOrderId,
         notes: {
           studentId,
-          creditsQuantity: String(quantity),
-          purpose: 'CA Exam Checker AI Evaluation Credits',
+          purchaseType,
+          courseLevel: courseLevel || 'N/A',
+          creditsQuantity: String(finalQuantity),
+          amountINR: String(finalAmountINR),
+          purpose: purposeDescription,
         },
       }),
     });
@@ -98,7 +161,6 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
     razorpayOrderId = orderData.id;
   } else {
     // When environment secrets are pending configuration or invalid, generate an official standard order ID format
-    // and instruct the user to configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Settings > Secrets.
     razorpayOrderId = `order_${crypto.randomBytes(10).toString('hex')}`;
   }
 
@@ -106,15 +168,19 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
   db.prepare(`
     INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status)
     VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING')
-  `).run(internalOrderId, studentId, razorpayOrderId, quantity, amountPaise);
+  `).run(internalOrderId, studentId, razorpayOrderId, finalQuantity, amountPaise);
 
   return {
     orderId: internalOrderId,
     razorpayOrderId,
     amountPaise,
+    amountINR: finalAmountINR,
     currency: 'INR',
     keyId,
-    quantity,
+    quantity: finalQuantity,
+    purchaseType,
+    courseLevel,
+    description: purposeDescription,
   };
 }
 
