@@ -1142,8 +1142,8 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       )}
 
       {/* Advisory & Compliance Disclaimer */}
-      <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed print:bg-white print:border-gray-200 print:text-gray-500">
-        <p className="font-semibold text-slate-700 dark:text-slate-300 print:text-gray-700 mb-1">
+      <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed print:hidden">
+        <p className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
           AI-Assisted Evaluation Notice
         </p>
         <p>
