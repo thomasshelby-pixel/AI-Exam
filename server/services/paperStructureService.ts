@@ -207,7 +207,8 @@ function buildTaxationPaperStructure(options: {
     '16': 'Section 34(3) of the CGST Act, 2017',
   };
 
-  const getKey = (qNum: string) => verifiedDefaultKeys[qNum] || parsedKeys.get(qNum)?.officialKey || 'A';
+  // Authoritative rule: Keys parsed directly from the uploaded Suggested Answers ALWAYS take precedence
+  const getKey = (qNum: string) => parsedKeys.get(qNum)?.officialKey || verifiedDefaultKeys[qNum] || 'A';
   const getExplanation = (qNum: string) => parsedKeys.get(qNum)?.explanation || verifiedExplanations[qNum];
   const getProvision = (qNum: string) => parsedKeys.get(qNum)?.provision || verifiedProvisions[qNum];
 

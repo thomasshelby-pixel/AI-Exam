@@ -49,7 +49,8 @@ export interface AuthoritativeSubQuestionReference {
  */
 export function toCanonicalQuestionId(
   questionNumberInput?: string | number | null,
-  subQuestionInput?: string | null
+  subQuestionInput?: string | null,
+  paperStructureSubQuestions?: AuthoritativeSubQuestionReference[]
 ): string {
   const rawQ = String(questionNumberInput || '').trim();
   const rawSub = subQuestionInput ? String(subQuestionInput).trim() : '';
@@ -71,27 +72,65 @@ export function toCanonicalQuestionId(
     return parsedQ.canonicalId;
   }
 
+  let finalCanonId = parsedQ.canonicalId;
+
   // If rawQ already contains a sub-question (e.g. 'Q3(b)', '3(b)', 'Q4(b)', 'Q6(a)(1)'):
   if (parsedQ.subQuestion) {
-    // If rawSub is also provided and differs from parsedQ.subQuestion:
     const cleanRawSub = rawSub.toLowerCase().replace(/[^a-z0-9()]/g, '');
-    if (!cleanRawSub || cleanRawSub === parsedQ.subQuestion || parsedQ.subQuestion.startsWith(cleanRawSub)) {
-      return parsedQ.canonicalId;
+    // If rawSub is empty, matches parsedQ.subQuestion, or is an inner clause/echo of parsedQ.subQuestion:
+    if (
+      !cleanRawSub ||
+      cleanRawSub === parsedQ.subQuestion ||
+      cleanRawSub.startsWith(parsedQ.subQuestion) ||
+      parsedQ.subQuestion.startsWith(cleanRawSub) ||
+      /^(?:[ivxlcdm]+|[0-9]+)$/i.test(cleanRawSub)
+    ) {
+      finalCanonId = parsedQ.canonicalId;
+    } else {
+      // Check if paperStructure explicitly has the nested form
+      const potentialNested = `Q${parsedQ.questionNumber}(${parsedQ.subQuestion}(${cleanRawSub}))`;
+      if (
+        Array.isArray(paperStructureSubQuestions) &&
+        paperStructureSubQuestions.some((s) => s.fullQuestionCode === potentialNested)
+      ) {
+        finalCanonId = potentialNested;
+      } else {
+        finalCanonId = parsedQ.canonicalId;
+      }
     }
-    // If parsedQ was Q6(a) and rawSub is '1' (nested sub-question like Q6(a)(1)):
-    if (/^[0-9]+$/i.test(cleanRawSub) || /^[ivx]+$/i.test(cleanRawSub)) {
-      return `Q${parsedQ.questionNumber}(${parsedQ.subQuestion}(${cleanRawSub}))`;
-    }
-    return parsedQ.canonicalId;
-  }
-
-  // If rawQ had no sub-question (e.g. '3', 'Q3', 'Question 4'), but rawSub is supplied:
-  if (rawSub) {
+  } else if (rawSub) {
+    // If rawQ had no sub-question (e.g. '3', 'Q3', 'Question 4'), but rawSub is supplied:
     const parsedCombined = parseCanonicalQuestionIdentity(`Q${parsedQ.questionNumber}(${rawSub})`);
-    return parsedCombined.canonicalId;
+    finalCanonId = parsedCombined.canonicalId;
   }
 
-  return parsedQ.canonicalId;
+  // 3. Align against authoritative paper structure if provided
+  if (Array.isArray(paperStructureSubQuestions) && paperStructureSubQuestions.length > 0) {
+    // Check exact match
+    const exact = paperStructureSubQuestions.find(
+      (s) => s.fullQuestionCode.toLowerCase() === finalCanonId.toLowerCase()
+    );
+    if (exact) {
+      return exact.fullQuestionCode;
+    }
+
+    // Check same question number and sub-question letter
+    const parsedFinal = parseCanonicalQuestionIdentity(finalCanonId);
+    if (!parsedFinal.isMcq && parsedFinal.subQuestion) {
+      const baseLetter = parsedFinal.subQuestion.charAt(0).toLowerCase();
+      const match = paperStructureSubQuestions.find((s) => {
+        if (s.isMcq) return false;
+        if (s.questionNumber !== parsedFinal.questionNumber) return false;
+        const sSub = (s.subQuestionNumber || '').toLowerCase();
+        return sSub === baseLetter || s.fullQuestionCode.toLowerCase().includes(`(${baseLetter})`);
+      });
+      if (match) {
+        return match.fullQuestionCode;
+      }
+    }
+  }
+
+  return finalCanonId;
 }
 
 /**
@@ -99,8 +138,7 @@ export function toCanonicalQuestionId(
  * Handles:
  * - Alternatives: "Q3(b) (OR)", "Q3(b) OR", "Q3(b) Alternative", "Q4(b) [Option 2]" -> canonicalId: "Q3(b)", isAlternative: true
  * - Separators: "Q3_b", "3.b", "3-b", "Question 3 Part (b)", "Question 3 Part B", "3b" -> "Q3(b)"
- * - Nested: "Q6(a)(1)", "6(a)(2)", "6(a)(i)" -> "Q6(a)(1)"
- * - Accidental duplicate echoes: "Q3(b)(b)" -> "Q3(b)", "Q4(b(b))" -> "Q4(b)"
+ * - Nested / Roman clause: "Q3(b(iiiiv))", "3(b)(iii)", "3(b)(1)", "b(b)" -> canonicalId: "Q3(b)", subQuestion: "b"
  * - MCQs: "MCQ 1", "MCQ1", "Objective 1" -> "MCQ1"
  */
 export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuestionIdentity {
@@ -145,47 +183,45 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
         rest = rest.replace(altRegex, ' ').trim();
       }
 
-      // Check for duplicated sub-question concatenation, e.g. (b)(b) or (a)(a)
+      // Check for duplicated sub-question concatenation or nested clause patterns,
+      // e.g. (b)(b), (b)(iii), (b)(1), (b(iiiiv)), (b(iii)), a(1), a(i)
       const duplicateParenMatch = rest.match(/^\(([a-zA-Z0-9]+)\)\s*\(([a-zA-Z0-9]+)\)/);
       const nestedParenEnclosedMatch = rest.match(/^\(([a-zA-Z0-9]+)\(([a-zA-Z0-9]+)\)\)/);
+      const directNestedMatch = rest.match(/^([a-zA-Z0-9]+)\s*\(([a-zA-Z0-9]+)\)/);
 
-      if (duplicateParenMatch && duplicateParenMatch[1].toLowerCase() === duplicateParenMatch[2].toLowerCase()) {
-        subQ = duplicateParenMatch[1].toLowerCase();
-      } else if (duplicateParenMatch) {
-        // Legitimate nested sub-question: (a)(1) or (a)(i)
-        subQ = `${duplicateParenMatch[1].toLowerCase()}(${duplicateParenMatch[2].toLowerCase()})`;
-      } else if (nestedParenEnclosedMatch) {
-        if (nestedParenEnclosedMatch[1].toLowerCase() === nestedParenEnclosedMatch[2].toLowerCase()) {
-          subQ = nestedParenEnclosedMatch[1].toLowerCase();
+      const m = duplicateParenMatch || nestedParenEnclosedMatch || directNestedMatch;
+      if (m) {
+        const token1 = m[1].toLowerCase();
+        const token2 = m[2].toLowerCase();
+        // If second token is same letter e.g. (b)(b), or is Roman numeral sequence like (i), (ii), (iii), (iv), (iiiiv),
+        // collapse to base token1 (e.g. Q3(b)). But if token2 is a numeric sub-part like 1, 2 (e.g. a(1), a(2)), preserve it.
+        if (
+          token1 === token2 ||
+          /^[ivxlcdm]+$/i.test(token2)
+        ) {
+          subQ = token1;
         } else {
-          subQ = `${nestedParenEnclosedMatch[1].toLowerCase()}(${nestedParenEnclosedMatch[2].toLowerCase()})`;
+          subQ = `${token1}(${token2})`;
         }
       } else {
-        // Direct nested without outer parens: a(1) or a(i) or a(a)
-        const directNestedMatch = rest.match(/^([a-zA-Z0-9]+)\s*\(([a-zA-Z0-9]+)\)/);
-        if (directNestedMatch && directNestedMatch[1].toLowerCase() === directNestedMatch[2].toLowerCase()) {
-          subQ = directNestedMatch[1].toLowerCase();
-        } else if (directNestedMatch) {
-          subQ = `${directNestedMatch[1].toLowerCase()}(${directNestedMatch[2].toLowerCase()})`;
+        // Single bracket: (a) or [a]
+        const singleBracket = rest.match(/^[\(\[]([a-zA-Z0-9]+)[\)\]]/);
+        if (singleBracket) {
+          subQ = singleBracket[1].toLowerCase();
         } else {
-          // Single bracket: (a) or [a]
-          const singleBracket = rest.match(/^[\(\[]([a-zA-Z0-9]+)[\)\]]/);
-          if (singleBracket) {
-            subQ = singleBracket[1].toLowerCase();
-          } else {
-            // Direct token: a or b or c or a1 or a2
-            const directMatch = rest.match(/^([a-zA-Z](?:\([a-zA-Z0-9]+\)|[0-9]+)?)/);
-            if (directMatch) {
-              subQ = directMatch[1].toLowerCase();
-            }
+          // Direct token: a or b or c or a1 or a2
+          const directMatch = rest.match(/^([a-zA-Z](?:\([a-zA-Z0-9]+\)|[0-9]+)?)/);
+          if (directMatch) {
+            subQ = directMatch[1].toLowerCase();
           }
         }
       }
     }
 
-    // Collapse any inner echo like 'b(b)' into 'b'
+    // Collapse any inner echo like 'b(b)' or Roman numeral clause like 'b(iiiiv)' into 'b'
     if (subQ) {
       subQ = subQ.replace(/^([a-z])\(\1\)$/i, '$1');
+      subQ = subQ.replace(/^([a-z])\([ivxlcdm]+\)$/i, '$1');
     }
 
     const canonicalId = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
@@ -261,6 +297,10 @@ export function deduplicateQuestionList<T extends {
   marksAwarded?: number;
   marksLost?: number;
   markingComponents?: any[];
+  pages?: number[] | any;
+  studentSnippet?: string;
+  detailedFeedback?: string;
+  technicalEvaluation?: string;
   [key: string]: any;
 }>(
   questions: T[],
@@ -270,12 +310,13 @@ export function deduplicateQuestionList<T extends {
     return [];
   }
 
-  // 1. Compute canonical identity for each item
+  // 1. Compute canonical identity for each item using authoritative paper structure
   const mapped = questions.map((item) => {
     const raw = item.canonicalId || item.fullQuestionCode || item.questionId;
     const canonId = toCanonicalQuestionId(
       raw || item.questionNumber,
-      item.subQuestion || item.subQuestionNumber || item.subQuestionId
+      item.subQuestion || item.subQuestionNumber || item.subQuestionId,
+      paperStructureSubQuestions
     );
     const parsed = parseCanonicalQuestionIdentity(canonId);
     return {
@@ -298,7 +339,7 @@ export function deduplicateQuestionList<T extends {
   if (Array.isArray(paperStructureSubQuestions)) {
     for (const sq of paperStructureSubQuestions) {
       if (!sq.isMcq) {
-        const sqCanon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
+        const sqCanon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber, paperStructureSubQuestions);
         nonMcqCanonicalIds.add(sqCanon);
       }
     }
@@ -341,57 +382,112 @@ export function deduplicateQuestionList<T extends {
   // 4. Group by canonicalId to enforce Exactly-Once Rule
   const canonicalMap = new Map<string, typeof nonParentDuplicates[0]>();
 
+  // Extract authoritative max marks map in advance
+  const authoritativeMaxMap = new Map<string, number>();
+  if (Array.isArray(paperStructureSubQuestions)) {
+    for (const sq of paperStructureSubQuestions) {
+      const canon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber, paperStructureSubQuestions);
+      authoritativeMaxMap.set(canon, sq.maximumMarks);
+    }
+  }
+
   for (const entry of nonParentDuplicates) {
     const key = entry.canonicalId;
     if (!canonicalMap.has(key)) {
       canonicalMap.set(key, entry);
     } else {
-      // Conflict resolution: Choose the more complete / detailed evaluation
+      // Conflict resolution: Merge evidence, components, and pages between duplicate records
       const existing = canonicalMap.get(key)!;
-      const existingComps = existing.item.markingComponents?.length || 0;
-      const newComps = entry.item.markingComponents?.length || 0;
+      const existingMax = (existing.item.maximumMarks !== undefined && existing.item.maximumMarks !== null && Number(existing.item.maximumMarks) > 0)
+        ? Number(existing.item.maximumMarks)
+        : (existing.item.maxMarks !== undefined && existing.item.maxMarks !== null && Number(existing.item.maxMarks) > 0)
+        ? Number(existing.item.maxMarks)
+        : undefined;
+      const entryMax = (entry.item.maximumMarks !== undefined && entry.item.maximumMarks !== null && Number(entry.item.maximumMarks) > 0)
+        ? Number(entry.item.maximumMarks)
+        : (entry.item.maxMarks !== undefined && entry.item.maxMarks !== null && Number(entry.item.maxMarks) > 0)
+        ? Number(entry.item.maxMarks)
+        : undefined;
+      const targetMax = authoritativeMaxMap.get(key) || existingMax || entryMax || BASELINE_AUTHORITATIVE_MAX_MARKS[key] || 100;
 
-      // Prefer non-alternative over alternative if both present and equal,
-      // or prefer the entry with marking components, or higher marks awarded, or longer feedback
-      const existingHasEvidence = existingComps > 0 || (existing.item.marksAwarded || 0) > 0;
-      const newHasEvidence = newComps > 0 || (entry.item.marksAwarded || 0) > 0;
-
-      let shouldReplace = false;
-      if (!existingHasEvidence && newHasEvidence) {
-        shouldReplace = true;
-      } else if (existingHasEvidence && !newHasEvidence) {
-        shouldReplace = false;
-      } else if (newComps > existingComps) {
-        shouldReplace = true;
-      } else if (newComps < existingComps) {
-        shouldReplace = false;
-      } else if ((entry.item.marksAwarded || 0) > (existing.item.marksAwarded || 0)) {
-        shouldReplace = true;
-      } else if ((existing.item.marksAwarded || 0) > (entry.item.marksAwarded || 0)) {
-        shouldReplace = false;
-      } else if (!entry.isAlternative && existing.isAlternative) {
-        shouldReplace = true;
-      } else if (entry.isAlternative && !existing.isAlternative) {
-        shouldReplace = false;
-      } else if ((entry.item.detailedFeedback || '').length > (existing.item.detailedFeedback || '').length) {
-        shouldReplace = true;
+      // 4A. Merge pages
+      const existingPages = Array.isArray(existing.item.pages) ? existing.item.pages : [];
+      const entryPages = Array.isArray(entry.item.pages) ? entry.item.pages : [];
+      if (entryPages.length > 0) {
+        existing.item.pages = Array.from(new Set([...existingPages, ...entryPages])).sort((a: number, b: number) => a - b);
       }
 
-      if (shouldReplace) {
-        canonicalMap.set(key, entry);
+      // 4B. Merge student snippets
+      if (entry.item.studentSnippet && !existing.item.studentSnippet?.includes(entry.item.studentSnippet)) {
+        existing.item.studentSnippet = (existing.item.studentSnippet ? `${existing.item.studentSnippet}\n\n` : '') + entry.item.studentSnippet;
+      }
+
+      // 4C. Merge marking components and steps
+      const existingComps: any[] = existing.item.markingComponents || [];
+      const newComps: any[] = entry.item.markingComponents || [];
+
+      if (newComps.length > 0 || existingComps.length > 0) {
+        const seenCompKeys = new Set(existingComps.map((c) => c.componentId || c.expectedRequirement));
+        const combinedComps = [...existingComps];
+        for (const nc of newComps) {
+          const compKey = nc.componentId || nc.expectedRequirement;
+          if (!seenCompKeys.has(compKey)) {
+            seenCompKeys.add(compKey);
+            combinedComps.push(nc);
+          }
+        }
+
+        // Generic Pruning: If a component was flagged as "not attempted" / "omitted" because of chunking/page splits,
+        // but another component in the combined pool actually evaluated candidate evidence for that subpart/clause,
+        // prune the unattempted placeholder component.
+        const attemptedClauses = new Set<string>();
+        for (const c of combinedComps) {
+          const isUnattempted = (c.marksAwarded === 0 || c.marksAwarded === undefined) &&
+            /(?:not attempted|unattempted|not answered|omitted|no candidate step)/i.test(
+              `${c.deductionReason || ''} ${c.studentEvidence || ''} ${c.annotationInstructions || ''}`
+            );
+          const clauseMatch = `${c.componentId || ''} ${c.expectedRequirement || ''}`.match(/(?:part[_\s]*|clause[_\s]*|\()([ivx]+|[0-9]+)(?:\)|\b|_)/i);
+          if (clauseMatch && !isUnattempted) {
+            attemptedClauses.add(clauseMatch[1].toLowerCase());
+          }
+        }
+
+        const mergedComps = combinedComps.filter((c) => {
+          const isUnattempted = (c.marksAwarded === 0 || c.marksAwarded === undefined) &&
+            /(?:not attempted|unattempted|not answered|omitted|no candidate step)/i.test(
+              `${c.deductionReason || ''} ${c.studentEvidence || ''} ${c.annotationInstructions || ''}`
+            );
+          if (!isUnattempted) return true;
+          const clauseMatch = `${c.componentId || ''} ${c.expectedRequirement || ''}`.match(/(?:part[_\s]*|clause[_\s]*|\()([ivx]+|[0-9]+)(?:\)|\b|_)/i);
+          if (clauseMatch && attemptedClauses.has(clauseMatch[1].toLowerCase())) {
+            // Superseded placeholder
+            return false;
+          }
+          return true;
+        });
+
+        existing.item.markingComponents = mergedComps;
+
+        // Recalculate marks awarded based on merged unique components
+        const sumAwarded = mergedComps.reduce((acc, c) => acc + (Number(c.marksAwarded) || 0), 0);
+        existing.item.marksAwarded = Math.min(targetMax, Math.round(sumAwarded * 4) / 4);
+      } else {
+        // If neither had components, combine marks awarded up to max marks
+        const combinedMarks = (existing.item.marksAwarded || 0) + (entry.item.marksAwarded || 0);
+        existing.item.marksAwarded = Math.min(targetMax, Math.round(combinedMarks * 4) / 4);
+      }
+
+      // 4D. Merge feedback
+      if (entry.item.detailedFeedback && !existing.item.detailedFeedback?.includes(entry.item.detailedFeedback)) {
+        existing.item.detailedFeedback = (existing.item.detailedFeedback ? `${existing.item.detailedFeedback}\n` : '') + entry.item.detailedFeedback;
+      }
+      if (entry.item.technicalEvaluation && !existing.item.technicalEvaluation?.includes(entry.item.technicalEvaluation)) {
+        existing.item.technicalEvaluation = (existing.item.technicalEvaluation ? `${existing.item.technicalEvaluation}\n` : '') + entry.item.technicalEvaluation;
       }
     }
   }
 
   // 5. Authoritative Maximum Marks Alignment
-  const authoritativeMaxMap = new Map<string, number>();
-  if (Array.isArray(paperStructureSubQuestions)) {
-    for (const sq of paperStructureSubQuestions) {
-      const canon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
-      authoritativeMaxMap.set(canon, sq.maximumMarks);
-    }
-  }
-
   const result: T[] = [];
   for (const [canonicalId, entry] of canonicalMap.entries()) {
     const clonedItem: T = { ...entry.item };
@@ -457,7 +553,8 @@ export function deduplicateQuestionList<T extends {
  * Throws an error or returns validation failure if duplicates or parent/child collisions remain.
  */
 export function validateQuestionDeduplication(
-  questions: Array<{ questionNumber?: string; subQuestion?: string; canonicalId?: string; fullQuestionCode?: string; questionId?: string }>
+  questions: Array<{ questionNumber?: string; subQuestion?: string; canonicalId?: string; fullQuestionCode?: string; questionId?: string }>,
+  paperStructureSubQuestions?: AuthoritativeSubQuestionReference[]
 ): {
   isValid: boolean;
   duplicateIds: string[];
@@ -470,7 +567,8 @@ export function validateQuestionDeduplication(
   for (const q of questions) {
     const canonId = toCanonicalQuestionId(
       q.canonicalId || q.fullQuestionCode || q.questionId || q.questionNumber,
-      q.subQuestion
+      q.subQuestion,
+      paperStructureSubQuestions
     );
     counts.set(canonId, (counts.get(canonId) || 0) + 1);
 

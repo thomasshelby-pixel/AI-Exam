@@ -161,7 +161,15 @@ export function buildStructuredAnnotations(
     pagesMap.set(p, []);
   }
 
+  const seenAnnotationQuestions = new Set<string>();
+
   questions.forEach((q, idx) => {
+    const qKey = String(q.canonicalId || q.fullQuestionCode || q.questionId || `${q.questionNumber}_${q.subQuestion}`);
+    if (seenAnnotationQuestions.has(qKey)) {
+      return;
+    }
+    seenAnnotationQuestions.add(qKey);
+
     let targetPage = Number(q.pageNumber);
     if (!targetPage || targetPage < 1 || targetPage > safeTotalPages) {
       targetPage = (idx % safeTotalPages) + 1;
@@ -718,7 +726,22 @@ export async function generateOriginalSubmissionPdf(
   ];
   const questions = deduplicateQuestionList(rawCoverQuestions);
 
+  const seenCoverQuestions = new Set<string>();
+
   questions.forEach((q: any, idx: number) => {
+    const qKey = String(
+      q.canonicalId ||
+      q.fullQuestionCode ||
+      (q.subQuestion && !String(q.questionNumber).includes('(')
+        ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
+        : q.questionNumber) ||
+      `Q${idx + 1}`
+    );
+    if (seenCoverQuestions.has(qKey)) {
+      return;
+    }
+    seenCoverQuestions.add(qKey);
+
     const isEven = idx % 2 === 0;
     cover.drawRectangle({
       x: 35,

@@ -545,6 +545,8 @@ export async function generateDetailedReportPdf(
 
     stepY -= 20;
 
+    const renderedCanonicalQuestions = new Set<string>();
+
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       const qNum = String(
@@ -555,6 +557,10 @@ export async function generateDetailedReportPdf(
           : q.questionNumber) ||
         `Q${i + 1}`
       );
+      if (renderedCanonicalQuestions.has(qNum)) {
+        continue;
+      }
+      renderedCanonicalQuestions.add(qNum);
       const qMarks = Number(q.marksAwarded ?? 0);
       const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
       const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [];

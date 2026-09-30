@@ -882,11 +882,15 @@ EVALUATION MANDATES:
    - If ANY creditworthy component exists: 0 is FORBIDDEN. Award the supported partial marks.
    - Award 0 ONLY for: NO_ANSWER (blank), WHOLLY_IRRELEVANT (unrelated topic/gibberish), NO_CREDITWORTHY_COMPONENT (all steps attempted are wrong with no creditworthy element), or MATERIALLY_INCORRECT_WITH_NO_CREDITABLE_STEP.
 
-4. SUBSTANTIVE REASONING OVER FINAL AMOUNT MATCHING:
-   - Reason about the technical accuracy and legal/accounting logic.
-   - Do NOT blindly trust final numerical amounts. A correct final number obtained with invalid reasoning or incorrect provision must NOT automatically receive full marks (deduct provision/treatment marks).
-   - A different final answer must NOT automatically be treated as wrong if the student's method is independently correct and supported by the applicable provision/rule.
-   - Do NOT deduct marks merely because the student did not use the exact phrasing of the suggested answer.
+4. TWO-LAYER PRINCIPLE — STRICT REFERENCE INTEGRITY vs FLEXIBLE STUDENT EVALUATION:
+   - LAYER A (REFERENCE INTEGRITY): The Question Paper, Suggested Answer, and Marking Scheme are the AUTHORITATIVE BENCHMARK. You must NEVER override official facts, provisions, or marking ceilings.
+   - LAYER B (STUDENT EVALUATION): Do NOT require word-for-word reproduction of the Suggested Answer. Student expression must remain flexible.
+   - The evaluator must NEVER say or penalize: "Student wording is different from Suggested Answer → wrong".
+   - Instead, determine whether the student answer is substantively equivalent, legally valid, mathematically valid, or an acceptable alternative method.
+   - ACCEPT VALID VARIATIONS: Different wording, different sentence structure, different presentation sequence, equivalent terminology, correct synonyms, valid abbreviations, and recognized ICAI-style expressions.
+   - ALTERNATIVE VALID METHODS: If Suggested Answer shows Method A but student uses Method B: verify whether Method B is mathematically, legally, and conceptually valid, consistent with the Question Paper, and capable of producing the correct conclusion. If valid, award full corresponding marks under the marking criteria.
+   - ALTERNATIVE VALID CONCLUSIONS: Where more than one conclusion legitimately follows depending on a stated valid assumption, accept it (record validAlternativeRecognition and explain why).
+   - CONSEQUENTIAL ERROR LOGIC: If an arithmetic slip occurs in an early step, deduct marks ONLY for that specific calculation step. Do NOT repeatedly penalize downstream steps where the candidate correctly carried forward the figure using sound methodology. Award consequential credit!
 
 5. TAXATION, LAW, AUDIT & ACCOUNTING DOMAIN SPECIALIZATION:
    - TAXATION: Evaluate Provision, Treatment, Calculation, Working, and Conclusion distinctly. Correct final amount + wrong provision = deduct provision marks only. Correct provision + correct method + arithmetic slip = preserve provision/method marks and give consequential credit.
@@ -1080,14 +1084,14 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             const batch = attemptedDescriptive.slice(i, i + concurrency);
             const batchResults = await Promise.all(
               batch.map(async (mapping) => {
-                const canonId = toCanonicalQuestionId(mapping.questionNumber, mapping.subQuestionNumber);
+                const canonId = toCanonicalQuestionId(mapping.questionNumber, mapping.subQuestionNumber, paperStructure.subQuestions);
                 if (evaluatedCanonicalIds.has(canonId)) {
                   return null;
                 }
                 evaluatedCanonicalIds.add(canonId);
 
                 let subQ = paperStructure.subQuestions.find(
-                  (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber) === canonId
+                  (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions) === canonId || s.fullQuestionCode === canonId
                 );
 
                 if (!subQ) {

@@ -47,6 +47,7 @@ export interface IntegrityProcessOptions {
   caLevel?: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
   paper?: string;
   subjectKey?: string;
+  subjectName?: string;
   checkingMode?: 'standard' | 'strict' | 'lenient';
   materialId?: string;
   coverageMap?: any;
@@ -395,6 +396,10 @@ export function normalizeQuestionComponents(
   targetAwardedMarks: number,
   questionNumber: string
 ): MarkingComponent[] {
+  // Ensure valid numeric targets
+  questionMaxMarks = Math.max(0.5, Math.round(Number(questionMaxMarks) * 4) / 4);
+  targetAwardedMarks = Math.max(0, Math.min(questionMaxMarks, Math.round(Number(targetAwardedMarks) * 4) / 4));
+
   if (!components || components.length === 0) {
     // Generate standard balanced components if empty
     const pMax = Math.round(questionMaxMarks * 0.4 * 2) / 2 || 1;
@@ -439,13 +444,11 @@ export function normalizeQuestionComponents(
   }));
 
   if (Math.abs(currentAvailableSum - questionMaxMarks) > 0.01 && currentAvailableSum > 0) {
-    // Proportionally scale available marks
     const scale = questionMaxMarks / currentAvailableSum;
     let accumulated = 0;
 
     adjustedComponents = adjustedComponents.map((c, idx) => {
       if (idx === adjustedComponents.length - 1) {
-        // Last component takes the exact remainder to prevent rounding drift
         const lastAvailable = Math.max(0.25, Math.round((questionMaxMarks - accumulated) * 4) / 4);
         return { ...c, marksAvailable: lastAvailable };
       }
@@ -453,34 +456,71 @@ export function normalizeQuestionComponents(
       accumulated += scaled;
       return { ...c, marksAvailable: scaled };
     });
+
+    const totalAvail = adjustedComponents.reduce((sum, c) => sum + c.marksAvailable, 0);
+    const availDelta = Math.round((questionMaxMarks - totalAvail) * 4) / 4;
+    if (availDelta !== 0) {
+      adjustedComponents[adjustedComponents.length - 1].marksAvailable = Math.max(
+        0.25,
+        Math.round((adjustedComponents[adjustedComponents.length - 1].marksAvailable + availDelta) * 4) / 4
+      );
+    }
   }
 
   // 2. Adjust marksAwarded across components to match targetAwardedMarks
-  const currentAwardedSum = adjustedComponents.reduce((sum, c) => sum + c.marksAwarded, 0);
+  if (targetAwardedMarks === questionMaxMarks) {
+    // 100% full credit across all components
+    adjustedComponents = adjustedComponents.map((c) => ({
+      ...c,
+      marksAwarded: c.marksAvailable,
+    }));
+  } else if (targetAwardedMarks === 0) {
+    // 0 credit
+    adjustedComponents = adjustedComponents.map((c) => ({
+      ...c,
+      marksAwarded: 0,
+    }));
+  } else {
+    // Proportional allocation based on original candidate performance on each component
+    const originalScores = components.map((c) => {
+      const avail = Number(c.marksAvailable) || 1;
+      const awd = Number(c.marksAwarded) || 0;
+      return Math.max(0, Math.min(1, awd / avail));
+    });
 
-  if (Math.abs(currentAwardedSum - targetAwardedMarks) > 0.01) {
-    if (currentAwardedSum === 0 && targetAwardedMarks > 0) {
-      // Allocate targetAwardedMarks starting from first component
-      let remainingToAward = targetAwardedMarks;
-      adjustedComponents = adjustedComponents.map((c) => {
-        const canAward = Math.min(c.marksAvailable, remainingToAward);
-        remainingToAward -= canAward;
-        return { ...c, marksAwarded: canAward };
-      });
-    } else if (currentAwardedSum > 0) {
-      // Scale proportionally or adjust
-      const scale = targetAwardedMarks / currentAwardedSum;
-      let accumulatedAwarded = 0;
+    // Initial allocation
+    adjustedComponents = adjustedComponents.map((c, idx) => {
+      const perfRatio = originalScores[idx] ?? 0;
+      const awd = Math.max(0, Math.min(c.marksAvailable, Math.round(c.marksAvailable * perfRatio * 4) / 4));
+      return { ...c, marksAwarded: awd };
+    });
 
-      adjustedComponents = adjustedComponents.map((c, idx) => {
-        if (idx === adjustedComponents.length - 1) {
-          const lastAwarded = Math.max(0, Math.min(c.marksAvailable, Math.round((targetAwardedMarks - accumulatedAwarded) * 4) / 4));
-          return { ...c, marksAwarded: lastAwarded };
+    // Reconcile with targetAwardedMarks
+    let currentSum = adjustedComponents.reduce((sum, c) => sum + c.marksAwarded, 0);
+    let diff = Math.round((targetAwardedMarks - currentSum) * 4) / 4;
+
+    if (diff > 0) {
+      // Allocate surplus to components with headroom
+      for (const comp of adjustedComponents) {
+        if (diff <= 0) break;
+        const headroom = Math.round((comp.marksAvailable - comp.marksAwarded) * 4) / 4;
+        if (headroom > 0) {
+          const add = Math.min(headroom, diff);
+          comp.marksAwarded = Math.round((comp.marksAwarded + add) * 4) / 4;
+          diff = Math.round((diff - add) * 4) / 4;
         }
-        const scaledAwarded = Math.max(0, Math.min(c.marksAvailable, Math.round(c.marksAwarded * scale * 4) / 4));
-        accumulatedAwarded += scaledAwarded;
-        return { ...c, marksAwarded: scaledAwarded };
-      });
+      }
+    } else if (diff < 0) {
+      // Deduct deficit from components with awarded marks
+      for (let i = adjustedComponents.length - 1; i >= 0; i--) {
+        if (diff >= 0) break;
+        const comp = adjustedComponents[i];
+        if (comp.marksAwarded > 0) {
+          const sub = Math.min(comp.marksAwarded, -diff);
+          comp.marksAwarded = Math.round((comp.marksAwarded - sub) * 4) / 4;
+          diff = Math.round((diff + sub) * 4) / 4;
+        }
+      }
     }
   }
 
@@ -513,25 +553,6 @@ export function normalizeQuestionComponents(
       studentEvidence: c.studentEvidence || 'Candidate step evidence examined.',
     };
   });
-
-  // Final exact sum enforcement: SUM(marksAvailable) === questionMaxMarks & SUM(marksAwarded) === targetAwardedMarks
-  if (finalized.length > 0) {
-    const availSum = finalized.reduce((s, c) => s + c.marksAvailable, 0);
-    const availDiff = questionMaxMarks - availSum;
-    if (Math.abs(availDiff) > 0.001) {
-      const largestComp = [...finalized].sort((a, b) => b.marksAvailable - a.marksAvailable)[0];
-      largestComp.marksAvailable = Math.round((largestComp.marksAvailable + availDiff) * 4) / 4;
-      largestComp.marksDeducted = Math.max(0, Math.round((largestComp.marksAvailable - largestComp.marksAwarded) * 4) / 4);
-    }
-
-    const awardSum = finalized.reduce((s, c) => s + c.marksAwarded, 0);
-    const awardDiff = targetAwardedMarks - awardSum;
-    if (Math.abs(awardDiff) > 0.001) {
-      const eligibleComp = finalized.find((c) => c.marksAwarded + awardDiff <= c.marksAvailable && c.marksAwarded + awardDiff >= 0) || finalized[finalized.length - 1];
-      eligibleComp.marksAwarded = Math.max(0, Math.min(eligibleComp.marksAvailable, Math.round((eligibleComp.marksAwarded + awardDiff) * 4) / 4));
-      eligibleComp.marksDeducted = Math.max(0, Math.round((eligibleComp.marksAvailable - eligibleComp.marksAwarded) * 4) / 4);
-    }
-  }
 
   return finalized;
 }
@@ -568,7 +589,7 @@ export function validateAuthoritativeConsistency(
   }
 
   // Deduplication & Canonical Exactly-Once Rule Validation
-  const dedupValidation = validateQuestionDeduplication(questions);
+  const dedupValidation = validateQuestionDeduplication(questions, options?.paperStructure?.subQuestions);
   if (!dedupValidation.isValid) {
     errors.push(`Deduplication validation failed: ${dedupValidation.details}`);
   }
@@ -673,8 +694,14 @@ export function evaluateHardCompletionGate(
 ): any {
   const checks: any[] = [];
   const questions = evaluation.questions || [];
-  const coverageMap = options?.coverageMap || evaluation.coverageMap;
   const paperStructure = options?.paperStructure;
+  const rawCoverageMap = options?.coverageMap || evaluation.coverageMap;
+  const coverageMap = rawCoverageMap && Array.isArray(rawCoverageMap.attemptedQuestions)
+    ? {
+        ...rawCoverageMap,
+        attemptedQuestions: deduplicateQuestionList(rawCoverageMap.attemptedQuestions, paperStructure?.subQuestions),
+      }
+    : rawCoverageMap;
 
   // Check 1: Coverage Completeness
   let check1Passed = true;
@@ -709,18 +736,20 @@ export function evaluateHardCompletionGate(
   if (coverageMap && Array.isArray(coverageMap.attemptedQuestions)) {
     const evaluatedCodes = new Set(
       questions.map((q) => {
+        if (q.canonicalId) return q.canonicalId.toLowerCase();
+        if (q.fullQuestionCode) return q.fullQuestionCode.toLowerCase();
         const qNum = String(q.questionNumber).replace(/[^0-9]/g, '');
         const sub = q.subQuestion ? String(q.subQuestion).toLowerCase() : '';
-        return sub ? `Q${qNum}(${sub})` : String(q.questionNumber).startsWith('MCQ') ? `MCQ${qNum}` : `Q${qNum}`;
+        return (sub ? `q${qNum}(${sub})` : String(q.questionNumber).startsWith('MCQ') ? `mcq${qNum}` : `q${qNum}`).toLowerCase();
       })
     );
 
     for (const att of coverageMap.attemptedQuestions) {
       if (att.isMcq) continue; // Checked under MCQ rule
-      const code = att.fullQuestionCode;
+      const code = (att.canonicalId || att.fullQuestionCode || '').toLowerCase();
       if (!evaluatedCodes.has(code)) {
         check3Passed = false;
-        check3Details = `Attempted question ${code} was detected on page(s) ${att.pages.join(', ')} but missing from evaluation.`;
+        check3Details = `Attempted question ${att.fullQuestionCode || att.canonicalId} was detected on page(s) ${att.pages?.join(', ')} but missing from evaluation.`;
         break;
       }
     }
@@ -833,7 +862,7 @@ export function evaluateHardCompletionGate(
   checks.push({ ruleId: 'RULE_11_UNIFIED_EVALUATION_OBJECT', name: 'Single Authoritative Object', passed: check11Passed, details: check11Details });
 
   // Check 12: Canonical Deduplication & Exactly-Once Validation
-  const dedupVal = validateQuestionDeduplication(questions);
+  const dedupVal = validateQuestionDeduplication(questions, options?.paperStructure?.subQuestions);
   checks.push({
     ruleId: 'RULE_12_CANONICAL_EXACTLY_ONCE',
     name: 'Canonical Deduplication & Exactly-Once Rule',
@@ -1047,7 +1076,7 @@ export function processEvaluationIntegrity(
   const finalQuestions = deduplicateQuestionList(scoredQuestions, authoritativeSubQs);
 
   // Structural Validation: Every canonical question ID MUST have occurrence count === 1
-  const deduplicationValidation = validateQuestionDeduplication(finalQuestions);
+  const deduplicationValidation = validateQuestionDeduplication(finalQuestions, authoritativeSubQs);
   if (!deduplicationValidation.isValid) {
     throw new Error(`DEDUPLICATION_VALIDATION_ERROR: ${deduplicationValidation.details}`);
   }
@@ -1088,7 +1117,16 @@ export function processEvaluationIntegrity(
       ? 'Not provided'
       : rawReg;
 
-  const coverageMap = options.coverageMap || rawResult.coverageMap;
+  const rawCoverageMap = options.coverageMap || rawResult.coverageMap;
+  const coverageMap = rawCoverageMap && Array.isArray(rawCoverageMap.attemptedQuestions)
+    ? {
+        ...rawCoverageMap,
+        attemptedQuestions: deduplicateQuestionList(
+          rawCoverageMap.attemptedQuestions,
+          (options.paperStructure || rawResult.paperStructure)?.subQuestions
+        ),
+      }
+    : rawCoverageMap;
 
   const dynamicConfidence = calculateDynamicAiConfidence({
     questions: finalQuestions,

@@ -127,7 +127,7 @@ export async function buildAnswerSheetCoverageMap(
     for (const det of pageRec.detectedQuestions) {
       const code = det.isMcq
         ? `MCQ${String(det.questionNumber).replace(/[^0-9]/g, '') || '1'}`
-        : toCanonicalQuestionId(det.fullQuestionCode || det.questionNumber, det.subQuestionNumber);
+        : toCanonicalQuestionId(det.fullQuestionCode || det.questionNumber, det.subQuestionNumber, paperStructure.subQuestions);
       const parsed = parseCanonicalQuestionIdentity(code);
 
       if (!mappingMap.has(parsed.canonicalId)) {
@@ -145,9 +145,10 @@ export async function buildAnswerSheetCoverageMap(
         const existing = mappingMap.get(parsed.canonicalId)!;
         if (!existing.pages.includes(pageRec.pageNumber)) {
           existing.pages.push(pageRec.pageNumber);
+          existing.pages.sort((a, b) => a - b);
         }
-        if (det.snippet && (!existing.studentSnippet || existing.studentSnippet.length < det.snippet.length)) {
-          existing.studentSnippet = det.snippet;
+        if (det.snippet && !existing.studentSnippet?.includes(det.snippet)) {
+          existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + det.snippet;
         }
         if (det.studentSelectedOption && !existing.studentSelectedOption) {
           existing.studentSelectedOption = det.studentSelectedOption;
@@ -324,7 +325,7 @@ Return strictly valid JSON with this schema:
       for (const dq of raw.detectedQuestions) {
         const rawQStr = String(dq.questionNumber || '').trim();
         const rawSubStr = dq.subQuestion ? String(dq.subQuestion).trim() : '';
-        const canonId = toCanonicalQuestionId(rawQStr, rawSubStr);
+        const canonId = toCanonicalQuestionId(rawQStr, rawSubStr, paperStructure.subQuestions);
         const parsed = parseCanonicalQuestionIdentity(canonId);
         if (!parsed.questionNumber) continue;
 

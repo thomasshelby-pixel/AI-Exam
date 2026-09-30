@@ -200,6 +200,90 @@ export interface ReferenceTrace {
 
 export type PYQSourceFormat = 'SEPARATE' | 'COMBINED' | 'LEGACY';
 
+/**
+ * Immutable Single Evaluation Source Binding Bundle
+ * Strictly binds authoritative reference documents to an evaluation run.
+ */
+export interface EvaluationSourceBundle {
+  readonly evaluationId: string;
+  readonly paperId: string;
+  readonly paperVersion: string;
+  readonly course: string;
+  readonly level: string;
+  readonly subject: string;
+  readonly examType: string;
+  readonly examSession: string;
+  readonly mtpSeries?: number | null;
+
+  readonly questionPaperSourceId: string;
+  readonly questionPaperVersionId: string;
+  readonly questionPaperContentHash: string;
+
+  readonly suggestedAnswerSourceId: string;
+  readonly suggestedAnswerVersionId: string;
+  readonly suggestedAnswerContentHash: string;
+
+  readonly markingSchemeSourceId?: string;
+  readonly markingSchemeVersionId?: string;
+  readonly markingSchemeContentHash?: string;
+
+  readonly mcqAnswerKeySourceId?: string;
+  readonly mcqAnswerKeyVersionId?: string;
+  readonly mcqAnswerKeyContentHash?: string;
+
+  readonly questionPaperFilename?: string;
+  readonly suggestedAnswerFilename?: string;
+  readonly markingSchemeFilename?: string;
+  readonly mcqAnswerKeyFilename?: string;
+
+  readonly sourceBindingHash: string;
+}
+
+/**
+ * Question-Wise Bound Reference Bundle
+ * Strictly binds authoritative question context and suggested answer segment.
+ */
+export interface QuestionReferenceBundle {
+  readonly canonicalQuestionId: string;
+  readonly questionPaperText: string;
+  readonly questionPaperSourceLocation: string;
+  readonly maximumMarks: number;
+
+  readonly suggestedAnswerText: string;
+  readonly suggestedAnswerSourceLocation: string;
+
+  readonly officialMarkingCriteria?: string;
+  readonly officialMcqKey?: string;
+
+  readonly referenceSourceId: string;
+  readonly referenceVersionId: string;
+  readonly referenceContentHash: string;
+}
+
+/**
+ * Authoritative Traceability Record for Evaluated Criteria
+ */
+export interface EvaluationReferenceTraceRecord {
+  readonly canonicalQuestionId: string;
+  readonly criterionId: string;
+
+  readonly questionPaperSourceId: string;
+  readonly questionPaperVersionId: string;
+  readonly questionPaperLocation: string;
+
+  readonly suggestedAnswerSourceId: string;
+  readonly suggestedAnswerVersionId: string;
+  readonly suggestedAnswerLocation: string;
+
+  readonly markingSchemeSourceId?: string;
+  readonly markingSchemeVersionId?: string;
+
+  readonly mcqAnswerKeySourceId?: string;
+  readonly mcqAnswerKeyVersionId?: string;
+
+  readonly referenceContentHash: string;
+}
+
 export interface EvaluationReferencePackage {
   packageId: string;
   evaluationId?: string;

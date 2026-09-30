@@ -19,6 +19,7 @@ import { savePersistentFile, getPersistentFile } from './persistentStorageServic
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
+import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -246,14 +247,29 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     );
 
     // Structural Deduplication Validation: Canonical Exactly-Once Rule
-    let dedupValidation = validateQuestionDeduplication(evaluationResult.questions || []);
+    const paperStruct = getAuthoritativePaperStructure({
+      level: job.level,
+      paper: job.paper || job.subjectName,
+      subjectName: job.subjectName,
+      questionPaperText: job.referenceQuestionPaperText,
+      markingSchemeText: job.markingSchemeText,
+      suggestedAnswersText: job.referenceSuggestedAnswersText,
+      officialPaperMaxMarks: job.officialPaperMaxMarks || 100,
+    });
+
+    let dedupValidation = validateQuestionDeduplication(evaluationResult.questions || [], paperStruct.subQuestions);
     if (!dedupValidation.isValid) {
       console.warn(`[AsyncEval] Duplicate question instances detected for evaluation ${evaluationId}: ${dedupValidation.details}. Resolving deterministically.`);
-      evaluationResult.questions = deduplicateQuestionList(evaluationResult.questions || []);
-      dedupValidation = validateQuestionDeduplication(evaluationResult.questions || []);
+      evaluationResult.questions = deduplicateQuestionList(evaluationResult.questions || [], paperStruct.subQuestions);
+      if (evaluationResult.coverageMap && Array.isArray(evaluationResult.coverageMap.attemptedQuestions)) {
+        evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
+      }
+      dedupValidation = validateQuestionDeduplication(evaluationResult.questions || [], paperStruct.subQuestions);
       if (!dedupValidation.isValid) {
         throw new Error(`CRITICAL_INTEGRITY_VIOLATION: Cannot generate final report due to persistent question duplication: ${dedupValidation.details}`);
       }
+    } else if (evaluationResult.coverageMap && Array.isArray(evaluationResult.coverageMap.attemptedQuestions)) {
+      evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
     }
 
     // Stage 5: Artifact Generation (Checked Copy & Detailed Report PDFs)

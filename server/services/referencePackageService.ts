@@ -17,6 +17,8 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { normalizeAndSplitCombinedPyq } from './materialHardGateService.js';
 import { normalizeMtpSeries } from './materialLookupService.js';
+import { createEvaluationSourceBundle } from './referenceSourceBindingService.js';
+import { EvaluationSourceBundle } from '../../src/types/index.js';
 
 export interface MaterialTextDoc {
   materialId: string;
@@ -29,6 +31,7 @@ export interface MaterialTextDoc {
 export interface ReferencePackage {
   packageId: string;
   evaluationId: string;
+  sourceBundle: EvaluationSourceBundle;
   sourceFormat: 'SEPARATE' | 'COMBINED' | 'LEGACY';
   sourceMaterialIds: {
     questionMaterialId?: string;
@@ -329,9 +332,31 @@ export function buildAuthoritativeReferencePackage(
     markingSchemeMaterialId: msText ? (rawMaterial.marking_scheme_material_id || `mat_ms_${matId}`) : undefined,
   };
 
+  const sourceBundle = createEvaluationSourceBundle({
+    evaluationId: request.evaluationId,
+    paperId: rawMaterial.paper || request.paper || 'Paper 1',
+    paperVersion: matVersion,
+    course: 'CA',
+    level: normLevel,
+    subject: rawMaterial.subject_name || request.subjectName || 'Chartered Accountancy',
+    examType: rawMaterial.material_type || request.materialType || 'MTP',
+    examSession: rawMaterial.attempt || request.attempt || 'May 2026',
+    mtpSeries: normalizedSeries,
+    questionPaperText: qpText,
+    questionPaperSourceId: sourceMaterialIds.questionMaterialId || `qp_${matId}`,
+    questionPaperVersionId: matVersion,
+    suggestedAnswersText: saText,
+    suggestedAnswerSourceId: sourceMaterialIds.suggestedAnswerMaterialId || `sa_${matId}`,
+    suggestedAnswerVersionId: matVersion,
+    markingSchemeText: msText,
+    markingSchemeSourceId: sourceMaterialIds.markingSchemeMaterialId || (msText ? `ms_${matId}` : undefined),
+    markingSchemeVersionId: msText ? matVersion : undefined,
+  });
+
   return {
     packageId: `ref_pkg_${packageHash.slice(0, 16)}`,
     evaluationId: request.evaluationId,
+    sourceBundle,
     sourceFormat,
     sourceMaterialIds,
     retrievalTimestamp: new Date().toISOString(),
