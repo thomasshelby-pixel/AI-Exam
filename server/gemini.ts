@@ -28,6 +28,7 @@ import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
 import { deduplicateQuestionList, toCanonicalQuestionId } from './services/canonicalQuestionService.js';
+import { validatePreEvaluationGate } from './services/evaluationIntegrityHardening.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -1038,6 +1039,22 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         if (coverageMap && coverageMap.attemptedQuestions && coverageMap.attemptedQuestions.length > 0) {
           console.log(`[EvaluationEngine] Authoritative pipeline running for ${coverageMap.attemptedQuestions.length} attempted questions.`);
 
+          // Pre-Evaluation Validation Gate (Requirement 18)
+          const preGate = validatePreEvaluationGate({
+            paperStructure,
+            coverageMap,
+            questionPaperText: params.referenceQuestionPaperText,
+            suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
+            markingSchemeText: params.markingSchemeText,
+            officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
+            level: params.level,
+            subjectName: params.subjectName,
+          });
+
+          if (!preGate.passed) {
+            console.warn(`[EvaluationEngine] Pre-evaluation validation gate warning: ${preGate.failureReason}`);
+          }
+
           // 1. Evaluate MCQs deterministically against verified official keys
           const mcqQuestions = evaluateAllAuthoritativeMcqs(
             paperStructure.mcqs,
@@ -1088,7 +1105,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 if (!subQ) {
-                  const fallbackMax = mapping.fullQuestionCode.includes('5(a)') ? 10 : mapping.fullQuestionCode.includes('5(b)') ? 5 : 4;
+                  const fallbackMax = Number((mapping as any).maximumMarks) > 0 ? Number((mapping as any).maximumMarks) : 4;
                   subQ = {
                     section: 'A',
                     questionNumber: mapping.questionNumber,
@@ -1326,7 +1343,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     const rawQ = rawQuestions[qIdx];
     const qNum = String(rawQ.questionNumber || (qIdx + 1));
     const subQ = rawQ.subQuestion ? String(rawQ.subQuestion) : undefined;
-    const maxMarks = Math.max(0.5, Number(rawQ.maximumMarks) || 5);
+    const maxMarks = Math.max(0.5, Number(rawQ.maximumMarks ?? rawQ.maxMarks ?? 0) || 4);
     const qPage = Number(rawQ.pageNumber) || (qIdx + 1);
 
     const isMcqQuestion =

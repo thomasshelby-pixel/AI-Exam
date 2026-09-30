@@ -483,7 +483,7 @@ export async function generateDetailedReportPdf(
       `Q${idx + 1}`
     );
     const qMarks = Number(q.marksAwarded ?? 0);
-    const qMax = Number(q.maxMarks || q.maximumMarks || 5);
+    const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
     const qPct = qMax > 0 ? Math.round((qMarks / qMax) * 100) : 0;
     const qRemarks = q.detailedFeedback || q.examinerRemarks || q.reasonForDeduction || q.remarks || 'Step evaluation completed';
 
@@ -556,7 +556,7 @@ export async function generateDetailedReportPdf(
         `Q${i + 1}`
       );
       const qMarks = Number(q.marksAwarded ?? 0);
-      const qMax = Number(q.maxMarks || q.maximumMarks || 5);
+      const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
       const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [];
       const hasConsequential = Boolean(q.consequentialErrorDetails?.isConsequential);
 

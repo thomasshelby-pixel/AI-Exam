@@ -183,7 +183,7 @@ export function buildStructuredAnnotations(
         `Q${idx + 1}`
       ),
       marksAwarded: Number(q.marksAwarded ?? 0),
-      maxMarks: Number(q.maxMarks || q.maximumMarks || 5),
+      maxMarks: Number(q.maximumMarks ?? q.maxMarks ?? 0),
       steps: steps.map((s: any) => {
         const cType = s.componentType || (s.stepName && s.stepName.startsWith('[') ? '' : 'STEP');
         const prefix = cType ? `[${cType}] ` : '';

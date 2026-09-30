@@ -359,11 +359,21 @@ export function deduplicateQuestionList<T extends {
       let shouldReplace = false;
       if (!existingHasEvidence && newHasEvidence) {
         shouldReplace = true;
+      } else if (existingHasEvidence && !newHasEvidence) {
+        shouldReplace = false;
       } else if (newComps > existingComps) {
         shouldReplace = true;
-      } else if (newComps === existingComps && (entry.item.marksAwarded || 0) > (existing.item.marksAwarded || 0)) {
+      } else if (newComps < existingComps) {
+        shouldReplace = false;
+      } else if ((entry.item.marksAwarded || 0) > (existing.item.marksAwarded || 0)) {
         shouldReplace = true;
-      } else if (newComps === existingComps && (entry.item.detailedFeedback || '').length > (existing.item.detailedFeedback || '').length) {
+      } else if ((existing.item.marksAwarded || 0) > (entry.item.marksAwarded || 0)) {
+        shouldReplace = false;
+      } else if (!entry.isAlternative && existing.isAlternative) {
+        shouldReplace = true;
+      } else if (entry.isAlternative && !existing.isAlternative) {
+        shouldReplace = false;
+      } else if ((entry.item.detailedFeedback || '').length > (existing.item.detailedFeedback || '').length) {
         shouldReplace = true;
       }
 

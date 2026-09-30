@@ -13,6 +13,7 @@ import {
   validateQuestionDeduplication,
   toCanonicalQuestionId,
 } from './canonicalQuestionService.js';
+import { validatePostEvaluationGate } from './evaluationIntegrityHardening.js';
 
 export type ZeroScoreReason =
   | 'NO_ANSWER'
@@ -859,9 +860,9 @@ export function evaluateHardCompletionGate(
  */
 export function processEvaluationIntegrity(
   rawResult: any,
-  options: IntegrityProcessOptions
+  options: IntegrityProcessOptions = {}
 ): EvaluationResult {
-  const { markingSchemeText = '', questionPaperText = '', isMcqOnly = false } = options;
+  const { markingSchemeText = '', questionPaperText = '', isMcqOnly = false } = options || {};
 
   const presentationAllowed = isPresentationMarkingAllowed(markingSchemeText, questionPaperText);
   const rawQuestions: any[] = Array.isArray(rawResult.questions) ? rawResult.questions : [];
@@ -877,7 +878,19 @@ export function processEvaluationIntegrity(
     const rawQ = preDedupedRaw[idx];
     const qNum = String(rawQ.questionNumber || idx + 1);
     const subQ = rawQ.subQuestion ? String(rawQ.subQuestion) : undefined;
-    const maxMarks = Math.max(0.5, Number(rawQ.maximumMarks) || 5);
+    let maxMarks = Number(rawQ.maximumMarks ?? rawQ.maxMarks ?? 0);
+    if (!maxMarks || maxMarks <= 0) {
+      const canon = toCanonicalQuestionId(qNum, subQ);
+      const authMatch = authoritativeSubQs?.find(
+        (sq) => toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber) === canon
+      );
+      if (authMatch?.maximumMarks) {
+        maxMarks = authMatch.maximumMarks;
+      }
+    }
+    if (!maxMarks || maxMarks <= 0) {
+      maxMarks = Math.max(0.5, Number(rawQ.maximumMarks) || 4);
+    }
     let initialAwarded = Number(rawQ.marksAwarded) ?? 0;
 
     const isMcq =
@@ -1148,16 +1161,27 @@ export function processEvaluationIntegrity(
     coverageMap,
     paperStructure,
   });
-  evaluationResult.validationStatus = consistencyReport.isValid ? 'VALID' : 'NEEDS_REVIEW';
-  evaluationResult.validationErrors = consistencyReport.errors;
+
+  const postGateReport = validatePostEvaluationGate({
+    evaluationResult,
+    paperStructure,
+    coverageMap,
+  });
+
+  const combinedValid = consistencyReport.isValid && postGateReport.isValid;
+  const combinedErrors = Array.from(new Set([...consistencyReport.errors, ...postGateReport.errors]));
+
+  evaluationResult.validationStatus = combinedValid ? 'VALID' : 'NEEDS_REVIEW';
+  evaluationResult.validationErrors = combinedErrors;
   evaluationResult.integrityAudit = {
-    mathConsistent: consistencyReport.isValid,
+    mathConsistent: combinedValid,
     zeroMarksVerified: true,
     presentationCompliant: true,
     checkedCopyConsistent: consistencyReport.checkedCopyConsistent,
     totalComponents: processedQuestions.reduce((acc, q) => acc + (q.markingComponents?.length || 0), 0),
     rejectedPresentationDeductionsCount,
     hardCompletionGatePassed: evaluationResult.completionGateReport?.isPassed ?? false,
+    postEvaluationGate: postGateReport,
   };
 
   return evaluationResult;

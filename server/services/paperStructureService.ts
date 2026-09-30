@@ -398,6 +398,42 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     }
   }
 
+  // Regex 3: Contextual line-by-line scanning: captures "(a) Description [10 Marks]" under "QUESTION 1 – 20 MARKS"
+  const lines = text.split('\n');
+  let activeParentQNum: string | null = null;
+  const parentHeaderRegex = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*\()/i;
+  const childSubQRegex = /^\s*[\(\[]([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)[\)\]]\s*.*?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+
+  for (const line of lines) {
+    const pMatch = line.match(parentHeaderRegex);
+    if (pMatch) {
+      activeParentQNum = pMatch[1];
+    }
+    if (activeParentQNum) {
+      const cMatch = line.match(childSubQRegex);
+      if (cMatch) {
+        const subQ = cMatch[1];
+        const marks = parseFloat(cMatch[2]);
+        const rawCode = `Q${activeParentQNum}(${subQ})`;
+        const canon = toCanonicalQuestionId(rawCode);
+        if (!seen.has(canon) && marks > 0) {
+          seen.add(canon);
+          const parsed = parseCanonicalQuestionIdentity(canon);
+          subQuestions.push({
+            fullQuestionCode: parsed.canonicalId,
+            questionNumber: parsed.questionNumber,
+            subQuestionNumber: parsed.subQuestion,
+            maximumMarks: marks,
+            compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
+            isMcq: false,
+            section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
+            division: 'B',
+          });
+        }
+      }
+    }
+  }
+
   return deduplicateQuestionList(subQuestions);
 }
 
