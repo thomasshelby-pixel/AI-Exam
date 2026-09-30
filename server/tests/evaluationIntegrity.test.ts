@@ -1546,6 +1546,257 @@ console.log('\n--- TEST BB: Canonical Identity & Exactly-Once Pipeline Invariant
   );
 }
 
+// --------------------------------------------------------------------------
+// TEST CC: Cross-Course & Cross-Subject Comprehensive Evaluation Integrity
+// Validating Foundation, Intermediate, Final, Numerical, Law/Theory, Audit
+// --------------------------------------------------------------------------
+console.log('\n--- TEST CC: Cross-Course & Cross-Subject Comprehensive Invariants ---');
+{
+  // 1. CA Foundation Accounting: Numerical + Multi-Part Sub-Questions
+  const foundationInput: any = {
+    evaluationId: 'eval_foundation_acc_test',
+    studentName: 'Foundation Candidate',
+    icaiRegistrationNumber: 'WRO0123456',
+    level: 'FOUNDATION',
+    subjectKey: 'foundation_accounting',
+    subjectName: 'Accounting',
+    attempt: 'June 2026',
+    officialPaperMaxMarks: 100,
+    questions: [
+      // Parent container Q1 (should be excluded in favor of leaves)
+      { questionNumber: '1', maximumMarks: 20, marksAwarded: 14, status: 'partially_correct' },
+      {
+        questionNumber: '1',
+        subQuestion: 'a',
+        maximumMarks: 12,
+        marksAwarded: 9.5,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'c1', componentType: 'WORKING', marksAvailable: 4, marksAwarded: 3.5 },
+          { componentId: 'c2', componentType: 'CALCULATION', marksAvailable: 8, marksAwarded: 6 },
+        ],
+      },
+      {
+        questionNumber: '1',
+        subQuestion: 'b',
+        maximumMarks: 8,
+        marksAwarded: 6,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'c3', componentType: 'CALCULATION', marksAvailable: 8, marksAwarded: 6 },
+        ],
+      },
+      // Duplicate occurrence of Q1(b) from parallel chunk
+      { questionNumber: 'Q1(b)', subQuestion: 'b', maximumMarks: 8, marksAwarded: 5.5, status: 'partially_correct' },
+    ],
+  };
+
+  const foundationProcessed = processEvaluationIntegrity(foundationInput, {
+    markingSchemeText: 'Official ICAI Foundation Accounting Scheme',
+    officialPaperMaxMarks: 100,
+  });
+
+  assert(
+    foundationProcessed.questions.length === 2,
+    `TEST CC.1: CA Foundation Accounting has exactly 2 leaf questions evaluated (got ${foundationProcessed.questions.length})`
+  );
+  assert(
+    !foundationProcessed.questions.some((q) => q.questionNumber === '1' && !q.subQuestion),
+    'TEST CC.2: Parent container Q1 is completely eliminated from Foundation Accounting'
+  );
+  assert(
+    foundationProcessed.totalMarks === 15.5,
+    `TEST CC.3: Foundation total awarded is exactly 9.5 + 6 = 15.5 (got ${foundationProcessed.totalMarks})`
+  );
+
+  // 2. CA Intermediate Corporate and Other Laws: Theory/Law + OR Alternative
+  const interLawInput: any = {
+    evaluationId: 'eval_inter_law_test',
+    studentName: 'Intermediate Law Candidate',
+    icaiRegistrationNumber: 'NRO0987123',
+    level: 'INTERMEDIATE',
+    subjectKey: 'inter_law',
+    subjectName: 'Corporate and Other Laws',
+    attempt: 'May 2026',
+    officialPaperMaxMarks: 100,
+    questions: [
+      {
+        questionNumber: '2',
+        subQuestion: 'a',
+        maximumMarks: 7,
+        marksAwarded: 5,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'c1', componentType: 'PROVISION', expectedRequirement: 'Companies Act Section 135 CSR', marksAvailable: 3, marksAwarded: 3 },
+          { componentId: 'c2', componentType: 'APPLICATION', expectedRequirement: 'CSR Committee applicability', marksAvailable: 4, marksAwarded: 2 },
+        ],
+      },
+      // OR Question: Student attempted Alternative A, but Alternative B was also parsed as unattempted
+      {
+        questionNumber: '4',
+        subQuestion: 'a',
+        maximumMarks: 6,
+        marksAwarded: 4.5,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'c3', componentType: 'PROVISION', marksAvailable: 3, marksAwarded: 2.5 },
+          { componentId: 'c4', componentType: 'CONCLUSION', marksAvailable: 3, marksAwarded: 2 },
+        ],
+      },
+      {
+        questionNumber: '4(a) (OR)',
+        maximumMarks: 6,
+        marksAwarded: 0,
+        status: 'incorrect',
+        detailedFeedback: 'Alternative question not attempted by candidate',
+      },
+    ],
+  };
+
+  const interLawProcessed = processEvaluationIntegrity(interLawInput, {
+    markingSchemeText: 'Official ICAI Inter Law Scheme',
+    officialPaperMaxMarks: 100,
+  });
+
+  const lawQ4a = interLawProcessed.questions.filter((q) => q.canonicalId === 'Q4(a)' || (q.questionNumber === '4' && q.subQuestion === 'a'));
+  assert(
+    lawQ4a.length === 1 && lawQ4a[0].marksAwarded === 4.5,
+    `TEST CC.4: Law OR alternative properly disambiguated; only attempted Q4(a) retained with 4.5 marks (count=${lawQ4a.length})`
+  );
+  assert(
+    interLawProcessed.totalMarks === 9.5,
+    `TEST CC.5: Inter Law total marks equals 5 + 4.5 = 9.5 (got ${interLawProcessed.totalMarks})`
+  );
+
+  // 3. CA Intermediate Auditing and Ethics: Audit-Type Descriptive + Independent Scorable Criteria
+  const interAuditInput: any = {
+    evaluationId: 'eval_inter_audit_test',
+    studentName: 'Intermediate Audit Candidate',
+    icaiRegistrationNumber: 'SRO0543210',
+    level: 'INTERMEDIATE',
+    subjectKey: 'inter_audit',
+    subjectName: 'Auditing and Ethics',
+    attempt: 'November 2026',
+    officialPaperMaxMarks: 100,
+    questions: [
+      {
+        questionNumber: '3',
+        subQuestion: 'a',
+        maximumMarks: 5,
+        marksAwarded: 3.5,
+        status: 'partially_correct',
+        markingComponents: [
+          // Criterion 1: SA 500 Audit Evidence - Correct
+          { componentId: 'sa500', componentType: 'PROVISION', expectedRequirement: 'Sufficient appropriate audit evidence under SA 500', assessment: 'CORRECT', marksAvailable: 2, marksAwarded: 2, marksDeducted: 0 },
+          // Criterion 2: Practical substantive procedure - Minor omission
+          { componentId: 'subst_proc', componentType: 'APPLICATION', expectedRequirement: 'Substantive testing of inventory valuation', assessment: 'PARTIALLY_CORRECT', marksAvailable: 2, marksAwarded: 1.5, marksDeducted: 0.5, deductionReason: 'Omitted physical stock count sheet reconciliation' },
+          // Criterion 3: Reporting conclusion - Incorrect
+          { componentId: 'report_concl', componentType: 'CONCLUSION', expectedRequirement: 'Modified opinion under SA 705', assessment: 'INCORRECT', marksAvailable: 1, marksAwarded: 0, marksDeducted: 1, deductionReason: 'Wrongly suggested unmodified opinion with EOM' },
+        ],
+      },
+    ],
+  };
+
+  const interAuditProcessed = processEvaluationIntegrity(interAuditInput, {
+    markingSchemeText: 'Official ICAI Inter Audit Scheme',
+    officialPaperMaxMarks: 100,
+  });
+
+  const auditQ3a = interAuditProcessed.questions[0];
+  assert(
+    auditQ3a.marksAwarded === 3.5 && auditQ3a.maximumMarks === 5,
+    `TEST CC.6: Audit independent criteria preserved; partial credit 3.5/5 awarded despite wrong reporting conclusion`
+  );
+  assert(
+    auditQ3a.markingComponents?.length === 3,
+    'TEST CC.7: Audit question contains exactly 3 independent scorable criteria'
+  );
+
+  // 4. CA Final Advanced Financial Management (AFM): Complex Numerical with Consequential Error & Multi-Page Continuation
+  const caFinalAfmInput: any = {
+    evaluationId: 'eval_final_afm_test',
+    studentName: 'Final Candidate',
+    icaiRegistrationNumber: 'CRO0456789',
+    level: 'FINAL',
+    subjectKey: 'final_afm',
+    subjectName: 'Advanced Financial Management',
+    attempt: 'May 2026',
+    officialPaperMaxMarks: 100,
+    questions: [
+      // Multi-page question Q2 continued across pages 4 and 5
+      {
+        questionNumber: '2',
+        subQuestion: 'a',
+        pageNumber: 4,
+        maximumMarks: 8,
+        marksAwarded: 6.5,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'afm_c1', componentType: 'WORKING', marksAvailable: 3, marksAwarded: 3 },
+          { componentId: 'afm_c2', componentType: 'CALCULATION', marksAvailable: 5, marksAwarded: 3.5, deductionReason: 'Intermediate rounding error in discount factor; subsequent cash flows carried forward correctly' },
+        ],
+      },
+      // Spurious split continuation on page 5 with duplicate code Q2(a)
+      {
+        questionNumber: '2(a)',
+        pageNumber: 5,
+        maximumMarks: 8,
+        marksAwarded: 6.5,
+        status: 'partially_correct',
+      },
+      {
+        questionNumber: '2',
+        subQuestion: 'b',
+        pageNumber: 6,
+        maximumMarks: 6,
+        marksAwarded: 5,
+        status: 'partially_correct',
+        markingComponents: [
+          { componentId: 'afm_b1', componentType: 'CALCULATION', marksAvailable: 6, marksAwarded: 5 },
+        ],
+      },
+    ],
+  };
+
+  const finalAfmProcessed = processEvaluationIntegrity(caFinalAfmInput, {
+    markingSchemeText: 'Official ICAI Final AFM Scheme',
+    officialPaperMaxMarks: 100,
+  });
+
+  const afmQ2a = finalAfmProcessed.questions.filter((q) => q.canonicalId === 'Q2(a)' || (q.questionNumber === '2' && q.subQuestion === 'a'));
+  assert(
+    afmQ2a.length === 1,
+    `TEST CC.8: Multi-page continuation for Final AFM Q2(a) merged into exactly 1 canonical question (got ${afmQ2a.length})`
+  );
+  assert(
+    afmQ2a[0].maximumMarks === 8 && afmQ2a[0].marksAwarded === 6.5,
+    `TEST CC.9: AFM Q2(a) preserved 8 max marks with 6.5 marks awarded including consequential credit`
+  );
+  assert(
+    finalAfmProcessed.totalMarks === 11.5,
+    `TEST CC.10: Final AFM total marks equals 6.5 + 5 = 11.5 (got ${finalAfmProcessed.totalMarks})`
+  );
+
+  // 5. Cross-Course Monotonic Mode Invariant across Foundation, Intermediate, and Final
+  const testSubQuestions: any[] = [
+    { questionNumber: '1', subQuestion: 'a', maximumMarks: 10, marksAwarded: 7, marksLost: 3, status: 'partially_correct', reasonForDeduction: '', detailedFeedback: '', markingComponents: [{ componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 10, marksAwarded: 7 }] },
+    { questionNumber: '1', subQuestion: 'b', maximumMarks: 5, marksAwarded: 3, marksLost: 2, status: 'partially_correct', reasonForDeduction: '', detailedFeedback: '', markingComponents: [{ componentId: 'c2', componentType: 'PROVISION', marksAvailable: 5, marksAwarded: 3 }] },
+  ];
+
+  const stdMode = applyMultiModeMarkingPhilosophy(testSubQuestions, 'standard');
+  const strictMode = applyMultiModeMarkingPhilosophy(testSubQuestions, 'strict');
+  const modMode = applyMultiModeMarkingPhilosophy(testSubQuestions, 'lenient');
+
+  assert(
+    strictMode.activeTotalMarks <= stdMode.activeTotalMarks && stdMode.activeTotalMarks <= modMode.activeTotalMarks,
+    `TEST CC.11: Mode invariant STRICT (${strictMode.activeTotalMarks}) <= STANDARD (${stdMode.activeTotalMarks}) <= MODERATE (${modMode.activeTotalMarks}) holds universally`
+  );
+  assert(
+    strictMode.attemptedMaxMarks === stdMode.attemptedMaxMarks && stdMode.attemptedMaxMarks === 15,
+    'TEST CC.12: Attempted max marks is strictly invariant across evaluation modes (15 marks)'
+  );
+}
+
 console.log('\n================================================================');
 console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
 console.log('================================================================');
