@@ -11,6 +11,12 @@ import { getAuthoritativePaperStructure } from '../services/paperStructureServic
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { parseQuestionCode } from '../services/questionReferenceLock.js';
+import {
+  toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
+  deduplicateQuestionList,
+  validateQuestionDeduplication,
+} from '../services/canonicalQuestionService.js';
 
 console.log('================================================================');
 console.log('--- RUNNING CRITICAL CA EVALUATION ACCURACY & INTEGRITY TESTS ---');
@@ -1369,6 +1375,175 @@ console.log('\n--- TEST AA: Universal Paper Structure Parser ---');
   assert(q2a?.maximumMarks === 8, `TEST AA.2: Q2(a) dynamically parsed with 8 marks (got ${q2a?.maximumMarks})`);
   assert(q2b?.maximumMarks === 6, `TEST AA.3: Q2(b) dynamically parsed with 6 marks (got ${q2b?.maximumMarks})`);
   assert(dynamicPaper.totalPaperMaxMarks === 100, 'TEST AA.4: Official paper maximum marks is 100');
+}
+
+// --------------------------------------------------------------------------
+// TEST BB: Generic Deduplication, Canonical Identity & Exactly-Once Invariants
+// Regression Verification for Q3(b), Q4(b), and arbitrary sub-questions
+// --------------------------------------------------------------------------
+console.log('\n--- TEST BB: Canonical Identity & Exactly-Once Pipeline Invariants ---');
+{
+  // 1. Stable Canonical Identity Normalization
+  assert(
+    toCanonicalQuestionId('3', 'b') === 'Q3(b)' &&
+      toCanonicalQuestionId('Q3(b)', 'b') === 'Q3(b)' &&
+      toCanonicalQuestionId('3(b)', 'b') === 'Q3(b)' &&
+      toCanonicalQuestionId('Q3_b') === 'Q3(b)' &&
+      toCanonicalQuestionId('3(b) (OR)') === 'Q3(b)',
+    'TEST BB.1: Canonical identity for Q3(b) is strictly invariant across all input formats'
+  );
+
+  assert(
+    toCanonicalQuestionId('4', 'b') === 'Q4(b)' &&
+      toCanonicalQuestionId('Q4(b)', 'b') === 'Q4(b)' &&
+      toCanonicalQuestionId('4(b)', 'b') === 'Q4(b)' &&
+      toCanonicalQuestionId('Q4_b') === 'Q4(b)' &&
+      toCanonicalQuestionId('4(b) OR') === 'Q4(b)',
+    'TEST BB.2: Canonical identity for Q4(b) is strictly invariant across all input formats'
+  );
+
+  assert(
+    toCanonicalQuestionId('6', 'a(1)') === 'Q6(a(1))' &&
+      toCanonicalQuestionId('Q6(a)(1)') === 'Q6(a(1))' &&
+      toCanonicalQuestionId('Q6(a(1))') === 'Q6(a(1))',
+    'TEST BB.3: Nested sub-questions like Q6(a(1)) retain exact canonical structure'
+  );
+
+  // 2. Exactly-Once Rule: Multiple duplicate objects of Q3(b) and Q4(b)
+  const duplicateInput: any[] = [
+    { questionNumber: '3', subQuestion: 'b', maximumMarks: 4, marksAwarded: 2.5, markingComponents: [{ componentId: 'c1', componentType: 'PROVISION', marksAvailable: 4, marksAwarded: 2.5 }] },
+    { questionNumber: 'Q3(b)', subQuestion: 'b', maximumMarks: 4, marksAwarded: 3, detailedFeedback: 'Longer evaluation', markingComponents: [{ componentId: 'c1', componentType: 'PROVISION', marksAvailable: 4, marksAwarded: 3 }] },
+    { questionNumber: '3(b) (OR)', maximumMarks: 4, marksAwarded: 0, detailedFeedback: 'Unattempted alternative' },
+    { questionNumber: '4', subQuestion: 'b', maximumMarks: 4, marksAwarded: 2, markingComponents: [{ componentId: 'c1', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 2 }] },
+    { questionNumber: 'Q4(b)', maximumMarks: 4, marksAwarded: 3.5, markingComponents: [{ componentId: 'c1', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 3.5 }] },
+    { questionNumber: '2', subQuestion: 'a', maximumMarks: 4, marksAwarded: 3, markingComponents: [{ componentId: 'c1', componentType: 'CALCULATION', marksAvailable: 4, marksAwarded: 3 }] },
+    { questionNumber: '5', subQuestion: 'b', maximumMarks: 5, marksAwarded: 4, markingComponents: [{ componentId: 'c1', componentType: 'PROVISION', marksAvailable: 5, marksAwarded: 4 }] },
+  ];
+
+  // Validation catches duplicates prior to resolution
+  const preCheck = validateQuestionDeduplication(duplicateInput);
+  assert(
+    preCheck.isValid === false &&
+      preCheck.duplicateIds.includes('Q3(b)') &&
+      preCheck.duplicateIds.includes('Q4(b)'),
+    'TEST BB.4: Structural validation detects duplicate occurrences of Q3(b) and Q4(b)'
+  );
+
+  // Generic deduplication engine resolves to exactly one instance per canonicalId
+  const deduped = deduplicateQuestionList(duplicateInput);
+  const q3bOccurrences = deduped.filter((q: any) => q.canonicalId === 'Q3(b)' || toCanonicalQuestionId(q.questionNumber, q.subQuestion) === 'Q3(b)');
+  const q4bOccurrences = deduped.filter((q: any) => q.canonicalId === 'Q4(b)' || toCanonicalQuestionId(q.questionNumber, q.subQuestion) === 'Q4(b)');
+
+  assert(
+    q3bOccurrences.length === 1,
+    `TEST BB.5: Exactly ONE evaluation instance exists for Q3(b) (count=${q3bOccurrences.length})`
+  );
+  assert(
+    q4bOccurrences.length === 1,
+    `TEST BB.6: Exactly ONE evaluation instance exists for Q4(b) (count=${q4bOccurrences.length})`
+  );
+
+  // Exact maximum marks preserved
+  assert(
+    q3bOccurrences[0].maximumMarks === 4,
+    `TEST BB.7: Q3(b) maximum marks is strictly 4 (got ${q3bOccurrences[0].maximumMarks})`
+  );
+  assert(
+    q4bOccurrences[0].maximumMarks === 4,
+    `TEST BB.8: Q4(b) maximum marks is strictly 4 (got ${q4bOccurrences[0].maximumMarks})`
+  );
+
+  // Post-check passes structural deduplication validation
+  const postCheck = validateQuestionDeduplication(deduped);
+  assert(
+    postCheck.isValid === true && postCheck.duplicateIds.length === 0,
+    'TEST BB.9: Deduplicated list passes structural validation with 0 duplicate canonical IDs'
+  );
+
+  // 3. Parent / Child Separation: Parent container must NEVER double count with child sub-questions
+  const parentChildInput: any[] = [
+    { questionNumber: '3', maximumMarks: 10, marksAwarded: 7, detailedFeedback: 'Parent container Q3' },
+    { questionNumber: '3', subQuestion: 'a', maximumMarks: 6, marksAwarded: 4.5, markingComponents: [{ componentId: 'c1', componentType: 'PROVISION', marksAvailable: 6, marksAwarded: 4.5 }] },
+    { questionNumber: '3', subQuestion: 'b', maximumMarks: 4, marksAwarded: 3, markingComponents: [{ componentId: 'c2', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 3 }] },
+  ];
+
+  const parentChildPreCheck = validateQuestionDeduplication(parentChildInput);
+  assert(
+    parentChildPreCheck.isValid === false && parentChildPreCheck.parentChildCollisions.includes('Q3'),
+    'TEST BB.10: Parent container Q3 flagged as parentChildCollision when children Q3(a) and Q3(b) exist'
+  );
+
+  const parentResolved = deduplicateQuestionList(parentChildInput);
+  const q3ParentExists = parentResolved.some((q: any) => q.canonicalId === 'Q3');
+  const q3aChildExists = parentResolved.some((q: any) => q.canonicalId === 'Q3(a)');
+  const q3bChildExists = parentResolved.some((q: any) => q.canonicalId === 'Q3(b)');
+
+  assert(
+    !q3ParentExists && q3aChildExists && q3bChildExists && parentResolved.length === 2,
+    'TEST BB.11: Parent Q3 eliminated; only unique children Q3(a) and Q3(b) evaluated'
+  );
+
+  const totalFromChildren = parentResolved.reduce((s, q) => s + (q.marksAwarded || 0), 0);
+  assert(
+    totalFromChildren === 7.5,
+    `TEST BB.12: Marks calculated exclusively from unique child evaluations (4.5 + 3 = 7.5, not 7 + 7.5 = 14.5)`
+  );
+
+  // 4. End-to-End Master Pipeline Verification with processEvaluationIntegrity
+  const rawMasterInput: any = {
+    evaluationId: 'eval_bb_test',
+    studentName: 'Candidate Regression Test',
+    icaiRegistrationNumber: 'CRO0987654',
+    level: 'INTERMEDIATE',
+    subjectKey: 'tax',
+    subjectName: 'Taxation',
+    attempt: 'May 2026',
+    officialPaperMaxMarks: 100,
+    questions: [
+      { questionNumber: 'MCQ 1', maximumMarks: 2, marksAwarded: 2, status: 'correct', markingComponents: [{ componentId: 'mcq1', componentType: 'MCQ', marksAvailable: 2, marksAwarded: 2 }] },
+      { questionNumber: '1', maximumMarks: 15, marksAwarded: 10, status: 'partially_correct', markingComponents: [{ componentId: 'q1_c1', componentType: 'PROVISION', marksAvailable: 15, marksAwarded: 10 }] },
+      { questionNumber: '3', maximumMarks: 10, marksAwarded: 7, status: 'partially_correct' }, // Parent container - should be dropped!
+      { questionNumber: '3', subQuestion: 'a', maximumMarks: 6, marksAwarded: 4.5, status: 'partially_correct', markingComponents: [{ componentId: 'q3a_c1', componentType: 'PROVISION', marksAvailable: 6, marksAwarded: 4.5 }] },
+      { questionNumber: '3', subQuestion: 'b', maximumMarks: 4, marksAwarded: 3, status: 'partially_correct', markingComponents: [{ componentId: 'q3b_c1', componentType: 'APPLICATION', marksAvailable: 4, marksAwarded: 3 }] },
+      { questionNumber: 'Q3(b)', subQuestion: 'b', maximumMarks: 4, marksAwarded: 2.5, status: 'partially_correct' }, // Duplicate Q3(b) - should be dropped!
+      { questionNumber: '4', subQuestion: 'b', maximumMarks: 4, marksAwarded: 3, status: 'partially_correct', markingComponents: [{ componentId: 'q4b_c1', componentType: 'PROVISION', marksAvailable: 4, marksAwarded: 3 }] },
+      { questionNumber: '4(b) (OR)', maximumMarks: 4, marksAwarded: 0, status: 'incorrect' }, // Alternative Q4(b) - should be dropped!
+    ],
+  };
+
+  const masterProcessed = processEvaluationIntegrity(rawMasterInput, {
+    markingSchemeText: 'Official ICAI suggested answers',
+    officialPaperMaxMarks: 100,
+  });
+
+  const finalQ3b = masterProcessed.questions.filter((q) => q.questionNumber === '3' && q.subQuestion === 'b' || q.canonicalId === 'Q3(b)');
+  const finalQ4b = masterProcessed.questions.filter((q) => q.questionNumber === '4' && q.subQuestion === 'b' || q.canonicalId === 'Q4(b)');
+  const finalQ3Parent = masterProcessed.questions.filter((q) => q.questionNumber === '3' && !q.subQuestion);
+
+  assert(
+    finalQ3b.length === 1 && finalQ3b[0].maximumMarks === 4,
+    'TEST BB.13: Master pipeline output contains exactly 1 evaluation for Q3(b) with 4 marks max'
+  );
+  assert(
+    finalQ4b.length === 1 && finalQ4b[0].maximumMarks === 4,
+    'TEST BB.14: Master pipeline output contains exactly 1 evaluation for Q4(b) with 4 marks max'
+  );
+  assert(
+    finalQ3Parent.length === 0,
+    'TEST BB.15: Master pipeline completely eliminated duplicate parent container Q3'
+  );
+
+  const masterValidation = validateQuestionDeduplication(masterProcessed.questions);
+  assert(
+    masterValidation.isValid === true,
+    'TEST BB.16: Final master evaluation output has ZERO duplicate canonical sub-questions'
+  );
+
+  const consistencyCheck = validateAuthoritativeConsistency(masterProcessed);
+  assert(
+    consistencyCheck.isValid === true,
+    'TEST BB.17: Final total integrity check passes with exact mathematical balance'
+  );
 }
 
 console.log('\n================================================================');

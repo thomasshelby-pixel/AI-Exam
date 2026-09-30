@@ -10,6 +10,12 @@
  * 4. Maximum marks are NEVER inferred or invented by AI models.
  */
 
+import {
+  toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
+  deduplicateQuestionList,
+} from './canonicalQuestionService.js';
+
 export interface PaperStructureSubQuestion {
   fullQuestionCode: string; // e.g. 'Q5(a)', 'Q5(b)', 'Q6(a)', 'MCQ1'
   questionNumber: string;   // '5', '6', '1'
@@ -261,49 +267,36 @@ function buildTaxationPaperStructure(options: {
   const parsedExplicit = extractSubQuestionsFromText(combinedText);
   const overrideMap = new Map<string, number>();
   for (const pe of parsedExplicit) {
-    overrideMap.set(pe.fullQuestionCode, pe.maximumMarks);
+    const canonKey = toCanonicalQuestionId(pe.fullQuestionCode || pe.questionNumber, pe.subQuestionNumber);
+    overrideMap.set(canonKey, pe.maximumMarks);
   }
 
   for (const sq of subQuestions) {
-    if (overrideMap.has(sq.fullQuestionCode)) {
-      sq.maximumMarks = overrideMap.get(sq.fullQuestionCode)!;
+    const canonKey = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
+    if (overrideMap.has(canonKey)) {
+      sq.maximumMarks = overrideMap.get(canonKey)!;
     }
   }
 
   // If parsedExplicit contains sub-sub questions (like Q6(a)(1) or Q6(a)(2)), remove parent placeholder like Q6(a)
-  const hasSubSub = (parentCode: string) => parsedExplicit.some((pe) => pe.fullQuestionCode.startsWith(parentCode + '('));
+  const hasSubSub = (parentCode: string) => {
+    const canonP = toCanonicalQuestionId(parentCode);
+    return parsedExplicit.some((pe) => {
+      const canonChild = toCanonicalQuestionId(pe.fullQuestionCode || pe.questionNumber, pe.subQuestionNumber);
+      return canonChild !== canonP && canonChild.startsWith(`${canonP}(`);
+    });
+  };
   let finalSubQuestions = subQuestions.filter((sq) => !hasSubSub(sq.fullQuestionCode));
 
-  // Determine question numbers that already have sub-questions (e.g. '2', '3', '4', '5', '6', '7', '8')
-  const qNumsWithChildren = new Set<string>();
-  for (const sq of finalSubQuestions) {
-    if (!sq.isMcq && sq.subQuestionNumber) {
-      qNumsWithChildren.add(sq.questionNumber);
-    }
-  }
-
   for (const pe of parsedExplicit) {
-    // If pe has subQuestionNumber, record its parent
-    if (!pe.isMcq && pe.subQuestionNumber) {
-      qNumsWithChildren.add(pe.questionNumber);
-    }
-    // NEVER push a parent question (e.g. Q3, Q4, Q5) into finalSubQuestions if child sub-questions exist
-    if (!pe.isMcq && !pe.subQuestionNumber && qNumsWithChildren.has(pe.questionNumber)) {
-      continue;
-    }
-    if (!finalSubQuestions.some((s) => s.fullQuestionCode.toLowerCase() === pe.fullQuestionCode.toLowerCase())) {
+    const peCanon = toCanonicalQuestionId(pe.fullQuestionCode || pe.questionNumber, pe.subQuestionNumber);
+    if (!finalSubQuestions.some((s) => toCanonicalQuestionId(s.fullQuestionCode || s.questionNumber, s.subQuestionNumber) === peCanon)) {
       finalSubQuestions.push(pe);
     }
   }
 
-  // Filter out any parent questions if child sub-questions exist
-  finalSubQuestions = finalSubQuestions.filter((sq) => {
-    if (sq.isMcq) return true;
-    if (!sq.subQuestionNumber && qNumsWithChildren.has(sq.questionNumber)) {
-      return false; // Parent container must not be in evaluable leaf sub-questions
-    }
-    return true;
-  });
+  // Authoritative deduplication and parent-child elimination
+  finalSubQuestions = deduplicateQuestionList(finalSubQuestions);
 
   // Group into Questions
   const questionsMap = new Map<string, PaperStructureQuestion>();
@@ -363,17 +356,19 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     const qNum = match[1];
     const subQ = match[2];
     const marks = parseFloat(match[3]);
-    const code = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    if (!seen.has(code) && marks > 0) {
-      seen.add(code);
+    const rawCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
+    const canon = toCanonicalQuestionId(rawCode);
+    if (!seen.has(canon) && marks > 0) {
+      seen.add(canon);
+      const parsed = parseCanonicalQuestionIdentity(canon);
       subQuestions.push({
-        fullQuestionCode: code,
-        questionNumber: qNum,
-        subQuestionNumber: subQ,
+        fullQuestionCode: parsed.canonicalId,
+        questionNumber: parsed.questionNumber,
+        subQuestionNumber: parsed.subQuestion,
         maximumMarks: marks,
-        compulsory: qNum === '1' || qNum === '5',
+        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
         isMcq: false,
-        section: parseInt(qNum, 10) > 4 ? 'B' : 'A',
+        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
         division: 'B',
       });
     }
@@ -385,23 +380,25 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     const qNum = match[1];
     const subQ = match[2];
     const marks = parseFloat(match[3]);
-    const code = `Q${qNum}(${subQ})`;
-    if (!seen.has(code) && marks > 0) {
-      seen.add(code);
+    const rawCode = `Q${qNum}(${subQ})`;
+    const canon = toCanonicalQuestionId(rawCode);
+    if (!seen.has(canon) && marks > 0) {
+      seen.add(canon);
+      const parsed = parseCanonicalQuestionIdentity(canon);
       subQuestions.push({
-        fullQuestionCode: code,
-        questionNumber: qNum,
-        subQuestionNumber: subQ,
+        fullQuestionCode: parsed.canonicalId,
+        questionNumber: parsed.questionNumber,
+        subQuestionNumber: parsed.subQuestion,
         maximumMarks: marks,
-        compulsory: qNum === '1' || qNum === '5',
+        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
         isMcq: false,
-        section: parseInt(qNum, 10) > 4 ? 'B' : 'A',
+        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
         division: 'B',
       });
     }
   }
 
-  return subQuestions;
+  return deduplicateQuestionList(subQuestions);
 }
 
 /**
@@ -431,20 +428,7 @@ function buildGenericPaperStructure(options: {
     }
   }
 
-  // Filter out parent questions from subQuestions if children exist
-  const genericChildren = new Set<string>();
-  for (const sq of subQuestions) {
-    if (!sq.isMcq && sq.subQuestionNumber) {
-      genericChildren.add(sq.questionNumber);
-    }
-  }
-  subQuestions = subQuestions.filter((sq) => {
-    if (sq.isMcq) return true;
-    if (!sq.subQuestionNumber && genericChildren.has(sq.questionNumber)) {
-      return false; // Exclude parent from leaf evaluable sub-questions
-    }
-    return true;
-  });
+  subQuestions = deduplicateQuestionList(subQuestions);
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
   for (const sq of subQuestions) {

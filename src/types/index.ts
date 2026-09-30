@@ -261,6 +261,9 @@ export interface QuestionEvaluation {
   subQuestion?: string;
   questionId?: string;
   subQuestionId?: string;
+  canonicalId?: string;
+  parentQuestionId?: string;
+  fullQuestionCode?: string;
   questionSource?: string;
   suggestedAnswerSource?: string;
   markingSchemeSource?: string;

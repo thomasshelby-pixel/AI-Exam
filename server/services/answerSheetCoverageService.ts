@@ -2,7 +2,11 @@ import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { getGemini, generateContentWithResilience } from '../gemini.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
-import { toCanonicalQuestionId } from './canonicalQuestionService.js';
+import {
+  toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
+  deduplicateQuestionList,
+} from './canonicalQuestionService.js';
 
 // In-memory cache: 1 Answer Sheet = 1 Authoritative Coverage Map
 const coverageMapCache = new Map<string, AnswerCoverageMap>();
@@ -28,6 +32,7 @@ export interface DetectedQuestionOccurrence {
   pageNumber: number;
   snippet?: string;
   studentSelectedOption?: string; // For MCQs
+  isMcq?: boolean;
 }
 
 export interface PageCoverageRecord {
@@ -121,22 +126,23 @@ export async function buildAnswerSheetCoverageMap(
   for (const pageRec of pageRecords) {
     for (const det of pageRec.detectedQuestions) {
       const code = det.isMcq
-        ? `MCQ${det.questionNumber}`
-        : toCanonicalQuestionId(det.questionNumber, det.subQuestionNumber);
+        ? `MCQ${String(det.questionNumber).replace(/[^0-9]/g, '') || '1'}`
+        : toCanonicalQuestionId(det.fullQuestionCode || det.questionNumber, det.subQuestionNumber);
+      const parsed = parseCanonicalQuestionIdentity(code);
 
-      if (!mappingMap.has(code)) {
-        mappingMap.set(code, {
-          fullQuestionCode: code,
-          questionNumber: det.questionNumber,
-          subQuestionNumber: det.subQuestionNumber,
+      if (!mappingMap.has(parsed.canonicalId)) {
+        mappingMap.set(parsed.canonicalId, {
+          fullQuestionCode: parsed.canonicalId,
+          questionNumber: parsed.questionNumber,
+          subQuestionNumber: parsed.subQuestion,
           pages: [pageRec.pageNumber],
           status: det.status,
           studentSnippet: det.snippet,
           studentSelectedOption: det.studentSelectedOption,
-          isMcq: code.startsWith('MCQ') || det.subQuestionNumber === 'MCQ',
+          isMcq: parsed.isMcq,
         });
       } else {
-        const existing = mappingMap.get(code)!;
+        const existing = mappingMap.get(parsed.canonicalId)!;
         if (!existing.pages.includes(pageRec.pageNumber)) {
           existing.pages.push(pageRec.pageNumber);
         }
@@ -150,25 +156,41 @@ export async function buildAnswerSheetCoverageMap(
     }
   }
 
-  // Parent / Child Rule: If child sub-questions are attempted or defined (e.g. Q3(b), Q4(a), Q5(a), Q6(b)),
-  // prune any parent container question (e.g. Q3, Q4, Q5, Q6) so it is NEVER evaluated as a duplicate question.
-  const questionNumbersWithChildren = new Set<string>();
+  // Parent / Child Rule: Prune any parent container question (e.g. Q3, Q4, Q5, Q6(a)) if more granular children exist
+  const nonMcqCanonicalIds = new Set<string>();
   for (const mapping of mappingMap.values()) {
-    if (!mapping.isMcq && mapping.subQuestionNumber) {
-      questionNumbersWithChildren.add(mapping.questionNumber);
+    if (!mapping.isMcq) nonMcqCanonicalIds.add(mapping.fullQuestionCode);
+  }
+  for (const sq of paperStructure.subQuestions) {
+    if (!sq.isMcq) {
+      nonMcqCanonicalIds.add(toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber));
+    }
+  }
+
+  const parentContainers = new Set<string>();
+  for (const childId of nonMcqCanonicalIds) {
+    for (const potentialParent of nonMcqCanonicalIds) {
+      if (childId !== potentialParent && childId.startsWith(`${potentialParent}(`)) {
+        parentContainers.add(potentialParent);
+      }
+    }
+  }
+  for (const m of mappingMap.values()) {
+    if (!m.isMcq && m.subQuestionNumber) {
+      parentContainers.add(`Q${m.questionNumber}`);
     }
   }
   for (const sq of paperStructure.subQuestions) {
     if (!sq.isMcq && sq.subQuestionNumber) {
-      questionNumbersWithChildren.add(sq.questionNumber);
+      parentContainers.add(`Q${sq.questionNumber}`);
     }
   }
 
   for (const [key, mapping] of Array.from(mappingMap.entries())) {
-    if (!mapping.isMcq && !mapping.subQuestionNumber && questionNumbersWithChildren.has(mapping.questionNumber)) {
+    if (!mapping.isMcq && parentContainers.has(mapping.fullQuestionCode)) {
       // Find the first child sub-question to transfer any pages if necessary
       const child = Array.from(mappingMap.values()).find(
-        (m) => !m.isMcq && m.questionNumber === mapping.questionNumber && m.subQuestionNumber
+        (m) => !m.isMcq && m.fullQuestionCode.startsWith(`${mapping.fullQuestionCode}(`)
       );
       if (child) {
         for (const p of mapping.pages) {
@@ -182,7 +204,7 @@ export async function buildAnswerSheetCoverageMap(
     }
   }
 
-  const attemptedQuestions = Array.from(mappingMap.values());
+  const attemptedQuestions = deduplicateQuestionList(Array.from(mappingMap.values()), paperStructure.subQuestions);
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
 
   const unmappedPages = pageRecords
@@ -300,16 +322,16 @@ Return strictly valid JSON with this schema:
 
     if (Array.isArray(raw.detectedQuestions)) {
       for (const dq of raw.detectedQuestions) {
-        const qNum = String(dq.questionNumber || '').replace(/[^0-9]/g, '');
-        if (!qNum) continue;
-
-        const subQ = dq.subQuestion ? String(dq.subQuestion).toLowerCase().replace(/[^a-z0-9]/g, '') : undefined;
-        const code = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
+        const rawQStr = String(dq.questionNumber || '').trim();
+        const rawSubStr = dq.subQuestion ? String(dq.subQuestion).trim() : '';
+        const canonId = toCanonicalQuestionId(rawQStr, rawSubStr);
+        const parsed = parseCanonicalQuestionIdentity(canonId);
+        if (!parsed.questionNumber) continue;
 
         detectedQuestions.push({
-          fullQuestionCode: code,
-          questionNumber: qNum,
-          subQuestionNumber: subQ,
+          fullQuestionCode: parsed.canonicalId,
+          questionNumber: parsed.questionNumber,
+          subQuestionNumber: parsed.subQuestion,
           status,
           isContinuation: Boolean(dq.isContinuation),
           pageNumber,

@@ -18,6 +18,7 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
+import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -243,6 +244,17 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       75,
       'Verifying step calculations, MCQ scores, and total mark allocation...'
     );
+
+    // Structural Deduplication Validation: Canonical Exactly-Once Rule
+    let dedupValidation = validateQuestionDeduplication(evaluationResult.questions || []);
+    if (!dedupValidation.isValid) {
+      console.warn(`[AsyncEval] Duplicate question instances detected for evaluation ${evaluationId}: ${dedupValidation.details}. Resolving deterministically.`);
+      evaluationResult.questions = deduplicateQuestionList(evaluationResult.questions || []);
+      dedupValidation = validateQuestionDeduplication(evaluationResult.questions || []);
+      if (!dedupValidation.isValid) {
+        throw new Error(`CRITICAL_INTEGRITY_VIOLATION: Cannot generate final report due to persistent question duplication: ${dedupValidation.details}`);
+      }
+    }
 
     // Stage 5: Artifact Generation (Checked Copy & Detailed Report PDFs)
     updateEvaluationProgress(

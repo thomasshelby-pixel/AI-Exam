@@ -274,10 +274,11 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
   const totalMcqMaxPossible = mcqs.reduce((acc, m) => acc + (m.maximumMarks || 0), 0);
 
   const evaluatedQuestions: QuestionEvaluation[] = mcqs.map((mcq) => {
-    const qNum = mcq.questionNumber;
+    const cleanNum = String(mcq.questionNumber || '').replace(/[^0-9]/g, '') || '1';
+    const qNum = cleanNum;
     const rawChoice = mcqSelections instanceof Map
-      ? (mcqSelections.get(qNum) ?? mcqSelections.get(`MCQ${qNum}`) ?? mcqSelections.get(`MCQ ${qNum}`) ?? '')
-      : (mcqSelections[qNum] ?? mcqSelections[`MCQ${qNum}`] ?? mcqSelections[`MCQ ${qNum}`] ?? '');
+      ? (mcqSelections.get(qNum) ?? (cleanNum ? mcqSelections.get(cleanNum) : undefined) ?? (cleanNum ? mcqSelections.get(`MCQ${cleanNum}`) : undefined) ?? (cleanNum ? mcqSelections.get(`MCQ ${cleanNum}`) : undefined) ?? '')
+      : (mcqSelections[qNum] ?? (cleanNum ? mcqSelections[cleanNum] : undefined) ?? (cleanNum ? mcqSelections[`MCQ${cleanNum}`] : undefined) ?? (cleanNum ? mcqSelections[`MCQ ${cleanNum}`] : undefined) ?? '');
     const studentChoice = String(rawChoice || '').trim().toUpperCase();
     const officialKey = (mcq.officialKey || '').trim().toUpperCase();
     const maxMarks = mcq.maximumMarks;

@@ -174,7 +174,14 @@ export function buildStructuredAnnotations(
 
     const annotation: PageAnnotation = {
       pageNumber: targetPage,
-      questionNumber: String(q.questionNumber || `Q${idx + 1}`),
+      questionNumber: String(
+        q.canonicalId ||
+        q.fullQuestionCode ||
+        (q.subQuestion && !String(q.questionNumber).includes('(')
+          ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
+          : q.questionNumber) ||
+        `Q${idx + 1}`
+      ),
       marksAwarded: Number(q.marksAwarded ?? 0),
       maxMarks: Number(q.maxMarks || q.maximumMarks || 5),
       steps: steps.map((s: any) => {
@@ -723,7 +730,14 @@ export async function generateOriginalSubmissionPdf(
       borderWidth: 0.5,
     });
 
-    const qNum = String(q.questionNumber || `Q${idx + 1}`);
+    const qNum = String(
+      q.canonicalId ||
+      q.fullQuestionCode ||
+      (q.subQuestion && !String(q.questionNumber).includes('(')
+        ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
+        : q.questionNumber) ||
+      `Q${idx + 1}`
+    );
     const qTopic = (q.topic || q.questionTitle || q.examinerRemarks || 'Compulsory / Descriptive Solution').substring(0, 48);
 
     safeDrawText(cover, qNum, { x: 45, y: tY, size: 8.5, font: helveticaBold, color: darkSlate });

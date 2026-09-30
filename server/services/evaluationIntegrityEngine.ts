@@ -566,6 +566,12 @@ export function validateAuthoritativeConsistency(
     };
   }
 
+  // Deduplication & Canonical Exactly-Once Rule Validation
+  const dedupValidation = validateQuestionDeduplication(questions);
+  if (!dedupValidation.isValid) {
+    errors.push(`Deduplication validation failed: ${dedupValidation.details}`);
+  }
+
   // Run Hard Completion Gate
   const gateReport = evaluateHardCompletionGate(evaluation, options);
   evaluation.completionGateReport = gateReport;
@@ -824,6 +830,15 @@ export function evaluateHardCompletionGate(
     check11Details = 'Evaluation object missing core structured evidence components.';
   }
   checks.push({ ruleId: 'RULE_11_UNIFIED_EVALUATION_OBJECT', name: 'Single Authoritative Object', passed: check11Passed, details: check11Details });
+
+  // Check 12: Canonical Deduplication & Exactly-Once Validation
+  const dedupVal = validateQuestionDeduplication(questions);
+  checks.push({
+    ruleId: 'RULE_12_CANONICAL_EXACTLY_ONCE',
+    name: 'Canonical Deduplication & Exactly-Once Rule',
+    passed: dedupVal.isValid,
+    details: dedupVal.details,
+  });
 
   const passedCount = checks.filter((c) => c.passed).length;
   const failedCount = checks.filter((c) => !c.passed).length;

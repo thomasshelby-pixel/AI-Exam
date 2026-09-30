@@ -57,7 +57,8 @@ export async function generateDetailedReportPdf(
   const isExemption = percentage >= 60;
   const resultStatus = isExemption ? 'EXEMPTION' : isPass ? 'PASS' : 'FAIL';
 
-  const questions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
+  const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
+  const questions = deduplicateQuestionList(rawQuestions);
 
   // Helper to add a new page with standard header and footer
   const createReportPage = (pageNum: number) => {
@@ -473,7 +474,14 @@ export async function generateDetailedReportPdf(
   // Render question summary rows (paginate if needed so NO question is truncated)
   let currentScorecardPage = p1;
   questions.forEach((q: any, idx: number) => {
-    const qNum = String(q.questionNumber || `Q${idx + 1}`);
+    const qNum = String(
+      q.canonicalId ||
+      q.fullQuestionCode ||
+      (q.subQuestion && !String(q.questionNumber).includes('(')
+        ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
+        : q.questionNumber) ||
+      `Q${idx + 1}`
+    );
     const qMarks = Number(q.marksAwarded ?? 0);
     const qMax = Number(q.maxMarks || q.maximumMarks || 5);
     const qPct = qMax > 0 ? Math.round((qMarks / qMax) * 100) : 0;
@@ -539,7 +547,14 @@ export async function generateDetailedReportPdf(
 
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
-      const qNum = String(q.questionNumber || `Q${i + 1}`);
+      const qNum = String(
+        q.canonicalId ||
+        q.fullQuestionCode ||
+        (q.subQuestion && !String(q.questionNumber).includes('(')
+          ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
+          : q.questionNumber) ||
+        `Q${i + 1}`
+      );
       const qMarks = Number(q.marksAwarded ?? 0);
       const qMax = Number(q.maxMarks || q.maximumMarks || 5);
       const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [];

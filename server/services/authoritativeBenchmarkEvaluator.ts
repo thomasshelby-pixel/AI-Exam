@@ -2,11 +2,16 @@ import type { EvaluateAnswerSheetParams } from '../gemini.js';
 import { ModelExecutionResult } from '../models/modelRegistry.js';
 import { MarkingComponent, MarkingComponentType } from '../../src/types/index.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
-import { deduplicateQuestionList } from './canonicalQuestionService.js';
+import { deduplicateQuestionList, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 interface RawBenchmarkQuestion {
   questionNumber: string;
   subQuestion?: string;
+  canonicalId?: string;
+  questionId?: string;
+  subQuestionId?: string;
+  parentQuestionId?: string;
+  fullQuestionCode?: string;
   maximumMarks: number;
   marksAwarded: number;
   pageNumber: number;
@@ -35,6 +40,16 @@ export function generateAuthoritativeBenchmarkEvaluation(
 
   // Standard baseline ratio (mode adjustments are applied deterministically by multiModeMarkingEngine)
   const baseStandardRatio = 0.65;
+
+  const paperStruct = getAuthoritativePaperStructure({
+    level: params.level,
+    paper: params.paper || params.subjectName,
+    subjectName: params.subjectName,
+    questionPaperText: params.referenceQuestionPaperText,
+    markingSchemeText: params.markingSchemeText,
+    suggestedAnswersText: params.referenceSuggestedAnswersText,
+    officialPaperMaxMarks: paperMaxMarks,
+  });
 
   const questions: RawBenchmarkQuestion[] = [];
 
@@ -124,16 +139,6 @@ export function generateAuthoritativeBenchmarkEvaluation(
     }
 
     // Descriptive Questions derived dynamically from authoritative Paper Structure
-    const paperStruct = getAuthoritativePaperStructure({
-      level: params.level,
-      paper: params.paper || params.subjectName,
-      subjectName: params.subjectName,
-      questionPaperText: params.referenceQuestionPaperText,
-      markingSchemeText: params.markingSchemeText,
-      suggestedAnswersText: params.referenceSuggestedAnswersText,
-      officialPaperMaxMarks: paperMaxMarks,
-    });
-
     const authDescriptive = paperStruct.subQuestions.filter((s) => !s.isMcq);
     const descriptiveSpecs = authDescriptive.length > 0
       ? authDescriptive.map((sq, idx) => ({
@@ -208,8 +213,15 @@ export function generateAuthoritativeBenchmarkEvaluation(
         },
       ];
 
+      const parsed = parseCanonicalQuestionIdentity(spec.qNum);
       questions.push({
-        questionNumber: spec.qNum,
+        questionNumber: parsed.questionNumber,
+        subQuestion: parsed.subQuestion,
+        canonicalId: parsed.canonicalId,
+        questionId: parsed.canonicalId,
+        subQuestionId: parsed.subQuestion,
+        parentQuestionId: parsed.parentQuestionId,
+        fullQuestionCode: parsed.canonicalId,
         maximumMarks: spec.max,
         marksAwarded: actualAwarded,
         pageNumber: spec.pages[0],
@@ -222,7 +234,8 @@ export function generateAuthoritativeBenchmarkEvaluation(
     }
   }
 
-  const calculatedTotal = questions.reduce((sum, q) => sum + q.marksAwarded, 0);
+  const dedupedQuestions = deduplicateQuestionList(questions, paperStruct.subQuestions);
+  const calculatedTotal = dedupedQuestions.reduce((sum, q) => sum + (q.marksAwarded || 0), 0);
   const percentage = Math.round((calculatedTotal / paperMaxMarks) * 1000) / 10;
 
   let grade = 'Pass';
@@ -265,7 +278,7 @@ export function generateAuthoritativeBenchmarkEvaluation(
       'State the applicable statutory provision or accounting standard explicitly before writing computations.',
       'Ensure neat underline of final answers and ledger balances for examiner clarity.',
     ],
-    questions,
+    questions: dedupedQuestions,
   };
 
   return {

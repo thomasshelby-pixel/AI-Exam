@@ -164,7 +164,43 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const isExemption = activePercentage >= 60;
   const isPass = activePercentage >= 40;
 
-  const filteredQuestions = questions.filter((q) => {
+  // Normalized question display helper guaranteeing clean, unambiguous canonical labels
+  const getQuestionDisplayCode = (q: any): string => {
+    if (!q) return '';
+    const numStr = String(q.canonicalId || q.fullQuestionCode || q.questionNumber || '').trim();
+    const subStr = q.subQuestion ? String(q.subQuestion).trim() : '';
+
+    if (numStr.toUpperCase().startsWith('MCQ') || subStr.toUpperCase() === 'MCQ') {
+      const digits = numStr.replace(/[^0-9]/g, '') || subStr.replace(/[^0-9]/g, '') || '1';
+      return `MCQ ${digits}`;
+    }
+
+    if (numStr.includes('(')) {
+      return numStr.startsWith('Q') ? numStr : `Q${numStr}`;
+    }
+
+    const cleanNum = numStr.replace(/^Q/i, '');
+    if (subStr && subStr.toUpperCase() !== 'MCQ') {
+      return `Q${cleanNum}(${subStr})`;
+    }
+    return `Q${cleanNum}`;
+  };
+
+  // Enforce Canonical Exactly-Once Rule: Normalize and deduplicate before rendering
+  const normalizedQuestions = React.useMemo(() => {
+    const seen = new Set<string>();
+    const list: QuestionEvaluation[] = [];
+    for (const q of questions || []) {
+      const code = getQuestionDisplayCode(q);
+      if (!seen.has(code)) {
+        seen.add(code);
+        list.push(q);
+      }
+    }
+    return list;
+  }, [questions]);
+
+  const filteredQuestions = normalizedQuestions.filter((q) => {
     if (filterStatus === 'ALL') return true;
     return q.status === filterStatus;
   });
@@ -716,12 +752,13 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {questions.map((q, i) => {
+              {normalizedQuestions.map((q, i) => {
+                const displayCode = getQuestionDisplayCode(q);
                 const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
                 const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
                 return (
-                  <tr key={`tbl-q-${q.questionNumber}-${q.subQuestion || ''}-${i}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                    <td className="py-2 px-3 font-bold font-mono text-slate-800 dark:text-slate-200">Q{q.questionNumber}</td>
+                  <tr key={`tbl-q-${displayCode}-${i}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                    <td className="py-2 px-3 font-bold font-mono text-slate-800 dark:text-slate-200">{displayCode}</td>
                     <td className="py-2 px-3 font-mono text-slate-600 dark:text-slate-400">{q.maximumMarks}</td>
                     <td className="py-2 px-3 font-mono font-bold text-emerald-700 dark:text-emerald-400">+{q.marksAwarded}</td>
                     <td className="py-2 px-3 font-mono text-rose-700 dark:text-rose-400">-{q.marksLost}</td>
@@ -844,17 +881,17 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
             const comps = q.markingComponents || q.structuredEvidence?.markingComponents || [];
             const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
+            const displayCode = getQuestionDisplayCode(q);
 
             return (
               <div
-                key={`card-q-${q.questionNumber}-${q.subQuestion || ''}-${idx}`}
+                key={`card-q-${displayCode}-${idx}`}
                 className={`rounded-lg border p-4 transition ${statusColor} print:border-gray-200 print:bg-white print:text-black`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-sm text-slate-900 dark:text-white print:text-black">
-                      Question {q.questionNumber}
-                      {q.subQuestion ? ` (${q.subQuestion})` : ''}
+                      {displayCode.startsWith('MCQ') ? displayCode : `Question ${displayCode.replace(/^Q/, '')}`}
                     </span>
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200">
                       {q.status.replace('_', ' ')}
