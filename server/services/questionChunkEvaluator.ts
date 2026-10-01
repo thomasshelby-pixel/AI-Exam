@@ -5,6 +5,7 @@ import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { AttemptedQuestionMapping } from './answerSheetCoverageService.js';
 import { lockQuestionReference } from './questionReferenceLock.js';
+import { extractSourceGroundedTransformations } from './sourceGroundedTransformationService.js';
 
 export interface ChunkEvaluationContext {
   subQuestion: PaperStructureSubQuestion;
@@ -96,6 +97,24 @@ export async function evaluateQuestionChunk(
     ctx.markingSchemeText
   );
 
+  const sourceTransformations = extractSourceGroundedTransformations(
+    snippets.qpSnippet,
+    snippets.saSnippet,
+    snippets.msSnippet,
+    fullCode
+  );
+
+  const transformationContextText = sourceTransformations.length > 0
+    ? `\n--- IDENTIFIED SOURCE-GROUNDED TRANSFORMATIONS ---\n` +
+      sourceTransformations.map((t, i) =>
+        `[Transformation ${i + 1} - ${t.transformationType}]:\n` +
+        `- Input Fact: ${t.inputFact}\n` +
+        `- Authoritative Rule: ${t.sourceRule}\n` +
+        `- Authoritative Formula / Method: ${t.sourceFormula || 'Standard ICAI methodology'}\n` +
+        `- Instruction: Execute Two-Stage Interpretation (Stage A: Source meaning -> Stage B: Student treatment).`
+      ).join('\n')
+    : '';
+
   const prompt = `
 MANDATORY EVALUATOR INSTRUCTION:
 "You are an examiner-style evaluator, not a binary answer matcher.
@@ -168,6 +187,7 @@ ${snippets.saSnippet || 'Official Suggested Answer Extract'}
 
 --- VERIFIED STEP-MARKING SCHEME EXTRACT ---
 ${snippets.msSnippet || 'Official Step-Marking Scheme Extract'}
+${transformationContextText}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
 
@@ -191,8 +211,14 @@ CRITICAL ICAI EVALUATION RULES:
 7. DETAILED EXAMINER REASONING (NO TRUNCATION):
    - "detailedFeedback" must be thorough, constructive, and detailed (at least 2-3 substantive sentences explaining candidate's performance against the model answer).
    - If marks are deducted, "reasonForDeduction" must clearly state what candidate wrote, what the authoritative solution requires, and the exact step-wise basis for deduction.
-8. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
-9. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
+8. TWO-STAGE INTERPRETATION & SOURCE-GROUNDED TRANSFORMATION:
+   - Raw figure stated in Question Paper != final figure to be evaluated.
+   - Stage A: Determine what authoritative source says raw fact represents (net vs gross, tax-inclusive vs exclusive, cost vs NRV, WDV depreciation, margin vs markup, etc.).
+   - Stage B: Evaluate student's treatment. Accept mathematically/algebraically equivalent forms (e.g. X / 70% == X / 0.70 == X * 100 / 70).
+   - Recognize and credit alternative valid methods and valid working orders.
+   - Enforce Own-Figure Rule / Consequential credit: Never double-penalize downstream steps for an earlier arithmetic slip.
+9. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
+10. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 
 Return strictly valid JSON with this schema:
 {

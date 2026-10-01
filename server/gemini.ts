@@ -886,6 +886,11 @@ EVALUATION MANDATES:
    - LAYER A (REFERENCE INTEGRITY): The Question Paper, Suggested Answer, and Marking Scheme are the AUTHORITATIVE BENCHMARK. You must NEVER override official facts, provisions, or marking ceilings.
    - LAYER B (STUDENT EVALUATION): Do NOT require word-for-word reproduction of the Suggested Answer. Student expression must remain flexible.
    - The evaluator must NEVER say or penalize: "Student wording is different from Suggested Answer → wrong".
+   - SOURCE-GROUNDED TRANSFORMATIONS & TWO-STAGE INTERPRETATION:
+     * Never assume raw figure in Question Paper = final figure to be evaluated.
+     * Stage A (Source Interpretation): Determine what authoritative source dictates that raw fact represents (e.g. net receipt requiring gross-up, tax-inclusive value requiring reverse calculation, historical cost requiring depreciation/NRV adjustment, margin on cost vs sales, threshold ceilings).
+     * Stage B (Student Evaluation): Evaluate student's substantive treatment. Accept mathematically and algebraically equivalent forms (e.g., X / 70% == X / 0.70 == X * 100 / 70 == X / (1 - 0.3)).
+     * Source Hierarchy: QP (facts/conditions) -> SA (transformations/methods/results) -> MS (marking scheme criteria) -> AI (student evaluation against those sources).
    - Instead, determine whether the student answer is substantively equivalent, legally valid, mathematically valid, or an acceptable alternative method.
    - ACCEPT VALID VARIATIONS: Different wording, different sentence structure, different presentation sequence, equivalent terminology, correct synonyms, valid abbreviations, and recognized ICAI-style expressions.
    - ALTERNATIVE VALID METHODS: If Suggested Answer shows Method A but student uses Method B: verify whether Method B is mathematically, legally, and conceptually valid, consistent with the Question Paper, and capable of producing the correct conclusion. If valid, award full corresponding marks under the marking criteria.
@@ -1255,6 +1260,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           const hardenedResult = processEvaluationIntegrity(initialResult, {
             markingSchemeText: params.markingSchemeText,
             questionPaperText: params.referenceQuestionPaperText,
+            suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
             isMcqOnly: false,
             officialPaperMaxMarks: officialMax,
             caLevel: params.level as any,
@@ -1814,6 +1820,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
   const hardenedResult = processEvaluationIntegrity(evaluationResult, {
     markingSchemeText: params.markingSchemeText,
     questionPaperText: params.referenceQuestionPaperText,
+    suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
     isMcqOnly,
     officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
     caLevel: params.level as any,

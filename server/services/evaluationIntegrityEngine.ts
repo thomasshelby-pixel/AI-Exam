@@ -5,6 +5,7 @@ import {
   MarkingComponentType,
   StructuredMarkingEvidence,
   AssessmentStatus,
+  SourceGroundedTransformation,
 } from '../../src/types/index.js';
 import { applyDeterministicMcqScoring } from './deterministicMcqScorer.js';
 import { calculateDynamicAiConfidence } from './dynamicConfidenceEngine.js';
@@ -14,6 +15,10 @@ import {
   toCanonicalQuestionId,
 } from './canonicalQuestionService.js';
 import { validatePostEvaluationGate } from './evaluationIntegrityHardening.js';
+import {
+  extractSourceGroundedTransformations,
+  auditNumericalReasoningIntegrity,
+} from './sourceGroundedTransformationService.js';
 
 export type ZeroScoreReason =
   | 'NO_ANSWER'
@@ -42,6 +47,8 @@ export interface ConsistencyValidationReport {
 export interface IntegrityProcessOptions {
   markingSchemeText?: string;
   questionPaperText?: string;
+  suggestedAnswersText?: string;
+  sourceTransformations?: SourceGroundedTransformation[];
   isMcqOnly?: boolean;
   officialPaperMaxMarks?: number;
   caLevel?: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
@@ -1081,9 +1088,21 @@ export function processEvaluationIntegrity(
     throw new Error(`DEDUPLICATION_VALIDATION_ERROR: ${deduplicationValidation.details}`);
   }
 
+  // Step D.4: Numerical Reasoning Integrity Audit & Consequential Error Protection
+  const activeTransformations = options.sourceTransformations && options.sourceTransformations.length > 0
+    ? options.sourceTransformations
+    : extractSourceGroundedTransformations(
+        options.questionPaperText || '',
+        options.suggestedAnswersText || '',
+        options.markingSchemeText || ''
+      );
+
+  const numericalAudit = auditNumericalReasoningIntegrity(finalQuestions, activeTransformations);
+  const auditedQuestions = numericalAudit.auditedQuestions;
+
   // Step E: Paper total calculation and authoritative denominator balance
-  const totalAwarded = finalQuestions.reduce((acc, q) => acc + q.marksAwarded, 0);
-  const evaluatedQuestionsMax = finalQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
+  const totalAwarded = auditedQuestions.reduce((acc, q) => acc + q.marksAwarded, 0);
+  const evaluatedQuestionsMax = auditedQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
   const roundedAwarded = Math.round(totalAwarded * 4) / 4;
 
   // Determine official paper maximum marks (Default 100 marks for CA exams unless specifically configured)
@@ -1129,12 +1148,12 @@ export function processEvaluationIntegrity(
     : rawCoverageMap;
 
   const dynamicConfidence = calculateDynamicAiConfidence({
-    questions: finalQuestions,
+    questions: auditedQuestions,
     totalPages: rawResult.totalPages || (coverageMap ? coverageMap.totalPages : 1),
     coveredPages: coverageMap ? coverageMap.coveredPages : [],
     referenceCompletenessRatio: 1.0,
-    hasHandwritingIssues: finalQuestions.some((q) => q.status === 'unclear'),
-    hasUnresolvedConflicts: finalQuestions.some((q) => q.modeDifferenceCategory === 'REVIEW_REQUIRED'),
+    hasHandwritingIssues: auditedQuestions.some((q) => q.status === 'unclear'),
+    hasUnresolvedConflicts: auditedQuestions.some((q) => q.modeDifferenceCategory === 'REVIEW_REQUIRED'),
     checkedCopyConsistent: true,
     totalPaperMaxMarks: officialPaperMaxMarks,
   });
@@ -1178,9 +1197,9 @@ export function processEvaluationIntegrity(
       'Show distinct working notes for all key steps.',
       'Always state the statutory or standard principle before drawing conclusions.',
     ],
-    questions: finalQuestions,
-    structuredMarkingEvidence: finalQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
-    scoreCalculationAudit: finalQuestions.map((q) => ({
+    questions: auditedQuestions,
+    structuredMarkingEvidence: auditedQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
+    scoreCalculationAudit: auditedQuestions.map((q) => ({
       questionNumber: q.questionNumber,
       subQuestion: q.subQuestion,
       maxMarks: q.maximumMarks,

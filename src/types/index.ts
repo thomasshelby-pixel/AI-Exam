@@ -240,6 +240,79 @@ export interface EvaluationSourceBundle {
 }
 
 /**
+ * Supported Generic Transformation Types across CA Foundation, Intermediate, and Final.
+ * Never subject-specific; encompasses all source-defined transformations.
+ */
+export type TransformationType =
+  | 'GROSS_UP'
+  | 'TAX_ADJUSTMENT'
+  | 'GST_ADJUSTMENT'
+  | 'ACCOUNTING_ADJUSTMENT'
+  | 'DEPRECIATION'
+  | 'PROVISION'
+  | 'PERCENTAGE_REVERSE_CALCULATION'
+  | 'DISCOUNTING'
+  | 'COMPOUNDING'
+  | 'WORKING_CAPITAL_ADJUSTMENT'
+  | 'CASH_FLOW_ADJUSTMENT'
+  | 'CONSOLIDATION'
+  | 'RECONCILIATION'
+  | 'LEGAL_EXCEPTION'
+  | 'PROVISO_APPLICATION'
+  | 'THRESHOLD_APPLICATION'
+  | 'ALLOWABLE_DEDUCTION'
+  | 'SET_OFF'
+  | 'CARRY_FORWARD'
+  | 'OTHER_SOURCE_DEFINED_TRANSFORMATION';
+
+/**
+ * Generic Internal Structure for Source-Grounded Transformations.
+ * Evaluator must identify the source-defined transformation between raw input fact
+ * and expected intermediate / final result.
+ */
+export interface SourceGroundedTransformation {
+  readonly questionId: string;
+  readonly criterionId?: string;
+  readonly inputFact: string;
+  readonly inputFactSource: 'QUESTION_PAPER' | 'ASSUMPTION' | 'GIVEN_FACT' | string;
+  readonly transformationType: TransformationType;
+  readonly sourceRule: string;
+  readonly sourceFormula?: string;
+  readonly sourceCalculation?: string;
+  readonly expectedIntermediateResult?: string | number;
+  readonly expectedFinalResult?: string | number;
+  readonly sourceLocation: string;
+  readonly sourceVersion?: string;
+  readonly referenceHash: string;
+}
+
+/**
+ * Categorization of numerical reasoning errors to prevent double-penalties
+ * and ensure own-figure rule / consequential credit.
+ */
+export type NumericalReasoningErrorType =
+  | 'NONE'
+  | 'INTERPRETATION_MISTAKE'
+  | 'FORMULA_ERROR'
+  | 'ARITHMETIC_SLIP'
+  | 'CONSEQUENTIAL_CONTINUATION'
+  | 'OMITTED_TRANSFORMATION';
+
+export interface IntermediateResultIntegrityRecord {
+  readonly transformationId?: string;
+  readonly transformationType: TransformationType;
+  readonly inputFact: string;
+  readonly expectedValue: string | number;
+  readonly studentValue?: string | number;
+  readonly errorType: NumericalReasoningErrorType;
+  readonly isMethodValid: boolean;
+  readonly isAlternativeMethod: boolean;
+  readonly isConsequentialCreditAwarded: boolean;
+  readonly marksImpacted: number;
+  readonly auditExplanation: string;
+}
+
+/**
  * Question-Wise Bound Reference Bundle
  * Strictly binds authoritative question context and suggested answer segment.
  */
@@ -258,6 +331,11 @@ export interface QuestionReferenceBundle {
   readonly referenceSourceId: string;
   readonly referenceVersionId: string;
   readonly referenceContentHash: string;
+
+  /**
+   * Source-grounded transformations identified for this question
+   */
+  readonly sourceTransformations?: readonly SourceGroundedTransformation[];
 }
 
 /**
@@ -401,6 +479,8 @@ export interface QuestionEvaluation {
   reviewerAdjustmentNotes?: string;
   modeDifferenceCategory?: string;
   modeDifferenceJustification?: string;
+  sourceTransformations?: SourceGroundedTransformation[];
+  numericalIntegrityRecords?: IntermediateResultIntegrityRecord[];
 }
 
 export interface ScoreCalculationAuditItem {

@@ -29,6 +29,7 @@ import { extractLockedQuestionSlice, parseQuestionCode } from './questionReferen
 import { toCanonicalQuestionId, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { normalizeMtpSeries } from './materialLookupService.js';
+import { extractSourceGroundedTransformations } from './sourceGroundedTransformationService.js';
 
 export function computeSha256(content: string): string {
   return crypto.createHash('sha256').update(content || '', 'utf8').digest('hex');
@@ -269,6 +270,13 @@ export function buildQuestionReferenceBundle(
 
   const referenceContentHash = computeSha256(combinedContent);
 
+  const sourceTransformations = extractSourceGroundedTransformations(
+    qpSlice.snippet,
+    saSlice.snippet,
+    msSlice?.snippet,
+    canonicalQuestionId
+  );
+
   const bundle: QuestionReferenceBundle = {
     canonicalQuestionId,
     questionPaperText: qpSlice.snippet,
@@ -281,6 +289,7 @@ export function buildQuestionReferenceBundle(
     referenceSourceId: sourceBundle.suggestedAnswerSourceId,
     referenceVersionId: sourceBundle.suggestedAnswerVersionId,
     referenceContentHash,
+    sourceTransformations,
   };
 
   return Object.freeze(bundle);
