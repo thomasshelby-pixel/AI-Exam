@@ -15,6 +15,8 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 
+import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
+
 let firestoreInstance: Firestore | null = null;
 let initAttempted = false;
 
@@ -24,28 +26,36 @@ export function getFirestoreDb(): Firestore | null {
 
   initAttempted = true;
   try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const raw = fs.readFileSync(configPath, 'utf8');
-      const config = JSON.parse(raw);
-      const app = getApps().length === 0 ? initializeApp(config) : getApp();
-      firestoreInstance = config.firestoreDatabaseId
-        ? getFirestore(app, config.firestoreDatabaseId)
-        : getFirestore(app);
-      console.log('[Firestore] Successfully initialized database:', config.firestoreDatabaseId || '(default)');
-      return firestoreInstance;
-    }
-  } catch (err) {
-    console.warn('[Firestore] Initialization error:', err);
+    const { config } = loadAndValidateFirebaseConfig();
+    const app = getApps().length === 0 ? initializeApp(config) : getApp();
+    firestoreInstance = config.firestoreDatabaseId
+      ? getFirestore(app, config.firestoreDatabaseId)
+      : getFirestore(app);
+    console.log('[Firestore] Successfully initialized database:', config.firestoreDatabaseId || '(default)');
+    return firestoreInstance;
+  } catch (err: any) {
+    console.error('[Firestore FATAL] Initialization error:', err?.message || err);
+    throw err;
   }
-  return null;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number = 3000, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
+async function withTimeout<T>(promise: Promise<T>, ms: number = 12000, fallback: T, operationName: string = 'Firestore operation'): Promise<T> {
+  let timeoutHandle: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      console.warn(`[Firestore TIMEOUT] ${operationName} exceeded ${ms}ms threshold; applying fallback.`);
+      resolve(fallback);
+    }, ms);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutHandle);
+    return result;
+  } catch (err) {
+    clearTimeout(timeoutHandle);
+    throw err;
+  }
 }
 
 export async function setFirestoreDoc(collectionName: string, docId: string, data: Record<string, any>): Promise<boolean> {
@@ -61,8 +71,9 @@ export async function setFirestoreDoc(collectionName: string, docId: string, dat
     cleanData._updatedAt = new Date().toISOString();
     return await withTimeout(
       setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true }).then(() => true),
-      3000,
-      false
+      12000,
+      false,
+      `setFirestoreDoc(${collectionName}/${docId})`
     );
   } catch (err) {
     console.warn(`[Firestore] Failed to set document in ${collectionName}/${docId}:`, err);
@@ -76,8 +87,9 @@ export async function getFirestoreDoc<T = DocumentData>(collectionName: string, 
   try {
     const snap = await withTimeout(
       getDoc(doc(db, collectionName, String(docId))),
-      2500,
-      null as any
+      12000,
+      null as any,
+      `getFirestoreDoc(${collectionName}/${docId})`
     );
     if (!snap || !snap.exists()) return null;
     return { id: snap.id, ...snap.data() } as unknown as T;
@@ -93,8 +105,9 @@ export async function deleteFirestoreDoc(collectionName: string, docId: string):
   try {
     return await withTimeout(
       deleteDoc(doc(db, collectionName, String(docId))).then(() => true),
-      3000,
-      false
+      12000,
+      false,
+      `deleteFirestoreDoc(${collectionName}/${docId})`
     );
   } catch (err) {
     console.warn(`[Firestore] Failed to delete document in ${collectionName}/${docId}:`, err);
@@ -106,12 +119,29 @@ export async function getAllFirestoreDocs<T = DocumentData>(collectionName: stri
   const db = getFirestoreDb();
   if (!db) return [];
   try {
-    const snap = await withTimeout(
+    let snap = await withTimeout(
       getDocs(collection(db, collectionName)),
-      2500,
-      null as any
+      12000,
+      null as any,
+      `getAllFirestoreDocs(${collectionName})`
     );
-    if (!snap) return [];
+
+    // If initial query timed out on cold start, retry once with backoff
+    if (!snap) {
+      console.log(`[Firestore] Retrying getAllFirestoreDocs for ${collectionName}...`);
+      await new Promise((r) => setTimeout(r, 1000));
+      snap = await withTimeout(
+        getDocs(collection(db, collectionName)),
+        15000,
+        null as any,
+        `getAllFirestoreDocs_Retry(${collectionName})`
+      );
+    }
+
+    if (!snap) {
+      console.warn(`[Firestore WARN] Failed to retrieve documents from ${collectionName} after retry.`);
+      return [];
+    }
     const results: T[] = [];
     snap.forEach((d: any) => {
       results.push({ id: d.id, ...d.data() } as unknown as T);

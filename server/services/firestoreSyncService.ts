@@ -122,6 +122,12 @@ export async function hydrateFromFirestore(): Promise<void> {
     let uHydrated = 0;
     for (const u of users) {
       let normEmail = String(u.email || '').trim().toLowerCase();
+      // Skip malformed documents without valid email to prevent inserting or overwriting empty accounts
+      if (!normEmail || !normEmail.includes('@')) {
+        console.warn(`[FirestoreSync] Skipping malformed user document ${u.id} (missing or invalid email).`);
+        continue;
+      }
+
       const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
       if (!isProtected && tombstoneSet.has(`users_${u.id}`)) continue;
       try {
@@ -156,7 +162,9 @@ export async function hydrateFromFirestore(): Promise<void> {
           targetRole = 'DISABLED';
         }
 
-        const pHash = u.password_hash || u.passwordHash || u.password || 'HASHED_PASS';
+        // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
+        const existingLocalUser = db.prepare('SELECT id, password_hash FROM users WHERE id = ? OR lower(email) = ?').get(targetId, normEmail) as { id: string; password_hash: string } | undefined;
+        const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
         const userClassification = u.account_classification || 'NORMAL';
 
         // Check for any colliding user in SQLite by email with a different ID

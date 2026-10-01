@@ -556,15 +556,11 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       remainingCodes = existingStatus.remaining;
     }
 
-    // Mirror to Firestore
-    syncRecordToFirestore('users', user.id, {
-      id: user.id,
-      mfa_enabled: 1,
-      mfa_enrolled_at: new Date().toISOString(),
-      totp_secret: candidateSecret,
-      mfa_reset_required: 0,
-      updated_at: new Date().toISOString(),
-    }).catch(() => {});
+    // Mirror full updated user record to Firestore to preserve complete credentials
+    const fullEnrolledUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+    if (fullEnrolledUser) {
+      syncRecordToFirestore('users', user.id, fullEnrolledUser).catch(() => {});
+    }
 
     logMfaAudit({
       userId: user.id,
@@ -628,12 +624,10 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
     `).run(primaryId, user.id);
 
     // Durable Firestore synchronization
-    syncRecordToFirestore('users', user.id, {
-      id: user.id,
-      mfa_enabled: 1,
-      mfa_enrolled_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).catch(() => {});
+    const fullPrimUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+    if (fullPrimUser) {
+      syncRecordToFirestore('users', user.id, fullPrimUser).catch(() => {});
+    }
 
     syncRecordToFirestore('mfa_authenticators', primaryId, {
       id: primaryId,
@@ -1527,10 +1521,10 @@ const handleValidateTotp = async (req: Request, res: Response) => {
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(user.id);
-      syncRecordToFirestore('users', user.id, {
-        mfa_enabled: 1,
-        mfa_reset_required: 0,
-      }).catch(() => {});
+      const fullValUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+      if (fullValUser) {
+        syncRecordToFirestore('users', user.id, fullValUser).catch(() => {});
+      }
     } catch {
       // Non-fatal
     }
@@ -1651,12 +1645,10 @@ router.post('/disable', authenticateToken, async (req: AuthRequest, res: Respons
     db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(req.user.id);
     db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id = ?').run(req.user.id);
 
-    syncRecordToFirestore('users', req.user.id, {
-      id: req.user.id,
-      mfa_enabled: 0,
-      mfa_enrolled_at: null,
-      updated_at: new Date().toISOString(),
-    }).catch(() => {});
+    const fullDisUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
+    if (fullDisUser) {
+      syncRecordToFirestore('users', req.user.id, fullDisUser).catch(() => {});
+    }
 
     logMfaAudit({
       userId: req.user.id,

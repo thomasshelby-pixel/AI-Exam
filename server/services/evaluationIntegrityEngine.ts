@@ -6,6 +6,9 @@ import {
   StructuredMarkingEvidence,
   AssessmentStatus,
   SourceGroundedTransformation,
+  CanonicalQuestionInventory,
+  CanonicalEvaluationLedger,
+  EvaluationReconciliationSection,
 } from '../../src/types/index.js';
 import { applyDeterministicMcqScoring } from './deterministicMcqScorer.js';
 import { calculateDynamicAiConfidence } from './dynamicConfidenceEngine.js';
@@ -13,12 +16,20 @@ import {
   deduplicateQuestionList,
   validateQuestionDeduplication,
   toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
 } from './canonicalQuestionService.js';
 import { validatePostEvaluationGate } from './evaluationIntegrityHardening.js';
 import {
   extractSourceGroundedTransformations,
   auditNumericalReasoningIntegrity,
 } from './sourceGroundedTransformationService.js';
+import {
+  buildCanonicalQuestionInventory,
+  buildCanonicalEvaluationLedger,
+  verifyTotalReconciliationGate,
+  buildEvaluationReconciliationSection,
+  IndependentAttemptRecord,
+} from './canonicalQuestionInventoryService.js';
 
 export type ZeroScoreReason =
   | 'NO_ANSWER'
@@ -1100,12 +1111,8 @@ export function processEvaluationIntegrity(
   const numericalAudit = auditNumericalReasoningIntegrity(finalQuestions, activeTransformations);
   const auditedQuestions = numericalAudit.auditedQuestions;
 
-  // Step E: Paper total calculation and authoritative denominator balance
-  const totalAwarded = auditedQuestions.reduce((acc, q) => acc + q.marksAwarded, 0);
-  const evaluatedQuestionsMax = auditedQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
-  const roundedAwarded = Math.round(totalAwarded * 4) / 4;
-
   // Determine official paper maximum marks (Default 100 marks for CA exams unless specifically configured)
+  const evaluatedQuestionsMax = auditedQuestions.reduce((acc, q) => acc + q.maximumMarks, 0);
   const officialPaperMaxMarks = Number(
     options.officialPaperMaxMarks ||
     rawResult.officialPaperMaxMarks ||
@@ -1115,6 +1122,109 @@ export function processEvaluationIntegrity(
       ? evaluatedQuestionsMax
       : 100)
   );
+
+  const rawCoverageMap = options.coverageMap || rawResult.coverageMap;
+  const coverageMap = rawCoverageMap && Array.isArray(rawCoverageMap.attemptedQuestions)
+    ? {
+        ...rawCoverageMap,
+        attemptedQuestions: deduplicateQuestionList(
+          rawCoverageMap.attemptedQuestions,
+          (options.paperStructure || rawResult.paperStructure)?.subQuestions
+        ),
+      }
+    : rawCoverageMap;
+
+  // Step E.1: Build Authoritative Canonical Question Inventory
+  const resolvedPaperStructure: any = options.paperStructure || rawResult.paperStructure || {
+    paperTitle: rawResult.subjectName || 'CA Examination Paper',
+    totalPaperMaxMarks: officialPaperMaxMarks,
+    questions: [],
+    subQuestions: authoritativeSubQs || auditedQuestions.map((q) => ({
+      fullQuestionCode: q.canonicalId || toCanonicalQuestionId(q.questionNumber, q.subQuestion),
+      questionNumber: q.questionNumber,
+      subQuestionNumber: q.subQuestion,
+      maximumMarks: q.maximumMarks,
+      compulsory: false,
+      isMcq: Boolean(q.canonicalId?.startsWith('MCQ') || q.subQuestion === 'MCQ'),
+      section: 'A',
+    })),
+    mcqs: (authoritativeSubQs || []).filter((s: any) => s.isMcq),
+  };
+
+  const inventory = buildCanonicalQuestionInventory({
+    paperStructure: resolvedPaperStructure,
+    questionPaperText: options.questionPaperText,
+    markingSchemeText: options.markingSchemeText,
+    paperTitle: rawResult.subjectName || options.subjectName,
+    totalPaperMaxMarks: officialPaperMaxMarks,
+  });
+
+  // Step E.2: Detect Independent Attempts
+  const attemptedMap = new Map<string, IndependentAttemptRecord>();
+  if (coverageMap && Array.isArray(coverageMap.attemptedQuestions) && coverageMap.attemptedQuestions.length > 0) {
+    for (const att of coverageMap.attemptedQuestions) {
+      const canonId = toCanonicalQuestionId(att.fullQuestionCode || att.questionNumber, att.subQuestionNumber, authoritativeSubQs);
+      const parsed = parseCanonicalQuestionIdentity(canonId);
+      attemptedMap.set(canonId, {
+        canonicalId: canonId,
+        questionNumber: parsed.questionNumber,
+        subQuestion: parsed.subQuestion,
+        sourcePages: att.pages || (att.pageNumber ? [att.pageNumber] : [1]),
+        isAttempted: true,
+        isPartial: Boolean(att.isPartial),
+        isContinuation: Boolean(att.isContinuation),
+        isCrossedOutWithNoReplacement: Boolean(att.isCrossedOut && !att.hasReplacement),
+        selectedAlternative: (att as any).selectedAlternative,
+        evidence: att.studentSnippet || `Detected on page(s) ${(att.pages || [att.pageNumber || 1]).join(', ')}`,
+        studentSnippet: att.studentSnippet,
+        studentSelectedOption: att.studentSelectedOption,
+        isMcq: parsed.isMcq,
+      });
+    }
+  } else {
+    for (const q of auditedQuestions) {
+      const canonId = q.canonicalId || toCanonicalQuestionId(q.questionNumber, q.subQuestion, authoritativeSubQs);
+      const parsed = parseCanonicalQuestionIdentity(canonId);
+      const snippet = (q as any).studentSnippet || q.reasonForDeduction || 'Evaluated answer';
+      attemptedMap.set(canonId, {
+        canonicalId: canonId,
+        questionNumber: parsed.questionNumber,
+        subQuestion: parsed.subQuestion,
+        sourcePages: [q.pageNumber || 1],
+        isAttempted: q.status !== 'not_attempted',
+        isPartial: q.status === 'partially_correct',
+        isContinuation: false,
+        isCrossedOutWithNoReplacement: false,
+        evidence: snippet,
+        studentSnippet: (q as any).studentSnippet,
+        studentSelectedOption: q.candidateSelectedOption,
+        isMcq: parsed.isMcq,
+      });
+    }
+  }
+
+  // Step E.3: Authoritative Canonical Score Ledger Construction
+  const canonicalLedger = buildCanonicalEvaluationLedger({
+    runId: rawResult.evaluationId || 'eval_run',
+    inventory,
+    attemptedMap,
+    evaluatedQuestions: auditedQuestions,
+  });
+
+  const reconciliationSection = buildEvaluationReconciliationSection(canonicalLedger);
+
+  // Total score MUST be derived directly from the canonical ledger
+  const totalAwarded = canonicalLedger.totalAwardedMarks;
+  const roundedAwarded = canonicalLedger.totalAwardedMarks;
+
+  // Step E.4: Total Reconciliation Gate
+  const rawSumOfAudited = Math.round(auditedQuestions.reduce((acc, q) => acc + q.marksAwarded, 0) * 4) / 4;
+  const totalReconciliation = verifyTotalReconciliationGate({
+    ledger: canonicalLedger,
+    evaluationResultTotal: roundedAwarded,
+    scorecardTotal: rawSumOfAudited,
+    renderedTotal: rawSumOfAudited,
+  });
 
   // Official percentage is ALWAYS calculated against the official paper maximum marks
   const percentage = officialPaperMaxMarks > 0 ? Math.round((roundedAwarded / officialPaperMaxMarks) * 1000) / 10 : 0;
@@ -1135,17 +1245,6 @@ export function processEvaluationIntegrity(
     rawReg === 'WRO0987654'
       ? 'Not provided'
       : rawReg;
-
-  const rawCoverageMap = options.coverageMap || rawResult.coverageMap;
-  const coverageMap = rawCoverageMap && Array.isArray(rawCoverageMap.attemptedQuestions)
-    ? {
-        ...rawCoverageMap,
-        attemptedQuestions: deduplicateQuestionList(
-          rawCoverageMap.attemptedQuestions,
-          (options.paperStructure || rawResult.paperStructure)?.subQuestions
-        ),
-      }
-    : rawCoverageMap;
 
   const dynamicConfidence = calculateDynamicAiConfidence({
     questions: auditedQuestions,
@@ -1208,6 +1307,8 @@ export function processEvaluationIntegrity(
       componentsCount: q.markingComponents?.length || 0,
       consequentialCredited: q.consequentialErrorDetected || false,
     })),
+    canonicalLedger,
+    reconciliationSection,
   };
 
   // Step F: Hard consistency validation check & 11-Rule Hard Completion Gate
@@ -1225,8 +1326,13 @@ export function processEvaluationIntegrity(
     coverageMap,
   });
 
-  const combinedValid = consistencyReport.isValid && postGateReport.isValid;
-  const combinedErrors = Array.from(new Set([...consistencyReport.errors, ...postGateReport.errors]));
+  const ledgerErrors = [
+    ...canonicalLedger.reconciliationErrors,
+    ...totalReconciliation.discrepancies,
+  ];
+
+  const combinedValid = consistencyReport.isValid && postGateReport.isValid && canonicalLedger.isReconciled && totalReconciliation.passed;
+  const combinedErrors = Array.from(new Set([...consistencyReport.errors, ...postGateReport.errors, ...ledgerErrors]));
 
   evaluationResult.validationStatus = combinedValid ? 'VALID' : 'NEEDS_REVIEW';
   evaluationResult.validationErrors = combinedErrors;
@@ -1239,6 +1345,8 @@ export function processEvaluationIntegrity(
     rejectedPresentationDeductionsCount,
     hardCompletionGatePassed: evaluationResult.completionGateReport?.isPassed ?? false,
     postEvaluationGate: postGateReport,
+    canonicalLedgerReconciled: canonicalLedger.isReconciled,
+    totalReconciliationPassed: totalReconciliation.passed,
   };
 
   return evaluationResult;

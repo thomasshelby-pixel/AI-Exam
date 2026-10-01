@@ -648,6 +648,96 @@ export interface EvaluationResult {
     overallNewTotal?: number;
   }>;
   originalEvaluationSnapshot?: any;
+  canonicalLedger?: CanonicalEvaluationLedger;
+  reconciliationSection?: EvaluationReconciliationSection;
+}
+
+export type CanonicalQuestionType = 'DESCRIPTIVE' | 'MCQ' | 'CASE_SCENARIO' | 'PRACTICAL';
+
+export interface CanonicalQuestionInventoryItem {
+  readonly questionId: string;
+  readonly parentQuestionId?: string;
+  readonly subQuestionId?: string;
+  readonly questionType: CanonicalQuestionType;
+  readonly maxMarks: number;
+  readonly sourcePage?: number;
+  readonly sourceOrder: number;
+  readonly alternativeGroupId?: string;
+  readonly canonicalTextAnchor?: string;
+  readonly isAlternative?: boolean;
+  readonly isRequiredOrOptional: 'REQUIRED' | 'OPTIONAL';
+}
+
+export interface CanonicalQuestionInventory {
+  readonly inventoryId: string;
+  readonly paperTitle?: string;
+  readonly totalPaperMaxMarks: number;
+  readonly items: CanonicalQuestionInventoryItem[];
+  readonly referenceHash: string;
+}
+
+export type CanonicalEvaluationStatus =
+  | 'EVALUATED'
+  | 'FAILED_TO_EVALUATE'
+  | 'NEEDS_MAPPING_REVIEW'
+  | 'UNATTEMPTED'
+  | 'EXCLUDED_ALTERNATIVE';
+
+export interface CanonicalEvaluationRecord {
+  readonly questionId: string;
+  readonly parentQuestionId?: string;
+  readonly subQuestionId?: string;
+  readonly attempted: boolean;
+  readonly sourcePages: number[];
+  readonly maxMarks: number;
+  readonly awardedMarks: number;
+  readonly evaluationStatus: CanonicalEvaluationStatus;
+  readonly rendered: boolean;
+  readonly counted: boolean;
+  readonly selectedAlternative?: string | number;
+  readonly evidence?: string;
+  readonly stepMarkingBreakdown?: any[];
+  readonly markingComponents?: MarkingComponent[];
+  readonly reconciliationNotes?: string[];
+}
+
+export interface CanonicalEvaluationLedger {
+  readonly ledgerId: string;
+  readonly evaluationRunId: string;
+  readonly records: CanonicalEvaluationRecord[];
+  readonly totalCanonicalQuestions: number;
+  readonly totalAttempted: number;
+  readonly totalEvaluated: number;
+  readonly totalRendered: number;
+  readonly totalCounted: number;
+  readonly totalMaxMarks: number;
+  readonly totalAwardedMarks: number;
+  readonly isReconciled: boolean;
+  readonly reconciliationErrors: string[];
+}
+
+export interface DiagnosticLedgerRow {
+  readonly questionId: string;
+  readonly attempted: boolean;
+  readonly evaluated: boolean;
+  readonly rendered: boolean;
+  readonly counted: boolean;
+  readonly maxMarks: number;
+  readonly awardedMarks: number;
+  readonly status: CanonicalEvaluationStatus;
+}
+
+export interface EvaluationReconciliationSection {
+  readonly totalCanonicalQuestions: number;
+  readonly totalAttempted: number;
+  readonly totalEvaluated: number;
+  readonly totalRendered: number;
+  readonly totalCounted: number;
+  readonly totalMaxMarks: number;
+  readonly totalAwardedMarks: number;
+  readonly allAttemptedCountedExactlyOnce: boolean;
+  readonly diagnosticTable: DiagnosticLedgerRow[];
+  readonly ledgerSummary: string;
 }
 
 export interface HardCompletionGateCheck {

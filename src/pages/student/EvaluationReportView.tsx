@@ -789,6 +789,108 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
         </div>
       </div>
 
+      {/* Canonical Ledger & Attempt Reconciliation Section (Requirement 24) */}
+      {evaluationResult.reconciliationSection && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-4 print:border-gray-200 print:bg-white">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Canonical Question Ledger & Attempt Reconciliation</span>
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Exact verification guarantee: every attempted question is evaluated, rendered, and counted exactly once in the final score ledger.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
+                evaluationResult.reconciliationSection.allAttemptedCountedExactlyOnce
+                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800'
+              }`}>
+                {evaluationResult.reconciliationSection.allAttemptedCountedExactlyOnce ? '✓ 100% Reconciled Exactly-Once' : '⚠ Reconciliation Discrepancy'}
+              </span>
+            </div>
+          </div>
+
+          {/* Metric Tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-center text-xs">
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Canonical</span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{evaluationResult.reconciliationSection.totalCanonicalQuestions}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Attempted</span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{evaluationResult.reconciliationSection.totalAttempted}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Evaluated</span>
+              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{evaluationResult.reconciliationSection.totalEvaluated}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Rendered</span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{evaluationResult.reconciliationSection.totalRendered}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Counted</span>
+              <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{evaluationResult.reconciliationSection.totalCounted}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Max Marks</span>
+              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{evaluationResult.reconciliationSection.totalMaxMarks}</span>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-lg p-2.5">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block">Awarded</span>
+              <span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">{evaluationResult.reconciliationSection.totalAwardedMarks}</span>
+            </div>
+          </div>
+
+          {/* Diagnostic Table */}
+          <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-lg">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 font-semibold border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 px-3">Question ID</th>
+                  <th className="py-2 px-3 text-center">Attempted</th>
+                  <th className="py-2 px-3 text-center">Evaluated</th>
+                  <th className="py-2 px-3 text-center">Rendered</th>
+                  <th className="py-2 px-3 text-center">Counted</th>
+                  <th className="py-2 px-3 text-right">Max</th>
+                  <th className="py-2 px-3 text-right">Awarded</th>
+                  <th className="py-2 px-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {evaluationResult.reconciliationSection.diagnosticTable.map((row, idx) => (
+                  <tr key={`diag-${row.questionId}-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                    <td className="py-2 px-3 font-mono font-bold text-slate-800 dark:text-slate-200">{row.questionId}</td>
+                    <td className="py-2 px-3 text-center">{row.attempted ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-400">—</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.evaluated ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-400">—</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.rendered ? <span className="text-emerald-600 font-bold">✓</span> : <span className="text-slate-400">—</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.counted ? <span className="text-blue-600 font-bold">✓</span> : <span className="text-slate-400">—</span>}</td>
+                    <td className="py-2 px-3 text-right font-mono text-slate-600 dark:text-slate-400">{row.maxMarks}</td>
+                    <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">{row.awardedMarks}</td>
+                    <td className="py-2 px-3">
+                      <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                        row.status === 'EVALUATED'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300'
+                          : row.status === 'EXCLUDED_ALTERNATIVE'
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          : row.status === 'UNATTEMPTED'
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                          : 'bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300'
+                      }`}>
+                        {row.status.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Question-Wise Step Marking Breakdown */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-5 shadow-sm print:border-gray-300 print:bg-white print:text-black">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

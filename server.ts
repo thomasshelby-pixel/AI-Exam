@@ -229,27 +229,25 @@ export default {};
     });
   }
 
+  // Hydrate persistent cloud data from Cloud Firestore before binding port
+  try {
+    console.log('[Server] Awaiting durable cloud state hydration from Cloud Firestore before serving traffic...');
+    const hydrationPromise = Promise.all([
+      hydrateFromFirestore(),
+      seedBaselineToFirestoreIfEmpty(),
+    ]);
+    const hydrationTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Firestore hydration timeout limit (20s) reached')), 20000)
+    );
+    await Promise.race([hydrationPromise, hydrationTimeout]);
+    console.log('[Server] Cloud Firestore state successfully restored to active runtime.');
+  } catch (err) {
+    console.warn('[Server] Firestore hydration startup note:', err);
+  }
+
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
-
-    // Hydrate persistent cloud data from Cloud Firestore promptly after binding port
-    (async () => {
-      try {
-        console.log('[Server] Awaiting durable cloud state hydration from Cloud Firestore...');
-        const hydrationPromise = Promise.all([
-          hydrateFromFirestore(),
-          seedBaselineToFirestoreIfEmpty(),
-        ]);
-        const hydrationTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Firestore hydration timeout limit (20s) reached')), 20000)
-        );
-        await Promise.race([hydrationPromise, hydrationTimeout]);
-        console.log('[Server] Cloud Firestore state successfully restored to active runtime.');
-      } catch (err) {
-        console.warn('[Server] Firestore hydration note:', err);
-      }
-    })();
   });
 
   const handleShutdown = (signal: string) => {

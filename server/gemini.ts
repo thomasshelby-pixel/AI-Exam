@@ -1127,21 +1127,64 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   };
                 }
 
-                return evaluateQuestionChunk({
-                  subQuestion: subQ,
-                  mapping,
-                  fullPdfBuffer: pdfBuffer,
-                  questionPaperText: params.referenceQuestionPaperText,
-                  suggestedAnswersText: params.referenceSuggestedAnswersText,
-                  markingSchemeText: params.markingSchemeText,
-                  checkingMode: (params.checkingMode as any) || 'standard',
-                  level: params.level,
-                  subjectName: params.subjectName,
-                });
+                try {
+                  return await evaluateQuestionChunk({
+                    subQuestion: subQ,
+                    mapping,
+                    fullPdfBuffer: pdfBuffer,
+                    questionPaperText: params.referenceQuestionPaperText,
+                    suggestedAnswersText: params.referenceSuggestedAnswersText,
+                    markingSchemeText: params.markingSchemeText,
+                    checkingMode: (params.checkingMode as any) || 'standard',
+                    level: params.level,
+                    subjectName: params.subjectName,
+                  });
+                } catch (chunkErr) {
+                  console.warn(`[EvaluationEngine] Chunk evaluation failed for ${canonId}, generating controlled evaluation failure record:`, chunkErr);
+                  return {
+                    questionNumber: subQ.questionNumber,
+                    subQuestion: subQ.subQuestionNumber,
+                    canonicalId: canonId,
+                    maximumMarks: subQ.maximumMarks,
+                    marksAwarded: 0,
+                    marksLost: subQ.maximumMarks,
+                    status: 'unclear',
+                    reasonForDeduction: 'Evaluation integrity protection: Chunk evaluation encountered error. Flagged for review.',
+                    detailedFeedback: `The candidate attempted this question on page(s) ${mapping.pages.join(', ')}. Automatic chunk evaluation encountered an unexpected condition.`,
+                    flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                    pageNumber: mapping.pages[0] || 1,
+                  } as QuestionEvaluation;
+                }
               })
             );
             for (const r of batchResults) {
               if (r) descriptiveQuestions.push(r);
+            }
+          }
+
+          // Completeness Gate: Every attempted question in coverageMap MUST be present in allQuestions
+          const evaluatedCanonSet = new Set(descriptiveQuestions.map((q) => q.canonicalId || toCanonicalQuestionId(q.questionNumber, q.subQuestion)));
+          for (const mapping of attemptedDescriptive) {
+            const canonId = toCanonicalQuestionId(mapping.questionNumber, mapping.subQuestionNumber, paperStructure.subQuestions);
+            if (!evaluatedCanonSet.has(canonId)) {
+              console.warn(`[EvaluationEngine] Attempted question ${canonId} was missing from descriptive evaluations, creating controlled recovery record`);
+              const fallbackSubQ = paperStructure.subQuestions.find(
+                (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions) === canonId
+              );
+              const max = fallbackSubQ ? fallbackSubQ.maximumMarks : 4;
+              descriptiveQuestions.push({
+                questionNumber: mapping.questionNumber,
+                subQuestion: mapping.subQuestionNumber,
+                canonicalId: canonId,
+                maximumMarks: max,
+                marksAwarded: 0,
+                marksLost: max,
+                status: 'unclear',
+                reasonForDeduction: 'Evaluation integrity safety: Attempted question preserved from silent omission.',
+                detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}.`,
+                flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                pageNumber: mapping.pages[0] || 1,
+              });
             }
           }
 

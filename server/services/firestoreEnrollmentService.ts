@@ -1,8 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getFirestore,
   collection,
   query,
   where,
@@ -11,36 +7,9 @@ import {
 } from 'firebase/firestore';
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../db.js';
+import { getFirestoreDb } from './firestoreDbService.js';
 
-let firestoreInstance: Firestore | null = null;
-let firestoreInitAttempted = false;
-
-/**
- * Lazily initialize and return the Firestore database instance
- * using credentials from firebase-applet-config.json.
- */
-export function getFirestoreDb(): Firestore | null {
-  if (firestoreInstance) return firestoreInstance;
-  if (firestoreInitAttempted && !firestoreInstance) return null;
-
-  firestoreInitAttempted = true;
-  try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const raw = fs.readFileSync(configPath, 'utf8');
-      const config = JSON.parse(raw);
-      const app = getApps().length === 0 ? initializeApp(config) : getApp();
-      firestoreInstance = config.firestoreDatabaseId
-        ? getFirestore(app, config.firestoreDatabaseId)
-        : getFirestore(app);
-      console.log('[Firestore] Successfully initialized with databaseId:', config.firestoreDatabaseId || '(default)');
-      return firestoreInstance;
-    }
-  } catch (err) {
-    console.warn('[Firestore] Could not initialize Firestore client:', err);
-  }
-  return null;
-}
+export { getFirestoreDb };
 
 export interface EnrollmentValidationResult {
   isValid: boolean;
