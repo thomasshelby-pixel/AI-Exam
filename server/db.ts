@@ -25,7 +25,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 const DB_FILE = path.join(DATA_DIR, 'ca_exam_checker.db');
 
 function openDatabaseWithIntegrityCheck(): DatabaseSync {
-  let conn: DatabaseSync;
+  let conn: DatabaseSync | null = null;
   let needsRepair = false;
 
   if (fs.existsSync(DB_FILE)) {
@@ -55,17 +55,27 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
         console.error('[DB Integrity] Database failed quick_check on startup:', check);
         needsRepair = true;
         try { conn.close(); } catch {}
+        conn = null;
       } else {
         return conn;
       }
     } catch (err) {
       console.error('[DB Integrity] Error during initial connection, scheduling auto-repair:', err);
       needsRepair = true;
+      if (conn) {
+        try { conn.close(); } catch {}
+        conn = null;
+      }
     }
   }
 
   if (needsRepair && fs.existsSync(DB_FILE)) {
     try {
+      if (conn) {
+        try { conn.close(); } catch {}
+        conn = null;
+      }
+
       const backupPath = path.join(DATA_DIR, `ca_exam_checker.corrupt.${Date.now()}.db`);
       fs.copyFileSync(DB_FILE, backupPath);
       console.log(`[DB Integrity] Preserved corrupted database backup at ${backupPath}`);
@@ -75,8 +85,9 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
 
+      let salvageConn: DatabaseSync | null = null;
       try {
-        const salvageConn = new DatabaseSync(DB_FILE);
+        salvageConn = new DatabaseSync(DB_FILE);
         salvageConn.exec('PRAGMA busy_timeout = 10000;');
         salvageConn.exec('REINDEX;');
         const check = salvageConn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
@@ -88,9 +99,13 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
           salvageConn.exec('PRAGMA wal_autocheckpoint = 1000;');
           return salvageConn;
         }
-        salvageConn.close();
       } catch (salvageErr) {
         console.warn('[DB Integrity] WAL salvage failed, wiping database file for fresh rebuild:', salvageErr);
+      } finally {
+        if (salvageConn) {
+          try { salvageConn.close(); } catch {}
+          salvageConn = null;
+        }
       }
 
       try { fs.unlinkSync(DB_FILE); } catch {}
