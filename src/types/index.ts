@@ -752,6 +752,7 @@ export interface EvaluationRunPackage {
   readonly reconciliation: FourSetReconciliationReport;
   readonly finalizationStatus: EvaluationFinalizationStatus;
   readonly durablePersistenceConfirmed: boolean;
+  readonly renderManifest?: RenderManifest;
   readonly persistedAt?: string;
   readonly finalizedAt?: string;
   readonly auditTrail: string[];
@@ -762,24 +763,69 @@ export type CanonicalEvaluationStatus =
   | 'FAILED_TO_EVALUATE'
   | 'NEEDS_MAPPING_REVIEW'
   | 'UNATTEMPTED'
-  | 'EXCLUDED_ALTERNATIVE';
+  | 'EXCLUDED_ALTERNATIVE'
+  | 'RENDER_FAILED';
+
+export interface AnnotationAnchor {
+  readonly pageNumber: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly region: 'TOP_MARGIN' | 'RIGHT_MARGIN' | 'INLINE' | 'BOTTOM_MARGIN';
+  readonly annotationType: 'SCORE_BOX' | 'STEP_BREAKDOWN' | 'MCQ_BADGE' | 'EVALUATION_NOTE';
+  readonly height?: number;
+  readonly width?: number;
+}
 
 export interface CanonicalEvaluationRecord {
   readonly questionId: string;
   readonly parentQuestionId?: string;
   readonly subQuestionId?: string;
+  readonly questionType?: CanonicalQuestionType;
   readonly attempted: boolean;
+  readonly evaluated?: boolean;
   readonly sourcePages: number[];
+  readonly studentPages?: number[];
   readonly maxMarks: number;
   readonly awardedMarks: number;
   readonly evaluationStatus: CanonicalEvaluationStatus;
+  readonly annotationRequired?: boolean;
+  readonly annotationPage?: number;
+  readonly annotationAnchor?: AnnotationAnchor;
+  readonly renderOrder?: number;
   readonly rendered: boolean;
   readonly counted: boolean;
   readonly selectedAlternative?: string | number;
+  readonly isAlternative?: boolean;
+  readonly alternativeGroupId?: string;
+  readonly studentSelectedOption?: string;
+  readonly officialAnswer?: string;
   readonly evidence?: string;
   readonly stepMarkingBreakdown?: any[];
   readonly markingComponents?: MarkingComponent[];
   readonly reconciliationNotes?: string[];
+}
+
+export interface RenderManifestItem {
+  readonly questionId: string;
+  readonly evaluated: boolean;
+  readonly annotationRequired: boolean;
+  readonly rendered: boolean;
+  readonly renderedPages: number[];
+  readonly annotationCount: number;
+  readonly renderAnchorValid: boolean;
+  readonly status: CanonicalEvaluationStatus;
+}
+
+export interface RenderManifest {
+  readonly evaluationId: string;
+  readonly runId: string;
+  readonly items: RenderManifestItem[];
+  readonly totalEvaluated: number;
+  readonly totalRendered: number;
+  readonly isRenderValid: boolean;
+  readonly orphanAnnotations: string[];
+  readonly renderErrors: string[];
+  readonly timestamp: string;
 }
 
 export interface CanonicalEvaluationLedger {

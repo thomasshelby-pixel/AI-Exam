@@ -1,6 +1,7 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopyService.js';
 import { deduplicateQuestionList } from './canonicalQuestionService.js';
+import { loadEvaluationRunPackage } from '../db.js';
 
 function wrapText(text: string, maxChars: number = 80): string[] {
   if (!text) return [];
@@ -50,15 +51,49 @@ export async function generateDetailedReportPdf(
   const failRed = rgb(0.78, 0.18, 0.18);
   const accentGold = rgb(0.75, 0.55, 0.1);
 
-  const totalAwarded = evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0;
-  const maxMarks = evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100;
+  const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
+  const ledger = resultJson?.canonicalLedger || runPkg?.scoreLedger;
+
+  const totalAwarded = ledger?.totalAwardedMarks ?? (evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0);
+  const maxMarks = ledger?.totalMaxMarks ?? (evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100);
   const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
   const isPass = percentage >= 40;
   const isExemption = percentage >= 60;
   const resultStatus = isExemption ? 'EXEMPTION' : isPass ? 'PASS' : 'FAIL';
 
-  const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
-  const questions = deduplicateQuestionList(rawQuestions);
+  let questions: any[] = [];
+  if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
+    questions = runPkg.evaluationRecords
+      .filter((r: any) => r.counted || r.attempted)
+      .map((r: any) => ({
+        questionNumber: r.questionId,
+        canonicalId: r.questionId,
+        maximumMarks: r.maxMarks,
+        maxMarks: r.maxMarks,
+        marksAwarded: r.awardedMarks,
+        detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
+        markingComponents: r.markingComponents,
+        stepMarkingBreakdown: r.stepMarkingBreakdown,
+        stepsEvaluated: r.markingComponents,
+      }));
+  } else if (resultJson?.canonicalLedger && Array.isArray(resultJson.canonicalLedger.records) && resultJson.canonicalLedger.records.length > 0) {
+    questions = resultJson.canonicalLedger.records
+      .filter((r: any) => r.counted || r.attempted)
+      .map((r: any) => ({
+        questionNumber: r.questionId,
+        canonicalId: r.questionId,
+        maximumMarks: r.maxMarks,
+        maxMarks: r.maxMarks,
+        marksAwarded: r.awardedMarks,
+        detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
+        markingComponents: r.markingComponents,
+        stepMarkingBreakdown: r.stepMarkingBreakdown,
+        stepsEvaluated: r.markingComponents,
+      }));
+  } else {
+    const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
+    questions = deduplicateQuestionList(rawQuestions);
+  }
 
   // Helper to add a new page with standard header and footer
   const createReportPage = (pageNum: number) => {

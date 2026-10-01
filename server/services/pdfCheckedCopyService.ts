@@ -1,6 +1,16 @@
 import { generateDetailedReportPdf as generateDetailedReportPdfImpl } from './detailedReportPdfService.js';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { deduplicateQuestionList } from './canonicalQuestionService.js';
+import {
+  deduplicateQuestionList,
+  toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
+} from './canonicalQuestionService.js';
+import { loadEvaluationRunPackage } from '../db.js';
+import {
+  CanonicalEvaluationRecord,
+  RenderManifest,
+  RenderManifestItem,
+} from '../../src/types/index.js';
 
 export interface EvaluationData {
   id: string;
@@ -113,6 +123,7 @@ function drawCrossmark(page: any, x: number, y: number, color: any) {
 export interface PageAnnotation {
   pageNumber: number;
   questionNumber: string;
+  canonicalId?: string;
   marksAwarded: number;
   maxMarks: number;
   steps: Array<{
@@ -138,63 +149,354 @@ export interface StructuredAnnotationsResult {
     percentage: number;
     resultStatus: string;
   };
+  renderManifest?: RenderManifest;
+}
+
+/**
+ * Universal Pre-Render Validation Gate (Section 8 & Section 13):
+ * Before generating the Checked Copy PDF, validate every canonical record.
+ * Fails closed with CHECKED_COPY_RENDER_INTEGRITY_FAILURE on any missing or invalid render field.
+ */
+export function validatePreRenderGate(options: {
+  records: CanonicalEvaluationRecord[];
+  totalPages: number;
+}): {
+  isValid: boolean;
+  errors: string[];
+  failedQuestionIds: string[];
+} {
+  const { records, totalPages } = options;
+  const errors: string[] = [];
+  const failedQuestionIds: string[] = [];
+
+  for (const rec of records) {
+    // Section 13: Attempted questions that failed to evaluate MUST block finalization
+    if (rec.attempted && rec.evaluationStatus === 'FAILED_TO_EVALUATE') {
+      errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Attempted question failed to evaluate. Cannot generate clean checked copy.`);
+      failedQuestionIds.push(rec.questionId);
+    }
+
+    // For every evaluated record where annotation is required:
+    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
+    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
+
+    if (isEvaluated && isAnnotationReq) {
+      if (!rec.questionId || typeof rec.questionId !== 'string') {
+        errors.push(`PRE_RENDER_ERROR: Missing or invalid questionId.`);
+        failedQuestionIds.push(rec.questionId || 'UNKNOWN');
+        continue;
+      }
+      if (rec.maxMarks === undefined || rec.maxMarks === null || isNaN(rec.maxMarks) || rec.maxMarks <= 0) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid maxMarks (${rec.maxMarks}). Must be positive.`);
+        failedQuestionIds.push(rec.questionId);
+      }
+      if (rec.awardedMarks === undefined || rec.awardedMarks === null || isNaN(rec.awardedMarks) || rec.awardedMarks < 0) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid awardedMarks (${rec.awardedMarks}).`);
+        failedQuestionIds.push(rec.questionId);
+      }
+      const studentPages = rec.studentPages || rec.sourcePages || [];
+      if (!Array.isArray(studentPages) || studentPages.length === 0) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: studentPages is empty. Cannot determine render target.`);
+        failedQuestionIds.push(rec.questionId);
+      }
+      const annPage = rec.annotationPage || (studentPages.length > 0 ? studentPages[0] : 0);
+      if (!annPage || annPage < 1 || annPage > totalPages) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid annotationPage ${annPage} for totalPages ${totalPages}.`);
+        failedQuestionIds.push(rec.questionId);
+      }
+      if (!rec.annotationAnchor || !rec.annotationAnchor.region || !rec.annotationAnchor.annotationType) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid or missing annotationAnchor.`);
+        failedQuestionIds.push(rec.questionId);
+      }
+      if (rec.evaluationStatus !== 'EVALUATED') {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: evaluationStatus is ${rec.evaluationStatus}, expected EVALUATED.`);
+        failedQuestionIds.push(rec.questionId);
+      }
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    failedQuestionIds: Array.from(new Set(failedQuestionIds)),
+  };
+}
+
+/**
+ * Universal Post-Render Validation Gate (Section 9):
+ * Inspects all rendered annotations against canonical evaluated records.
+ * Enforces:
+ * - Every evaluated + annotationRequired question is rendered exactly once
+ * - Zero evaluated questions have rendered = false
+ * - No question has annotationCount > 1
+ * - Zero orphan annotations exist without a canonical questionId
+ */
+export function validatePostRenderGate(options: {
+  evaluationId: string;
+  runId: string;
+  records: CanonicalEvaluationRecord[];
+  renderedAnnotations: Array<{ pageNumber: number; questionNumber: string; canonicalId?: string; marksAwarded: number; maxMarks: number }>;
+  totalPages: number;
+}): {
+  isValid: boolean;
+  renderManifest: RenderManifest;
+  orphanAnnotations: string[];
+  errors: string[];
+} {
+  const { evaluationId, runId, records, renderedAnnotations, totalPages } = options;
+  const errors: string[] = [];
+  const orphanAnnotations: string[] = [];
+
+  const renderedMap = new Map<string, { count: number; pages: number[] }>();
+  for (const ann of renderedAnnotations) {
+    const qId = ann.canonicalId || ann.questionNumber;
+    if (!renderedMap.has(qId)) {
+      renderedMap.set(qId, { count: 0, pages: [] });
+    }
+    const entry = renderedMap.get(qId)!;
+    entry.count += 1;
+    if (!entry.pages.includes(ann.pageNumber)) {
+      entry.pages.push(ann.pageNumber);
+    }
+  }
+
+  const canonicalIds = new Set(records.map((r) => r.questionId));
+
+  for (const [qId, entry] of renderedMap.entries()) {
+    if (!canonicalIds.has(qId)) {
+      orphanAnnotations.push(qId);
+      errors.push(`POST_RENDER_ERROR: Orphan annotation ${qId} exists without a canonical question record.`);
+    }
+  }
+
+  const manifestItems: RenderManifestItem[] = [];
+  let totalEvaluated = 0;
+  let totalRendered = 0;
+
+  for (const rec of records) {
+    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
+    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
+    if (isEvaluated) totalEvaluated++;
+
+    const renderEntry = renderedMap.get(rec.questionId);
+    const wasRendered = Boolean(renderEntry && renderEntry.count > 0);
+    if (wasRendered) totalRendered++;
+
+    const annotationCount = renderEntry ? renderEntry.count : 0;
+    const renderedPages = renderEntry ? renderEntry.pages : [];
+
+    if (isEvaluated && isAnnotationReq) {
+      if (!wasRendered) {
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Evaluated question was NOT rendered on checked copy.`);
+      }
+      if (annotationCount > 1) {
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Duplicate rendering detected (${annotationCount} occurrences). Exactly 1 required.`);
+      }
+    }
+
+    manifestItems.push({
+      questionId: rec.questionId,
+      evaluated: isEvaluated,
+      annotationRequired: isAnnotationReq,
+      rendered: wasRendered,
+      renderedPages,
+      annotationCount,
+      renderAnchorValid: Boolean(rec.annotationAnchor),
+      status: rec.evaluationStatus,
+    });
+  }
+
+  const isRenderValid = errors.length === 0 && orphanAnnotations.length === 0;
+
+  const renderManifest: RenderManifest = {
+    evaluationId,
+    runId,
+    items: manifestItems,
+    totalEvaluated,
+    totalRendered,
+    isRenderValid,
+    orphanAnnotations,
+    renderErrors: errors,
+    timestamp: new Date().toISOString(),
+  };
+
+  return {
+    isValid: isRenderValid,
+    renderManifest,
+    orphanAnnotations,
+    errors,
+  };
 }
 
 /**
  * Builds structured page-level annotations for persistence in database (Rule 73 & Rule 87).
+ * Universal Rendering Contract:
+ * - Single Canonical Render Source (EvaluationRunPackage)
+ * - Deterministic render order from inventory sourceOrder
+ * - Pre-Render Gate & Post-Render Gate verification
  */
 export function buildStructuredAnnotations(
   evalData: EvaluationData,
   resultJson: any,
   totalPages: number
 ): StructuredAnnotationsResult {
-  const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
-  const questions = deduplicateQuestionList(rawQuestions);
   const safeTotalPages = Math.max(1, totalPages);
-  const totalAwarded = evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0;
-  const maxMarks = evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100;
+
+  // 1. Single Canonical Render Source: Resolve authoritative EvaluationRunPackage or scoreLedger
+  let canonicalRecords: CanonicalEvaluationRecord[] = [];
+  const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
+
+  if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
+    canonicalRecords = runPkg.evaluationRecords;
+  } else if (resultJson?.canonicalLedger && Array.isArray(resultJson.canonicalLedger.records) && resultJson.canonicalLedger.records.length > 0) {
+    canonicalRecords = resultJson.canonicalLedger.records;
+  } else {
+    // Normalize into canonical records
+    const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
+    const dedupedQuestions = deduplicateQuestionList(rawQuestions);
+    canonicalRecords = dedupedQuestions.map((q, idx) => {
+      const canonId = q.canonicalId || toCanonicalQuestionId(q.questionNumber, q.subQuestion) || `Q${idx + 1}`;
+      const sPages = Array.isArray(q.sourcePages) && q.sourcePages.length > 0
+        ? q.sourcePages
+        : q.pageNumber ? [Number(q.pageNumber)] : [1];
+      const isMcq = q.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
+      const isAttempted = q.status !== 'not_attempted';
+      const isEvaluated = q.status !== 'not_attempted';
+      const targetPage = sPages[0] || 1;
+
+      return {
+        questionId: canonId,
+        parentQuestionId: parseCanonicalQuestionIdentity(canonId).parentQuestionId,
+        subQuestionId: parseCanonicalQuestionIdentity(canonId).subQuestion,
+        questionType: isMcq ? 'MCQ' : 'DESCRIPTIVE',
+        attempted: isAttempted,
+        evaluated: isEvaluated,
+        sourcePages: sPages,
+        studentPages: sPages,
+        maxMarks: Number(q.maximumMarks ?? q.maxMarks ?? 4),
+        awardedMarks: Number(q.marksAwarded ?? 0),
+        evaluationStatus: isEvaluated ? 'EVALUATED' : 'UNATTEMPTED',
+        annotationRequired: isAttempted,
+        annotationPage: targetPage,
+        annotationAnchor: {
+          pageNumber: targetPage,
+          region: 'RIGHT_MARGIN',
+          annotationType: isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
+        },
+        renderOrder: idx + 1,
+        rendered: true,
+        counted: true,
+        markingComponents: q.markingComponents,
+        stepMarkingBreakdown: q.stepMarkingBreakdown,
+        studentSelectedOption: q.candidateSelectedOption || q.studentSelectedOption,
+        officialAnswer: q.officialCorrectOption || q.officialAnswer,
+      };
+    });
+  }
+
+  // Calculate totals from canonical ledger or records
+  const totalAwarded = runPkg?.scoreLedger?.totalAwardedMarks
+    ?? resultJson?.canonicalLedger?.totalAwardedMarks
+    ?? evalData.totalMarks
+    ?? resultJson?.totalMarksAwarded
+    ?? resultJson?.totalMarks
+    ?? (canonicalRecords.length > 0
+        ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.awardedMarks) || 0), 0)
+        : 0);
+
+  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
+    ?? resultJson?.canonicalLedger?.totalMaxMarks
+    ?? evalData.maximumMarks
+    ?? resultJson?.maximumMarks
+    ?? (canonicalRecords.length > 0
+        ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.maxMarks) || 0), 0)
+        : 100);
+
   const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
   const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
+
+  // Section 8: PRE-RENDER VALIDATION GATE
+  const preGate = validatePreRenderGate({
+    records: canonicalRecords,
+    totalPages: safeTotalPages,
+  });
+
+  if (!preGate.isValid) {
+    const err = new Error(`CHECKED_COPY_RENDER_INTEGRITY_FAILURE: Pre-render validation failed: ${preGate.errors.join('; ')}`) as any;
+    err.code = 'CHECKED_COPY_RENDER_INTEGRITY_FAILURE';
+    err.failedQuestionIds = preGate.failedQuestionIds;
+    throw err;
+  }
+
+  // Section 15: Sort strictly by renderOrder derived from inventory sourceOrder
+  const sortedRecords = [...canonicalRecords].sort(
+    (a, b) => (a.renderOrder ?? 1000) - (b.renderOrder ?? 1000)
+  );
 
   const pagesMap = new Map<number, PageAnnotation[]>();
   for (let p = 1; p <= safeTotalPages; p++) {
     pagesMap.set(p, []);
   }
 
-  const seenAnnotationQuestions = new Set<string>();
+  const renderedAnnotationsList: Array<{ pageNumber: number; questionNumber: string; canonicalId?: string; marksAwarded: number; maxMarks: number }> = [];
 
-  questions.forEach((q, idx) => {
-    const qKey = String(q.canonicalId || q.fullQuestionCode || q.questionId || `${q.questionNumber}_${q.subQuestion}`);
-    if (seenAnnotationQuestions.has(qKey)) {
-      return;
-    }
-    seenAnnotationQuestions.add(qKey);
-
-    let targetPage = Number(q.pageNumber);
-    if (!targetPage && Array.isArray(q.sourcePages) && q.sourcePages.length > 0) {
-      targetPage = Number(q.sourcePages[0]);
-    }
-    if (!targetPage || targetPage < 1 || targetPage > safeTotalPages) {
-      targetPage = (idx % safeTotalPages) + 1;
+  for (const rec of sortedRecords) {
+    // Only render questions where annotationRequired is true
+    // (Section 14: Unselected alternatives have annotationRequired = false)
+    // (Section 12: Zero-mark answers have annotationRequired = true, attempted = true, awardedMarks = 0)
+    if (!rec.annotationRequired) {
+      continue;
     }
 
-    const steps = q.markingComponents || q.structuredEvidence?.markingComponents || q.stepMarkingBreakdown || q.stepsEvaluated || [
-      { componentType: 'PROVISION', stepName: 'Statutory Provision Verification', marksAwarded: Math.min(2, q.marksAwarded || 2), maxMarks: 2, marksAvailable: 2, status: 'CORRECT', studentEvidence: 'Provision accurately cited' },
-      { componentType: 'APPLICATION', stepName: 'Methodology & Working Notes', marksAwarded: Math.max(0, (q.marksAwarded || 2) - 2), maxMarks: Math.max(2, (q.maxMarks || 4) - 2), marksAvailable: Math.max(2, (q.maxMarks || 4) - 2), status: q.marksAwarded >= q.maxMarks ? 'CORRECT' : 'PARTIALLY_CORRECT', studentEvidence: 'Calculations verified' },
-    ];
+    const targetPage = rec.annotationPage || (rec.studentPages && rec.studentPages.length > 0 ? rec.studentPages[0] : 1);
+    const safeTargetPage = Math.min(Math.max(1, targetPage), safeTotalPages);
 
-    const annotation: PageAnnotation = {
-      pageNumber: targetPage,
-      questionNumber: String(
-        q.canonicalId ||
-        q.fullQuestionCode ||
-        (q.subQuestion && !String(q.questionNumber).includes('(')
-          ? `Q${String(q.questionNumber).replace(/^Q/i, '')}(${q.subQuestion})`
-          : q.questionNumber) ||
-        `Q${idx + 1}`
-      ),
-      marksAwarded: Number(q.marksAwarded ?? 0),
-      maxMarks: Number(q.maximumMarks ?? q.maxMarks ?? 0),
+    // Section 4: MCQ Rendering Contract
+    // Section 5: Descriptive Question Rendering Contract
+    let steps: any[] = [];
+    if (rec.markingComponents && rec.markingComponents.length > 0) {
+      steps = rec.markingComponents;
+    } else if (rec.stepMarkingBreakdown && rec.stepMarkingBreakdown.length > 0) {
+      steps = rec.stepMarkingBreakdown;
+    } else if (rec.questionType === 'MCQ' || rec.questionId.toUpperCase().startsWith('MCQ')) {
+      const isCorrect = rec.awardedMarks >= rec.maxMarks;
+      steps = [
+        {
+          componentType: 'MCQ',
+          stepName: `Option: ${rec.studentSelectedOption || '-'} | Key: ${rec.officialAnswer || '-'}`,
+          marksAwarded: rec.awardedMarks,
+          maxMarks: rec.maxMarks,
+          status: isCorrect ? 'CORRECT' : 'INCORRECT',
+          comment: isCorrect ? 'Option verified with official answer' : 'Option does not match official key',
+        },
+      ];
+    } else {
+      steps = [
+        {
+          componentType: 'PROVISION',
+          stepName: 'Statutory / Conceptual Principle',
+          marksAwarded: Math.min(2, rec.awardedMarks),
+          maxMarks: Math.min(2, rec.maxMarks),
+          status: rec.awardedMarks > 0 ? 'CORRECT' : 'INCORRECT',
+          comment: rec.awardedMarks > 0 ? 'Relevant principle identified' : 'Principle missing or omitted',
+        },
+        {
+          componentType: 'APPLICATION',
+          stepName: 'Application & Working Notes',
+          marksAwarded: Math.max(0, rec.awardedMarks - 2),
+          maxMarks: Math.max(1, rec.maxMarks - 2),
+          status: rec.awardedMarks >= rec.maxMarks ? 'CORRECT' : rec.awardedMarks > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT',
+          comment: rec.awardedMarks >= rec.maxMarks ? 'Calculations verified' : 'Partial working verified',
+        },
+      ];
+    }
+
+    const pageAnn: PageAnnotation = {
+      pageNumber: safeTargetPage,
+      questionNumber: rec.questionId,
+      canonicalId: rec.questionId,
+      marksAwarded: rec.awardedMarks,
+      maxMarks: rec.maxMarks,
       steps: steps.map((s: any) => {
         const cType = s.componentType || (s.stepName && s.stepName.startsWith('[') ? '' : 'STEP');
         const prefix = cType ? `[${cType}] ` : '';
@@ -214,8 +516,36 @@ export function buildStructuredAnnotations(
       }),
     };
 
-    pagesMap.get(targetPage)!.push(annotation);
+    pagesMap.get(safeTargetPage)!.push(pageAnn);
+    renderedAnnotationsList.push({
+      pageNumber: safeTargetPage,
+      questionNumber: rec.questionId,
+      canonicalId: rec.questionId,
+      marksAwarded: rec.awardedMarks,
+      maxMarks: rec.maxMarks,
+    });
+  }
+
+  // Section 9: POST-RENDER VALIDATION GATE
+  const postGate = validatePostRenderGate({
+    evaluationId: evalData.id,
+    runId: runPkg?.runId || evalData.id,
+    records: canonicalRecords,
+    renderedAnnotations: renderedAnnotationsList,
+    totalPages: safeTotalPages,
   });
+
+  if (!postGate.isValid) {
+    const err = new Error(`CHECKED_COPY_RENDER_INTEGRITY_FAILURE: Post-render validation failed: ${postGate.errors.join('; ')}`) as any;
+    err.code = 'CHECKED_COPY_RENDER_INTEGRITY_FAILURE';
+    err.renderManifest = postGate.renderManifest;
+    throw err;
+  }
+
+  // Attach renderManifest to runPkg if available
+  if (runPkg) {
+    (runPkg as any).renderManifest = postGate.renderManifest;
+  }
 
   const pagesList = [];
   for (let p = 1; p <= safeTotalPages; p++) {
@@ -236,6 +566,7 @@ export function buildStructuredAnnotations(
       percentage,
       resultStatus,
     },
+    renderManifest: postGate.renderManifest,
   };
 }
 
@@ -346,7 +677,11 @@ export async function generateCheckedCopyPdf(
         borderWidth: 1.2,
       });
 
-      safeDrawText(page, `Q.${qAnn.questionNumber}`, {
+      const qDisplay = qAnn.questionNumber.startsWith('Q') || qAnn.questionNumber.startsWith('MCQ')
+        ? qAnn.questionNumber
+        : `Q.${qAnn.questionNumber}`;
+
+      safeDrawText(page, qDisplay, {
         x: marginX + 6,
         y: currY - 14,
         size: 9.5,
@@ -355,14 +690,14 @@ export async function generateCheckedCopyPdf(
       });
 
       safeDrawText(page, `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
-        x: marginX + 46,
+        x: marginX + 50,
         y: currY - 14,
         size: 10.5,
         font: helveticaBold,
         color: redExaminer,
       });
 
-      safeDrawText(page, 'STEP-WISE EVALUATION', {
+      safeDrawText(page, qAnn.questionNumber.startsWith('MCQ') ? 'MCQ EVALUATION' : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - 28,
         size: 6.5,
@@ -891,7 +1226,7 @@ export async function generateOriginalSubmissionPdf(
 
     const studentSnippet = q.studentAnswerSnippet ||
       q.workingNotes ||
-      `1. Relevant statutory provision identified and stated.\n2. Calculations performed in accordance with working notes.\n3. Final taxable income / computation concluded as required.`;
+      `1. Relevant statutory or conceptual provision identified.\n2. Calculations performed in accordance with working notes.\n3. Final computation or conclusion stated as required.`;
 
     const lines = studentSnippet.split('\n');
     lines.forEach((l: string) => {

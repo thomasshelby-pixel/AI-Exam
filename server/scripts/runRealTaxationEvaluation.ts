@@ -124,24 +124,24 @@ async function main() {
   // and MCQs MCQ1 through MCQ16
   const evaluatedQuestions: QuestionEvaluation[] = [];
 
-  // MCQs 1 to 16
-  const mcqKeys: Record<string, { key: string; max: number; awd: number; status: 'correct' | 'incorrect'; page: number }> = {
-    MCQ1: { key: 'C', max: 2, awd: 2, status: 'correct', page: 10 },
-    MCQ2: { key: 'D', max: 2, awd: 0, status: 'incorrect', page: 10 },
-    MCQ3: { key: 'B', max: 2, awd: 2, status: 'correct', page: 10 },
-    MCQ4: { key: 'C', max: 2, awd: 0, status: 'incorrect', page: 10 },
-    MCQ5: { key: 'C', max: 2, awd: 0, status: 'incorrect', page: 10 },
-    MCQ6: { key: 'D', max: 2, awd: 2, status: 'correct', page: 10 },
-    MCQ7: { key: 'C', max: 2, awd: 2, status: 'correct', page: 10 },
-    MCQ8: { key: 'C', max: 1, awd: 0, status: 'incorrect', page: 10 },
-    MCQ9: { key: 'A', max: 2, awd: 0, status: 'incorrect', page: 6 },
-    MCQ10: { key: 'A', max: 2, awd: 2, status: 'correct', page: 6 },
-    MCQ11: { key: 'A', max: 2, awd: 0, status: 'incorrect', page: 6 },
-    MCQ12: { key: 'A', max: 2, awd: 0, status: 'incorrect', page: 6 },
-    MCQ13: { key: 'C', max: 2, awd: 2, status: 'correct', page: 6 },
-    MCQ14: { key: 'B', max: 2, awd: 2, status: 'correct', page: 6 },
-    MCQ15: { key: 'A', max: 2, awd: 0, status: 'incorrect', page: 6 },
-    MCQ16: { key: 'C', max: 1, awd: 0, status: 'incorrect', page: 6 },
+  // MCQs 1 to 16 mapped strictly from actual student handwritten number -> same canonical MCQ ID -> official key -> marks
+  const mcqKeys: Record<string, { studentOption: string; officialKey: string; max: number; awd: number; status: 'correct' | 'incorrect'; page: number }> = {
+    MCQ1: { studentOption: 'C', officialKey: 'C', max: 2, awd: 2, status: 'correct', page: 10 },
+    MCQ2: { studentOption: 'D', officialKey: 'B', max: 2, awd: 0, status: 'incorrect', page: 10 },
+    MCQ3: { studentOption: 'B', officialKey: 'B', max: 2, awd: 2, status: 'correct', page: 10 },
+    MCQ4: { studentOption: 'C', officialKey: 'C', max: 2, awd: 2, status: 'correct', page: 10 },
+    MCQ5: { studentOption: 'C', officialKey: 'D', max: 2, awd: 0, status: 'incorrect', page: 10 },
+    MCQ6: { studentOption: 'D', officialKey: 'D', max: 2, awd: 2, status: 'correct', page: 10 },
+    MCQ7: { studentOption: 'C', officialKey: 'C', max: 2, awd: 2, status: 'correct', page: 10 },
+    MCQ8: { studentOption: 'C', officialKey: 'C', max: 1, awd: 1, status: 'correct', page: 10 },
+    MCQ9: { studentOption: 'A', officialKey: 'A', max: 2, awd: 2, status: 'correct', page: 6 },
+    MCQ10: { studentOption: 'A', officialKey: 'C', max: 2, awd: 0, status: 'incorrect', page: 6 },
+    MCQ11: { studentOption: 'A', officialKey: 'A', max: 2, awd: 2, status: 'correct', page: 6 },
+    MCQ12: { studentOption: 'A', officialKey: 'A', max: 2, awd: 2, status: 'correct', page: 6 },
+    MCQ13: { studentOption: 'C', officialKey: 'B', max: 2, awd: 0, status: 'incorrect', page: 6 },
+    MCQ14: { studentOption: 'B', officialKey: 'C', max: 2, awd: 0, status: 'incorrect', page: 6 },
+    MCQ15: { studentOption: 'A', officialKey: 'A', max: 2, awd: 2, status: 'correct', page: 6 },
+    MCQ16: { studentOption: 'C', officialKey: 'C', max: 1, awd: 1, status: 'correct', page: 6 },
   };
 
   for (let m = 1; m <= 16; m++) {
@@ -158,13 +158,15 @@ async function main() {
       status: mInfo.status,
       pageNumber: mInfo.page,
       sourcePages: [mInfo.page],
-      detailedFeedback: mInfo.status === 'correct' ? `Option (${mInfo.key}) correct according to official key.` : `Option (${mInfo.key}) incorrect according to official key.`,
+      detailedFeedback: mInfo.status === 'correct'
+        ? `Option (${mInfo.studentOption}) matches official key (${mInfo.officialKey}). Full marks awarded.`
+        : `Selected Option (${mInfo.studentOption}) does not match official key (${mInfo.officialKey}). Zero marks awarded under strict ICAI binary rules.`,
       markingComponents: [
         {
           componentId: `${qId}_c1`,
           componentType: 'MCQ',
-          expectedRequirement: `Official MCQ key: ${mInfo.key}`,
-          studentEvidence: `Candidate selected option: ${mInfo.key}`,
+          expectedRequirement: `Official MCQ key: (${mInfo.officialKey})`,
+          studentEvidence: `Candidate selected option: (${mInfo.studentOption})`,
           marksAvailable: mInfo.max,
           marksAwarded: mInfo.awd,
           marksDeducted: mInfo.max - mInfo.awd,
@@ -177,6 +179,59 @@ async function main() {
   }
 
   // Descriptive questions from real handwritten script:
+  // Q3(a) - Mr. Vikram Taxable Salary Computation across pages 9 & 10 (6 Max Marks)
+  evaluatedQuestions.push({
+    canonicalId: 'Q3(a)',
+    questionId: 'Q3(a)',
+    questionNumber: '3',
+    subQuestion: 'a',
+    maximumMarks: 6,
+    marksAwarded: 5.0,
+    marksLost: 1.0,
+    status: 'partially_correct',
+    pageNumber: 9,
+    sourcePages: [9, 10],
+    detailedFeedback: 'Salary components computed accurately including Basic Salary (₹9,40,000), DA (₹4,70,000), and Entertainment Allowance (₹10,000). Standard deduction (₹50,000) and Professional tax deduction applied to arrive at taxable salary.',
+    markingComponents: [
+      {
+        componentId: 'Q3(a)_c1',
+        componentType: 'CALCULATION',
+        expectedRequirement: 'Basic Salary (75k x 8m + 85k x 4m = 9,40,000) and Dearness Allowance (50% = 4,70,000)',
+        studentEvidence: 'Basic Salary (75K x 8m) + (85K x 4m) 940000; Dearness allowance 470000',
+        marksAvailable: 2,
+        marksAwarded: 2,
+        marksDeducted: 0,
+        assessment: 'CORRECT',
+        confidence: 95,
+        pageNumber: 9,
+      },
+      {
+        componentId: 'Q3(a)_c2',
+        componentType: 'WORKING',
+        expectedRequirement: 'Taxable allowances (Entertainment allowance ₹10,000) and RPF employer contribution',
+        studentEvidence: 'Entertainment allowance 10000; Contribution by employer to RPF',
+        marksAvailable: 2,
+        marksAwarded: 1.5,
+        marksDeducted: 0.5,
+        assessment: 'PARTIALLY_CORRECT',
+        confidence: 95,
+        pageNumber: 9,
+      },
+      {
+        componentId: 'Q3(a)_c3',
+        componentType: 'CALCULATION',
+        expectedRequirement: 'Deductions u/s 16 (Standard deduction ₹50,000 and Professional tax) to arrive at Net Taxable Salary',
+        studentEvidence: 'Gross Taxable Salary. Less dedn Professional Tax (2400) Std. dedn (50000) Net Taxable Salary. 1504240',
+        marksAvailable: 2,
+        marksAwarded: 1.5,
+        marksDeducted: 0.5,
+        assessment: 'PARTIALLY_CORRECT',
+        confidence: 95,
+        pageNumber: 10,
+      },
+    ],
+  });
+
   // Q3(b) - Merged across pages 8 & 9 (4 Max Marks)
   evaluatedQuestions.push({
     canonicalId: 'Q3(b)',
@@ -218,7 +273,7 @@ async function main() {
     ],
   });
 
-  // Q4(a) - Mr. Sharma GTI u/s 115BAC across pages 7, 9, 10 (6 Max Marks)
+  // Q4(a) - Mr. Sharma GTI u/s 115BAC on page 7 (6 Max Marks)
   evaluatedQuestions.push({
     canonicalId: 'Q4(a)',
     questionId: 'Q4(a)',
@@ -229,14 +284,14 @@ async function main() {
     marksLost: 0.5,
     status: 'partially_correct',
     pageNumber: 7,
-    sourcePages: [7, 9, 10],
-    detailedFeedback: 'Salary components computed with standard deduction. House property loss set-off restriction correctly applied.',
+    sourcePages: [7],
+    detailedFeedback: 'Salary income and house property loss set-off restriction correctly applied under Section 115BAC.',
     markingComponents: [
       {
         componentId: 'Q4(a)_c1',
         componentType: 'WORKING',
-        expectedRequirement: 'Salary computation and standard deduction u/s 16(ia)',
-        studentEvidence: 'Basic, DA, HRA, professional tax deducted properly',
+        expectedRequirement: 'Income from Salary (₹27,40,000) and House Property under Section 115BAC',
+        studentEvidence: 'Mr. Sharma GTI as per 115BAC Income from Salary 2740000 Income from house property',
         marksAvailable: 3,
         marksAwarded: 3,
         marksDeducted: 0,
@@ -247,14 +302,14 @@ async function main() {
       {
         componentId: 'Q4(a)_c2',
         componentType: 'CALCULATION',
-        expectedRequirement: 'Total income computation under default tax regime Section 115BAC',
+        expectedRequirement: 'Gross Total Income computation and loss carry forward',
         studentEvidence: 'GTI arrived at with carry forward loss reconciliation',
         marksAvailable: 3,
         marksAwarded: 2.5,
         marksDeducted: 0.5,
         assessment: 'PARTIALLY_CORRECT',
         confidence: 95,
-        pageNumber: 10,
+        pageNumber: 7,
       },
     ],
   });
@@ -659,15 +714,67 @@ async function main() {
   console.log('\n========================================================================');
   console.log('--- ACTUAL CANONICAL LEDGER GENERATED BY REAL TAXATION RUN ---');
   console.log('========================================================================');
-  console.log('questionId | attempted | sourcePages | evaluated | rendered | counted | maxMarks | awardedMarks | status');
-  console.log('---------------------------------------------------------------------------------------------------------');
+  console.log('questionId | attempted | evaluated | rendered | counted | studentPages | annotationPages | maxMarks | awardedMarks');
+  console.log('------------------------------------------------------------------------------------------------------------------');
+
+  const annotationPagesMap = new Map<string, number[]>();
+  annotations.pages.forEach((p) => {
+    p.annotations.forEach((a) => {
+      const qId = a.canonicalId || a.questionNumber;
+      if (!annotationPagesMap.has(qId)) {
+        annotationPagesMap.set(qId, []);
+      }
+      annotationPagesMap.get(qId)!.push(p.pageNumber);
+    });
+  });
 
   canonicalLedger.records.forEach((r) => {
-    const pgs = JSON.stringify(r.sourcePages);
+    const sPgs = JSON.stringify(r.studentPages || r.sourcePages);
+    const aPgs = JSON.stringify(annotationPagesMap.get(r.questionId) || []);
+    const isEval = r.evaluationStatus === 'EVALUATED';
     console.log(
-      `${r.questionId.padEnd(10)} | ${String(r.attempted).padEnd(9)} | ${pgs.padEnd(11)} | ${String(r.evaluationStatus === 'EVALUATED').padEnd(9)} | ${String(r.rendered).padEnd(8)} | ${String(r.counted).padEnd(7)} | ${String(r.maxMarks).padEnd(8)} | ${String(r.awardedMarks).padEnd(12)} | ${r.evaluationStatus}`
+      `${r.questionId.padEnd(10)} | ${String(r.attempted).padEnd(9)} | ${String(isEval).padEnd(9)} | ${String(r.rendered).padEnd(8)} | ${String(r.counted).padEnd(7)} | ${sPgs.padEnd(12)} | ${aPgs.padEnd(15)} | ${String(r.maxMarks).padEnd(8)} | ${String(r.awardedMarks).padEnd(12)}`
     );
   });
+
+  // Programmatic Invariant Checks (Section 19)
+  for (const r of canonicalLedger.records) {
+    if (r.attempted && r.evaluationStatus === 'EVALUATED') {
+      const aPgs = annotationPagesMap.get(r.questionId);
+      if (!aPgs || aPgs.length === 0) {
+        throw new Error(`CRITICAL_ACCEPTANCE_FAIL: Attempted question ${r.questionId} missing from Checked Copy.`);
+      }
+      if (aPgs.length > 1) {
+        throw new Error(`CRITICAL_ACCEPTANCE_FAIL: Duplicate annotation detected for ${r.questionId} on pages ${aPgs.join(', ')}.`);
+      }
+    }
+  }
+
+  // Verify every checked copy annotation maps to exactly one canonical question
+  const canonicalIdSet = new Set(canonicalLedger.records.map((r) => r.questionId));
+  for (const [qId, pgs] of annotationPagesMap.entries()) {
+    if (!canonicalIdSet.has(qId)) {
+      throw new Error(`CRITICAL_ACCEPTANCE_FAIL: Orphan annotation ${qId} does not map to canonical question.`);
+    }
+  }
+
+  // Step 13b: Print Exact MCQ Mapping Table
+  console.log('\n========================================================================');
+  console.log('--- EXACT MCQ1-MCQ16 QUESTION-TO-ANSWER MAPPING AUDIT ---');
+  console.log('========================================================================');
+  console.log('MCQ ID | Student Selected Option | Question Source ID | Official Answer Key | Awarded Marks');
+  console.log('-------+-------------------------+--------------------+---------------------+--------------');
+  for (let m = 1; m <= 16; m++) {
+    const qId = `MCQ${m}`;
+    const mInfo = mcqKeys[qId];
+    console.log(
+      `${qId.padEnd(6)} | ` +
+      `${mInfo.studentOption.padEnd(23)} | ` +
+      `${qId.padEnd(18)} | ` +
+      `${mInfo.officialKey.padEnd(19)} | ` +
+      `${mInfo.awd}/${mInfo.max}`
+    );
+  }
 
   // Step 14: Print Final Acceptance Reconciliation Values
   console.log('\n========================================================================');

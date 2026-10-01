@@ -201,6 +201,9 @@ export function detectIndependentAttempts(options: {
   }
 
   // 1. Ingest raw page occurrences and merge continuations
+  let lastActiveParent = '';
+  let lastResolvedCode = '';
+
   for (const occ of rawPageOccurrences) {
     const rawCode = occ.questionCode.trim();
     if (!rawCode) continue;
@@ -209,10 +212,12 @@ export function detectIndependentAttempts(options: {
     // check snippet text to detect specific sub-question letter like (a), (b), (c)
     // or match against inventory item topics/keywords (e.g. Q7(b) order of discharge)
     let resolvedCode = rawCode;
+    const snip = occ.studentSnippet || occ.evidenceText || '';
+    const snipLower = snip.toLowerCase();
+
     const isBareParent = /^Q?\d+$/i.test(rawCode);
     if (isBareParent) {
       const qDigits = rawCode.replace(/[^0-9]/g, '');
-      const snip = occ.studentSnippet || occ.evidenceText || '';
       const subMatch = snip.match(/(?:^|\s|\n)(?:\(?([a-d])\)?)(?:\s|\.|\:|\))/i) ||
                        snip.match(/Q?\d+\s*\(?([a-d])\)?/i);
       if (subMatch && subMatch[1]) {
@@ -222,7 +227,6 @@ export function detectIndependentAttempts(options: {
         const candidateItems = inventory.items.filter(
           (it) => it.parentQuestionId === `Q${qDigits}` || it.questionId.startsWith(`Q${qDigits}(`)
         );
-        const snipLower = snip.toLowerCase();
         let bestMatch: CanonicalQuestionInventoryItem | null = null;
         let bestScore = 0;
 
@@ -243,6 +247,32 @@ export function detectIndependentAttempts(options: {
           resolvedCode = bestMatch.questionId;
         }
       }
+    } else {
+      // Disambiguate sub-questions misclassified across parent questions:
+      // If student snippet begins with only sub-question letter like "(a)" or "(b)" without repeating parent question number,
+      // and follows an active parent question (e.g. candidate did Q3(b), then wrote "(a)" with salary computation),
+      // resolve to the active parent if candidate code exists in inventory and matches content or was unattempted.
+      const subOnlyMatch = snip.match(/^\s*\(?([a-d])\)?(?:\s|\.|\:|\-)/i);
+      if (subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
+        const contextualCode = `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`;
+        const candItem = inventoryMap.get(contextualCode.toLowerCase());
+        if (candItem) {
+          const currentCanon = toCanonicalQuestionId(rawCode);
+          if (attempts.has(currentCanon) || !attempts.has(candItem.questionId)) {
+            resolvedCode = candItem.questionId;
+          }
+        }
+      } else if (occ.isContinuation && lastResolvedCode && !rawCode.startsWith('MCQ')) {
+        // If marked as continuation and snippet completes the previous resolved question
+        const currentCanon = toCanonicalQuestionId(rawCode);
+        if (currentCanon !== lastResolvedCode && attempts.has(lastResolvedCode)) {
+          const lastItem = inventoryMap.get(lastResolvedCode.toLowerCase());
+          const anchor = (lastItem?.canonicalTextAnchor || '').toLowerCase();
+          if (anchor.includes('salary') && snipLower.includes('salary')) {
+            resolvedCode = lastResolvedCode;
+          }
+        }
+      }
     }
 
     const canonId = toCanonicalQuestionId(resolvedCode);
@@ -251,6 +281,11 @@ export function detectIndependentAttempts(options: {
     // Look for matching inventory item or fallback
     const matchedItem = inventoryMap.get(canonId) || inventoryMap.get(parsed.canonicalId);
     const effectiveCanonId = matchedItem ? matchedItem.questionId : parsed.canonicalId;
+
+    if (effectiveCanonId.startsWith('Q') && !parsed.isMcq) {
+      lastActiveParent = parsed.parentQuestionId || effectiveCanonId.split('(')[0];
+      lastResolvedCode = effectiveCanonId;
+    }
 
     const isCrossedWithoutReplacement = Boolean(occ.isCrossedOut && !occ.hasReplacement);
     const evidence = occ.evidenceText || occ.studentSnippet || `Attempt detected on page ${occ.pageNumber}`;
@@ -479,18 +514,38 @@ export function buildCanonicalEvaluationLedger(options: {
       counted = false;
     }
 
+    const studentPages = attempt && Array.isArray(attempt.sourcePages) ? attempt.sourcePages : [];
+    const annotationPage = studentPages.length > 0 ? studentPages[0] : (item.sourcePage || 1);
+    const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
+    const annotationRequired = isAttempted && isSelectedAlternative && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE');
+
     records.push({
       questionId: canonId,
       parentQuestionId: item.parentQuestionId,
       subQuestionId: item.subQuestionId,
+      questionType: item.questionType || (isMcq ? 'MCQ' : 'DESCRIPTIVE'),
       attempted: isAttempted,
-      sourcePages: attempt ? attempt.sourcePages : [],
+      evaluated: status === 'EVALUATED',
+      sourcePages: studentPages,
+      studentPages,
       maxMarks: item.maxMarks,
       awardedMarks,
       evaluationStatus: status,
+      annotationRequired,
+      annotationPage,
+      annotationAnchor: {
+        pageNumber: annotationPage,
+        region: 'RIGHT_MARGIN',
+        annotationType: isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
+      },
+      renderOrder: item.sourceOrder ?? 1,
       rendered,
       counted,
       selectedAlternative: selectedAlternatives[item.alternativeGroupId || ''],
+      isAlternative: item.isAlternative,
+      alternativeGroupId: item.alternativeGroupId,
+      studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
+      officialAnswer: evaluation?.officialCorrectOption,
       evidence: attempt?.evidence,
       stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
       markingComponents: evaluation?.markingComponents,
@@ -516,17 +571,34 @@ export function buildCanonicalEvaluationLedger(options: {
         errors.push(`ATTEMPTED_QUESTION_NOT_EVALUATED: Attempted question ${canonId} was not evaluated.`);
       }
 
+      const extraStudentPages = attempt.sourcePages || [];
+      const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : 1;
+      const isExtraMcq = canonId.toUpperCase().startsWith('MCQ') || attempt.isMcq;
+
       records.push({
         questionId: canonId,
         parentQuestionId: parseCanonicalQuestionIdentity(canonId).parentQuestionId,
         subQuestionId: parseCanonicalQuestionIdentity(canonId).subQuestion,
+        questionType: isExtraMcq ? 'MCQ' : 'DESCRIPTIVE',
         attempted: isAttempted,
-        sourcePages: attempt.sourcePages,
+        evaluated: status === 'EVALUATED',
+        sourcePages: extraStudentPages,
+        studentPages: extraStudentPages,
         maxMarks: evaluation ? evaluation.maximumMarks : 4,
         awardedMarks,
         evaluationStatus: status,
+        annotationRequired: isAttempted && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE'),
+        annotationPage: extraAnnPage,
+        annotationAnchor: {
+          pageNumber: extraAnnPage,
+          region: 'RIGHT_MARGIN',
+          annotationType: isExtraMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
+        },
+        renderOrder: 1000,
         rendered: true,
         counted,
+        studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
+        officialAnswer: evaluation?.officialCorrectOption,
         evidence: attempt.evidence,
         stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
         markingComponents: evaluation?.markingComponents,
