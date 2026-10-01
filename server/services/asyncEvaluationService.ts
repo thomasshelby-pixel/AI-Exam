@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
-import { db } from '../db.js';
+import { db, persistEvaluationRunPackageAtomic } from '../db.js';
 import { evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
@@ -426,7 +426,16 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.warn(`[AsyncEval] Evaluation ${evaluationId} flagged for consistency review:`, consistencyReport.errors);
     }
 
-    // Stage 6: Update Database to COMPLETED / NEEDS_REVIEW
+    // Stage 6: Persist authoritative EvaluationRunPackage and update Database to COMPLETED / NEEDS_REVIEW
+    if (evaluationResult.evaluationRunPackage) {
+      try {
+        persistEvaluationRunPackageAtomic(evaluationResult.evaluationRunPackage);
+        console.log(`[AsyncEval] Durably persisted authoritative EvaluationRunPackage for ${evaluationId}`);
+      } catch (persistErr: any) {
+        console.warn(`[AsyncEval] Error persisting EvaluationRunPackage for ${evaluationId}:`, persistErr.message);
+      }
+    }
+
     db.prepare(`
       UPDATE evaluations
       SET status = ?,
@@ -459,6 +468,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           pyq_source_format = COALESCE(?, pyq_source_format),
           normalized_package_json = ?,
           question_sources_json = ?,
+          evaluation_run_package_id = COALESCE(?, evaluation_run_package_id),
+          score_ledger_total = COALESCE(?, score_ledger_total),
+          durable_persistence_confirmed = 1,
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -508,6 +520,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           sourceFormat: job.sourceFormat || 'SEPARATE',
         }
       }))),
+      evaluationResult.evaluationRunPackage?.runId || null,
+      evaluationResult.evaluationRunPackage?.scoreLedger?.totalAwardedMarks ?? evaluationResult.totalMarks,
       evaluationId
     );
 

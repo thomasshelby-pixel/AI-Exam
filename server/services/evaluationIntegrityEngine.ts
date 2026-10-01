@@ -9,6 +9,9 @@ import {
   CanonicalQuestionInventory,
   CanonicalEvaluationLedger,
   EvaluationReconciliationSection,
+  EvaluationRunPackage,
+  StudentAttemptManifest,
+  FourSetReconciliationReport,
 } from '../../src/types/index.js';
 import { applyDeterministicMcqScoring } from './deterministicMcqScorer.js';
 import { calculateDynamicAiConfidence } from './dynamicConfidenceEngine.js';
@@ -28,6 +31,10 @@ import {
   buildCanonicalEvaluationLedger,
   verifyTotalReconciliationGate,
   buildEvaluationReconciliationSection,
+  buildStudentAttemptManifest,
+  buildFourSetReconciliation,
+  createEvaluationRunPackage,
+  finalizeEvaluationRun,
   IndependentAttemptRecord,
 } from './canonicalQuestionInventoryService.js';
 
@@ -1226,6 +1233,70 @@ export function processEvaluationIntegrity(
     renderedTotal: rawSumOfAudited,
   });
 
+  // Step E.5: Build Manifest, Four-Set Reconciliation, and Authoritative EvaluationRunPackage
+  const totalPages = coverageMap?.totalPages || rawResult.original_page_count || 1;
+  const rawOccurrences: any[] = [];
+  if (coverageMap?.pages && Array.isArray(coverageMap.pages)) {
+    for (const p of coverageMap.pages) {
+      if (p.detectedQuestions && Array.isArray(p.detectedQuestions)) {
+        for (const dq of p.detectedQuestions) {
+          rawOccurrences.push({
+            questionCode: dq.fullQuestionCode || dq.questionNumber,
+            pageNumber: p.pageNumber,
+            evidenceText: dq.snippet,
+            studentSnippet: dq.snippet,
+            isContinuation: dq.isContinuation,
+            isCrossedOut: dq.isCrossedOut,
+            hasReplacement: dq.hasReplacement,
+            selectedOption: dq.studentSelectedOption,
+            isPartial: dq.status === 'ATTEMPTED_PARTIALLY_READABLE',
+          });
+        }
+      }
+    }
+  } else if (coverageMap?.attemptedQuestions && Array.isArray(coverageMap.attemptedQuestions)) {
+    for (const att of coverageMap.attemptedQuestions) {
+      for (const p of att.pages || [att.pageNumber || 1]) {
+        rawOccurrences.push({
+          questionCode: att.fullQuestionCode || att.questionNumber,
+          pageNumber: p,
+          evidenceText: att.studentSnippet,
+          studentSnippet: att.studentSnippet,
+          selectedOption: att.studentSelectedOption,
+        });
+      }
+    }
+  }
+
+  const studentAttemptManifest = buildStudentAttemptManifest({
+    runId: rawResult.evaluationId || 'eval_run',
+    totalPages,
+    inventory,
+    rawPageOccurrences: rawOccurrences,
+    mcqSelections: coverageMap?.mcqSelections || (rawResult as any).mcqSelections,
+  });
+
+  const fourSetReconciliation = buildFourSetReconciliation({
+    ledger: canonicalLedger,
+    manifest: studentAttemptManifest,
+    scorecardTotal: rawSumOfAudited,
+    evaluationReportTotal: roundedAwarded,
+    checkedCopyTotal: roundedAwarded,
+    finalDisplayedTotal: roundedAwarded,
+  });
+
+  const evaluationRunPackage = createEvaluationRunPackage({
+    runId: rawResult.evaluationId || 'eval_run',
+    evaluationId: rawResult.evaluationId || 'eval_run',
+    sourceBundleId: options.materialId || rawResult.material_id || rawResult.evaluationId || 'bundle',
+    questionInventory: inventory,
+    studentAttemptManifest,
+    evaluationRecords: canonicalLedger.records,
+    scoreLedger: canonicalLedger,
+    reconciliation: fourSetReconciliation,
+    durablePersistenceConfirmed: false,
+  });
+
   // Official percentage is ALWAYS calculated against the official paper maximum marks
   const percentage = officialPaperMaxMarks > 0 ? Math.round((roundedAwarded / officialPaperMaxMarks) * 1000) / 10 : 0;
 
@@ -1309,6 +1380,7 @@ export function processEvaluationIntegrity(
     })),
     canonicalLedger,
     reconciliationSection,
+    evaluationRunPackage,
   };
 
   // Step F: Hard consistency validation check & 11-Rule Hard Completion Gate

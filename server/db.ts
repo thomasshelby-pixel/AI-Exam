@@ -910,6 +910,25 @@ export function initDatabase() {
       success INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_mfa_recov_attempts ON mfa_recovery_attempts(user_id, attempt_time);
+
+    CREATE TABLE IF NOT EXISTS evaluation_run_packages (
+      run_id TEXT PRIMARY KEY,
+      evaluation_id TEXT UNIQUE NOT NULL,
+      source_bundle_id TEXT NOT NULL,
+      package_json TEXT NOT NULL,
+      score_ledger_json TEXT NOT NULL,
+      reconciliation_json TEXT NOT NULL,
+      attempted_count INTEGER NOT NULL,
+      evaluated_count INTEGER NOT NULL,
+      rendered_count INTEGER NOT NULL,
+      counted_count INTEGER NOT NULL,
+      canonical_ledger_total REAL NOT NULL,
+      finalization_status TEXT NOT NULL,
+      durable_persisted_at TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_eval_run_packages_eval_id ON evaluation_run_packages(evaluation_id);
   `);
 
   runMigrations();
@@ -952,10 +971,14 @@ function runMigrations() {
   // Evaluations idempotency and content hash columns
   addColumnIfNotExists('evaluations', 'content_hash', "TEXT");
   addColumnIfNotExists('evaluations', 'idempotency_key', "TEXT");
+  addColumnIfNotExists('evaluations', 'evaluation_run_package_id', "TEXT");
+  addColumnIfNotExists('evaluations', 'score_ledger_total', "REAL");
+  addColumnIfNotExists('evaluations', 'durable_persistence_confirmed', "INTEGER DEFAULT 0");
   try {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_evaluations_content_hash ON evaluations(student_id, content_hash);
       CREATE INDEX IF NOT EXISTS idx_evaluations_idempotency ON evaluations(student_id, idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_package_id ON evaluations(evaluation_run_package_id);
     `);
   } catch {}
 
@@ -3701,6 +3724,111 @@ export function repairDatabaseFile(): { success: boolean; message: string } {
   } catch (err: any) {
     console.error('[db] repairDatabaseFile error:', err);
     return { success: false, message: err?.message || 'Failed to repair database' };
+  }
+}
+
+export function persistEvaluationRunPackageAtomic(pkg: any): { success: boolean; persistedAt: string } {
+  try {
+    const persistedAt = new Date().toISOString();
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      db.prepare(`
+        INSERT INTO evaluation_run_packages (
+          run_id, evaluation_id, source_bundle_id, package_json,
+          score_ledger_json, reconciliation_json, attempted_count,
+          evaluated_count, rendered_count, counted_count,
+          canonical_ledger_total, finalization_status, durable_persisted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(evaluation_id) DO UPDATE SET
+          run_id = excluded.run_id,
+          source_bundle_id = excluded.source_bundle_id,
+          package_json = excluded.package_json,
+          score_ledger_json = excluded.score_ledger_json,
+          reconciliation_json = excluded.reconciliation_json,
+          attempted_count = excluded.attempted_count,
+          evaluated_count = excluded.evaluated_count,
+          rendered_count = excluded.rendered_count,
+          counted_count = excluded.counted_count,
+          canonical_ledger_total = excluded.canonical_ledger_total,
+          finalization_status = excluded.finalization_status,
+          durable_persisted_at = excluded.durable_persisted_at;
+      `).run(
+        pkg.runId,
+        pkg.evaluationId,
+        pkg.sourceBundleId || pkg.runId,
+        JSON.stringify(pkg),
+        JSON.stringify(pkg.scoreLedger),
+        JSON.stringify(pkg.reconciliation || {}),
+        pkg.scoreLedger?.totalAttempted ?? 0,
+        pkg.scoreLedger?.totalEvaluated ?? 0,
+        pkg.scoreLedger?.totalRendered ?? 0,
+        pkg.scoreLedger?.totalCounted ?? 0,
+        pkg.scoreLedger?.totalAwardedMarks ?? 0,
+        pkg.finalizationStatus || 'PERSISTED',
+        persistedAt
+      );
+
+      // Atomically sync to evaluations table as well
+      const row = db.prepare('SELECT result_json FROM evaluations WHERE id = ?').get(pkg.evaluationId) as any;
+      let updatedResultJson = row?.result_json;
+      if (updatedResultJson) {
+        try {
+          const parsed = JSON.parse(updatedResultJson);
+          parsed.evaluationRunPackage = pkg;
+          parsed.canonicalLedger = pkg.scoreLedger;
+          parsed.totalMarks = pkg.scoreLedger?.totalAwardedMarks ?? parsed.totalMarks;
+          updatedResultJson = JSON.stringify(parsed);
+        } catch {}
+      }
+
+      db.prepare(`
+        UPDATE evaluations
+        SET evaluation_run_package_id = ?,
+            score_ledger_total = ?,
+            durable_persistence_confirmed = 1,
+            total_marks = ?,
+            result_json = COALESCE(?, result_json),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?;
+      `).run(
+        pkg.runId,
+        pkg.scoreLedger?.totalAwardedMarks ?? 0,
+        pkg.scoreLedger?.totalAwardedMarks ?? 0,
+        updatedResultJson || null,
+        pkg.evaluationId
+      );
+
+      db.exec('COMMIT;');
+      return { success: true, persistedAt };
+    } catch (txErr) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw txErr;
+    }
+  } catch (err: any) {
+    console.error('[DB] Failed to atomically persist evaluation run package:', err);
+    try {
+      db.prepare("UPDATE evaluations SET status = 'PERSISTENCE_FAILED', error_message = ? WHERE id = ?")
+        .run(err.message, pkg.evaluationId);
+    } catch {}
+    throw new Error(`PERSISTENCE_FAILED: ${err.message}`);
+  }
+}
+
+export function loadEvaluationRunPackage(evaluationId: string): any | null {
+  try {
+    const row = db.prepare('SELECT package_json FROM evaluation_run_packages WHERE evaluation_id = ? OR run_id = ?').get(evaluationId, evaluationId) as any;
+    if (row && row.package_json) {
+      return JSON.parse(row.package_json);
+    }
+    const evalRow = db.prepare('SELECT result_json FROM evaluations WHERE id = ?').get(evaluationId) as any;
+    if (evalRow && evalRow.result_json) {
+      const parsed = JSON.parse(evalRow.result_json);
+      return parsed.evaluationRunPackage || null;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[DB] Error loading evaluation run package for ${evaluationId}:`, err);
+    return null;
   }
 }
 

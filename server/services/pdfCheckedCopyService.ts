@@ -171,6 +171,9 @@ export function buildStructuredAnnotations(
     seenAnnotationQuestions.add(qKey);
 
     let targetPage = Number(q.pageNumber);
+    if (!targetPage && Array.isArray(q.sourcePages) && q.sourcePages.length > 0) {
+      targetPage = Number(q.sourcePages[0]);
+    }
     if (!targetPage || targetPage < 1 || targetPage > safeTotalPages) {
       targetPage = (idx % safeTotalPages) + 1;
     }

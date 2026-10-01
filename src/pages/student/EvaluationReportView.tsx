@@ -156,8 +156,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const attemptedOrEvaluatedMax =
     selectedEvaluatedMaxMarks || attemptedMaxMarks || (maximumMarks < officialMax ? maximumMarks : undefined);
 
+  // Single Source of Truth: If canonicalLedger or evaluationRunPackage is present, its score is authoritative
+  const canonicalLedger = evaluationResult.canonicalLedger || evaluationResult.evaluationRunPackage?.scoreLedger;
+  const canonicalTotalMarks = canonicalLedger?.totalAwardedMarks !== undefined ? canonicalLedger.totalAwardedMarks : totalMarks;
+
   const modeData = evaluationResult.modeBreakdown?.[selectedMode];
-  const activeMarks = modeData ? modeData.totalMarks : totalMarks;
+  const activeMarks = modeData ? modeData.totalMarks : canonicalTotalMarks;
   const activePercentage = modeData ? modeData.percentage : percentage;
   const activeGrade = modeData ? modeData.grade : grade;
 

@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, hashPassword, verifyPassword } from '../db.js';
+import { db, hashPassword, verifyPassword, loadEvaluationRunPackage } from '../db.js';
 import { authenticateToken, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
@@ -1339,11 +1339,23 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
           resultJson.version = auditMeta.currentVersion || (resultJson as any).version || 'v1';
           resultJson.recheckHistory = auditMeta.recheckHistory || [];
           resultJson.originalEvaluationSnapshot = auditMeta.originalEvaluationSnapshot || null;
+
+          // Single Source of Truth: inject authoritative EvaluationRunPackage if available
+          const runPkg = loadEvaluationRunPackage(evaluationId);
+          if (runPkg) {
+            resultJson.evaluationRunPackage = runPkg;
+            resultJson.canonicalLedger = runPkg.scoreLedger;
+            if (runPkg.scoreLedger?.totalAwardedMarks !== undefined) {
+              resultJson.totalMarks = runPkg.scoreLedger.totalAwardedMarks;
+            }
+          }
         }
       } catch {
         // ignore
       }
     }
+
+    const runPackage = loadEvaluationRunPackage(evaluationId);
 
     return res.json({
       evaluation: {
@@ -1359,6 +1371,8 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
         version: auditMeta.currentVersion || (resultJson as any)?.version || 'v1',
         original_snapshot: auditMeta.originalEvaluationSnapshot || null,
         recheck_history: auditMeta.recheckHistory || [],
+        evaluation_run_package: runPackage,
+        canonical_score_ledger: runPackage?.scoreLedger || null,
       },
     });
   } catch (error: unknown) {
@@ -1549,6 +1563,14 @@ router.get(
       if (record.result_json) {
         try {
           resultJson = JSON.parse(record.result_json);
+          const runPkg = loadEvaluationRunPackage(evaluationId);
+          if (runPkg) {
+            resultJson.evaluationRunPackage = runPkg;
+            resultJson.canonicalLedger = runPkg.scoreLedger;
+            if (runPkg.scoreLedger?.totalAwardedMarks !== undefined) {
+              resultJson.totalMarks = runPkg.scoreLedger.totalAwardedMarks;
+            }
+          }
         } catch {
           // ignore
         }
@@ -1756,6 +1778,14 @@ router.get(
       if (record.result_json) {
         try {
           resultJson = JSON.parse(record.result_json);
+          const runPkg = loadEvaluationRunPackage(evaluationId);
+          if (runPkg) {
+            resultJson.evaluationRunPackage = runPkg;
+            resultJson.canonicalLedger = runPkg.scoreLedger;
+            if (runPkg.scoreLedger?.totalAwardedMarks !== undefined) {
+              resultJson.totalMarks = runPkg.scoreLedger.totalAwardedMarks;
+            }
+          }
         } catch {
           // ignore
         }

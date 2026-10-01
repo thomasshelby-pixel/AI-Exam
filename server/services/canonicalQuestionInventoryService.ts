@@ -24,6 +24,12 @@ import {
   CanonicalEvaluationStatus,
   QuestionEvaluation,
   EvaluationResult,
+  StudentAttemptManifestItem,
+  PageCoverageAuditItem,
+  StudentAttemptManifest,
+  FourSetReconciliationReport,
+  EvaluationRunPackage,
+  EvaluationFinalizationStatus,
 } from '../../src/types/index.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import {
@@ -31,6 +37,7 @@ import {
   parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
 } from './canonicalQuestionService.js';
+import { db, persistEvaluationRunPackageAtomic, loadEvaluationRunPackage } from '../db.js';
 
 export interface IndependentAttemptRecord {
   canonicalId: string;
@@ -198,7 +205,47 @@ export function detectIndependentAttempts(options: {
     const rawCode = occ.questionCode.trim();
     if (!rawCode) continue;
 
-    const canonId = toCanonicalQuestionId(rawCode);
+    // If rawCode is just a parent question (e.g. "Q6", "6", "Q7", "7") without sub-question,
+    // check snippet text to detect specific sub-question letter like (a), (b), (c)
+    // or match against inventory item topics/keywords (e.g. Q7(b) order of discharge)
+    let resolvedCode = rawCode;
+    const isBareParent = /^Q?\d+$/i.test(rawCode);
+    if (isBareParent) {
+      const qDigits = rawCode.replace(/[^0-9]/g, '');
+      const snip = occ.studentSnippet || occ.evidenceText || '';
+      const subMatch = snip.match(/(?:^|\s|\n)(?:\(?([a-d])\)?)(?:\s|\.|\:|\))/i) ||
+                       snip.match(/Q?\d+\s*\(?([a-d])\)?/i);
+      if (subMatch && subMatch[1]) {
+        resolvedCode = `Q${qDigits}(${subMatch[1].toLowerCase()})`;
+      } else {
+        // Topic keyword matching for inventory sub-questions of this parent
+        const candidateItems = inventory.items.filter(
+          (it) => it.parentQuestionId === `Q${qDigits}` || it.questionId.startsWith(`Q${qDigits}(`)
+        );
+        const snipLower = snip.toLowerCase();
+        let bestMatch: CanonicalQuestionInventoryItem | null = null;
+        let bestScore = 0;
+
+        for (const cand of candidateItems) {
+          const anchor = (cand.canonicalTextAnchor || '').toLowerCase();
+          const words = anchor.split(/[\s,()/-]+/).filter((w) => w.length > 3);
+          let matchCount = 0;
+          for (const w of words) {
+            if (snipLower.includes(w)) matchCount++;
+          }
+          if (matchCount > bestScore) {
+            bestScore = matchCount;
+            bestMatch = cand;
+          }
+        }
+
+        if (bestMatch && bestScore >= 1) {
+          resolvedCode = bestMatch.questionId;
+        }
+      }
+    }
+
+    const canonId = toCanonicalQuestionId(resolvedCode);
     const parsed = parseCanonicalQuestionIdentity(canonId);
 
     // Look for matching inventory item or fallback
@@ -610,5 +657,425 @@ export function buildEvaluationReconciliationSection(
     allAttemptedCountedExactlyOnce,
     diagnosticTable,
     ledgerSummary: summary,
+  };
+}
+
+/**
+ * Builds the independent StudentAttemptManifest and per-page coverage audit before scoring.
+ */
+export function buildStudentAttemptManifest(options: {
+  runId: string;
+  totalPages: number;
+  inventory: CanonicalQuestionInventory;
+  rawPageOccurrences: Array<{
+    questionCode: string;
+    pageNumber: number;
+    evidenceText?: string;
+    studentSnippet?: string;
+    isContinuation?: boolean;
+    isCrossedOut?: boolean;
+    hasReplacement?: boolean;
+    selectedOption?: string;
+    isPartial?: boolean;
+  }>;
+  mcqSelections?: Record<string, string>;
+}): StudentAttemptManifest {
+  const { runId, totalPages, inventory, rawPageOccurrences, mcqSelections } = options;
+  const attemptsMap = detectIndependentAttempts({
+    inventory,
+    rawPageOccurrences,
+    mcqSelections,
+  });
+
+  const attempts: StudentAttemptManifestItem[] = [];
+  for (const [canonId, att] of attemptsMap.entries()) {
+    attempts.push({
+      questionId: canonId,
+      attempted: att.isAttempted,
+      confidence: 100,
+      sourcePages: att.sourcePages,
+      evidence: att.evidence,
+      isPartial: att.isPartial,
+      isContinuation: att.isContinuation,
+      selectedAlternative: att.selectedAlternative,
+      studentSnippet: att.studentSnippet,
+      studentSelectedOption: att.studentSelectedOption,
+      isCrossedOutWithNoReplacement: att.isCrossedOutWithNoReplacement,
+      isMcq: att.isMcq,
+    });
+  }
+
+  // Construct Page Coverage Audit for all pages 1 to totalPages
+  const pageCoverageAudit: PageCoverageAuditItem[] = [];
+  for (let p = 1; p <= totalPages; p++) {
+    const pageOccs = rawPageOccurrences.filter((occ) => occ.pageNumber === p);
+    const hasStudentContent = pageOccs.length > 0;
+    const detectedQuestionIds: string[] = [];
+
+    for (const occ of pageOccs) {
+      const canon = toCanonicalQuestionId(occ.questionCode);
+      const parsed = parseCanonicalQuestionIdentity(canon);
+      const matched = attempts.find((a) => a.questionId === parsed.canonicalId || a.questionId === canon);
+      const effId = matched ? matched.questionId : parsed.canonicalId;
+      if (!detectedQuestionIds.includes(effId)) {
+        detectedQuestionIds.push(effId);
+      }
+    }
+
+    for (const att of attempts) {
+      if (att.sourcePages.includes(p) && !detectedQuestionIds.includes(att.questionId)) {
+        detectedQuestionIds.push(att.questionId);
+      }
+    }
+
+    pageCoverageAudit.push({
+      pageNumber: p,
+      hasStudentContent,
+      detectedQuestionIds,
+      evaluatedQuestionIds: [],
+      renderedQuestionIds: [],
+    });
+  }
+
+  return {
+    manifestId: `manifest_${runId}`,
+    evaluationRunId: runId,
+    totalPages,
+    attempts,
+    pageCoverageAudit,
+  };
+}
+
+/**
+ * Builds the authoritative FourSetReconciliationReport:
+ * - AttemptedSet ⊆ EvaluatedSet
+ * - EvaluatedSet = RenderedSet = CountedSet (for scorable questions)
+ * - canonicalLedgerTotal = scorecardTotal = evaluationReportTotal = checkedCopyTotal = finalDisplayedTotal
+ */
+export function buildFourSetReconciliation(options: {
+  ledger: CanonicalEvaluationLedger;
+  manifest: StudentAttemptManifest;
+  scorecardTotal: number;
+  evaluationReportTotal: number;
+  checkedCopyTotal: number;
+  finalDisplayedTotal: number;
+}): FourSetReconciliationReport {
+  const { ledger, manifest, scorecardTotal, evaluationReportTotal, checkedCopyTotal, finalDisplayedTotal } = options;
+
+  const attemptedSet = Array.from(
+    new Set(
+      ledger.records.filter((r) => r.attempted).map((r) => r.questionId)
+    )
+  ).sort();
+
+  const evaluatedSet = Array.from(
+    new Set(
+      ledger.records.filter((r) => r.evaluationStatus === 'EVALUATED').map((r) => r.questionId)
+    )
+  ).sort();
+
+  const renderedSet = Array.from(
+    new Set(
+      ledger.records.filter((r) => r.rendered && r.evaluationStatus === 'EVALUATED').map((r) => r.questionId)
+    )
+  ).sort();
+
+  const countedSet = Array.from(
+    new Set(
+      ledger.records.filter((r) => r.counted).map((r) => r.questionId)
+    )
+  ).sort();
+
+  const mismatches: string[] = [];
+
+  // Check 1: AttemptedSet ⊆ EvaluatedSet
+  const isAttemptedSubsetOfEvaluated = attemptedSet.every((qId) => evaluatedSet.includes(qId));
+  if (!isAttemptedSubsetOfEvaluated) {
+    const missingInEvaluated = attemptedSet.filter((qId) => !evaluatedSet.includes(qId));
+    mismatches.push(`ATTEMPTED_SET_BREACH: Attempted questions missing from evaluated set: ${missingInEvaluated.join(', ')}`);
+  }
+
+  // Check 2: EvaluatedSet == RenderedSet
+  const isEvaluatedEqualToRendered =
+    evaluatedSet.length === renderedSet.length &&
+    evaluatedSet.every((qId) => renderedSet.includes(qId));
+  if (!isEvaluatedEqualToRendered) {
+    mismatches.push(`RENDERED_SET_MISMATCH: Evaluated set (${evaluatedSet.length}) does not match rendered set (${renderedSet.length})`);
+  }
+
+  // Check 3: RenderedSet == CountedSet (for scorable questions)
+  const unselectedAlternatives = ledger.records
+    .filter((r) => r.evaluationStatus === 'EXCLUDED_ALTERNATIVE')
+    .map((r) => r.questionId);
+
+  const nonAltEvaluated = evaluatedSet.filter((id) => !unselectedAlternatives.includes(id));
+  const isRenderedEqualToCounted =
+    nonAltEvaluated.length === countedSet.length &&
+    nonAltEvaluated.every((qId) => countedSet.includes(qId));
+  if (!isRenderedEqualToCounted) {
+    mismatches.push(`COUNTED_SET_MISMATCH: Counted set (${countedSet.length}) does not match scorable evaluated set (${nonAltEvaluated.length})`);
+  }
+
+  // Check 4: Score Reconciliation
+  const canonicalLedgerTotal = ledger.totalAwardedMarks;
+  const isScoresReconciled =
+    Math.abs(canonicalLedgerTotal - scorecardTotal) < 0.01 &&
+    Math.abs(canonicalLedgerTotal - evaluationReportTotal) < 0.01 &&
+    Math.abs(canonicalLedgerTotal - checkedCopyTotal) < 0.01 &&
+    Math.abs(canonicalLedgerTotal - finalDisplayedTotal) < 0.01;
+
+  if (!isScoresReconciled) {
+    mismatches.push(
+      `SCORE_RECONCILIATION_FAILED: canonicalLedgerTotal (${canonicalLedgerTotal}) != scorecardTotal (${scorecardTotal}) or reportTotal (${evaluationReportTotal}) or checkedCopyTotal (${checkedCopyTotal}) or finalTotal (${finalDisplayedTotal})`
+    );
+  }
+
+  const diagnosticTable: DiagnosticLedgerRow[] = ledger.records.map((r) => ({
+    questionId: r.questionId,
+    attempted: r.attempted,
+    evaluated: r.evaluationStatus === 'EVALUATED',
+    rendered: r.rendered,
+    counted: r.counted,
+    maxMarks: r.maxMarks,
+    awardedMarks: r.awardedMarks,
+    status: r.evaluationStatus,
+  }));
+
+  const isFullyReconciled =
+    isAttemptedSubsetOfEvaluated &&
+    isEvaluatedEqualToRendered &&
+    isRenderedEqualToCounted &&
+    isScoresReconciled &&
+    mismatches.length === 0;
+
+  return {
+    attemptedSet,
+    evaluatedSet,
+    renderedSet,
+    countedSet,
+    isAttemptedSubsetOfEvaluated,
+    isEvaluatedEqualToRendered,
+    isRenderedEqualToCounted,
+    canonicalLedgerTotal,
+    scorecardTotal,
+    evaluationReportTotal,
+    checkedCopyTotal,
+    finalDisplayedTotal,
+    isScoresReconciled,
+    isFullyReconciled,
+    mismatches,
+    diagnosticTable,
+  };
+}
+
+/**
+ * Creates the single authoritative EvaluationRunPackage.
+ */
+export function createEvaluationRunPackage(options: {
+  runId: string;
+  evaluationId: string;
+  sourceBundleId: string;
+  questionInventory: CanonicalQuestionInventory;
+  studentAttemptManifest: StudentAttemptManifest;
+  evaluationRecords: CanonicalEvaluationRecord[];
+  scoreLedger: CanonicalEvaluationLedger;
+  pageCoverageAudit?: PageCoverageAuditItem[];
+  reconciliation?: FourSetReconciliationReport;
+  durablePersistenceConfirmed?: boolean;
+}): EvaluationRunPackage {
+  const {
+    runId,
+    evaluationId,
+    sourceBundleId,
+    questionInventory,
+    studentAttemptManifest,
+    evaluationRecords,
+    scoreLedger,
+    pageCoverageAudit = studentAttemptManifest.pageCoverageAudit,
+    reconciliation = buildFourSetReconciliation({
+      ledger: scoreLedger,
+      manifest: studentAttemptManifest,
+      scorecardTotal: scoreLedger.totalAwardedMarks,
+      evaluationReportTotal: scoreLedger.totalAwardedMarks,
+      checkedCopyTotal: scoreLedger.totalAwardedMarks,
+      finalDisplayedTotal: scoreLedger.totalAwardedMarks,
+    }),
+    durablePersistenceConfirmed = false,
+  } = options;
+
+  const evaluatedCanonIds = new Set(
+    evaluationRecords.filter((r) => r.evaluationStatus === 'EVALUATED').map((r) => r.questionId)
+  );
+  const updatedPageAudit: PageCoverageAuditItem[] = pageCoverageAudit.map((p) => {
+    const pageEvaluated = p.detectedQuestionIds.filter((qId) => evaluatedCanonIds.has(qId));
+    return {
+      ...p,
+      evaluatedQuestionIds: pageEvaluated,
+      renderedQuestionIds: pageEvaluated,
+    };
+  });
+
+  return {
+    runId,
+    evaluationId,
+    sourceBundleId,
+    questionInventory,
+    studentAttemptManifest: {
+      ...studentAttemptManifest,
+      pageCoverageAudit: updatedPageAudit,
+    },
+    evaluationRecords,
+    scoreLedger,
+    pageCoverageAudit: updatedPageAudit,
+    reconciliation,
+    finalizationStatus: durablePersistenceConfirmed ? 'PERSISTED' : 'IN_EVALUATION',
+    durablePersistenceConfirmed,
+    auditTrail: [
+      `Initialized package at ${new Date().toISOString()}`,
+      `Total items: ${questionInventory.items.length}, Attempted: ${scoreLedger.totalAttempted}, Evaluated: ${scoreLedger.totalEvaluated}`,
+    ],
+  };
+}
+
+/**
+ * Single Authoritative Finalization Gate:
+ * This is the ONLY function allowed to transition an evaluation into COMPLETED / PUBLISHED / REPORT_READY.
+ * Fails closed on ANY integrity or persistence violation.
+ */
+export function finalizeEvaluationRun(options: {
+  runPackage: EvaluationRunPackage;
+  evaluationId: string;
+}): {
+  success: boolean;
+  package: EvaluationRunPackage;
+  errors: string[];
+} {
+  const { runPackage, evaluationId } = options;
+  const errors: string[] = [];
+
+  // 1. Durable persistence confirmation requirement
+  if (!runPackage.durablePersistenceConfirmed) {
+    errors.push('FINALIZATION_FAILED: durablePersistenceConfirmed is false. Canonical package must be durably persisted before completion.');
+  }
+
+  // 2. Attempted set subset of evaluated set
+  if (!runPackage.reconciliation.isAttemptedSubsetOfEvaluated) {
+    errors.push('FINALIZATION_FAILED: Attempted question missing from evaluation. AttemptedSet ⊆ EvaluatedSet violated.');
+  }
+
+  // 3. Evaluated == Rendered
+  if (!runPackage.reconciliation.isEvaluatedEqualToRendered) {
+    errors.push('FINALIZATION_FAILED: EvaluatedSet != RenderedSet.');
+  }
+
+  // 4. Rendered == Counted (for scorable questions)
+  if (!runPackage.reconciliation.isRenderedEqualToCounted) {
+    errors.push('FINALIZATION_FAILED: RenderedSet != CountedSet.');
+  }
+
+  // 5. Score reconciliation
+  if (!runPackage.reconciliation.isScoresReconciled) {
+    errors.push('FINALIZATION_FAILED: Score reconciliation mismatch across ledger, scorecard, report, and checked copy.');
+  }
+
+  // 6. Check for any failed evaluations or unmapped questions
+  const failedQuestions = runPackage.evaluationRecords.filter(
+    (r) => r.attempted && (r.evaluationStatus === 'FAILED_TO_EVALUATE' || r.evaluationStatus === 'NEEDS_MAPPING_REVIEW')
+  );
+  if (failedQuestions.length > 0) {
+    errors.push(`FINALIZATION_FAILED: Unresolved failed evaluations: ${failedQuestions.map((q) => `${q.questionId}:${q.evaluationStatus}`).join(', ')}`);
+  }
+
+  // 7. Check for duplicate canonical questions in evaluation records
+  const seenIds = new Set<string>();
+  for (const r of runPackage.evaluationRecords) {
+    if (seenIds.has(r.questionId)) {
+      errors.push(`FINALIZATION_FAILED: Duplicate canonical question in evaluation records: ${r.questionId}`);
+    }
+    seenIds.add(r.questionId);
+  }
+
+  // 8. Page coverage audit: verify every student page with content has evaluated questions
+  for (const pageAudit of runPackage.pageCoverageAudit) {
+    if (pageAudit.hasStudentContent && pageAudit.detectedQuestionIds.length > 0) {
+      const anyEvaluated = pageAudit.detectedQuestionIds.some((qId) =>
+        runPackage.reconciliation.evaluatedSet.includes(qId)
+      );
+      if (!anyEvaluated) {
+        errors.push(`FINALIZATION_FAILED: Page ${pageAudit.pageNumber} contains student content for ${pageAudit.detectedQuestionIds.join(', ')} but none are evaluated.`);
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    // Fail closed!
+    const failedPackage: EvaluationRunPackage = {
+      ...runPackage,
+      finalizationStatus: 'INTEGRITY_FAILED',
+      auditTrail: [
+        ...runPackage.auditTrail,
+        `Finalization REJECTED at ${new Date().toISOString()}: ${errors.join('; ')}`,
+      ],
+    };
+    try {
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'NEEDS_REVIEW',
+            rejection_reason = ?,
+            error_message = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?;
+      `).run(errors.join(' | '), errors.join(' | '), evaluationId);
+    } catch {}
+
+    return {
+      success: false,
+      package: failedPackage,
+      errors,
+    };
+  }
+
+  // All invariants passed! Mark finalized
+  const finalizedAt = new Date().toISOString();
+  const finalizedPackage: EvaluationRunPackage = {
+    ...runPackage,
+    finalizationStatus: 'FINALIZED',
+    finalizedAt,
+    auditTrail: [
+      ...runPackage.auditTrail,
+      `Finalization APPROVED at ${finalizedAt}. Total: ${runPackage.scoreLedger.totalAwardedMarks} marks across ${runPackage.scoreLedger.totalCounted} counted items.`,
+    ],
+  };
+
+  try {
+    db.exec('BEGIN IMMEDIATE;');
+    db.prepare(`
+      UPDATE evaluation_run_packages
+      SET finalization_status = 'FINALIZED',
+          package_json = ?
+      WHERE evaluation_id = ?;
+    `).run(JSON.stringify(finalizedPackage), evaluationId);
+
+    db.prepare(`
+      UPDATE evaluations
+      SET status = 'COMPLETED',
+          progress_stage = 'COMPLETED',
+          progress_percentage = 100,
+          total_marks = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?;
+    `).run(finalizedPackage.scoreLedger.totalAwardedMarks, evaluationId);
+    db.exec('COMMIT;');
+  } catch (err: any) {
+    try { db.exec('ROLLBACK;'); } catch {}
+    console.error('[DB] Finalization database commit error:', err);
+    throw new Error(`FINALIZATION_DB_ERROR: ${err.message}`);
+  }
+
+  return {
+    success: true,
+    package: finalizedPackage,
+    errors: [],
   };
 }

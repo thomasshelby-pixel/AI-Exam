@@ -434,7 +434,7 @@ export interface QuestionEvaluation {
   marksAwarded: number;
   marksLost: number;
   status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear';
-  reasonForDeduction: string;
+  reasonForDeduction?: string;
   detailedFeedback: string;
   confidence?: number;
   technicalEvaluation?: string;
@@ -451,6 +451,7 @@ export interface QuestionEvaluation {
   flags?: string[];
   isDerivedAllocation?: boolean;
   pageNumber?: number;
+  sourcePages?: number[];
   boundingBox?: BoundingBox;
   stepMarkingBreakdown?: {
     step: string;
@@ -650,6 +651,7 @@ export interface EvaluationResult {
   originalEvaluationSnapshot?: any;
   canonicalLedger?: CanonicalEvaluationLedger;
   reconciliationSection?: EvaluationReconciliationSection;
+  evaluationRunPackage?: EvaluationRunPackage;
 }
 
 export type CanonicalQuestionType = 'DESCRIPTIVE' | 'MCQ' | 'CASE_SCENARIO' | 'PRACTICAL';
@@ -664,6 +666,9 @@ export interface CanonicalQuestionInventoryItem {
   readonly sourceOrder: number;
   readonly alternativeGroupId?: string;
   readonly canonicalTextAnchor?: string;
+  readonly sourceAnchor?: string;
+  readonly sourceVersion?: string;
+  readonly canonicalTextFingerprint?: string;
   readonly isAlternative?: boolean;
   readonly isRequiredOrOptional: 'REQUIRED' | 'OPTIONAL';
 }
@@ -674,6 +679,82 @@ export interface CanonicalQuestionInventory {
   readonly totalPaperMaxMarks: number;
   readonly items: CanonicalQuestionInventoryItem[];
   readonly referenceHash: string;
+}
+
+export interface StudentAttemptManifestItem {
+  readonly questionId: string;
+  readonly attempted: boolean;
+  readonly confidence: number;
+  readonly sourcePages: number[];
+  readonly evidence: string;
+  readonly isPartial: boolean;
+  readonly isContinuation: boolean;
+  readonly selectedAlternative?: string | number;
+  readonly studentSnippet?: string;
+  readonly studentSelectedOption?: string;
+  readonly isCrossedOutWithNoReplacement?: boolean;
+  readonly isMcq?: boolean;
+}
+
+export interface PageCoverageAuditItem {
+  readonly pageNumber: number;
+  readonly hasStudentContent: boolean;
+  readonly detectedQuestionIds: string[];
+  readonly evaluatedQuestionIds: string[];
+  readonly renderedQuestionIds: string[];
+}
+
+export interface StudentAttemptManifest {
+  readonly manifestId: string;
+  readonly evaluationRunId: string;
+  readonly totalPages: number;
+  readonly attempts: StudentAttemptManifestItem[];
+  readonly pageCoverageAudit: PageCoverageAuditItem[];
+}
+
+export interface FourSetReconciliationReport {
+  readonly attemptedSet: string[];
+  readonly evaluatedSet: string[];
+  readonly renderedSet: string[];
+  readonly countedSet: string[];
+  readonly isAttemptedSubsetOfEvaluated: boolean;
+  readonly isEvaluatedEqualToRendered: boolean;
+  readonly isRenderedEqualToCounted: boolean;
+  readonly canonicalLedgerTotal: number;
+  readonly scorecardTotal: number;
+  readonly evaluationReportTotal: number;
+  readonly checkedCopyTotal: number;
+  readonly finalDisplayedTotal: number;
+  readonly isScoresReconciled: boolean;
+  readonly isFullyReconciled: boolean;
+  readonly mismatches: string[];
+  readonly diagnosticTable: DiagnosticLedgerRow[];
+}
+
+export type EvaluationFinalizationStatus =
+  | 'INITIALIZED'
+  | 'IN_EVALUATION'
+  | 'PERSISTED'
+  | 'FINALIZED'
+  | 'REJECTED'
+  | 'PERSISTENCE_FAILED'
+  | 'INTEGRITY_FAILED';
+
+export interface EvaluationRunPackage {
+  readonly runId: string;
+  readonly evaluationId: string;
+  readonly sourceBundleId: string;
+  readonly questionInventory: CanonicalQuestionInventory;
+  readonly studentAttemptManifest: StudentAttemptManifest;
+  readonly evaluationRecords: CanonicalEvaluationRecord[];
+  readonly scoreLedger: CanonicalEvaluationLedger;
+  readonly pageCoverageAudit: PageCoverageAuditItem[];
+  readonly reconciliation: FourSetReconciliationReport;
+  readonly finalizationStatus: EvaluationFinalizationStatus;
+  readonly durablePersistenceConfirmed: boolean;
+  readonly persistedAt?: string;
+  readonly finalizedAt?: string;
+  readonly auditTrail: string[];
 }
 
 export type CanonicalEvaluationStatus =
