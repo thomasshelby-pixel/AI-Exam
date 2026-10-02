@@ -34,12 +34,118 @@ export interface DetectedQuestionOccurrence {
   isMcq?: boolean;
 }
 
+export interface ContextualQuestionResolution {
+  canonicalId?: string;
+  requiresReview: boolean;
+  reason?: string;
+}
+
+/**
+ * Resolve a detected sub-question using the last identified answer context when
+ * the page does not physically repeat its parent question number. The model's
+ * guessed parent is not authoritative in that case.
+ */
+export function resolveContextualQuestionIdentity(options: {
+  questionNumber?: string;
+  subQuestion?: string;
+  isContinuation?: boolean;
+  parentQuestionNumberVisible?: boolean;
+  previousActiveQuestion?: string;
+  paperSubQuestions: AuthoritativePaperStructure['subQuestions'];
+}): ContextualQuestionResolution {
+  const {
+    questionNumber = '',
+    subQuestion = '',
+    isContinuation = false,
+    parentQuestionNumberVisible,
+    previousActiveQuestion,
+    paperSubQuestions,
+  } = options;
+  const detectedId = toCanonicalQuestionId(questionNumber, subQuestion, paperSubQuestions);
+  const detected = parseCanonicalQuestionIdentity(detectedId);
+
+  // MCQ numbers are their own canonical identity; parent-question context does
+  // not apply to them.
+  if (detected.isMcq || subQuestion.toUpperCase() === 'MCQ') {
+    return { canonicalId: detected.canonicalId, requiresReview: false };
+  }
+
+  const context = previousActiveQuestion
+    ? parseCanonicalQuestionIdentity(previousActiveQuestion)
+    : undefined;
+  const isContextAnchored = parentQuestionNumberVisible === false;
+  const parentWasUnspecifiedAndConflicts =
+    parentQuestionNumberVisible === undefined &&
+    Boolean(context && detected.subQuestion && detected.parentQuestionId !== context.parentQuestionId);
+
+  if (parentWasUnspecifiedAndConflicts) {
+    return {
+      requiresReview: true,
+      reason: 'The detected parent conflicts with the active question, but the analysis did not confirm whether that parent number is visibly written.',
+    };
+  }
+
+  if (!isContextAnchored) {
+    return { canonicalId: detected.canonicalId, requiresReview: false };
+  }
+
+  if (!context || context.isMcq) {
+    return {
+      requiresReview: true,
+      reason: 'The parent question number is not visible and there is no active descriptive question context.',
+    };
+  }
+
+  const authoritativeLeaves = paperSubQuestions.filter((question) => !question.isMcq);
+  const subPart = subQuestion
+    .trim()
+    .replace(/^[([{]\s*/, '')
+    .replace(/\s*[)\]}]$/, '') || detected.subQuestion;
+
+  if (!subPart) {
+    const activeLeaf = authoritativeLeaves.find(
+      (question) => question.fullQuestionCode.toLowerCase() === context.canonicalId.toLowerCase()
+    );
+    if (isContinuation && activeLeaf) {
+      return { canonicalId: activeLeaf.fullQuestionCode, requiresReview: false };
+    }
+    return {
+      requiresReview: true,
+      reason: 'The parent question number and sub-question label are not visible, so the attempt cannot be mapped safely.',
+    };
+  }
+
+  // A bare label can mean another leaf under the active parent (Q3(b) then
+  // (a) => Q3(a)), or a nested part under the current leaf. Resolve only when
+  // the supplied paper structure identifies exactly one of those candidates.
+  const candidates = [
+    toCanonicalQuestionId(context.parentQuestionId, subPart, authoritativeLeaves),
+    parseCanonicalQuestionIdentity(`${context.canonicalId}(${subPart})`).canonicalId,
+  ];
+  const matches = authoritativeLeaves.filter((question) =>
+    candidates.some((candidate) => question.fullQuestionCode.toLowerCase() === candidate.toLowerCase())
+  );
+  const uniqueMatches = Array.from(new Map(matches.map((question) => [question.fullQuestionCode.toLowerCase(), question])).values());
+
+  if (uniqueMatches.length === 1) {
+    return { canonicalId: uniqueMatches[0].fullQuestionCode, requiresReview: false };
+  }
+
+  return {
+    requiresReview: true,
+    reason: uniqueMatches.length > 1
+      ? `The sub-question label "${subPart}" matches multiple authoritative questions under the active context.`
+      : `The sub-question label "${subPart}" does not match an authoritative question under the active context.`,
+  };
+}
+
 export interface PageCoverageRecord {
   pageNumber: number;
   status: PageAttemptStatus;
   detectedQuestions: DetectedQuestionOccurrence[];
   rawSummary: string;
   hasHandwriting: boolean;
+  mappingReviewReason?: string;
 }
 
 export interface AttemptedQuestionMapping {
@@ -121,7 +227,11 @@ export async function buildAnswerSheetCoverageMap(
     const nonMcqs = analysis.detectedQuestions.filter(
       (q) => !q.fullQuestionCode.startsWith('MCQ') && q.subQuestionNumber !== 'MCQ'
     );
-    if (nonMcqs.length > 0) {
+    if (analysis.mappingReviewReason) {
+      // An unresolved visible answer invalidates the inherited parent context;
+      // later pages must not silently attach to an older question.
+      activeQuestionContext = undefined;
+    } else if (nonMcqs.length > 0) {
       activeQuestionContext = nonMcqs[nonMcqs.length - 1].fullQuestionCode;
     }
 
@@ -235,10 +345,11 @@ Context:
 
 Task:
 1. Identify all question/sub-question headings attempted on this page (e.g. from valid questions above).
-2. If this page is a continuation of the previous page's answer and does NOT start a new question header, mark isContinuation: true and questionNumber matching "${previousActiveQuestion || ''}".
-3. If multiple sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
-4. Identify any MCQ answers written on this page with selected options (e.g. { "1": "C", "2": "D" }).
-5. Classify page status:
+2. For EVERY detected descriptive question, report parentQuestionNumberVisible=true only when that parent number is visibly written on this page. If only a child label such as "(a)" is visible, report false; do not guess a parent number from the question paper or page number.
+3. If this page is a continuation of the previous page's answer and does NOT start a new question header, mark isContinuation: true and identify the previous active question.
+4. If multiple sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
+5. Identify any MCQ answers written on this page with selected options (e.g. { "1": "C", "2": "D" }).
+6. Classify page status:
    - ATTEMPTED_READABLE: Clear student handwritten solution
    - ATTEMPTED_PARTIALLY_READABLE: Readable with minor handwriting difficulty
    - ATTEMPTED_UNCLEAR: Heavily illegible or blurry
@@ -254,6 +365,7 @@ Return strictly valid JSON with this schema:
     {
       "questionNumber": string,
       "subQuestion": string | null,
+      "parentQuestionNumberVisible": boolean,
       "isContinuation": boolean,
       "snippet": string
     }
@@ -294,12 +406,29 @@ Return strictly valid JSON with this schema:
       : 'QUESTION_NOT_IDENTIFIED';
     const hasHandwriting = raw.hasHandwriting !== false;
     const summary = raw.summary || `Page ${pageNumber} analysis`;
+    let mappingReviewReason: string | undefined;
+    let pageActiveQuestionContext = previousActiveQuestion;
 
     if (Array.isArray(raw.detectedQuestions)) {
       for (const dq of raw.detectedQuestions) {
         const rawQStr = String(dq.questionNumber || '').trim();
         const rawSubStr = dq.subQuestion ? String(dq.subQuestion).trim() : '';
-        const canonId = toCanonicalQuestionId(rawQStr, rawSubStr, paperStructure.subQuestions);
+        const resolution = resolveContextualQuestionIdentity({
+          questionNumber: rawQStr,
+          subQuestion: rawSubStr,
+          isContinuation: Boolean(dq.isContinuation),
+          parentQuestionNumberVisible: typeof dq.parentQuestionNumberVisible === 'boolean'
+            ? dq.parentQuestionNumberVisible
+            : undefined,
+          previousActiveQuestion: pageActiveQuestionContext,
+          paperSubQuestions: paperStructure.subQuestions,
+        });
+        if (resolution.requiresReview || !resolution.canonicalId) {
+          mappingReviewReason = resolution.reason || 'The detected answer requires question-mapping review.';
+          pageActiveQuestionContext = undefined;
+          continue;
+        }
+        const canonId = resolution.canonicalId;
         const parsed = parseCanonicalQuestionIdentity(canonId);
         if (!parsed.questionNumber) continue;
 
@@ -312,6 +441,7 @@ Return strictly valid JSON with this schema:
           pageNumber,
           snippet: dq.snippet || summary,
         });
+        pageActiveQuestionContext = parsed.isMcq ? pageActiveQuestionContext : parsed.canonicalId;
       }
     }
 
@@ -336,7 +466,9 @@ Return strictly valid JSON with this schema:
 
     // Do not infer a question from page position when the image was readable
     // but the model could not identify a reliable heading.
-    if (detectedQuestions.length === 0 && status !== 'CLEARLY_UNATTEMPTED') {
+    if (mappingReviewReason) {
+      status = 'QUESTION_NOT_IDENTIFIED';
+    } else if (detectedQuestions.length === 0 && status !== 'CLEARLY_UNATTEMPTED') {
       status = 'QUESTION_NOT_IDENTIFIED';
     }
 
@@ -344,8 +476,9 @@ Return strictly valid JSON with this schema:
       pageNumber,
       status,
       detectedQuestions,
-      rawSummary: summary,
+      rawSummary: mappingReviewReason ? `${summary} Mapping review required: ${mappingReviewReason}` : summary,
       hasHandwriting,
+      mappingReviewReason,
     };
   } catch (err: any) {
     const errStr = err?.message || String(err);

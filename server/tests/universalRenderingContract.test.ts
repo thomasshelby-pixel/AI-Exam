@@ -919,12 +919,92 @@ async function main() {
     assert.strictEqual(generatedDoc.getPageCount(), 10, 'Strict invariant: originalPageCount === checkedCopyPageCount');
   });
 
+  await runTest('TEST 24: All MCQ annotations physically render on a page without step-card overflow', async () => {
+    const records: CanonicalEvaluationRecord[] = Array.from({ length: 8 }, (_, index) => ({
+      questionId: `MCQ${index + 1}`,
+      questionType: 'MCQ',
+      attempted: true,
+      evaluated: true,
+      sourcePages: [1],
+      studentPages: [1],
+      maxMarks: index === 7 ? 1 : 2,
+      awardedMarks: index === 7 ? 1 : 2,
+      evaluationStatus: 'EVALUATED',
+      annotationRequired: true,
+      annotationPage: 1,
+      annotationAnchor: { pageNumber: 1, region: 'RIGHT_MARGIN', annotationType: 'MCQ_BADGE' },
+      renderOrder: index + 1,
+      rendered: true,
+      counted: true,
+      studentSelectedOption: 'B',
+      officialAnswer: 'B',
+    }));
+    const evaluationRunPackage: any = {
+      runId: 'mcq_compact_physical_render',
+      evaluationRecords: records,
+      scoreLedger: { totalAwardedMarks: 15, totalMaxMarks: 15 },
+    };
+    const meta: EvaluationData = { id: 'eval_mcq_physical_render', level: 'INTERMEDIATE', subjectName: 'Taxation' };
+    const checkedPdfBuf = await generateCheckedCopyPdf(meta, { evaluationRunPackage }, samplePdfBuf);
+    assert.ok(checkedPdfBuf.length > 500);
+    assert.strictEqual(evaluationRunPackage.renderManifest.totalRendered, 8);
+    assert.strictEqual(evaluationRunPackage.renderManifest.isRenderValid, true);
+    assert.deepStrictEqual(
+      evaluationRunPackage.renderManifest.items.filter((item: any) => item.rendered).map((item: any) => item.questionId),
+      records.map((record) => record.questionId),
+      'The physical-render manifest must preserve every canonical MCQ identity exactly once'
+    );
+  });
+
+  await runTest('TEST 25: Descriptive overflow fails closed instead of returning a partial checked copy', async () => {
+    const records: CanonicalEvaluationRecord[] = Array.from({ length: 12 }, (_, index) => ({
+      questionId: `Q${index + 1}(a)`,
+      questionType: 'DESCRIPTIVE',
+      attempted: true,
+      evaluated: true,
+      sourcePages: [1],
+      studentPages: [1],
+      maxMarks: 1,
+      awardedMarks: 1,
+      evaluationStatus: 'EVALUATED',
+      annotationRequired: true,
+      annotationPage: 1,
+      annotationAnchor: { pageNumber: 1, region: 'RIGHT_MARGIN', annotationType: 'SCORE_BOX' },
+      renderOrder: index + 1,
+      rendered: true,
+      counted: true,
+      markingComponents: [{
+        componentId: `Q${index + 1}-working`,
+        componentType: 'WORKING',
+        expectedRequirement: 'Working verified',
+        studentEvidence: 'Relevant calculation is present.',
+        confidence: 1,
+        marksAvailable: 1,
+        marksAwarded: 1,
+        marksDeducted: 0,
+        assessment: 'CORRECT',
+      }],
+    }));
+    const evaluationRunPackage: any = {
+      runId: 'descriptive_overflow_fail_closed',
+      evaluationRecords: records,
+      scoreLedger: { totalAwardedMarks: 12, totalMaxMarks: 12 },
+    };
+    const meta: EvaluationData = { id: 'eval_descriptive_overflow', level: 'INTERMEDIATE', subjectName: 'Accounting' };
+
+    await assert.rejects(
+      () => generateCheckedCopyPdf(meta, { evaluationRunPackage }, samplePdfBuf),
+      (err: any) => err.code === 'CHECKED_COPY_RENDER_INTEGRITY_FAILURE' && /source page 1/.test(err.message),
+      'Overflow must expose an integrity error rather than save a partially annotated PDF'
+    );
+  });
+
   console.log('\n================================================================');
   console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
   console.log('================================================================');
 
   if (passedTests === totalTests) {
-    console.log('ALL 22 UNIVERSAL CHECKED-COPY RENDERING CONTRACT TESTS PASSED!');
+    console.log('ALL 25 CHECKED-COPY RENDERING CONTRACT TESTS PASSED!');
     process.exit(0);
   } else {
     console.error('SOME CONTRACT TESTS FAILED!');

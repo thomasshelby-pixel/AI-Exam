@@ -126,6 +126,8 @@ export interface PageAnnotation {
   canonicalId?: string;
   marksAwarded: number;
   maxMarks: number;
+  studentSelectedOption?: string;
+  officialAnswer?: string;
   steps: Array<{
     stepName: string;
     marksAwarded: number;
@@ -497,6 +499,8 @@ export function buildStructuredAnnotations(
       canonicalId: rec.questionId,
       marksAwarded: rec.awardedMarks,
       maxMarks: rec.maxMarks,
+      studentSelectedOption: rec.studentSelectedOption,
+      officialAnswer: rec.officialAnswer,
       steps: steps.map((s: any) => {
         const cType = s.componentType || (s.stepName && s.stepName.startsWith('[') ? '' : 'STEP');
         const prefix = cType ? `[${cType}] ` : '';
@@ -628,6 +632,39 @@ export async function generateCheckedCopyPdf(
 
   // 2. Build structured page annotations
   const structuredData = buildStructuredAnnotations(evalData, resultJson, originalPageCount);
+  const manifestItems = structuredData.renderManifest?.items || [];
+  const gateRecords = manifestItems.map((item) => ({
+    questionId: item.questionId,
+    attempted: item.annotationRequired,
+    evaluated: item.evaluated,
+    evaluationStatus: item.status,
+    annotationRequired: item.annotationRequired,
+  } as CanonicalEvaluationRecord));
+  const physicallyRenderedAnnotations: Array<{
+    pageNumber: number;
+    questionNumber: string;
+    canonicalId?: string;
+    marksAwarded: number;
+    maxMarks: number;
+  }> = [];
+
+  const rejectIncompletePhysicalRender = (reason: string): never => {
+    const physicalGate = validatePostRenderGate({
+      evaluationId: evalData.id,
+      runId: runPkg?.runId || evalData.id,
+      records: gateRecords,
+      renderedAnnotations: physicallyRenderedAnnotations,
+      totalPages: originalPageCount,
+    });
+    const err = new Error(
+      `CHECKED_COPY_RENDER_INTEGRITY_FAILURE: ${reason}${physicalGate.errors.length ? `; ${physicalGate.errors.join('; ')}` : ''}`
+    ) as any;
+    err.code = 'CHECKED_COPY_RENDER_INTEGRITY_FAILURE';
+    err.renderManifest = physicalGate.renderManifest;
+    err.failedQuestionIds = physicalGate.renderManifest.items.filter((item) => item.annotationRequired && !item.rendered).map((item) => item.questionId);
+    if (runPkg) (runPkg as any).renderManifest = physicalGate.renderManifest;
+    throw err;
+  };
 
   // 3. Annotate EACH existing page in-place (DO NOT insert or add ANY pages)
   for (let pageIdx = 0; pageIdx < originalPageCount; pageIdx++) {
@@ -674,14 +711,80 @@ export async function generateCheckedCopyPdf(
     let currY = height - 70;
 
     for (const qAnn of pageAnnotations) {
-      if (currY < 120) break; // Don't overflow bottom margin
+      const isMcqAnnotation = qAnn.questionNumber.startsWith('MCQ');
+      const optionStep = qAnn.steps[0];
+      const optionMatch = optionStep?.stepName.match(/Option:\s*([^|]+)\|\s*Key:\s*([^|]+)/i);
+      const selectedOption = qAnn.studentSelectedOption || optionMatch?.[1]?.trim() || '-';
+      const officialKey = qAnn.officialAnswer || optionMatch?.[2]?.trim() || '-';
+      const mcqStatus = qAnn.marksAwarded >= qAnn.maxMarks
+        ? 'CORRECT'
+        : qAnn.marksAwarded > 0 ? 'PARTIAL' : 'INCORRECT';
+      const mcqFeedbackLines: string[] = [];
+      const mcqFeedback = optionStep?.comment || '';
+      if (mcqFeedback) {
+        const words = mcqFeedback.split(/\s+/);
+        let line = '';
+        for (const word of words) {
+          if ((line + ' ' + word).trim().length <= 36) {
+            line = (line + ' ' + word).trim();
+          } else {
+            if (line) mcqFeedbackLines.push(line);
+            line = word;
+          }
+        }
+        if (line) mcqFeedbackLines.push(line);
+      }
+      const mcqCardHeight = Math.max(42, 40 + mcqFeedbackLines.length * 7);
+      const preparedSteps = qAnn.steps.map((st) => {
+        const commentLines: string[] = [];
+        const rawComment = st.comment || st.stepName;
+        if (rawComment) {
+          const words = rawComment.split(/\s+/);
+          let line = '';
+          for (const word of words) {
+            if ((line + ' ' + word).trim().length <= 26) {
+              line = (line + ' ' + word).trim();
+            } else {
+              if (line) commentLines.push(line);
+              line = word;
+            }
+          }
+          if (line) commentLines.push(line);
+        }
+        return {
+          step: st,
+          displayLines: commentLines,
+          boxHeight: 18 + commentLines.length * 9,
+        };
+      });
+
+      // Preflight the whole canonical annotation before drawing any of it. A
+      // page-height limit is an integrity failure, never a reason to drop the
+      // current question or its remaining steps silently.
+      if (isMcqAnnotation) {
+        if (currY - mcqCardHeight < 85) {
+          rejectIncompletePhysicalRender(`MCQ annotation ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
+        }
+      } else {
+        let plannedY = currY;
+        if (plannedY - 36 < 85) {
+          rejectIncompletePhysicalRender(`Question annotation ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
+        }
+        plannedY -= 44;
+        for (const prepared of preparedSteps) {
+          if (plannedY - prepared.boxHeight + 8 < 85) {
+            rejectIncompletePhysicalRender(`Step marking for ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
+          }
+          plannedY -= prepared.boxHeight + 4;
+        }
+      }
 
       // Question Score Box
       page.drawRectangle({
         x: marginX,
-        y: currY - 34,
+        y: currY - (isMcqAnnotation ? mcqCardHeight : 36),
         width: marginWidth,
-        height: 36,
+        height: isMcqAnnotation ? mcqCardHeight : 36,
         color: rgb(1, 0.97, 0.97),
         borderColor: redExaminer,
         borderWidth: 1.2,
@@ -707,7 +810,44 @@ export async function generateCheckedCopyPdf(
         color: redExaminer,
       });
 
-      safeDrawText(page, qAnn.questionNumber.startsWith('MCQ') ? 'MCQ EVALUATION' : 'STEP-WISE EVALUATION', {
+      if (isMcqAnnotation) {
+        safeDrawText(page, `Selected: ${selectedOption} | Key: ${officialKey}`, {
+          x: marginX + 6,
+          y: currY - 26,
+          size: 5.8,
+          font: helveticaBold,
+          color: darkSlate,
+        });
+        safeDrawText(page, `MCQ ${mcqStatus}`, {
+          x: marginX + 6,
+          y: currY - 35,
+          size: 5.8,
+          font: helveticaBold,
+          color: qAnn.marksAwarded >= qAnn.maxMarks ? greenExaminer : redExaminer,
+        });
+        let feedbackY = currY - 44;
+        for (const feedbackLine of mcqFeedbackLines) {
+          safeDrawText(page, feedbackLine, {
+            x: marginX + 6,
+            y: feedbackY,
+            size: 5.2,
+            font: helvetica,
+            color: darkSlate,
+          });
+          feedbackY -= 7;
+        }
+        currY -= mcqCardHeight + 6;
+        physicallyRenderedAnnotations.push({
+          pageNumber,
+          questionNumber: qAnn.questionNumber,
+          canonicalId: qAnn.canonicalId,
+          marksAwarded: qAnn.marksAwarded,
+          maxMarks: qAnn.maxMarks,
+        });
+        continue;
+      }
+
+      safeDrawText(page, 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - 28,
         size: 6.5,
@@ -718,33 +858,13 @@ export async function generateCheckedCopyPdf(
       currY -= 44;
 
       // Render Individual Step Markings
-      for (const st of qAnn.steps) {
-        if (currY < 85) break;
+      for (const { step: st, displayLines, boxHeight } of preparedSteps) {
 
         const isCorrect = st.status === 'CORRECT';
         const isPartial = st.status === 'PARTIALLY_CORRECT';
         const markColor = isCorrect ? greenExaminer : isPartial ? amberExaminer : redExaminer;
 
         // Step container
-        const commentLines = [];
-        const rawComment = st.comment || st.stepName;
-        if (rawComment) {
-          // Wrap words across lines of max 26 characters
-          const words = rawComment.split(/\s+/);
-          let line = '';
-          for (const w of words) {
-            if ((line + ' ' + w).trim().length <= 26) {
-              line = (line + ' ' + w).trim();
-            } else {
-              if (line) commentLines.push(line);
-              line = w;
-            }
-          }
-          if (line) commentLines.push(line);
-        }
-        const displayLines = commentLines.slice(0, 6);
-        const boxHeight = 18 + displayLines.length * 9;
-
         page.drawRectangle({
           x: marginX,
           y: currY - boxHeight + 8,
@@ -804,6 +924,13 @@ export async function generateCheckedCopyPdf(
       }
 
       currY -= 6;
+      physicallyRenderedAnnotations.push({
+        pageNumber,
+        questionNumber: qAnn.questionNumber,
+        canonicalId: qAnn.canonicalId,
+        marksAwarded: qAnn.marksAwarded,
+        maxMarks: qAnn.maxMarks,
+      });
     }
 
     // (C) Official Examiner Final Verification Seal (Overlay on LAST page bottom margin)
@@ -878,6 +1005,18 @@ export async function generateCheckedCopyPdf(
       `Checked copy page count mismatch error: original has ${originalPageCount} pages, but generated checked copy has ${checkedCopyPageCount} pages. Extra pages are forbidden.`
     );
   }
+
+  const physicalPostGate = validatePostRenderGate({
+    evaluationId: evalData.id,
+    runId: runPkg?.runId || evalData.id,
+    records: gateRecords,
+    renderedAnnotations: physicallyRenderedAnnotations,
+    totalPages: originalPageCount,
+  });
+  if (!physicalPostGate.isValid) {
+    rejectIncompletePhysicalRender(`Physical drawing verification failed: ${physicalPostGate.errors.join('; ')}`);
+  }
+  if (runPkg) (runPkg as any).renderManifest = physicalPostGate.renderManifest;
 
   const pdfBytes = await pdfDoc.save();
   return Buffer.from(pdfBytes);
