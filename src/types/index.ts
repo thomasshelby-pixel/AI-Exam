@@ -740,6 +740,17 @@ export type EvaluationFinalizationStatus =
   | 'PERSISTENCE_FAILED'
   | 'INTEGRITY_FAILED';
 
+export interface EvaluationIntegrityFailureDiagnostic {
+  readonly failureCode: 'EVALUATION_INTEGRITY_FAILURE';
+  readonly questionId: string;
+  readonly stageOfFailure: 'AI_EVALUATION' | 'PERSISTENCE' | 'RENDERING' | 'COUNTING' | 'RECONCILIATION';
+  readonly studentPages: number[];
+  readonly detectedEvidence?: string;
+  readonly expectedState: string;
+  readonly actualState: string;
+  readonly reason: string;
+}
+
 export interface EvaluationRunPackage {
   readonly runId: string;
   readonly evaluationId: string;
@@ -753,6 +764,7 @@ export interface EvaluationRunPackage {
   readonly finalizationStatus: EvaluationFinalizationStatus;
   readonly durablePersistenceConfirmed: boolean;
   readonly renderManifest?: RenderManifest;
+  readonly integrityDiagnostics?: EvaluationIntegrityFailureDiagnostic[];
   readonly persistedAt?: string;
   readonly finalizedAt?: string;
   readonly auditTrail: string[];
