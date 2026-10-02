@@ -52,7 +52,7 @@ export async function generateDetailedReportPdf(
   const accentGold = rgb(0.75, 0.55, 0.1);
 
   const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
-  const ledger = resultJson?.canonicalLedger || runPkg?.scoreLedger;
+  const ledger = runPkg?.scoreLedger || resultJson?.canonicalLedger;
 
   const totalAwarded = ledger?.totalAwardedMarks ?? (evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0);
   const maxMarks = ledger?.totalMaxMarks ?? (evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100);

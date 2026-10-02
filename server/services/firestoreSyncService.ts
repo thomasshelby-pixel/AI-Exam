@@ -74,12 +74,17 @@ export async function permanentlyDeleteFromFirestore(collectionName: string, id:
  * 2. Permanently deleted records remain deleted (tombstone check).
  * 3. Never overwrites newer records.
  */
-export async function hydrateFromFirestore(): Promise<void> {
+export async function hydrateFromFirestore(options: { requireComplete?: boolean } = {}): Promise<void> {
+  const requireComplete = options.requireComplete === true;
   const fdb = getFirestoreDb();
   if (!fdb) {
+    if (requireComplete) throw new Error('Firestore is unavailable; complete hydration is required before serving traffic.');
     console.log('[FirestoreSync] Firestore not configured or offline; skipping hydration.');
     return;
   }
+
+  const readDocs = <T>(collectionName: string) =>
+    getAllFirestoreDocs<T>(collectionName, { failOnError: requireComplete });
 
   try {
     console.log('[FirestoreSync] Starting hydration from Cloud Firestore...');
@@ -87,7 +92,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     db.exec('PRAGMA foreign_keys = OFF;');
 
     // 1. Load tombstones
-    const tombstones = await getAllFirestoreDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
+    const tombstones = await readDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
     const localTombstones = getAllLocalTombstoneSet();
     const tombstoneSet = new Set<string>(localTombstones);
     const PROTECTED_CORE_IDS = new Set([
@@ -118,7 +123,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 2. Hydrate Users
-    const users = await getAllFirestoreDocs<any>('users');
+    const users = await readDocs<any>('users');
     let uHydrated = 0;
     for (const u of users) {
       let normEmail = String(u.email || '').trim().toLowerCase();
@@ -211,7 +216,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 3. Hydrate Student Profiles
-    const profiles = await getAllFirestoreDocs<any>('student_profiles');
+    const profiles = await readDocs<any>('student_profiles');
     for (const p of profiles) {
       const uId = p.user_id || p.id;
       if (tombstoneSet.has(`student_profiles_${uId}`)) continue;
@@ -241,7 +246,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 4. Hydrate Institutes
-    const institutes = await getAllFirestoreDocs<any>('institutes');
+    const institutes = await readDocs<any>('institutes');
     for (const inst of institutes) {
       if (tombstoneSet.has(`institutes_${inst.id}`)) continue;
       try {
@@ -268,7 +273,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 5. Hydrate Batches
-    const batches = await getAllFirestoreDocs<any>('batches');
+    const batches = await readDocs<any>('batches');
     for (const b of batches) {
       if (tombstoneSet.has(`batches_${b.id}`)) continue;
       try {
@@ -287,7 +292,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 5b. Hydrate Institute Memberships
-    const memberships = await getAllFirestoreDocs<any>('institute_memberships');
+    const memberships = await readDocs<any>('institute_memberships');
     for (const m of memberships) {
       try {
         db.prepare(`
@@ -315,7 +320,7 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
-    const materials = await getAllFirestoreDocs<any>('evaluation_materials');
+    const materials = await readDocs<any>('evaluation_materials');
     for (const m of materials) {
       if (tombstoneSet.has(`evaluation_materials_${m.id}`) || tombstoneSet.has(`materials_${m.id}`)) continue;
       try {
@@ -347,7 +352,7 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     }
 
-    const mcqMaterials = await getAllFirestoreDocs<any>('mcq_materials');
+    const mcqMaterials = await readDocs<any>('mcq_materials');
     for (const mm of mcqMaterials) {
       if (tombstoneSet.has(`mcq_materials_${mm.id}`) || tombstoneSet.has(mm.id) || mm.status === 'DELETED') {
         try {
@@ -401,7 +406,7 @@ export async function hydrateFromFirestore(): Promise<void> {
 
     // 7. Hydrate Evaluations (Student Submissions, Grades, Annotations)
     // Cloud Firestore is the true authoritative source of evaluations.
-    const evaluations = await getAllFirestoreDocs<any>('evaluations');
+    const evaluations = await readDocs<any>('evaluations');
     let evHydrated = 0;
     const fsEvalMap = new Set<string>();
 
@@ -492,7 +497,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 7b. Hydrate Recheck Requests
-    const rechecks = await getAllFirestoreDocs<any>('recheck_requests');
+    const rechecks = await readDocs<any>('recheck_requests');
     for (const r of rechecks) {
       try {
         db.prepare(`
@@ -527,7 +532,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 7b2. Hydrate Evaluation Versions (Immutable V1/V2 records)
-    const evalVersions = await getAllFirestoreDocs<any>('evaluation_versions');
+    const evalVersions = await readDocs<any>('evaluation_versions');
     for (const evVer of evalVersions) {
       try {
         db.prepare(`
@@ -582,7 +587,7 @@ export async function hydrateFromFirestore(): Promise<void> {
 
     // 7b3. Hydrate Student Disclaimer Acknowledgements
     try {
-      const disclaimers = await getAllFirestoreDocs<any>('student_disclaimer_acknowledgements');
+      const disclaimers = await readDocs<any>('student_disclaimer_acknowledgements');
       for (const d of disclaimers) {
         try {
           const ackId = d.id || `dack_${d.student_id}_${d.version || 'v1.0'}`;
@@ -614,10 +619,11 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     } catch (err) {
       console.warn('[FirestoreSync] Failed to fetch student_disclaimer_acknowledgements:', err);
+      if (requireComplete) throw err;
     }
 
     try {
-      const legacyDisclaimers = await getAllFirestoreDocs<any>('student_disclaimers');
+      const legacyDisclaimers = await readDocs<any>('student_disclaimers');
       for (const ld of legacyDisclaimers) {
         try {
           const sId = ld.student_id || ld.id;
@@ -645,10 +651,11 @@ export async function hydrateFromFirestore(): Promise<void> {
       }
     } catch (err) {
       console.warn('[FirestoreSync] Failed to fetch student_disclaimers:', err);
+      if (requireComplete) throw err;
     }
 
     // 7c. Hydrate Payment Orders & Transactions & Purchases
-    const paymentOrders = await getAllFirestoreDocs<any>('payment_orders');
+    const paymentOrders = await readDocs<any>('payment_orders');
     for (const po of paymentOrders) {
       try {
         db.prepare(`
@@ -659,7 +666,7 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch {}
     }
 
-    const creditPurchases = await getAllFirestoreDocs<any>('student_credit_purchases');
+    const creditPurchases = await readDocs<any>('student_credit_purchases');
     for (const cp of creditPurchases) {
       try {
         db.prepare(`
@@ -678,7 +685,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 8. Hydrate Audit Logs
-    const logs = await getAllFirestoreDocs<any>('audit_logs');
+    const logs = await readDocs<any>('audit_logs');
     for (const l of logs) {
       try {
         db.prepare(`
@@ -692,7 +699,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 9. Hydrate Credit Ledger
-    const ledger = await getAllFirestoreDocs<any>('credit_ledger');
+    const ledger = await readDocs<any>('credit_ledger');
     for (const c of ledger) {
       try {
         db.prepare(`
@@ -706,7 +713,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 10. Hydrate Legal Documents
-    const legalDocs = await getAllFirestoreDocs<any>('legal_documents');
+    const legalDocs = await readDocs<any>('legal_documents');
     for (const ld of legalDocs) {
       try {
         db.prepare(`
@@ -735,7 +742,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 11. Hydrate Legal Settings
-    const legalSettings = await getAllFirestoreDocs<any>('legal_settings');
+    const legalSettings = await readDocs<any>('legal_settings');
     for (const ls of legalSettings) {
       try {
         db.prepare(`
@@ -749,7 +756,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 12. Hydrate Support Tickets
-    const supportTickets = await getAllFirestoreDocs<any>('support_tickets');
+    const supportTickets = await readDocs<any>('support_tickets');
     for (const st of supportTickets) {
       try {
         db.prepare(`
@@ -769,7 +776,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 13. Hydrate Institute Materials & Tests
-    const instMaterials = await getAllFirestoreDocs<any>('institute_materials');
+    const instMaterials = await readDocs<any>('institute_materials');
     for (const im of instMaterials) {
       try {
         db.prepare(`
@@ -795,7 +802,7 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch {}
     }
 
-    const instTests = await getAllFirestoreDocs<any>('institute_tests');
+    const instTests = await readDocs<any>('institute_tests');
     for (const it of instTests) {
       try {
         db.prepare(`
@@ -819,7 +826,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     }
 
     // 14. Hydrate Student Reviews & Star Ratings
-    const reviews = await getAllFirestoreDocs<any>('reviews');
+    const reviews = await readDocs<any>('reviews');
     for (const rev of reviews) {
       if (tombstoneSet.has(`reviews_${rev.id}`)) continue;
       try {
@@ -892,7 +899,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     try {
       initMfaRecoveryTables();
     } catch {}
-    const mfaAuthenticators = await getAllFirestoreDocs<any>('mfa_authenticators');
+    const mfaAuthenticators = await readDocs<any>('mfa_authenticators');
     for (const auth of mfaAuthenticators) {
       try {
         db.prepare(`
@@ -910,7 +917,7 @@ export async function hydrateFromFirestore(): Promise<void> {
       } catch {}
     }
 
-    const mfaRecoveryCodes = await getAllFirestoreDocs<any>('mfa_recovery_codes');
+    const mfaRecoveryCodes = await readDocs<any>('mfa_recovery_codes');
     for (const rc of mfaRecoveryCodes) {
       try {
         db.prepare(`
@@ -960,6 +967,7 @@ export async function hydrateFromFirestore(): Promise<void> {
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
+    if (requireComplete) throw err;
   } finally {
     // Always restore foreign key constraint validation
     db.exec('PRAGMA foreign_keys = ON;');

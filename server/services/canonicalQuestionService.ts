@@ -247,31 +247,6 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
 }
 
 /**
- * Known official baseline maximum marks for standard CA questions when not overridden.
- * Guarantees Q3(b) = 4, Q4(b) = 4, Q3(a) = 6, Q4(a) = 6, etc.
- */
-const BASELINE_AUTHORITATIVE_MAX_MARKS: Record<string, number> = {
-  'Q1': 15,
-  'Q1(a)': 10,
-  'Q1(b)': 4,
-  'Q2(a)': 4,
-  'Q2(b)': 6,
-  'Q3(a)': 6,
-  'Q3(b)': 4,
-  'Q4(a)': 6,
-  'Q4(b)': 4,
-  'Q5(a)': 10,
-  'Q5(b)': 5,
-  'Q6(a)': 3,
-  'Q6(b)': 2,
-  'Q6(c)': 5,
-  'Q7(a)': 5,
-  'Q7(b)': 5,
-  'Q8(a)': 5,
-  'Q8(b)': 5,
-};
-
-/**
  * Generic deduplication engine for any list of questions in the evaluation pipeline.
  *
  * Rules strictly enforced:
@@ -408,7 +383,7 @@ export function deduplicateQuestionList<T extends {
         : (entry.item.maxMarks !== undefined && entry.item.maxMarks !== null && Number(entry.item.maxMarks) > 0)
         ? Number(entry.item.maxMarks)
         : undefined;
-      const targetMax = authoritativeMaxMap.get(key) || existingMax || entryMax || BASELINE_AUTHORITATIVE_MAX_MARKS[key] || 100;
+      const targetMax = authoritativeMaxMap.get(key) ?? existingMax ?? entryMax;
 
       // 4A. Merge pages
       const existingPages = Array.isArray(existing.item.pages) ? existing.item.pages : [];
@@ -470,11 +445,13 @@ export function deduplicateQuestionList<T extends {
 
         // Recalculate marks awarded based on merged unique components
         const sumAwarded = mergedComps.reduce((acc, c) => acc + (Number(c.marksAwarded) || 0), 0);
-        existing.item.marksAwarded = Math.min(targetMax, Math.round(sumAwarded * 4) / 4);
+        const roundedSum = Math.round(sumAwarded * 4) / 4;
+        existing.item.marksAwarded = targetMax === undefined ? roundedSum : Math.min(targetMax, roundedSum);
       } else {
         // If neither had components, combine marks awarded up to max marks
         const combinedMarks = (existing.item.marksAwarded || 0) + (entry.item.marksAwarded || 0);
-        existing.item.marksAwarded = Math.min(targetMax, Math.round(combinedMarks * 4) / 4);
+        const roundedCombined = Math.round(combinedMarks * 4) / 4;
+        existing.item.marksAwarded = targetMax === undefined ? roundedCombined : Math.min(targetMax, roundedCombined);
       }
 
       // 4D. Merge feedback
@@ -501,7 +478,7 @@ export function deduplicateQuestionList<T extends {
     clonedItem.parentQuestionId = entry.parentQuestionId;
     clonedItem.fullQuestionCode = canonicalId;
 
-    // Apply authoritative max marks: explicit paper structure first, then item's existing maximumMarks, then baseline fallback
+    // Apply authoritative max marks where supplied. No question-number defaults are used.
     let authMax: number | undefined = undefined;
     if (authoritativeMaxMap.has(canonicalId)) {
       authMax = authoritativeMaxMap.get(canonicalId);
@@ -509,8 +486,6 @@ export function deduplicateQuestionList<T extends {
       authMax = Number(clonedItem.maximumMarks);
     } else if (clonedItem.maxMarks !== undefined && clonedItem.maxMarks !== null && Number(clonedItem.maxMarks) > 0) {
       authMax = Number(clonedItem.maxMarks);
-    } else if (BASELINE_AUTHORITATIVE_MAX_MARKS[canonicalId] !== undefined) {
-      authMax = BASELINE_AUTHORITATIVE_MAX_MARKS[canonicalId];
     }
 
     if (authMax !== undefined) {

@@ -5,7 +5,6 @@ import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperS
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
-  deduplicateQuestionList,
 } from './canonicalQuestionService.js';
 
 // In-memory cache: 1 Answer Sheet = 1 Authoritative Coverage Map
@@ -73,7 +72,22 @@ export async function buildAnswerSheetCoverageMap(
   paperStructure: AuthoritativePaperStructure
 ): Promise<AnswerCoverageMap> {
   const pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
-  const cacheKey = `${pdfHash}:${paperStructure.paperTitle || 'CA_PAPER'}:${paperStructure.totalPaperMaxMarks || 100}`;
+  const structureSignature = JSON.stringify({
+    paperTitle: paperStructure.paperTitle || '',
+    totalPaperMaxMarks: paperStructure.totalPaperMaxMarks ?? null,
+    descriptiveQuestions: (paperStructure.subQuestions || []).map((question) => ({
+      questionId: question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
+      maximumMarks: question.maximumMarks,
+      isMcq: question.isMcq,
+    })),
+    mcqs: (paperStructure.mcqs || []).map((question) => ({
+      questionId: question.fullQuestionCode || `MCQ${question.questionNumber}`,
+      maximumMarks: question.maximumMarks,
+      officialKey: question.officialKey || null,
+    })),
+  });
+  const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
+  const cacheKey = `${pdfHash}:${structureHash}`;
   if (coverageMapCache.has(cacheKey)) {
     return coverageMapCache.get(cacheKey)!;
   }
@@ -157,55 +171,10 @@ export async function buildAnswerSheetCoverageMap(
     }
   }
 
-  // Parent / Child Rule: Prune any parent container question (e.g. Q3, Q4, Q5, Q6(a)) if more granular children exist
-  const nonMcqCanonicalIds = new Set<string>();
-  for (const mapping of mappingMap.values()) {
-    if (!mapping.isMcq) nonMcqCanonicalIds.add(mapping.fullQuestionCode);
-  }
-  for (const sq of paperStructure.subQuestions) {
-    if (!sq.isMcq) {
-      nonMcqCanonicalIds.add(toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber));
-    }
-  }
-
-  const parentContainers = new Set<string>();
-  for (const childId of nonMcqCanonicalIds) {
-    for (const potentialParent of nonMcqCanonicalIds) {
-      if (childId !== potentialParent && childId.startsWith(`${potentialParent}(`)) {
-        parentContainers.add(potentialParent);
-      }
-    }
-  }
-  for (const m of mappingMap.values()) {
-    if (!m.isMcq && m.subQuestionNumber) {
-      parentContainers.add(`Q${m.questionNumber}`);
-    }
-  }
-  for (const sq of paperStructure.subQuestions) {
-    if (!sq.isMcq && sq.subQuestionNumber) {
-      parentContainers.add(`Q${sq.questionNumber}`);
-    }
-  }
-
-  for (const [key, mapping] of Array.from(mappingMap.entries())) {
-    if (!mapping.isMcq && parentContainers.has(mapping.fullQuestionCode)) {
-      // Find the first child sub-question to transfer any pages if necessary
-      const child = Array.from(mappingMap.values()).find(
-        (m) => !m.isMcq && m.fullQuestionCode.startsWith(`${mapping.fullQuestionCode}(`)
-      );
-      if (child) {
-        for (const p of mapping.pages) {
-          if (!child.pages.includes(p)) {
-            child.pages.push(p);
-          }
-        }
-        child.pages.sort((a, b) => a - b);
-      }
-      mappingMap.delete(key);
-    }
-  }
-
-  const attemptedQuestions = deduplicateQuestionList(Array.from(mappingMap.values()), paperStructure.subQuestions);
+  // Keep ambiguous parent-level detections visible for the pre-evaluation gate.
+  // They may be headings or attempts; transferring them to an arbitrary child
+  // would silently remap the student's work.
+  const attemptedQuestions = Array.from(mappingMap.values());
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
 
   const unmappedPages = pageRecords
@@ -307,17 +276,22 @@ Return strictly valid JSON with this schema:
       },
     });
 
-    let raw: any = {};
-    try {
-      let clean = res.text?.trim() || '{}';
-      if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-      raw = JSON.parse(clean);
-    } catch {
-      raw = {};
-    }
+    let clean = res.text?.trim() || '{}';
+    if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    const raw: any = JSON.parse(clean);
 
     const detectedQuestions: DetectedQuestionOccurrence[] = [];
-    const status: PageAttemptStatus = raw.status || 'ATTEMPTED_READABLE';
+    const knownStatuses: PageAttemptStatus[] = [
+      'ATTEMPTED_READABLE',
+      'ATTEMPTED_PARTIALLY_READABLE',
+      'ATTEMPTED_UNCLEAR',
+      'CLEARLY_UNATTEMPTED',
+      'QUESTION_NOT_IDENTIFIED',
+      'PAGE_UNREADABLE',
+    ];
+    let status: PageAttemptStatus = knownStatuses.includes(raw.status)
+      ? raw.status
+      : 'QUESTION_NOT_IDENTIFIED';
     const hasHandwriting = raw.hasHandwriting !== false;
     const summary = raw.summary || `Page ${pageNumber} analysis`;
 
@@ -360,9 +334,10 @@ Return strictly valid JSON with this schema:
       }
     }
 
-    // Dynamic paper-structure fallback if AI detection yielded 0 questions
-    if (detectedQuestions.length === 0) {
-      applyDynamicPaperFallback(pageNumber, totalPages, detectedQuestions, status, summary, paperStructure, previousActiveQuestion);
+    // Do not infer a question from page position when the image was readable
+    // but the model could not identify a reliable heading.
+    if (detectedQuestions.length === 0 && status !== 'CLEARLY_UNATTEMPTED') {
+      status = 'QUESTION_NOT_IDENTIFIED';
     }
 
     return {
@@ -383,87 +358,18 @@ Return strictly valid JSON with this schema:
       errStr.includes('RESOURCE_EXHAUSTED');
 
     if (isCreditOrQuota) {
-      console.info(`[AnswerCoverageService] Page ${pageNumber}: AI quota/credits exhausted; using dynamic paper coverage mapping.`);
+      console.info(`[AnswerCoverageService] Page ${pageNumber}: AI quota/credits exhausted; preserving the page for question-mapping review.`);
     } else {
       console.warn(`[AnswerCoverageService] Notice on page ${pageNumber}: ${errStr.slice(0, 160)}`);
     }
 
-    const detectedQuestions: DetectedQuestionOccurrence[] = [];
-    applyDynamicPaperFallback(pageNumber, totalPages, detectedQuestions, 'ATTEMPTED_READABLE', `Page ${pageNumber} fallback`, paperStructure, previousActiveQuestion);
-
     return {
       pageNumber,
-      status: 'ATTEMPTED_READABLE',
-      detectedQuestions,
-      rawSummary: `Page ${pageNumber} evaluated via dynamic authoritative paper structure.`,
+      status: 'QUESTION_NOT_IDENTIFIED',
+      detectedQuestions: [],
+      rawSummary: `Page ${pageNumber} requires question-mapping review because automated page analysis failed: ${errStr.slice(0, 240)}`,
       hasHandwriting: true,
     };
-  }
-}
-
-/**
- * Universal dynamic fallback derived directly from AuthoritativePaperStructure.
- * NEVER hardcodes any specific question numbers (Q1/Q4/Q6), subjects, or papers.
- */
-function applyDynamicPaperFallback(
-  pageNumber: number,
-  totalPages: number,
-  list: DetectedQuestionOccurrence[],
-  status: PageAttemptStatus,
-  summary: string,
-  paperStructure: AuthoritativePaperStructure,
-  previousActiveQuestion?: string
-) {
-  const descriptiveSubQs = (paperStructure.subQuestions || []).filter((s) => !s.isMcq);
-
-  if (descriptiveSubQs.length === 0) {
-    // If no descriptive sub-questions found, generate a standard clean occurrence
-    const defaultQNum = Math.min(6, Math.max(1, Math.ceil((pageNumber / Math.max(1, totalPages)) * 5)));
-    list.push({
-      fullQuestionCode: `Q${defaultQNum}`,
-      questionNumber: `${defaultQNum}`,
-      status: 'ATTEMPTED_READABLE',
-      isContinuation: false,
-      pageNumber,
-      snippet: `Candidate solution on page ${pageNumber}.`,
-    });
-    return;
-  }
-
-  // Dynamic distribution of available sub-questions across pages
-  const pagesPerQuestion = Math.max(1, totalPages / descriptiveSubQs.length);
-  const targetIndex = Math.min(descriptiveSubQs.length - 1, Math.floor((pageNumber - 1) / pagesPerQuestion));
-  const targetSubQ = descriptiveSubQs[targetIndex];
-
-  const isContinuation = Boolean(previousActiveQuestion && previousActiveQuestion === targetSubQ.fullQuestionCode);
-
-  list.push({
-    fullQuestionCode: targetSubQ.fullQuestionCode,
-    questionNumber: targetSubQ.questionNumber,
-    subQuestionNumber: targetSubQ.subQuestionNumber,
-    status: 'ATTEMPTED_READABLE',
-    isContinuation,
-    pageNumber,
-    snippet: `Candidate solution for ${targetSubQ.fullQuestionCode} on page ${pageNumber}.`,
-  });
-
-  // If paper contains MCQs, attach them cleanly to the designated middle or final page
-  if (paperStructure.mcqs && paperStructure.mcqs.length > 0) {
-    const isMcqTargetPage = pageNumber === Math.ceil(totalPages / 2) || pageNumber === totalPages;
-    if (isMcqTargetPage) {
-      for (const mcq of paperStructure.mcqs) {
-        list.push({
-          fullQuestionCode: mcq.fullQuestionCode,
-          questionNumber: mcq.questionNumber,
-          subQuestionNumber: 'MCQ',
-          status: 'ATTEMPTED_READABLE',
-          isContinuation: false,
-          pageNumber,
-          snippet: `MCQ ${mcq.questionNumber}: Option ${mcq.officialKey || 'A'}`,
-          studentSelectedOption: mcq.officialKey || 'A',
-        });
-      }
-    }
   }
 }
 

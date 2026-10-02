@@ -34,7 +34,7 @@ import {
   enforceEvaluationEvidencePackageMtpGate,
   detectMtpSeriesFromText,
 } from './services/materialHardGateService.js';
-import { generateAuthoritativeBenchmarkEvaluation } from './services/authoritativeBenchmarkEvaluator.js';
+import { createEvaluationReviewResult } from './services/evaluationReviewResult.js';
 import { validateBase64Upload } from './utils/fileValidation.js';
 
 let aiClient: GoogleGenAI | null = null;
@@ -568,8 +568,8 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
       questionPaper: {
         text: qpText,
         metadata: {
-          materialId: params.referenceMaterialId || 'ref_qp',
-          version: params.referenceMaterialVersion || '1.0',
+          materialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+          version: params.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(qpText, 'utf8').digest('hex'),
           textLength: qpText.length,
           mtpSeries: params.mtpSeries,
@@ -583,8 +583,8 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
       suggestedAnswers: {
         text: saText,
         metadata: {
-          materialId: params.referenceMaterialId || 'ref_sa',
-          version: params.referenceMaterialVersion || '1.0',
+          materialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+          version: params.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(saText, 'utf8').digest('hex'),
           textLength: saText.length,
           mtpSeries: params.mtpSeries,
@@ -598,8 +598,8 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
       markingScheme: {
         text: msText,
         metadata: {
-          materialId: params.referenceMaterialId || 'ref_ms',
-          version: params.referenceMaterialVersion || '1.0',
+          materialId: params.markingSchemeMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+          version: params.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(msText, 'utf8').digest('hex'),
           textLength: msText.length,
           mtpSeries: params.mtpSeries,
@@ -1045,24 +1045,44 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 
         const coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure);
 
+        const preGate = validatePreEvaluationGate({
+          paperStructure,
+          coverageMap,
+          questionPaperText: params.referenceQuestionPaperText,
+          suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
+          markingSchemeText: params.markingSchemeText,
+          officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
+          level: params.level,
+          subjectName: params.subjectName,
+        });
+
+        if (!preGate.passed) {
+          return createEvaluationReviewResult({
+            evaluationId: params.evaluationId,
+            studentName: params.studentName,
+            icaiRegistrationNumber: params.icaiRegistrationNumber || 'Not provided',
+            level: params.level,
+            subjectKey: params.subjectKey,
+            subjectName: params.subjectName,
+            materialType: params.materialType,
+            attempt: params.attempt,
+            paper: params.paper,
+            checkingMode: params.checkingMode,
+            officialPaperMaxMarks: params.officialPaperMaxMarks,
+            sourceFormat: params.sourceFormat,
+            sourceMaterialIds: {
+              combinedSourceMaterialId: params.combinedSourceMaterialId,
+              questionMaterialId: params.questionMaterialId,
+              suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
+              markingSchemeMaterialId: params.markingSchemeMaterialId,
+            },
+            coverageMap,
+            errors: preGate.failedInvariants,
+          });
+        }
+
         if (coverageMap && coverageMap.attemptedQuestions && coverageMap.attemptedQuestions.length > 0) {
           console.log(`[EvaluationEngine] Authoritative pipeline running for ${coverageMap.attemptedQuestions.length} attempted questions.`);
-
-          // Pre-Evaluation Validation Gate (Requirement 18)
-          const preGate = validatePreEvaluationGate({
-            paperStructure,
-            coverageMap,
-            questionPaperText: params.referenceQuestionPaperText,
-            suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
-            markingSchemeText: params.markingSchemeText,
-            officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
-            level: params.level,
-            subjectName: params.subjectName,
-          });
-
-          if (!preGate.passed) {
-            console.warn(`[EvaluationEngine] Pre-evaluation validation gate warning: ${preGate.failureReason}`);
-          }
 
           // 1. Evaluate MCQs deterministically against verified official keys
           const mcqQuestions = evaluateAllAuthoritativeMcqs(
@@ -1072,9 +1092,14 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               caLevel: params.level,
               paper: params.paper || params.subjectName,
               subjectKey: params.subjectKey,
-              sourceMaterialTitle: params.referenceMaterialTitle || 'ICAI Official Suggested Answers (Mock Test Paper Series)',
-              sourceMaterialVersion: params.referenceMaterialVersion || 'August 2026 MTP Series 1',
-              sourceMaterialId: params.referenceMaterialId || 'ICAI_OFFICIAL_SUGGESTED',
+              sourceMaterialTitle: params.referenceMaterialTitle || 'Authoritative Suggested Answers',
+              sourceMaterialVersion: params.referenceMaterialVersion || 'UNSPECIFIED',
+              sourceMaterialId: params.referenceMaterialId || 'UNSPECIFIED',
+              mcqPageNumbers: Object.fromEntries(
+                coverageMap.attemptedQuestions
+                  .filter((attempt) => attempt.isMcq && attempt.pages.length > 0)
+                  .map((attempt) => [attempt.questionNumber, attempt.pages[0]])
+              ),
             }
           );
 
@@ -1114,13 +1139,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 if (!subQ) {
-                  const fallbackMax = Number((mapping as any).maximumMarks) > 0 ? Number((mapping as any).maximumMarks) : 4;
                   subQ = {
                     section: 'A',
                     questionNumber: mapping.questionNumber,
                     subQuestionNumber: mapping.subQuestionNumber,
                     fullQuestionCode: mapping.fullQuestionCode,
-                    maximumMarks: fallbackMax,
+                    maximumMarks: 0,
                     topic: 'Descriptive Question',
                     compulsory: false,
                     isMcq: false,
@@ -1171,7 +1195,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               const fallbackSubQ = paperStructure.subQuestions.find(
                 (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions) === canonId
               );
-              const max = fallbackSubQ ? fallbackSubQ.maximumMarks : 4;
+              const max = fallbackSubQ?.maximumMarks ?? 0;
               descriptiveQuestions.push({
                 questionNumber: mapping.questionNumber,
                 subQuestion: mapping.subQuestionNumber,
@@ -1180,9 +1204,9 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 marksAwarded: 0,
                 marksLost: max,
                 status: 'unclear',
-                reasonForDeduction: 'Evaluation integrity safety: Attempted question preserved from silent omission.',
+                reasonForDeduction: 'Evaluation integrity safety: Attempted question could not be mapped to an authoritative source question.',
                 detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}.`,
-                flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
                 pageNumber: mapping.pages[0] || 1,
               });
             }
@@ -1310,7 +1334,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             paper: params.paper,
             subjectKey: params.subjectKey,
             checkingMode: params.checkingMode as any,
-            materialId: (params as any).manifest?.questionPaper?.materialId,
+            materialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
             coverageMap,
             paperStructure,
           });
@@ -1345,11 +1369,9 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
       },
     });
   } catch (modelErr: any) {
-    console.warn(
-      '[EvaluationEngine] Upstream AI models unavailable or credit limit reached. Activating Authoritative ICAI Benchmark Engine fallback:',
-      modelErr?.message || modelErr
-    );
-    modelOutput = generateAuthoritativeBenchmarkEvaluation(params, mcqRule);
+    const detail = modelErr?.message || String(modelErr);
+    console.error('[EvaluationEngine] AI evaluation providers failed; refusing to produce a synthetic score:', detail);
+    throw new Error(`AI_EVALUATION_UNAVAILABLE: ${detail}`);
   }
 
   let parsed: any = {};
@@ -1870,7 +1892,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
     paper: params.paper,
     subjectKey: params.subjectKey,
     checkingMode: params.checkingMode as any,
-    materialId: (params as any).manifest?.questionPaper?.materialId,
+    materialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
   });
 
   // Preserve model telemetry and specialized metadata

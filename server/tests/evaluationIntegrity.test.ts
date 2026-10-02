@@ -1500,7 +1500,7 @@ console.log('\n--- TEST BB: Canonical Identity & Exactly-Once Pipeline Invariant
     attempt: 'May 2026',
     officialPaperMaxMarks: 100,
     questions: [
-      { questionNumber: 'MCQ 1', maximumMarks: 2, marksAwarded: 2, status: 'correct', markingComponents: [{ componentId: 'mcq1', componentType: 'MCQ', marksAvailable: 2, marksAwarded: 2 }] },
+      { questionNumber: 'MCQ 1', maximumMarks: 2, marksAwarded: 2, status: 'correct', candidateSelectedOption: 'A', officialCorrectOption: 'A', markingComponents: [{ componentId: 'mcq1', componentType: 'MCQ', marksAvailable: 2, marksAwarded: 2 }] },
       { questionNumber: '1', maximumMarks: 15, marksAwarded: 10, status: 'partially_correct', markingComponents: [{ componentId: 'q1_c1', componentType: 'PROVISION', marksAvailable: 15, marksAwarded: 10 }] },
       { questionNumber: '3', maximumMarks: 10, marksAwarded: 7, status: 'partially_correct' }, // Parent container - should be dropped!
       { questionNumber: '3', subQuestion: 'a', maximumMarks: 6, marksAwarded: 4.5, status: 'partially_correct', markingComponents: [{ componentId: 'q3a_c1', componentType: 'PROVISION', marksAvailable: 6, marksAwarded: 4.5 }] },
@@ -1514,6 +1514,20 @@ console.log('\n--- TEST BB: Canonical Identity & Exactly-Once Pipeline Invariant
   const masterProcessed = processEvaluationIntegrity(rawMasterInput, {
     markingSchemeText: 'Official ICAI suggested answers',
     officialPaperMaxMarks: 100,
+    paperStructure: {
+      paperTitle: 'Taxation',
+      totalPaperMaxMarks: 100,
+      questions: [],
+      subQuestions: [
+        { fullQuestionCode: 'Q1', questionNumber: '1', maximumMarks: 15, compulsory: true, isMcq: false, section: 'A' },
+        { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', maximumMarks: 6, compulsory: false, isMcq: false, section: 'A' },
+        { fullQuestionCode: 'Q3(b)', questionNumber: '3', subQuestionNumber: 'b', maximumMarks: 4, compulsory: false, isMcq: false, section: 'A' },
+        { fullQuestionCode: 'Q4(b)', questionNumber: '4', subQuestionNumber: 'b', maximumMarks: 4, compulsory: false, isMcq: false, section: 'A' },
+      ],
+      mcqs: [
+        { fullQuestionCode: 'MCQ1', questionNumber: '1', maximumMarks: 2, officialKey: 'A', section: 'A' },
+      ],
+    } as any,
   });
 
   const finalQ3b = masterProcessed.questions.filter((q) => q.questionNumber === '3' && q.subQuestion === 'b' || q.canonicalId === 'Q3(b)');

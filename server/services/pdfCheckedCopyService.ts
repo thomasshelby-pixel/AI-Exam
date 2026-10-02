@@ -582,8 +582,18 @@ export async function generateCheckedCopyPdf(
   resultJson: any,
   originalPdfBuffer?: Buffer
 ): Promise<Buffer> {
-  const totalAwarded = evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0;
-  const maxMarks = evalData.maximumMarks ?? resultJson?.maximumMarks ?? 100;
+  const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
+  const totalAwarded = runPkg?.scoreLedger?.totalAwardedMarks
+    ?? resultJson?.canonicalLedger?.totalAwardedMarks
+    ?? evalData.totalMarks
+    ?? resultJson?.totalMarksAwarded
+    ?? resultJson?.totalMarks
+    ?? 0;
+  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
+    ?? resultJson?.canonicalLedger?.totalMaxMarks
+    ?? evalData.maximumMarks
+    ?? resultJson?.maximumMarks
+    ?? 100;
   const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
   const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
 
