@@ -11,6 +11,9 @@ import {
   Star,
   MessageSquare,
   ThumbsUp,
+  FileCheck2,
+  Award,
+  Target,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
@@ -20,10 +23,11 @@ import { StudentReview } from '../../types/index.js';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
-  onNavigateLogin: () => void;
+  onNavigateLogin?: () => void;
   onNavigatePricing: () => void;
   onNavigateHowItWorks: () => void;
   onNavigateReviews?: () => void;
+  initialSection?: string;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
@@ -31,6 +35,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigatePricing,
   onNavigateHowItWorks,
   onNavigateReviews,
+  initialSection,
 }) => {
   const [modalExam, setModalExam] = useState<ComingSoonExamType | null>(null);
   const [sampleReviews, setSampleReviews] = useState<StudentReview[]>([]);
@@ -38,6 +43,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     totalReviews: number;
     averageRating: number;
   }>({ totalReviews: 0, averageRating: 0 });
+
+  useEffect(() => {
+    if (initialSection === 'features' || window.location.hash === '#features') {
+      setTimeout(() => {
+        const el = document.getElementById('features');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+    }
+  }, [initialSection]);
 
   useEffect(() => {
     const fetchLandingReviews = async () => {
@@ -140,40 +156,46 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* Interactive Feature Grid with Optimal Vertical Proximity */}
-      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        <div className="text-center space-y-1.5">
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">Engineered Exclusively for CA Aspirants</h2>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
-            Unlike generic AI tools, CA Exam Checker AI is tuned to CA examination standards, suggested answers, and structured marking rubrics.
+      {/* Comprehensive Platform Features Section & Capabilities List */}
+      <section id="features" className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 scroll-mt-20">
+        <div className="text-center space-y-2.5 max-w-3xl mx-auto">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-bold border border-blue-200 dark:border-blue-800 shadow-2xs">
+            <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Platform Features</span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+            Engineered Exclusively for CA Aspirants
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
+            Unlike generic AI tools, CA Exam Checker AI is calibrated to ICAI examination standards, suggested answers, statutory provisions, and structured step-marking rubrics.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {/* Card 1 */}
+        {/* 6 Core Feature Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* Feature 1 */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
             <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center">
               <Scale className="w-5 h-5" />
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">Genuine Step-Marking Rubric</h3>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              If your final numerical answer is incorrect due to a ledger slip, you still receive marks for correct journal entries,
-              formula application, and working note computations.
+              If your final numerical answer is incorrect due to a ledger slip, you still receive full step marks for correct journal entries, formula application, and working note computations.
             </p>
           </div>
 
-          {/* Card 2 */}
+          {/* Feature 2 */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
             <div className="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <ShieldCheck className="w-5 h-5" />
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">Document Vision Safeguard</h3>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              Our vision model verifies that the uploaded file is an actual handwritten CA answer sheet. Non-exam files (admit cards, random photos, certificates) are rejected automatically with zero credit loss.
+              Our vision model verifies that the uploaded file is an authentic handwritten CA answer copy. Non-exam files (admit cards, random photos, certificates) are intercepted automatically with 0 credit deduction guarantee.
             </p>
           </div>
 
-          {/* Card 3 */}
+          {/* Feature 3 */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
             <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center">
               <Zap className="w-5 h-5" />
@@ -182,6 +204,64 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               Full compliance with ICAI examination guidelines: 0 negative marking for Intermediate and Final MCQs, with precise -0.25 negative marking applied specifically for Foundation Quantitative Aptitude and Business Economics.
             </p>
+          </div>
+
+          {/* Feature 4 */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+              <FileCheck2 className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Annotated Checked Copy PDF</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Download your checked answer copy annotated with red examiner markings, question-wise score badges, margin remarks, and step mark tally on each attempted answer page.
+            </p>
+          </div>
+
+          {/* Feature 5 */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+              <Award className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Statutory & Standards Benchmarking</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Rigorous verification against Companies Act 2013, Income Tax Act 1961, GST provisions, Ind AS, Accounting Standards (AS), and Standards on Auditing (SAs) with official citations.
+            </p>
+          </div>
+
+          {/* Feature 6 */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-3 shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="w-10 h-10 rounded-lg bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+              <Target className="w-5 h-5" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Personal Examiner Profile & Analytics</h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Track recurring deduction patterns across test papers, identify high-yield working note improvements, and monitor marks recovered as your exam date approaches.
+            </p>
+          </div>
+        </div>
+
+        {/* Feature Capabilities Highlight Checklist */}
+        <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-7">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-4 text-center sm:text-left">
+            Platform Capabilities Included With Every Evaluation
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs text-slate-700 dark:text-slate-300">
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <span><strong>Under 60s Turnaround:</strong> No 2-week delays; immediate step feedback.</span>
+            </div>
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <span><strong>2 Free Checks / Mo:</strong> Full 100-mark mock evaluations at zero cost on registration.</span>
+            </div>
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <span><strong>Zero Score Drift:</strong> Single authoritative ledger ensures 100% score parity.</span>
+            </div>
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <span><strong>All 3 CA Tiers:</strong> Calibrated for CA Foundation, Intermediate, and Final.</span>
+            </div>
           </div>
         </div>
       </section>

@@ -45,6 +45,8 @@ import { McqAdminPortal } from './pages/admin/McqAdminPortal.js';
 import { McqAdminLoginPage } from './pages/auth/McqAdminLoginPage.js';
 import { EvaluationResult } from './types/index.js';
 import { apiRequest } from './api/client.js';
+import { featureApi } from './api/featureClient.js';
+import { FeatureUnavailable } from './components/common/FeatureUnavailable.js';
 import { DisclaimerModal } from './components/student/DisclaimerModal.js';
 
 // Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
@@ -338,6 +340,18 @@ const PublicAndStudentLayout: React.FC<{
       case 'student-profile':
         navigate('/student/profile');
         break;
+      case 'features':
+        if (location.pathname === '/' || location.pathname === '') {
+          const el = document.getElementById('features');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth' });
+          } else {
+            navigate('/features');
+          }
+        } else {
+          navigate('/features');
+        }
+        break;
       case 'arena':
         navigate('/arena');
         break;
@@ -501,6 +515,81 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   const roleUpper = (user.role || '').toUpperCase();
   if (roleUpper !== 'MCQ_ADMIN' && roleUpper !== 'SUPER_ADMIN') {
     return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Protected MCQ Arena Route Guard — strictly restricts access to Super Admin, MCQ Admin, and allowlisted testers
+const ProtectedArenaRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [isAllowed, setIsAllowed] = useState(false);
+  const [accessInfo, setAccessInfo] = useState<{
+    featureName?: string;
+    status?: 'TESTING' | 'DISABLED' | 'ENABLED' | 'COMING_SOON';
+    studentMessage?: string;
+  }>({});
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setIsCheckingAccess(false);
+      setIsAllowed(false);
+      return;
+    }
+
+    const roleUpper = (user.role || '').toUpperCase().replace(/\s+/g, '_');
+    if (roleUpper === 'SUPER_ADMIN' || roleUpper === 'ADMIN' || roleUpper === 'MCQ_ADMIN') {
+      setIsAllowed(true);
+      setIsCheckingAccess(false);
+      return;
+    }
+
+    featureApi
+      .checkAccess('mcq_arena')
+      .then((res) => {
+        setIsAllowed(Boolean(res.allowed));
+        setAccessInfo({
+          featureName: res.featureName,
+          status: res.status,
+          studentMessage: res.studentMessage,
+        });
+      })
+      .catch(() => {
+        setIsAllowed(false);
+      })
+      .finally(() => {
+        setIsCheckingAccess(false);
+      });
+  }, [isAuthenticated, user]);
+
+  if (isLoading || isCheckingAccess) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login?redirect=/arena" replace />;
+  }
+
+  if (!isAllowed) {
+    return (
+      <FeatureUnavailable
+        featureKey="mcq_arena"
+        featureName={accessInfo.featureName || 'MCQ Arena'}
+        status={accessInfo.status || 'TESTING'}
+        studentMessage={
+          accessInfo.studentMessage ||
+          "MCQ Arena is currently restricted and undergoing private testing. Public access will be available soon."
+        }
+        onBack={() => {
+          window.location.href = '/student/dashboard';
+        }}
+      />
+    );
   }
 
   return <>{children}</>;
@@ -687,6 +776,22 @@ const AppRoutes: React.FC = () => {
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
               <HowItWorksPage onNavigateRegister={() => navigate('/register')} />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/features"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <LandingPage
+                onNavigateRegister={() => navigate('/register')}
+                onNavigateLogin={() => navigate('/login')}
+                onNavigatePricing={() => navigate('/pricing')}
+                onNavigateHowItWorks={() => navigate('/how-it-works')}
+                onNavigateReviews={() => navigate('/reviews')}
+                initialSection="features"
+              />
             </PublicAndStudentLayout>
           }
         />
@@ -966,54 +1071,54 @@ const AppRoutes: React.FC = () => {
         />
 
         {/* ============================================================ */}
-        {/* MCQ ARENA STUDENT ROUTES — Authenticated CA Student Practice */}
+        {/* MCQ ARENA STUDENT ROUTES — Authenticated & Authorized Practice */}
         {/* ============================================================ */}
         <Route
           path="/arena"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqArenaDashboard />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/mcq-arena"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqArenaDashboard />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/session/:sessionId"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqPracticeSessionPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/wrong-vault"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqWrongVaultPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/bookmarks"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqBookmarksPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/progress"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqProgressPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
 

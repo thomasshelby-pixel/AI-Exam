@@ -45,6 +45,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             <h3 className="text-xs font-bold text-slate-900 dark:text-white">Platform</h3>
             <ul className="space-y-1.5 text-xs">
               <li>
+                <button onClick={() => onNavigate('features')} className="hover:text-blue-600 dark:text-blue-400 transition cursor-pointer">
+                  Platform Features
+                </button>
+              </li>
+              <li>
                 <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   How AI Evaluation Works
                 </button>
