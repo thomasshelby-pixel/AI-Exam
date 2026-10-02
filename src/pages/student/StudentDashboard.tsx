@@ -1024,22 +1024,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <td className="px-4 py-3">
                         <span
                           className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${
-                            ev.percentage >= 60
+                            (ev as any).status === 'NEEDS_REVIEW' || (ev as any).status === 'VALIDATION_FAILED'
+                              ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
+                              : ev.percentage >= 60
                               ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
                               : ev.percentage >= 40
                               ? 'bg-green-100 dark:bg-emerald-950/50 text-green-700 dark:text-emerald-300'
                               : 'bg-red-100 dark:bg-rose-950/50 text-red-700 dark:text-rose-300'
                           }`}
                         >
-                          {ev.grade || 'Completed'}
+                          {(ev as any).status === 'NEEDS_REVIEW' || (ev as any).status === 'VALIDATION_FAILED'
+                            ? 'Verification Required'
+                            : (ev.grade || 'Completed')}
                         </span>
                       </td>
                       <td className="px-6 py-3 text-right">
                         <button
                           onClick={() => onViewReport(ev.id)}
-                          className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-bold border border-slate-200 dark:border-slate-700 hover:border-blue-200 transition"
+                          className="px-3 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 text-xs font-bold border border-slate-200 dark:border-slate-700 hover:border-blue-200 transition cursor-pointer"
                         >
-                          View Report
+                          {(ev as any).status === 'NEEDS_REVIEW' || (ev as any).status === 'VALIDATION_FAILED'
+                            ? 'Verify & View'
+                            : 'View Report'}
                         </button>
                       </td>
                     </tr>

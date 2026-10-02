@@ -1,9 +1,25 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
-import { FileCheck2, Search, Filter, ArrowRight, RefreshCw, Layers, Globe, Building2, RotateCcw } from 'lucide-react';
+import {
+  FileCheck2,
+  Search,
+  Filter,
+  ArrowRight,
+  RefreshCw,
+  Layers,
+  Globe,
+  Building2,
+  RotateCcw,
+  Lock,
+  LogIn,
+  AlertCircle,
+  X,
+} from 'lucide-react';
 import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
 import { EvaluationResult } from '../../types/index.js';
+import { useAuth } from '../../context/AuthContext.js';
 
 interface EvaluationItem {
   id: string;
@@ -32,8 +48,12 @@ interface MyEvaluationsProps {
 }
 
 export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNavigateUpload }) => {
+  const navigate = useNavigate();
+  const { user, isAuthenticated, isLoading: isAuthLoading, isSessionLocked } = useAuth();
   const [evaluations, setEvaluations] = useState<EvaluationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<boolean>(false);
+  const [noticeMessage, setNoticeMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   const [search, setSearch] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'PUBLIC' | 'INSTITUTE'>('ALL');
@@ -42,19 +62,43 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   const [loadingRecheckId, setLoadingRecheckId] = useState<string | null>(null);
 
   const fetchEvaluations = async () => {
+    if (!isAuthenticated || !user || isSessionLocked) {
+      setIsLoading(false);
+      return;
+    }
     try {
+      setIsLoading(true);
+      setAuthError(false);
       const res = await apiRequest<{ evaluations: EvaluationItem[] }>('/api/student/evaluations');
       setEvaluations(res.evaluations || []);
-    } catch (err) {
-      console.error('Failed to load evaluations:', err);
+    } catch (err: any) {
+      if (
+        err?.status === 401 ||
+        err?.statusCode === 401 ||
+        err?.message?.includes('Authentication required')
+      ) {
+        setAuthError(true);
+        setEvaluations([]);
+      } else {
+        console.warn('Evaluations query notification:', err?.message || err);
+        setNoticeMessage({
+          type: 'error',
+          text: err?.message || 'Failed to load evaluations. Please try again.',
+        });
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated || !user || isSessionLocked) {
+      setIsLoading(false);
+      return;
+    }
     fetchEvaluations();
-  }, []);
+  }, [isAuthLoading, isAuthenticated, user, isSessionLocked]);
 
   const handleOpenRecheck = async (id: string) => {
     try {
@@ -70,11 +114,16 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
         setRecheckEvaluation(evalResult);
         setIsRecheckModalOpen(true);
       } else {
-        alert('Evaluation details could not be loaded for rechecking.');
+        setNoticeMessage({
+          type: 'error',
+          text: 'Evaluation details could not be loaded for rechecking.',
+        });
       }
-    } catch (err) {
-      console.error('Failed to open recheck modal:', err);
-      alert('Failed to load evaluation details for recheck request.');
+    } catch (err: any) {
+      setNoticeMessage({
+        type: 'error',
+        text: err?.message || 'Failed to load evaluation details for recheck request.',
+      });
     } finally {
       setLoadingRecheckId(null);
     }

@@ -25,6 +25,7 @@ import { savePersistentFile, getPersistentFile } from '../services/persistentSto
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
+import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
@@ -1449,6 +1450,52 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
   }
 });
 
+// 4.0 Verify Evaluation Consistency
+router.post(
+  '/evaluations/:id/verify-consistency',
+  requireFeatureAccess('CHECKER', 'checker_evaluation_report'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const evaluationId = req.params.id;
+      const studentId = req.user!.id;
+      const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+      const userRole = req.user!.role;
+
+      if (!evaluationId || !/^[a-zA-Z0-9_-]+$/.test(evaluationId)) {
+        return res.status(400).json({ error: 'Invalid evaluation ID format.' });
+      }
+
+      let record: any;
+      const roleStr = String(userRole);
+      if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
+        record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
+        record = db.prepare(`
+          SELECT e.* FROM evaluations e
+          LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
+          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+      } else {
+        record = db.prepare(`
+          SELECT e.* FROM evaluations e
+          LEFT JOIN users u ON u.id = e.student_id
+          WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
+        `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
+      }
+
+      if (!record) {
+        return res.status(404).json({ error: 'Evaluation not found' });
+      }
+
+      const verificationResult = await verifyEvaluationConsistency(evaluationId);
+      return res.status(verificationResult.success ? 200 : 409).json(verificationResult);
+    } catch (error: any) {
+      console.error('Verify evaluation consistency error:', error);
+      return res.status(500).json({ error: 'Failed to perform consistency verification', message: error?.message });
+    }
+  }
+);
+
 // 4a. Download Checked Copy (Annotated Student Answer Sheet with Examiner Marks)
 router.get(
   ['/evaluations/:id/download-checked-copy', '/evaluations/:id/download-checked', '/evaluations/:id/checked-copy/download'],
@@ -1508,6 +1555,15 @@ router.get(
           });
         }
         return res.status(404).json({ error: 'Evaluation not found' });
+      }
+
+      // If consistency verification was requested or auto-verify query param is passed
+      const shouldAutoVerify = req.query.verify === 'true' || req.query.autoVerify === 'true';
+      if ((record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') && shouldAutoVerify) {
+        const verifyRes = await verifyEvaluationConsistency(evaluationId);
+        if (verifyRes.success) {
+          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        }
       }
 
       if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {
@@ -1725,6 +1781,15 @@ router.get(
           });
         }
         return res.status(404).json({ error: 'Evaluation not found' });
+      }
+
+      // If consistency verification was requested or auto-verify query param is passed
+      const shouldAutoVerify = req.query.verify === 'true' || req.query.autoVerify === 'true';
+      if ((record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') && shouldAutoVerify) {
+        const verifyRes = await verifyEvaluationConsistency(evaluationId);
+        if (verifyRes.success) {
+          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        }
       }
 
       if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {

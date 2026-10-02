@@ -56,6 +56,7 @@ import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
+import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
@@ -2958,6 +2959,31 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
   } catch (error: any) {
     console.error('Stream report artifact error:', error);
     return res.status(500).json({ error: 'Failed to load evaluation report' });
+  }
+});
+
+// 15d. Verify Evaluation Consistency (Admin Quality Control)
+router.post('/evaluations/:id/verify-consistency', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const { adminOverride, notes } = req.body || {};
+
+    const evalRecord = db.prepare('SELECT id FROM evaluations WHERE id = ?').get(evaluationId);
+    if (!evalRecord) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    const verificationResult = await verifyEvaluationConsistency(evaluationId, {
+      adminOverride: Boolean(adminOverride),
+      reviewerEmail: req.user!.email,
+      reviewerId: req.user!.id,
+      notes: notes || 'Admin verified consistency',
+    });
+
+    return res.status(verificationResult.success ? 200 : 409).json(verificationResult);
+  } catch (error: any) {
+    console.error('Admin verify evaluation consistency error:', error);
+    return res.status(500).json({ error: 'Failed to verify evaluation consistency', message: error?.message });
   }
 });
 

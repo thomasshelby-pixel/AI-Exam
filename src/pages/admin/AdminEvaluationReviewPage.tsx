@@ -336,6 +336,28 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
     }
   };
 
+  const handleVerifyConsistency = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccessMessage(null);
+      const res = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/verify-consistency`, {
+        method: 'POST',
+        body: JSON.stringify({
+          adminOverride: false,
+          notes: overallReason.trim() || 'Admin verified consistency',
+        }),
+      });
+      setSuccessMessage(res.message || 'Evaluation consistency verified successfully!');
+      await fetchReviewDetails();
+    } catch (err: any) {
+      console.error('Verify consistency error:', err);
+      setError(err.message || 'Failed to verify evaluation consistency.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-16">
       {/* Top Navigation & Breadcrumb */}
@@ -912,6 +934,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           </button>
 
           <div className="flex items-center gap-3">
+            {/* Auto-Verify Consistency Option for NEEDS_REVIEW */}
+            {evaluation.status === 'NEEDS_REVIEW' && (
+              <button
+                onClick={handleVerifyConsistency}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                title="Run automatic consistency verification and authoritative reconciliation"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                Auto-Verify Consistency
+              </button>
+            )}
+
             {/* Affirm As-Is Option */}
             <button
               onClick={() => handleFinalize(true)}

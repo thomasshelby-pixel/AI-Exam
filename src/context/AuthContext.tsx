@@ -102,9 +102,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
 
   // Quick Resume State for Auto-Logout Inactivity Locking
-  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => {
-    return typeof window !== 'undefined' && sessionStorage.getItem('ca_session_locked') === 'true';
-  });
   const [lockedUser, setLockedUser] = useState<LockedUserInfo | null>(() => {
     if (typeof window === 'undefined') return null;
     const saved = sessionStorage.getItem('ca_locked_user');
@@ -116,6 +113,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     return null;
+  });
+
+  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const isLocked = sessionStorage.getItem('ca_session_locked') === 'true';
+    const savedUser = sessionStorage.getItem('ca_locked_user');
+    if (isLocked && !savedUser) {
+      sessionStorage.removeItem('ca_session_locked');
+      return false;
+    }
+    return isLocked;
   });
 
   const clearSuspension = () => setSuspendedAccount(null);

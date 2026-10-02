@@ -469,7 +469,8 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
 
 // Protected Student Route Guard
 const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -479,13 +480,14 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   }
 
-  // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  // Preserve workspace state only if session is genuinely locked with locked user info for QuickResumeModal
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login?redirect=/student/dashboard" replace />;
+    const redirectTarget = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?redirect=${redirectTarget}`} replace />;
   }
 
   return <>{children}</>;
@@ -493,7 +495,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 // Protected MCQ Admin Route Guard
 const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
 
   if (isLoading) {
     return (
@@ -504,7 +506,7 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
@@ -598,7 +600,7 @@ const ProtectedArenaRoute: React.FC<{ children: React.ReactNode }> = ({ children
 // Protected Super Admin Route Guard
 // Automatically routes Institute Admin to Institute Portal rather than hitting 403 Access Denied
 const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
 
   if (isLoading) {
     return (
@@ -609,7 +611,7 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
   }
 
   // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
