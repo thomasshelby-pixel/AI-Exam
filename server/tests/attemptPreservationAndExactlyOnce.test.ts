@@ -11,6 +11,7 @@ import { AuthoritativePaperStructure } from '../services/paperStructureService.j
 import { processEvaluationIntegrity } from '../services/evaluationIntegrityEngine.js';
 import { validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { QuestionEvaluation, EvaluationResult } from '../../src/types/index.js';
+import { resolveContextualQuestionIdentity } from '../services/answerSheetCoverageService.js';
 
 console.log('================================================================');
 console.log('--- GLOBAL ATTEMPTED-QUESTION PRESERVATION & EXACTLY-ONCE ENGINE TEST SUITE ---');
@@ -757,6 +758,46 @@ console.log('\n--- SECTION 23: REAL TAXATION EVALUATION REGRESSION TEST ---');
   console.log(`[PASS] REAL REGRESSION TEST: Canonical ledger grand total strictly reconciled at ${ledger.totalAwardedMarks} marks`);
 }
 
+// --- Generic page-context regression: a bare child label must not inherit an AI-guessed parent ---
+{
+  const paperSubQuestions = mockInterPaperStructure.subQuestions;
+  const mappedBareChild = resolveContextualQuestionIdentity({
+    questionNumber: '4', // Vision model's mistaken parent guess
+    subQuestion: 'a',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q3(b)',
+    paperSubQuestions,
+  });
+  assert.strictEqual(mappedBareChild.canonicalId, 'Q3(a)');
+  assert.strictEqual(mappedBareChild.requiresReview, false);
+
+  const explicitParent = resolveContextualQuestionIdentity({
+    questionNumber: '4',
+    subQuestion: 'a',
+    parentQuestionNumberVisible: true,
+    previousActiveQuestion: 'Q3(b)',
+    paperSubQuestions,
+  });
+  assert.strictEqual(explicitParent.canonicalId, 'Q4(a)', 'Visible parent numbering remains authoritative');
+
+  const ambiguousBareChild = resolveContextualQuestionIdentity({
+    questionNumber: '4',
+    subQuestion: 'a',
+    parentQuestionNumberVisible: false,
+    paperSubQuestions,
+  });
+  assert.strictEqual(ambiguousBareChild.requiresReview, true, 'Unanchored visible attempt must enter review rather than disappear');
+
+  const missingVisibilitySignal = resolveContextualQuestionIdentity({
+    questionNumber: '4',
+    subQuestion: 'a',
+    previousActiveQuestion: 'Q3(b)',
+    paperSubQuestions,
+  });
+  assert.strictEqual(missingVisibilitySignal.requiresReview, true, 'Missing visibility evidence must not silently remap a conflicting parent');
+  console.log('[PASS] Generic bare-sub-question context mapping and fail-closed review');
+}
+
 console.log('================================================================');
-console.log('--- ALL 21 INTEGRITY TESTS + REAL REGRESSION PASSED SUCCESSFULLY ---');
+console.log('--- ALL INTEGRITY TESTS + REAL REGRESSION PASSED SUCCESSFULLY ---');
 console.log('================================================================');
