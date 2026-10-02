@@ -164,29 +164,43 @@ async function runTests() {
 
   console.log('\n--- 5. Testing Refund on Evaluation Failure ---');
   // Consume 1 free evaluation, then simulate refund
-  const consumeForRefundFree = consumeEvaluationEntitlementAtomic({ userId: testUserId });
+  const freeRefundEvaluationId = `eval_refund_free_${testUserId}`;
+  const consumeForRefundFree = consumeEvaluationEntitlementAtomic({ userId: testUserId, evaluationId: freeRefundEvaluationId });
   assert(consumeForRefundFree.source === 'PERSONAL_FREE', 'Consumed 1 free for refund test');
-  refundEvaluationCreditAtomic({ userId: testUserId, entitlementSource: 'PERSONAL_FREE' });
+  refundEvaluationCreditAtomic({ userId: testUserId, evaluationId: freeRefundEvaluationId, entitlementSource: 'PERSONAL_FREE' });
+  refundEvaluationCreditAtomic({ userId: testUserId, evaluationId: freeRefundEvaluationId, entitlementSource: 'PERSONAL_FREE' });
   const afterRefundFree = getStudentCreditDetailedSummary(testUserId);
   assert(
     afterRefundFree.freeEvaluationsRemaining === 2,
     'Free evaluation refunded back to 2/2 remaining upon evaluation failure',
     `freeRemaining=${afterRefundFree.freeEvaluationsRemaining}`
   );
+  const freeRefundCount = db.prepare(`
+    SELECT COUNT(*) as count FROM credit_ledger
+    WHERE student_id = ? AND evaluation_id = ? AND source = 'REFUND_MONTHLY_FREE'
+  `).get(testUserId, freeRefundEvaluationId) as { count: number };
+  assert(freeRefundCount.count === 1, 'Retrying a failed free-credit job records only one refund');
 
   // Consume 1 paid credit (by exhausting free first)
   consumeEvaluationEntitlementAtomic({ userId: testUserId }); // free 1
   consumeEvaluationEntitlementAtomic({ userId: testUserId }); // free 2
-  const consumePaidForRefund = consumeEvaluationEntitlementAtomic({ userId: testUserId }); // paid 1
+  const paidRefundEvaluationId = `eval_refund_paid_${testUserId}`;
+  const consumePaidForRefund = consumeEvaluationEntitlementAtomic({ userId: testUserId, evaluationId: paidRefundEvaluationId }); // paid 1
   assert(consumePaidForRefund.source === 'PERSONAL_PURCHASED_CREDIT', 'Consumed 1 paid credit for refund test');
   assert(consumePaidForRefund.paidCredits === 8, 'Paid credits down to 8');
-  refundEvaluationCreditAtomic({ userId: testUserId, entitlementSource: 'PERSONAL_PURCHASED_CREDIT' });
+  refundEvaluationCreditAtomic({ userId: testUserId, evaluationId: paidRefundEvaluationId, entitlementSource: 'PERSONAL_PURCHASED_CREDIT' });
+  refundEvaluationCreditAtomic({ userId: testUserId, evaluationId: paidRefundEvaluationId, entitlementSource: 'PERSONAL_PURCHASED_CREDIT' });
   const afterRefundPaid = getStudentCreditDetailedSummary(testUserId);
   assert(
     afterRefundPaid.paidCredits === 9,
     'Paid credit refunded back to 9 upon evaluation failure',
     `paidCredits=${afterRefundPaid.paidCredits}`
   );
+  const paidRefundCount = db.prepare(`
+    SELECT COUNT(*) as count FROM credit_ledger
+    WHERE student_id = ? AND evaluation_id = ? AND source = 'REFUND_PURCHASED_CREDIT'
+  `).get(testUserId, paidRefundEvaluationId) as { count: number };
+  assert(paidRefundCount.count === 1, 'Retrying a failed paid-credit job records only one refund');
 
   console.log('\n================================================================');
   console.log(`RESULTS: ${passedTests} OF ${totalTests} TESTS PASSED`);

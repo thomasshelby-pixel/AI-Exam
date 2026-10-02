@@ -166,6 +166,13 @@ export function validatePreEvaluationGate(params: {
       unclearPages.push(...coverageMap.unclearPages);
     }
 
+    // Pages whose question identity could not be established remain protected
+    // attempts until a reviewer can map them. They must not be scored by a
+    // positional or guessed question mapping.
+    for (const pageNumber of coverageMap.unmappedPages || []) {
+      failedInvariants.push(`UNMAPPED_STUDENT_PAGE: Page ${pageNumber} contains content that has not been mapped to an authoritative question.`);
+    }
+
     // Check detected attempted questions against canonical Question Paper
     const validCanonicalSet = new Set(subQs.map((s) => toCanonicalQuestionId(s.fullQuestionCode || s.questionNumber, s.subQuestionNumber)));
     for (const mcq of mcqs) {
@@ -175,14 +182,13 @@ export function validatePreEvaluationGate(params: {
     if (coverageMap.attemptedQuestions) {
       for (const attempt of coverageMap.attemptedQuestions) {
         const attemptCanon = toCanonicalQuestionId(attempt.fullQuestionCode || attempt.questionNumber, attempt.subQuestionNumber);
-        // If not in paperStructure and cannot be mapped, check if valid
+        // Parent headings are not canonical leaves when the paper defines
+        // sub-questions. Keep them for review instead of deleting or moving
+        // them to a child question.
         if (!validCanonicalSet.has(attemptCanon)) {
-          // Allow parent matching if child exists
-          const isParentOfValid = subQs.some((s) => s.questionNumber === attempt.questionNumber);
-          if (!isParentOfValid && !attempt.isMcq) {
-            // Note as unmapped attempt needing review
-            sourceConflicts.push(`UNMAPPED_ATTEMPT_DETECTED: Candidate attempted ${attemptCanon} which does not exist in Question Paper.`);
-          }
+          const message = `UNMAPPED_ATTEMPT_DETECTED: Candidate attempted ${attemptCanon} which does not exist as a canonical question in the Question Paper.`;
+          sourceConflicts.push(message);
+          failedInvariants.push(message);
         }
       }
     }

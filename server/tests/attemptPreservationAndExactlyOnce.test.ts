@@ -104,6 +104,7 @@ console.log('\n--- TEST 1: Attempted Q3(a) Preservation ---');
   });
   const q3aTask = tasks.find((t) => t.canonicalQuestionId === 'Q3(a)');
   assert.ok(q3aTask, 'Evaluation task for Q3(a) must be created');
+  assert.strictEqual(q3aTask.requiresMappingReview, false, 'Canonical inventory attempts remain evaluable');
 
   const evaluated: QuestionEvaluation[] = [
     { questionNumber: '3', subQuestion: 'a', canonicalId: 'Q3(a)', maximumMarks: 8, marksAwarded: 6, marksLost: 2, status: 'partially_correct', reasonForDeduction: 'Minor arithmetic slip', detailedFeedback: 'Solid working' },
@@ -124,6 +125,35 @@ console.log('\n--- TEST 1: Attempted Q3(a) Preservation ---');
   assert.strictEqual(q3aRec.rendered, true);
   assert.strictEqual(q3aRec.counted, true);
   console.log('[PASS] TEST 1: Attempted Q3(a) preserved through detection, task, ledger, and score');
+}
+
+// --- TEST 1A: Unknown attempts must not receive invented marks or scores ---
+console.log('\n--- TEST 1A: Unknown Attempt Requires Mapping Review ---');
+{
+  const attempts = detectIndependentAttempts({
+    inventory: canonicalInventory,
+    rawPageOccurrences: [{ questionCode: 'Q99(a)', pageNumber: 11, evidenceText: 'Visible working without a matching source question' }],
+  });
+  const tasks = createExactlyOnceEvaluationTasks({ runId: 'run_unknown', inventory: canonicalInventory, attemptedMap: attempts });
+  const task = tasks.find((entry) => entry.canonicalQuestionId === 'Q99(a)');
+  assert.ok(task, 'Unknown attempt remains represented');
+  assert.strictEqual(task.maximumMarks, 0, 'Unknown attempt receives no invented maximum marks');
+  assert.strictEqual(task.requiresMappingReview, true, 'Unknown attempt is routed to mapping review');
+
+  const ledger = buildCanonicalEvaluationLedger({
+    runId: 'run_unknown',
+    inventory: canonicalInventory,
+    attemptedMap: attempts,
+    evaluatedQuestions: [{
+      questionNumber: '99', subQuestion: 'a', canonicalId: 'Q99(a)', maximumMarks: 5,
+      marksAwarded: 3, marksLost: 2, status: 'partially_correct', detailedFeedback: 'Must not be counted without a source mapping',
+    }],
+  });
+  const record = ledger.records.find((entry) => entry.questionId === 'Q99(a)');
+  assert.strictEqual(record?.evaluationStatus, 'NEEDS_MAPPING_REVIEW');
+  assert.strictEqual(record?.awardedMarks, 0, 'Unmapped marks are not included in the score');
+  assert.strictEqual(record?.counted, false, 'Unmapped attempt is not counted');
+  assert.strictEqual(ledger.isReconciled, false, 'An unmapped attempt blocks ledger reconciliation');
 }
 
 // --- TEST 2: Attempted sub-question must not disappear ---

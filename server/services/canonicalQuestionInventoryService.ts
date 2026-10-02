@@ -64,6 +64,7 @@ export interface ExactlyOnceTask {
   maximumMarks: number;
   isMcq: boolean;
   sourcePages: number[];
+  requiresMappingReview?: boolean;
 }
 
 /**
@@ -412,6 +413,7 @@ export function createExactlyOnceEvaluationTasks(options: {
       maximumMarks: item.maxMarks,
       isMcq: item.questionType === 'MCQ',
       sourcePages: attempt.sourcePages,
+      requiresMappingReview: false,
     });
   }
 
@@ -426,9 +428,10 @@ export function createExactlyOnceEvaluationTasks(options: {
         canonicalQuestionId: canonId,
         questionNumber: parsed.questionNumber,
         subQuestion: parsed.subQuestion,
-        maximumMarks: 4, // Safe standard mark ceiling
+        maximumMarks: 0,
         isMcq: attempt.isMcq,
         sourcePages: attempt.sourcePages,
+        requiresMappingReview: true,
       });
     }
   }
@@ -559,17 +562,10 @@ export function buildCanonicalEvaluationLedger(options: {
       const evaluation = evalMap.get(canonId) || evalMap.get(canonId.toLowerCase());
       const isAttempted = attempt.isAttempted;
 
-      let status: CanonicalEvaluationStatus = 'FAILED_TO_EVALUATE';
-      let awardedMarks = 0;
-      let counted = false;
-
-      if (evaluation) {
-        status = 'EVALUATED';
-        awardedMarks = Number(evaluation.marksAwarded) || 0;
-        counted = true;
-      } else {
-        errors.push(`ATTEMPTED_QUESTION_NOT_EVALUATED: Attempted question ${canonId} was not evaluated.`);
-      }
+      const status: CanonicalEvaluationStatus = 'NEEDS_MAPPING_REVIEW';
+      const awardedMarks = 0;
+      const counted = false;
+      errors.push(`ATTEMPTED_QUESTION_UNMAPPED: Attempted question ${canonId} is not in the authoritative inventory and cannot be scored.`);
 
       const extraStudentPages = attempt.sourcePages || [];
       const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : 1;
@@ -581,13 +577,13 @@ export function buildCanonicalEvaluationLedger(options: {
         subQuestionId: parseCanonicalQuestionIdentity(canonId).subQuestion,
         questionType: isExtraMcq ? 'MCQ' : 'DESCRIPTIVE',
         attempted: isAttempted,
-        evaluated: status === 'EVALUATED',
+        evaluated: false,
         sourcePages: extraStudentPages,
         studentPages: extraStudentPages,
-        maxMarks: evaluation ? evaluation.maximumMarks : 4,
+        maxMarks: 0,
         awardedMarks,
         evaluationStatus: status,
-        annotationRequired: isAttempted && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE'),
+        annotationRequired: false,
         annotationPage: extraAnnPage,
         annotationAnchor: {
           pageNumber: extraAnnPage,
@@ -595,13 +591,14 @@ export function buildCanonicalEvaluationLedger(options: {
           annotationType: isExtraMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
         },
         renderOrder: 1000,
-        rendered: true,
+        rendered: false,
         counted,
         studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
         officialAnswer: evaluation?.officialCorrectOption,
         evidence: attempt.evidence,
         stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
         markingComponents: evaluation?.markingComponents,
+        reconciliationNotes: ['Question identity does not match the authoritative inventory; reviewer mapping is required.'],
       });
     }
   }

@@ -115,9 +115,15 @@ export async function deleteFirestoreDoc(collectionName: string, docId: string):
   }
 }
 
-export async function getAllFirestoreDocs<T = DocumentData>(collectionName: string): Promise<T[]> {
+export async function getAllFirestoreDocs<T = DocumentData>(
+  collectionName: string,
+  options: { failOnError?: boolean } = {}
+): Promise<T[]> {
   const db = getFirestoreDb();
-  if (!db) return [];
+  if (!db) {
+    if (options.failOnError) throw new Error(`Firestore is unavailable while reading ${collectionName}.`);
+    return [];
+  }
   try {
     let snap = await withTimeout(
       getDocs(collection(db, collectionName)),
@@ -140,6 +146,7 @@ export async function getAllFirestoreDocs<T = DocumentData>(collectionName: stri
 
     if (!snap) {
       console.warn(`[Firestore WARN] Failed to retrieve documents from ${collectionName} after retry.`);
+      if (options.failOnError) throw new Error(`Firestore returned no result while reading ${collectionName} after retry.`);
       return [];
     }
     const results: T[] = [];
@@ -149,6 +156,7 @@ export async function getAllFirestoreDocs<T = DocumentData>(collectionName: stri
     return results;
   } catch (err) {
     console.warn(`[Firestore] Failed to list documents in ${collectionName}:`, err);
+    if (options.failOnError) throw err;
     return [];
   }
 }

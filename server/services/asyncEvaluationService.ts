@@ -18,6 +18,7 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
+import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import {
@@ -154,8 +155,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       questionPaper: {
         text: job.referenceQuestionPaperText,
         metadata: {
-          materialId: job.referenceMaterialId || 'ref_qp',
-          version: job.referenceMaterialVersion || '1.0',
+          materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+          version: job.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(job.referenceQuestionPaperText || '', 'utf8').digest('hex'),
           textLength: (job.referenceQuestionPaperText || '').length,
           mtpSeries: job.mtpSeries,
@@ -169,8 +170,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       suggestedAnswers: {
         text: job.referenceSuggestedAnswersText,
         metadata: {
-          materialId: job.referenceMaterialId || 'ref_sa',
-          version: job.referenceMaterialVersion || '1.0',
+          materialId: job.suggestedAnswerMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+          version: job.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(job.referenceSuggestedAnswersText || '', 'utf8').digest('hex'),
           textLength: (job.referenceSuggestedAnswersText || '').length,
           mtpSeries: job.mtpSeries,
@@ -184,8 +185,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       markingScheme: {
         text: job.markingSchemeText || '',
         metadata: {
-          materialId: job.referenceMaterialId || 'ref_ms',
-          version: job.referenceMaterialVersion || '1.0',
+          materialId: job.markingSchemeMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+          version: job.referenceMaterialVersion || 'UNSPECIFIED',
           checksum: crypto.createHash('sha256').update(job.markingSchemeText || '', 'utf8').digest('hex'),
           textLength: (job.markingSchemeText || '').length,
           mtpSeries: job.mtpSeries,
@@ -319,10 +320,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, job.pdfBuf);
       const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
       fs.writeFileSync(checkedFilePath, checkedPdfBuf);
-      checkedCopyStatus = 'READY';
 
       // Persist checked copy to Cloud Storage / persistent cache
-      savePersistentFile(
+      await savePersistentFile(
         `${evaluationId}_checked_copy`,
         `${evaluationId}_checked_copy.pdf`,
         'application/pdf',
@@ -333,7 +333,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           evaluationId,
           instituteId: resolvedSponsoringInstituteId || null,
         }
-      ).catch((e) => console.warn('[AsyncEval] Warning persisting checked copy:', e));
+      );
+      checkedCopyStatus = 'READY';
     } catch (annErr) {
       console.warn('[AsyncEval] Error generating checked copy PDF:', annErr);
     }
@@ -363,10 +364,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       const reportPdfBuf = await generateDetailedReportPdf(reportMeta, evaluationResult);
       const reportFilePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
       fs.writeFileSync(reportFilePath, reportPdfBuf);
-      reportStatus = 'READY';
 
       // Persist detailed report to Cloud Storage / persistent cache
-      savePersistentFile(
+      await savePersistentFile(
         `${evaluationId}_report`,
         `Evaluation_Report_${evaluationId}.pdf`,
         'application/pdf',
@@ -377,7 +377,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           evaluationId,
           instituteId: resolvedSponsoringInstituteId || null,
         }
-      ).catch((e) => console.warn('[AsyncEval] Warning persisting detailed report:', e));
+      );
+      reportStatus = 'READY';
     } catch (reportErr) {
       console.warn('[AsyncEval] Error pre-generating detailed report PDF:', reportErr);
     }
@@ -415,33 +416,111 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(mismatchErr, mismatchErr, evaluationId);
+        // The upload may already have consumed a personal entitlement. A source
+        // binding failure is a protected system failure, so return that credit.
+        if (
+          job.creditAlreadyConsumed &&
+          (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+        ) {
+          refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+        }
         return;
       }
     }
 
-    // Validate authoritative consistency before finalizing
+    // Stage 6: Only finalize after every validation, render, and persistence gate passes.
     const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
-    const finalStatus = consistencyReport.isValid ? 'COMPLETED' : 'NEEDS_REVIEW';
-    if (!consistencyReport.isValid) {
-      console.warn(`[AsyncEval] Evaluation ${evaluationId} flagged for consistency review:`, consistencyReport.errors);
-    }
+    const runPackage = evaluationResult.evaluationRunPackage;
+    const renderManifest = runPackage?.renderManifest;
+    const integrityChecksPassed =
+      consistencyReport.isValid &&
+      evaluationResult.validationStatus === 'VALID' &&
+      evaluationResult.completionGateReport?.isPassed === true &&
+      Boolean(runPackage?.scoreLedger?.isReconciled) &&
+      Boolean(runPackage?.reconciliation?.isFullyReconciled);
+    const artifactsPassed =
+      checkedCopyStatus === 'READY' &&
+      reportStatus === 'READY' &&
+      renderManifest?.isRenderValid === true;
+    const eligibleForFinalization = Boolean(runPackage) && integrityChecksPassed && artifactsPassed;
 
-    // Stage 6: Persist authoritative EvaluationRunPackage and update Database to COMPLETED / NEEDS_REVIEW
-    if (evaluationResult.evaluationRunPackage) {
+    let durablePackagePersisted = false;
+    let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = 'NEEDS_REVIEW';
+    let finalizationErrors: string[] = [];
+    if (runPackage) {
+      const packageToPersist = {
+        ...runPackage,
+        durablePersistenceConfirmed: true,
+        finalizationStatus: eligibleForFinalization ? 'PERSISTED' as const : 'INTEGRITY_FAILED' as const,
+      };
+      evaluationResult.evaluationRunPackage = packageToPersist;
       try {
-        persistEvaluationRunPackageAtomic(evaluationResult.evaluationRunPackage);
+        persistEvaluationRunPackageAtomic(packageToPersist);
+        durablePackagePersisted = true;
         console.log(`[AsyncEval] Durably persisted authoritative EvaluationRunPackage for ${evaluationId}`);
       } catch (persistErr: any) {
-        console.warn(`[AsyncEval] Error persisting EvaluationRunPackage for ${evaluationId}:`, persistErr.message);
+        console.error(`[AsyncEval] Error persisting EvaluationRunPackage for ${evaluationId}:`, persistErr.message);
+        finalizationErrors.push(`EvaluationRunPackage persistence failed: ${persistErr.message}`);
+        evaluationResult.evaluationRunPackage = {
+          ...packageToPersist,
+          durablePersistenceConfirmed: false,
+          finalizationStatus: 'PERSISTENCE_FAILED',
+        };
       }
+
+      if (eligibleForFinalization && durablePackagePersisted) {
+        const finalizationResult = finalizeEvaluationRun({
+          runPackage: evaluationResult.evaluationRunPackage!,
+          evaluationId,
+        });
+        evaluationResult.evaluationRunPackage = finalizationResult.package;
+        if (finalizationResult.success) {
+          finalStatus = 'COMPLETED';
+        } else {
+          finalizationErrors = finalizationResult.errors;
+          console.error(`[AsyncEval] Finalization gate rejected ${evaluationId}:`, finalizationResult.errors);
+          try {
+            persistEvaluationRunPackageAtomic(finalizationResult.package);
+          } catch (persistErr: any) {
+            console.error(`[AsyncEval] Could not persist rejected finalization package for ${evaluationId}:`, persistErr.message);
+          }
+        }
+      }
+    }
+
+    if (finalStatus !== 'COMPLETED') {
+      const reviewErrors = Array.from(new Set([
+        ...(!consistencyReport.isValid ? consistencyReport.errors : []),
+        ...(evaluationResult.validationErrors || []),
+        ...(!integrityChecksPassed && consistencyReport.isValid && evaluationResult.validationStatus === 'VALID'
+          ? ['One or more hard completion checks did not pass.']
+          : []),
+        ...(!artifactsPassed ? ['Checked copy, report, or render verification is not ready.'] : []),
+        ...(!durablePackagePersisted ? ['EvaluationRunPackage persistence was not confirmed.'] : []),
+        ...(renderManifest?.renderErrors || []),
+        ...finalizationErrors,
+      ]));
+      evaluationResult.validationStatus = 'NEEDS_REVIEW';
+      evaluationResult.validationErrors = reviewErrors;
+      evaluationResult.completionGateReport = {
+        ...(evaluationResult.completionGateReport || { passedCount: 0, failedCount: 0, checks: [], timestamp: new Date().toISOString() }),
+        isPassed: false,
+        failedCount: Math.max(1, reviewErrors.length),
+      };
+      evaluationResult.integrityAudit = {
+        ...(evaluationResult.integrityAudit || {}),
+        hardCompletionGatePassed: false,
+        errors: reviewErrors,
+      };
+      console.warn(`[AsyncEval] Evaluation ${evaluationId} remains NEEDS_REVIEW:`, reviewErrors);
     }
 
     db.prepare(`
       UPDATE evaluations
       SET status = ?,
-          progress_stage = 'COMPLETED',
+          progress_stage = ?,
           progress_percentage = 100,
-          progress_message = 'Evaluation complete and verified',
+          progress_message = ?,
           total_marks = ?,
           maximum_marks = ?,
           percentage = ?,
@@ -470,12 +549,16 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           question_sources_json = ?,
           evaluation_run_package_id = COALESCE(?, evaluation_run_package_id),
           score_ledger_total = COALESCE(?, score_ledger_total),
-          durable_persistence_confirmed = 1,
+          durable_persistence_confirmed = ?,
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       finalStatus,
+      finalStatus === 'COMPLETED' ? 'COMPLETED' : 'NEEDS_REVIEW',
+      finalStatus === 'COMPLETED'
+        ? 'Evaluation complete and verified'
+        : 'Integrity checks did not pass. The evaluation is preserved for review; no final score was issued.',
       evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
@@ -522,8 +605,47 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       }))),
       evaluationResult.evaluationRunPackage?.runId || null,
       evaluationResult.evaluationRunPackage?.scoreLedger?.totalAwardedMarks ?? evaluationResult.totalMarks,
+      durablePackagePersisted ? 1 : 0,
       evaluationId
     );
+
+    if (finalStatus !== 'COMPLETED') {
+      // The personal entitlement was charged when the upload was accepted.
+      // Return it when the system could not produce a verified final result.
+      if (
+        job.creditAlreadyConsumed &&
+        (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+      ) {
+        try {
+          refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+          db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+        } catch (refundErr) {
+          console.error(`[AsyncEval] Refund error for review-required evaluation ${evaluationId}:`, refundErr);
+        }
+      }
+
+      try {
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, title, message, type)
+          VALUES (?, ?, ?, ?, 'EVALUATION')
+        `).run(
+          `notif_${crypto.randomBytes(8).toString('hex')}`,
+          studentId,
+          'Evaluation Requires Review',
+          `Your evaluation for ${subjectName} is preserved for review. No final score was issued.`,
+        );
+      } catch (notifErr) {
+        console.warn('[AsyncEval] Error adding review notification:', notifErr);
+      }
+
+      try {
+        const reviewEvalRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        if (reviewEvalRow) syncRecordToFirestore('evaluations', evaluationId, reviewEvalRow as any);
+      } catch (syncErr) {
+        console.warn('[AsyncEval] Error syncing review-required evaluation to Firestore:', syncErr);
+      }
+      return;
+    }
 
     // Stage 7: Consume Credit / Quota ONLY ON SUCCESS
     if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {

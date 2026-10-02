@@ -27,6 +27,7 @@ export interface McqScoringConfig {
   caLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
   paper?: string;
   subjectKey?: string;
+  mcqPageNumbers?: Record<string, number>;
 }
 
 /**
@@ -191,6 +192,7 @@ export interface AuthoritativeMcqDef {
   questionNumber: string;
   subQuestionNumber?: string;
   questionText?: string;
+  sourcePage?: number;
   maximumMarks: number;
   officialKey?: string;
   officialExplanation?: string;
@@ -263,9 +265,9 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
       String(config.subjectKey).includes('economics')
     );
 
-  const matTitle = config.sourceMaterialTitle || 'ICAI Official Suggested Answers (Mock Test Paper Series)';
-  const matVersion = config.sourceMaterialVersion || 'v1.0';
-  const matId = config.sourceMaterialId || 'ICAI_OFFICIAL_SUGGESTED';
+  const matTitle = config.sourceMaterialTitle || 'Source-provided suggested answers';
+  const matVersion = config.sourceMaterialVersion || 'UNSPECIFIED';
+  const matId = config.sourceMaterialId || 'UNSPECIFIED';
 
   const auditTable: McqAuditRecord[] = [];
   const validationErrors: string[] = [];
@@ -319,7 +321,7 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
 
     // Explanations strictly grounded in official suggested answers
     const defaultExp = mcq.officialExplanation || `Authoritative correct option is (${officialKey}).`;
-    const provision = mcq.provision || (parseInt(qNum, 10) <= 8 ? 'Income-tax Act, 1961' : 'Central Goods and Services Tax Act, 2017');
+    const provision = mcq.provision || 'Refer to the authoritative suggested answer for this MCQ.';
 
     let detailedFeedback = '';
     let explanationForAudit = '';
@@ -416,7 +418,7 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
       deductionReason,
       supportingProvision: provision,
       confidence: 100,
-      pageNumber: parseInt(qNum, 10) >= 9 ? 6 : 10,
+      pageNumber: config.mcqPageNumbers?.[qNum] ?? mcq.sourcePage,
       annotationInstructions: isCorrect ? `[OK] Option (${officialKey}) (+${maxMarks}/${maxMarks})` : `[X] Selected (${studentChoice || 'None'}), Official (${officialKey}) (${marksAwarded}/${maxMarks})`,
     };
 
@@ -434,7 +436,7 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
       confidence: 100,
       technicalEvaluation: `Deterministic MCQ comparison: Student (${studentChoice || 'NONE'}) vs Official Key (${officialKey}). Marking Rule: ${markingRule}.`,
       markingComponents: [component],
-      pageNumber: parseInt(qNum, 10) >= 9 ? 6 : 10,
+      pageNumber: config.mcqPageNumbers?.[qNum] ?? mcq.sourcePage,
       referenceTrace: {
         materialId: matId,
         markingSchemeSection: `Section ${mcq.section} - Division A (MCQ ${qNum})`,

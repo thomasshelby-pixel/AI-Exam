@@ -570,8 +570,30 @@ export function refundEvaluationCreditAtomic(params: {
 }): void {
   const { userId, evaluationId, entitlementSource } = params;
   const evalRefId = evaluationId || 'unknown_eval';
+  const refundSource = entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY'
+    ? 'REFUND_MONTHLY_FREE'
+    : 'REFUND_PURCHASED_CREDIT';
+  let transactionStarted = false;
 
   try {
+    db.exec('BEGIN IMMEDIATE;');
+    transactionStarted = true;
+
+    // A background job can be replayed after a crash. With an evaluation ID,
+    // the refund ledger is the idempotency record for that one consumed item.
+    if (evaluationId) {
+      const existingRefund = db.prepare(`
+        SELECT id FROM credit_ledger
+        WHERE student_id = ? AND evaluation_id = ? AND source = ?
+        LIMIT 1
+      `).get(userId, evalRefId, refundSource);
+      if (existingRefund) {
+        db.exec('COMMIT;');
+        transactionStarted = false;
+        return;
+      }
+    }
+
     if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY') {
       db.prepare(`
         UPDATE student_profiles
@@ -635,7 +657,15 @@ export function refundEvaluationCreditAtomic(params: {
         VALUES (?, ?, 1, 'REFUND_PURCHASED_CREDIT', ?, ?, 'Refunded 1 purchased credit due to evaluation processing failure')
       `).run(ledgerId, userId, totalRemaining, evalRefId);
     }
+
+    db.exec('COMMIT;');
+    transactionStarted = false;
   } catch (err) {
+    if (transactionStarted) {
+      try { db.exec('ROLLBACK;'); } catch (rollbackErr) {
+        console.warn(`[StudentCreditService] Rollback error refunding credit for user ${userId}:`, rollbackErr);
+      }
+    }
     console.warn(`[StudentCreditService] Error refunding credit for user ${userId}:`, err);
   }
 }

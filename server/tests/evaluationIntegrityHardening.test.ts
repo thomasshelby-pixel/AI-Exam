@@ -43,6 +43,8 @@ import {
 import { processEvaluationIntegrity } from '../services/evaluationIntegrityEngine.js';
 import { buildStructuredAnnotations } from '../services/pdfCheckedCopyService.js';
 import { EvaluationResult, MarkingComponent, QuestionEvaluation } from '../../src/types/index.js';
+import { createEvaluationReviewResult } from '../services/evaluationReviewResult.js';
+import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 
 console.log('================================================================');
 console.log('--- PRODUCTION-GRADE EVALUATION INTEGRITY HARDENING TEST SUITE ---');
@@ -60,6 +62,60 @@ function assert(condition: boolean, testName: string, detail?: string) {
     console.error(`[FAIL] ${testName}${detail ? ` - ${detail}` : ''}`);
     process.exitCode = 1;
   }
+}
+
+// --------------------------------------------------------------------------
+// TEST G.1: Unmapped pages and parent-only detections stay in review
+// Invariant: Do not remap an ambiguous parent or unidentified page to a child.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST G.1: Unmapped Attempt Preservation ---');
+{
+  const paperStructure: any = {
+    paperTitle: 'Generic CA Paper',
+    totalPaperMaxMarks: 100,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false },
+    ],
+    mcqs: [],
+  };
+  const coverageMap: any = {
+    attemptedQuestions: [
+      { fullQuestionCode: 'Q2', questionNumber: '2', pages: [4], isMcq: false },
+    ],
+    unmappedPages: [7],
+    unclearPages: [],
+  };
+
+  const preGate = validatePreEvaluationGate({ paperStructure, coverageMap });
+  assert(preGate.passed === false, 'Unmapped content and a non-leaf parent must block scoring');
+  assert(preGate.failedInvariants.some((error) => error.includes('UNMAPPED_STUDENT_PAGE')), 'Unknown pages are named in the gate errors');
+  assert(preGate.failedInvariants.some((error) => error.includes('UNMAPPED_ATTEMPT_DETECTED')), 'Parent-only detections are named in the gate errors');
+
+  const reviewResult = createEvaluationReviewResult({
+    evaluationId: 'eval_mapping_review',
+    studentName: 'Candidate',
+    icaiRegistrationNumber: 'Not provided',
+    level: 'INTERMEDIATE',
+    subjectKey: 'generic',
+    subjectName: 'Generic CA Paper',
+    materialType: 'MTP',
+    coverageMap: {
+      totalPages: 8,
+      pages: [],
+      attemptedQuestions: [],
+      allDetectedCodes: [],
+      unmappedPages: [7],
+      unclearPages: [],
+      is100PercentCovered: false,
+      mcqSelections: {},
+    },
+    errors: preGate.failedInvariants,
+  });
+  assert(reviewResult.validationStatus === 'NEEDS_REVIEW', 'The result is explicitly marked NEEDS_REVIEW');
+  assert(reviewResult.questions.length === 0, 'An unresolved attempt must not be assigned a zero-mark question');
+  assert(reviewResult.coverageMap?.unmappedPages[0] === 7, 'The page remains explicitly recoverable');
+  assert(reviewResult.completionGateReport?.isPassed === false, 'The hard completion gate remains failed');
 }
 
 // --------------------------------------------------------------------------
@@ -207,6 +263,34 @@ console.log('\n--- TEST F: Missing Attempted Answer ---');
     gateResult.errors.some((e) => e.includes('ATTEMPTED_ANSWER_DROPPED') && e.includes('Q2(a)')),
     'TEST F.2: Explicit error raised for dropped question Q2(a)'
   );
+}
+
+// --------------------------------------------------------------------------
+// TEST G.2: MCQ annotations follow detected student pages
+// Invariant: Canonical MCQ identity stays explicit and page numbers are not inferred.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST G.2: MCQ Page Mapping ---');
+{
+  const mcqResults = evaluateAllAuthoritativeMcqs(
+    [
+      { fullQuestionCode: 'MCQ1', questionNumber: '1', maximumMarks: 1, officialKey: 'B', section: 'A' },
+      { fullQuestionCode: 'MCQ12', questionNumber: '12', maximumMarks: 1, officialKey: 'C', section: 'B' },
+    ],
+    { '1': 'B', '12': 'C' },
+    {
+      caLevel: 'INTERMEDIATE',
+      paper: 'Paper 3',
+      subjectKey: 'generic',
+      mcqPageNumbers: { '1': 3, '12': 8 },
+      sourceMaterialId: 'source-test',
+      sourceMaterialVersion: 'v1',
+      sourceMaterialTitle: 'Test source',
+    },
+  );
+  assert(mcqResults[0].questionNumber === 'MCQ 1' && mcqResults[0].pageNumber === 3 && mcqResults[0].markingComponents?.[0].pageNumber === 3,
+    'MCQ1 retains its canonical number and detected page');
+  assert(mcqResults[1].questionNumber === 'MCQ 12' && mcqResults[1].pageNumber === 8 && mcqResults[1].markingComponents?.[0].pageNumber === 8,
+    'MCQ12 retains its canonical number and detected page');
 }
 
 // --------------------------------------------------------------------------

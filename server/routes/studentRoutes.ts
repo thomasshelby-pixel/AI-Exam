@@ -1414,7 +1414,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     const reportReady = record.report_status === 'READY' || fs.existsSync(reportPath);
 
     let resultJson: any = null;
-    if (record.status === 'COMPLETED' && record.result_json) {
+    if ((record.status === 'COMPLETED' || record.status === 'NEEDS_REVIEW') && record.result_json) {
       try {
         resultJson = JSON.parse(record.result_json);
       } catch {
