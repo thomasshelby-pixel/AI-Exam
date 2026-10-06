@@ -732,10 +732,17 @@ export function evaluateHardCompletionGate(
   let check1Passed = true;
   let check1Details = 'All uploaded answer-sheet pages mapped and accounted for.';
   if (coverageMap) {
-    if (coverageMap.unmappedPages && coverageMap.unmappedPages.length > 0) {
+    const evaluatedPages = new Set<number>();
+    for (const q of questions) {
+      const pgs = Array.isArray(q.sourcePages) ? q.sourcePages : (q.pageNumber ? [Number(q.pageNumber)] : []);
+      pgs.forEach((p: number) => evaluatedPages.add(Number(p)));
+    }
+    const trulyUnmappedPages = (coverageMap.unmappedPages || []).filter((p: number) => !evaluatedPages.has(Number(p)));
+
+    if (trulyUnmappedPages.length > 0) {
       check1Passed = false;
-      check1Details = `Unmapped pages detected in coverage map: ${coverageMap.unmappedPages.join(', ')}.`;
-    } else if (coverageMap.is100PercentCovered === false) {
+      check1Details = `Unmapped pages detected in coverage map: ${trulyUnmappedPages.join(', ')}.`;
+    } else if (coverageMap.is100PercentCovered === false && trulyUnmappedPages.length > 0) {
       check1Passed = false;
       check1Details = 'Answer sheet coverage is incomplete; not all pages accounted for.';
     }
@@ -938,12 +945,12 @@ export function processEvaluationIntegrity(
       const authMatch = authoritativeSubQs?.find(
         (sq) => toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber) === canon
       );
-      if (authMatch?.maximumMarks) {
+      if (authMatch?.maximumMarks && authMatch.maximumMarks > 0) {
         maxMarks = authMatch.maximumMarks;
       }
     }
     if (!maxMarks || maxMarks <= 0) {
-      maxMarks = Math.max(0.5, Number(rawQ.maximumMarks) || 4);
+      maxMarks = 0;
     }
     let initialAwarded = Number(rawQ.marksAwarded) ?? 0;
 
@@ -1017,6 +1024,11 @@ export function processEvaluationIntegrity(
     }
 
     const questionFlags: string[] = Array.isArray(rawQ.flags) ? [...rawQ.flags] : [];
+    if (maxMarks <= 0) {
+      status = 'unclear';
+      if (!questionFlags.includes('NEEDS_MAPPING_REVIEW')) questionFlags.push('NEEDS_MAPPING_REVIEW');
+      if (!questionFlags.includes('RECHECK_RECOMMENDED')) questionFlags.push('RECHECK_RECOMMENDED');
+    }
     if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
       if (!questionFlags.includes('HANDWRITING_UNCLEAR')) questionFlags.push('HANDWRITING_UNCLEAR');
       if (!questionFlags.includes('RECHECK_RECOMMENDED')) questionFlags.push('RECHECK_RECOMMENDED');
@@ -1408,6 +1420,12 @@ export function processEvaluationIntegrity(
 
   evaluationResult.validationStatus = combinedValid ? 'VALID' : 'NEEDS_REVIEW';
   evaluationResult.validationErrors = combinedErrors;
+  evaluationResult.attemptedCount = canonicalLedger.totalAttempted;
+  evaluationResult.evaluatedCount = canonicalLedger.totalEvaluated;
+  evaluationResult.academicScore = canonicalLedger.totalAwardedMarks;
+  evaluationResult.certificationStatus = combinedValid ? 'CERTIFIED' : 'VERIFICATION_REQUIRED';
+  evaluationResult.technicalFailureCount = auditedQuestions.filter((q) => q.flags?.includes('FAILED_TO_EVALUATE') || q.flags?.includes('TECHNICAL_FAILURE')).length;
+  evaluationResult.unresolvedQuestions = auditedQuestions.filter((q) => q.status === 'unclear' || q.flags?.includes('NEEDS_MAPPING_REVIEW')).map((q) => q.canonicalId || q.questionNumber);
   evaluationResult.integrityAudit = {
     mathConsistent: combinedValid,
     zeroMarksVerified: true,

@@ -6,7 +6,6 @@ import { savePersistentFile } from './persistentStorageService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { generateCheckedCopyPdf, generateDetailedReportPdf, buildStructuredAnnotations } from './pdfCheckedCopyService.js';
 import { PDFDocument } from 'pdf-lib';
-import { computeIcaIGrade } from './authoritativeBenchmarkEvaluator.js';
 
 export interface ConsistencyVerificationResult {
   success: boolean;

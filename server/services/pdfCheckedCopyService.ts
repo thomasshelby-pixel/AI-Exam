@@ -450,7 +450,24 @@ export function buildStructuredAnnotations(
       continue;
     }
 
-    const targetPage = rec.annotationPage || (rec.studentPages && rec.studentPages.length > 0 ? rec.studentPages[0] : 1);
+    let targetPage = rec.annotationPage;
+    if (!targetPage && rec.studentPages && rec.studentPages.length > 0) {
+      if (rec.studentPages.length > 1) {
+        let minPage = rec.studentPages[0];
+        let minCount = (pagesMap.get(minPage) || []).length;
+        for (const p of rec.studentPages) {
+          const count = (pagesMap.get(p) || []).length;
+          if (count < minCount) {
+            minCount = count;
+            minPage = p;
+          }
+        }
+        targetPage = minPage;
+      } else {
+        targetPage = rec.studentPages[0];
+      }
+    }
+    targetPage = targetPage || 1;
     const safeTargetPage = Math.min(Math.max(1, targetPage), safeTotalPages);
 
     // Section 4: MCQ Rendering Contract
@@ -709,6 +726,29 @@ export async function generateCheckedCopyPdf(
     const marginWidth = 140;
     const marginX = width - marginWidth - 8;
     let currY = height - 70;
+    const availableHeightOnPage = (height - 70) - 85;
+
+    // Estimate standard required height to determine if this page needs adaptive compact layout
+    let estimatedStandardHeight = 0;
+    for (const qAnn of pageAnnotations) {
+      const isMcq = qAnn.questionNumber.startsWith('MCQ');
+      if (isMcq) {
+        const optionStep = qAnn.steps[0];
+        const rawFeedback = optionStep?.comment || '';
+        const lineCount = rawFeedback ? Math.min(3, Math.ceil(rawFeedback.length / 32)) : 0;
+        estimatedStandardHeight += Math.max(42, 40 + lineCount * 7) + 6;
+      } else {
+        estimatedStandardHeight += 44;
+        for (const st of qAnn.steps) {
+          const rawComment = st.comment || st.stepName || '';
+          const lineCount = rawComment ? Math.min(3, Math.ceil(rawComment.length / 24)) : 0;
+          estimatedStandardHeight += 18 + lineCount * 9 + 4;
+        }
+        estimatedStandardHeight += 6;
+      }
+    }
+
+    const isCompactMode = estimatedStandardHeight > availableHeightOnPage;
 
     for (const qAnn of pageAnnotations) {
       const isMcqAnnotation = qAnn.questionNumber.startsWith('MCQ');
@@ -724,67 +764,84 @@ export async function generateCheckedCopyPdf(
       if (mcqFeedback) {
         const words = mcqFeedback.split(/\s+/);
         let line = '';
+        const maxLines = isCompactMode ? 2 : 5;
         for (const word of words) {
           if ((line + ' ' + word).trim().length <= 36) {
             line = (line + ' ' + word).trim();
           } else {
             if (line) mcqFeedbackLines.push(line);
+            if (mcqFeedbackLines.length >= maxLines) break;
             line = word;
           }
         }
-        if (line) mcqFeedbackLines.push(line);
+        if (line && mcqFeedbackLines.length < maxLines) mcqFeedbackLines.push(line);
       }
-      const mcqCardHeight = Math.max(42, 40 + mcqFeedbackLines.length * 7);
+      const mcqCardHeight = isCompactMode
+        ? Math.max(36, 32 + mcqFeedbackLines.length * 6)
+        : Math.max(42, 40 + mcqFeedbackLines.length * 7);
       const preparedSteps = qAnn.steps.map((st) => {
         const commentLines: string[] = [];
         const rawComment = st.comment || st.stepName;
         if (rawComment) {
           const words = rawComment.split(/\s+/);
           let line = '';
+          const maxLines = isCompactMode ? 2 : 4;
           for (const word of words) {
             if ((line + ' ' + word).trim().length <= 26) {
               line = (line + ' ' + word).trim();
             } else {
               if (line) commentLines.push(line);
+              if (commentLines.length >= maxLines) break;
               line = word;
             }
           }
-          if (line) commentLines.push(line);
+          if (line && commentLines.length < maxLines) {
+            commentLines.push(line);
+          } else if (commentLines.length > 0 && commentLines.length >= maxLines && !commentLines[commentLines.length - 1].endsWith('...')) {
+            commentLines[commentLines.length - 1] = commentLines[commentLines.length - 1].slice(0, 23) + '...';
+          }
         }
+        const bHeight = isCompactMode
+          ? Math.max(16, 12 + commentLines.length * 7.5)
+          : 18 + commentLines.length * 9;
         return {
           step: st,
           displayLines: commentLines,
-          boxHeight: 18 + commentLines.length * 9,
+          boxHeight: bHeight,
         };
       });
 
       // Preflight the whole canonical annotation before drawing any of it. A
       // page-height limit is an integrity failure, never a reason to drop the
       // current question or its remaining steps silently.
+      const qHeaderHeight = isCompactMode ? 30 : 36;
+      const qHeaderAdvance = isCompactMode ? 36 : 44;
+      const stepGap = isCompactMode ? 2.5 : 4;
+
       if (isMcqAnnotation) {
         if (currY - mcqCardHeight < 85) {
           rejectIncompletePhysicalRender(`MCQ annotation ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
         }
       } else {
         let plannedY = currY;
-        if (plannedY - 36 < 85) {
+        if (plannedY - qHeaderHeight < 85) {
           rejectIncompletePhysicalRender(`Question annotation ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
         }
-        plannedY -= 44;
+        plannedY -= qHeaderAdvance;
         for (const prepared of preparedSteps) {
           if (plannedY - prepared.boxHeight + 8 < 85) {
             rejectIncompletePhysicalRender(`Step marking for ${qAnn.canonicalId || qAnn.questionNumber} does not fit on source page ${pageNumber}.`);
           }
-          plannedY -= prepared.boxHeight + 4;
+          plannedY -= prepared.boxHeight + stepGap;
         }
       }
 
       // Question Score Box
       page.drawRectangle({
         x: marginX,
-        y: currY - (isMcqAnnotation ? mcqCardHeight : 36),
+        y: currY - (isMcqAnnotation ? mcqCardHeight : qHeaderHeight),
         width: marginWidth,
-        height: isMcqAnnotation ? mcqCardHeight : 36,
+        height: isMcqAnnotation ? mcqCardHeight : qHeaderHeight,
         color: rgb(1, 0.97, 0.97),
         borderColor: redExaminer,
         borderWidth: 1.2,
@@ -796,16 +853,16 @@ export async function generateCheckedCopyPdf(
 
       safeDrawText(page, qDisplay, {
         x: marginX + 6,
-        y: currY - 14,
-        size: 9.5,
+        y: currY - (isCompactMode ? 12 : 14),
+        size: isCompactMode ? 8.5 : 9.5,
         font: helveticaBold,
         color: redExaminer,
       });
 
       safeDrawText(page, `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
-        x: marginX + 50,
-        y: currY - 14,
-        size: 10.5,
+        x: marginX + (isCompactMode ? 46 : 50),
+        y: currY - (isCompactMode ? 12 : 14),
+        size: isCompactMode ? 9.5 : 10.5,
         font: helveticaBold,
         color: redExaminer,
       });
@@ -813,30 +870,30 @@ export async function generateCheckedCopyPdf(
       if (isMcqAnnotation) {
         safeDrawText(page, `Selected: ${selectedOption} | Key: ${officialKey}`, {
           x: marginX + 6,
-          y: currY - 26,
-          size: 5.8,
+          y: currY - (isCompactMode ? 22 : 26),
+          size: isCompactMode ? 5.2 : 5.8,
           font: helveticaBold,
           color: darkSlate,
         });
         safeDrawText(page, `MCQ ${mcqStatus}`, {
           x: marginX + 6,
-          y: currY - 35,
-          size: 5.8,
+          y: currY - (isCompactMode ? 30 : 35),
+          size: isCompactMode ? 5.2 : 5.8,
           font: helveticaBold,
           color: qAnn.marksAwarded >= qAnn.maxMarks ? greenExaminer : redExaminer,
         });
-        let feedbackY = currY - 44;
+        let feedbackY = currY - (isCompactMode ? 38 : 44);
         for (const feedbackLine of mcqFeedbackLines) {
           safeDrawText(page, feedbackLine, {
             x: marginX + 6,
             y: feedbackY,
-            size: 5.2,
+            size: isCompactMode ? 4.8 : 5.2,
             font: helvetica,
             color: darkSlate,
           });
-          feedbackY -= 7;
+          feedbackY -= (isCompactMode ? 6 : 7);
         }
-        currY -= mcqCardHeight + 6;
+        currY -= mcqCardHeight + (isCompactMode ? 4 : 6);
         physicallyRenderedAnnotations.push({
           pageNumber,
           questionNumber: qAnn.questionNumber,
@@ -849,13 +906,13 @@ export async function generateCheckedCopyPdf(
 
       safeDrawText(page, 'STEP-WISE EVALUATION', {
         x: marginX + 6,
-        y: currY - 28,
-        size: 6.5,
+        y: currY - (isCompactMode ? 24 : 28),
+        size: isCompactMode ? 5.8 : 6.5,
         font: helveticaBold,
         color: darkSlate,
       });
 
-      currY -= 44;
+      currY -= qHeaderAdvance;
 
       // Render Individual Step Markings
       for (const { step: st, displayLines, boxHeight } of preparedSteps) {
@@ -876,54 +933,55 @@ export async function generateCheckedCopyPdf(
         });
 
         if (isCorrect) {
-          drawCheckmark(page, marginX + 4, currY, greenExaminer);
+          drawCheckmark(page, marginX + 4, currY - (isCompactMode ? 1 : 0), greenExaminer);
         } else if (isPartial) {
           page.drawRectangle({
             x: marginX + 4,
-            y: currY - 2,
-            width: 7,
-            height: 7,
+            y: currY - (isCompactMode ? 3 : 2),
+            width: isCompactMode ? 6 : 7,
+            height: isCompactMode ? 6 : 7,
             borderColor: amberExaminer,
             borderWidth: 1.2,
           });
         } else {
-          drawCrossmark(page, marginX + 4, currY, redExaminer);
+          drawCrossmark(page, marginX + 4, currY - (isCompactMode ? 1 : 0), redExaminer);
         }
 
         safeDrawText(page, `+${st.marksAwarded}/${st.maxMarks}`, {
-          x: marginX + 18,
-          y: currY,
-          size: 7.5,
+          x: marginX + (isCompactMode ? 16 : 18),
+          y: currY - (isCompactMode ? 1 : 0),
+          size: isCompactMode ? 6.8 : 7.5,
           font: helveticaBold,
           color: markColor,
         });
 
         // Step Name / Component tag (expanded to avoid truncation)
-        const stepNameClean = st.stepName.length > 45 ? `${st.stepName.slice(0, 42)}...` : st.stepName;
+        const maxStepChars = isCompactMode ? 38 : 45;
+        const stepNameClean = st.stepName.length > maxStepChars ? `${st.stepName.slice(0, maxStepChars - 3)}...` : st.stepName;
         safeDrawText(page, stepNameClean, {
-          x: marginX + 54,
-          y: currY,
-          size: 6.2,
+          x: marginX + (isCompactMode ? 48 : 54),
+          y: currY - (isCompactMode ? 1 : 0),
+          size: isCompactMode ? 5.6 : 6.2,
           font: helveticaBold,
           color: darkSlate,
         });
 
-        let lineY = currY - 9;
+        let lineY = currY - (isCompactMode ? 8 : 9);
         for (const cl of displayLines) {
           safeDrawText(page, cl, {
             x: marginX + 6,
             y: lineY,
-            size: 5.8,
+            size: isCompactMode ? 5.2 : 5.8,
             font: helvetica,
             color: isPartial ? darkSlate : isCorrect ? darkSlate : redExaminer,
           });
-          lineY -= 8.5;
+          lineY -= (isCompactMode ? 7.5 : 8.5);
         }
 
-        currY -= (boxHeight + 4);
+        currY -= (boxHeight + stepGap);
       }
 
-      currY -= 6;
+      currY -= (isCompactMode ? 4 : 6);
       physicallyRenderedAnnotations.push({
         pageNumber,
         questionNumber: qAnn.questionNumber,

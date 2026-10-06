@@ -41,6 +41,8 @@ export interface PreEvaluationValidationResult {
   status: 'PROCEED' | 'REVIEW_REQUIRED';
   failureReason?: string;
   failedInvariants: string[];
+  criticalFailures?: string[];
+  warnings?: string[];
   auditTrail: PreEvaluationAuditTrail;
 }
 
@@ -110,6 +112,8 @@ export function validatePreEvaluationGate(params: {
   subjectName?: string;
 }): PreEvaluationValidationResult {
   const failedInvariants: string[] = [];
+  const criticalFailures: string[] = [];
+  const warnings: string[] = [];
   const sourceConflicts: string[] = [];
   const unclearPages: number[] = [];
 
@@ -119,18 +123,24 @@ export function validatePreEvaluationGate(params: {
   const subQs = paperStructure?.subQuestions || [];
   const mcqs = paperStructure?.mcqs || [];
   if (subQs.length === 0 && mcqs.length === 0) {
-    failedInvariants.push('QUESTION_PAPER_NOT_PARSED: No valid question nodes found in authoritative structure.');
+    const msg = 'QUESTION_PAPER_NOT_PARSED: No valid question nodes found in authoritative structure.';
+    failedInvariants.push(msg);
+    criticalFailures.push(msg);
   }
 
   // 2. Canonical question map valid: check for malformed IDs like Q3(b(b))
   for (const sq of subQs) {
     const canon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
     if (/\([a-z0-9]+\([a-z0-9]+\)\)/i.test(canon) && !canon.includes('(1)') && !canon.includes('(2)')) {
-      failedInvariants.push(`MALFORMED_CANONICAL_ID: ${canon} contains illegal recursive nesting.`);
+      const msg = `MALFORMED_CANONICAL_ID: ${canon} contains illegal recursive nesting.`;
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
     }
     // Check maximum marks available (must be > 0)
     if (!sq.maximumMarks || sq.maximumMarks <= 0) {
-      failedInvariants.push(`INVALID_MAXIMUM_MARKS: Question ${canon} has invalid maximumMarks (${sq.maximumMarks}).`);
+      const msg = `INVALID_MAXIMUM_MARKS: Question ${canon} has invalid maximumMarks (${sq.maximumMarks}).`;
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
     }
   }
 
@@ -138,10 +148,14 @@ export function validatePreEvaluationGate(params: {
   if (mcqs.length > 0) {
     for (const mcq of mcqs) {
       if (!mcq.officialKey || !['A', 'B', 'C', 'D'].includes(mcq.officialKey.toUpperCase())) {
-        failedInvariants.push(`MISSING_OFFICIAL_MCQ_KEY: MCQ ${mcq.questionNumber} lacks a verified authoritative answer key.`);
+        const msg = `MISSING_OFFICIAL_MCQ_KEY: MCQ ${mcq.questionNumber} lacks a verified authoritative answer key.`;
+        failedInvariants.push(msg);
+        criticalFailures.push(msg);
       }
       if (!mcq.maximumMarks || mcq.maximumMarks <= 0) {
-        failedInvariants.push(`INVALID_MCQ_MAX_MARKS: MCQ ${mcq.questionNumber} has non-positive maximumMarks (${mcq.maximumMarks}).`);
+        const msg = `INVALID_MCQ_MAX_MARKS: MCQ ${mcq.questionNumber} has non-positive maximumMarks (${mcq.maximumMarks}).`;
+        failedInvariants.push(msg);
+        criticalFailures.push(msg);
       }
     }
   }
@@ -156,6 +170,7 @@ export function validatePreEvaluationGate(params: {
     if (/Foundation/i.test(questionPaperText) && /Final/i.test(suggestedAnswersText)) {
       sourceConflicts.push('CRITICAL_SOURCE_CONFLICT: Question Paper mentions Foundation but Suggested Answer mentions Final.');
       failedInvariants.push('SOURCE_CONFLICT_COURSE_LEVEL_MISMATCH');
+      criticalFailures.push('SOURCE_CONFLICT_COURSE_LEVEL_MISMATCH');
     }
   }
 
@@ -164,13 +179,17 @@ export function validatePreEvaluationGate(params: {
     // Check for degraded scans or illegible handwriting markers
     if (coverageMap.unclearPages && Array.isArray(coverageMap.unclearPages)) {
       unclearPages.push(...coverageMap.unclearPages);
+      if (coverageMap.unclearPages.length > 0) {
+        warnings.push(`HANDWRITING_UNCLEAR_PAGES: Pages [${coverageMap.unclearPages.join(', ')}] flagged for unclear handwriting.`);
+      }
     }
 
     // Pages whose question identity could not be established remain protected
-    // attempts until a reviewer can map them. They must not be scored by a
-    // positional or guessed question mapping.
+    // attempts until a reviewer can map them.
     for (const pageNumber of coverageMap.unmappedPages || []) {
-      failedInvariants.push(`UNMAPPED_STUDENT_PAGE: Page ${pageNumber} contains content that has not been mapped to an authoritative question.`);
+      const msg = `UNMAPPED_STUDENT_PAGE: Page ${pageNumber} contains content that has not been mapped to an authoritative question.`;
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
     }
 
     // Check detected attempted questions against canonical Question Paper
@@ -189,6 +208,7 @@ export function validatePreEvaluationGate(params: {
           const message = `UNMAPPED_ATTEMPT_DETECTED: Candidate attempted ${attemptCanon} which does not exist as a canonical question in the Question Paper.`;
           sourceConflicts.push(message);
           failedInvariants.push(message);
+          criticalFailures.push(message);
         }
       }
     }
@@ -215,6 +235,8 @@ export function validatePreEvaluationGate(params: {
     status: passed ? 'PROCEED' : 'REVIEW_REQUIRED',
     failureReason: passed ? undefined : failedInvariants.join(' | '),
     failedInvariants,
+    criticalFailures,
+    warnings,
     auditTrail,
   };
 }

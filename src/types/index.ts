@@ -652,6 +652,15 @@ export interface EvaluationResult {
   canonicalLedger?: CanonicalEvaluationLedger;
   reconciliationSection?: EvaluationReconciliationSection;
   evaluationRunPackage?: EvaluationRunPackage;
+
+  // Explicit State Separation (Section 2)
+  attemptedCount?: number;
+  evaluatedCount?: number;
+  academicScore?: number;
+  certificationStatus?: 'CERTIFIED' | 'VERIFICATION_REQUIRED' | 'PENDING' | 'RECHECK_REQUIRED';
+  technicalFailureCount?: number;
+  unresolvedQuestions?: string[];
+  isTechnicalReviewState?: boolean;
 }
 
 export type CanonicalQuestionType = 'DESCRIPTIVE' | 'MCQ' | 'CASE_SCENARIO' | 'PRACTICAL';
@@ -815,6 +824,8 @@ export interface CanonicalEvaluationRecord {
   readonly stepMarkingBreakdown?: any[];
   readonly markingComponents?: MarkingComponent[];
   readonly reconciliationNotes?: string[];
+  readonly isTechnicalFailure?: boolean;
+  readonly technicalFailureReason?: string;
 }
 
 export interface RenderManifestItem {

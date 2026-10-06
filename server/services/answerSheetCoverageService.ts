@@ -73,9 +73,17 @@ export function resolveContextualQuestionIdentity(options: {
   const context = previousActiveQuestion
     ? parseCanonicalQuestionIdentity(previousActiveQuestion)
     : undefined;
-  const isContextAnchored = parentQuestionNumberVisible === false;
+  const hasExplicitParentNumber = Boolean(
+    String(questionNumber || '')
+      .replace(/[^0-9]/g, '')
+      .trim()
+  );
+  const isContextAnchored =
+    parentQuestionNumberVisible === false ||
+    (!hasExplicitParentNumber && parentQuestionNumberVisible === undefined);
   const parentWasUnspecifiedAndConflicts =
     parentQuestionNumberVisible === undefined &&
+    hasExplicitParentNumber &&
     Boolean(context && detected.subQuestion && detected.parentQuestionId !== context.parentQuestionId);
 
   if (parentWasUnspecifiedAndConflicts) {
@@ -118,13 +126,13 @@ export function resolveContextualQuestionIdentity(options: {
   // A bare label can mean another leaf under the active parent (Q3(b) then
   // (a) => Q3(a)), or a nested part under the current leaf. Resolve only when
   // the supplied paper structure identifies exactly one of those candidates.
-  const candidates = [
-    toCanonicalQuestionId(context.parentQuestionId, subPart, authoritativeLeaves),
-    parseCanonicalQuestionIdentity(`${context.canonicalId}(${subPart})`).canonicalId,
-  ];
-  const matches = authoritativeLeaves.filter((question) =>
-    candidates.some((candidate) => question.fullQuestionCode.toLowerCase() === candidate.toLowerCase())
-  );
+  const siblingCandidate = toCanonicalQuestionId(context.parentQuestionId, subPart, authoritativeLeaves);
+  const nestedCandidate = `${context.canonicalId}(${subPart})`.toLowerCase();
+
+  const matches = authoritativeLeaves.filter((question) => {
+    const code = question.fullQuestionCode.toLowerCase();
+    return code === siblingCandidate.toLowerCase() || code === nestedCandidate;
+  });
   const uniqueMatches = Array.from(new Map(matches.map((question) => [question.fullQuestionCode.toLowerCase(), question])).values());
 
   if (uniqueMatches.length === 1) {
@@ -166,6 +174,7 @@ export interface AnswerCoverageMap {
   allDetectedCodes: string[];
   unmappedPages: number[];
   unclearPages: number[];
+  coveredPages?: number[];
   is100PercentCovered: boolean;
   mcqSelections: Record<string, string>; // e.g. { '1': 'C', '9': 'A' }
 }
@@ -299,6 +308,10 @@ export async function buildAnswerSheetCoverageMap(
     (p) => p.status !== 'QUESTION_NOT_IDENTIFIED' && p.status !== 'PAGE_UNREADABLE'
   );
 
+  const coveredPages = pageRecords
+    .filter((p) => p.status !== 'CLEARLY_UNATTEMPTED')
+    .map((p) => p.pageNumber);
+
   const coverageResult: AnswerCoverageMap = {
     totalPages,
     pages: pageRecords,
@@ -306,6 +319,7 @@ export async function buildAnswerSheetCoverageMap(
     allDetectedCodes,
     unmappedPages,
     unclearPages,
+    coveredPages,
     is100PercentCovered,
     mcqSelections,
   };
@@ -461,6 +475,27 @@ Return strictly valid JSON with this schema:
           snippet: `MCQ ${num} selected option: ${opt}`,
           studentSelectedOption: String(opt).trim().toUpperCase(),
         });
+      }
+    }
+
+    // If no explicit question headings were found on this page, but it has handwriting and indicates continuation of previous active question:
+    if (
+      detectedQuestions.length === 0 &&
+      (raw.isContinuation === true || String(raw.summary || '').toLowerCase().includes('continuation')) &&
+      previousActiveQuestion
+    ) {
+      const parsed = parseCanonicalQuestionIdentity(previousActiveQuestion);
+      if (parsed.questionNumber && !parsed.isMcq) {
+        detectedQuestions.push({
+          fullQuestionCode: parsed.canonicalId,
+          questionNumber: parsed.questionNumber,
+          subQuestionNumber: parsed.subQuestion,
+          status: status === 'QUESTION_NOT_IDENTIFIED' ? 'ATTEMPTED_READABLE' : status,
+          isContinuation: true,
+          pageNumber,
+          snippet: summary,
+        });
+        status = status === 'QUESTION_NOT_IDENTIFIED' ? 'ATTEMPTED_READABLE' : status;
       }
     }
 

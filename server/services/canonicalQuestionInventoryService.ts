@@ -108,12 +108,15 @@ export function buildCanonicalQuestionInventory(options: {
     const isAlt = Boolean(sq.fullQuestionCode?.toLowerCase().includes('or') || (sq as any).isAlternative);
     const altGroup = isAlt ? `ALT_${parsed.questionNumber}` : undefined;
 
+    const rawSqMax = Number(sq.maximumMarks);
+    const sqMax = Number.isFinite(rawSqMax) && rawSqMax > 0 ? rawSqMax : 0;
+
     items.push({
       questionId: canonicalId,
       parentQuestionId: parsed.parentQuestionId,
       subQuestionId: parsed.subQuestion,
       questionType: 'DESCRIPTIVE',
-      maxMarks: Number(sq.maximumMarks) || 4,
+      maxMarks: sqMax,
       sourceOrder: sourceOrder++,
       alternativeGroupId: altGroup,
       canonicalTextAnchor: sq.topic || `Question ${canonicalId}`,
@@ -128,12 +131,14 @@ export function buildCanonicalQuestionInventory(options: {
       if (q.subQuestions && q.subQuestions.length > 0) {
         for (const sq of q.subQuestions) {
           const canonicalId = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
+          const rawSqSubMax = Number(sq.maximumMarks);
+          const sqSubMax = Number.isFinite(rawSqSubMax) && rawSqSubMax > 0 ? rawSqSubMax : 0;
           items.push({
             questionId: canonicalId,
             parentQuestionId: `Q${q.questionNumber}`,
             subQuestionId: sq.subQuestionNumber,
             questionType: sq.isMcq ? 'MCQ' : 'DESCRIPTIVE',
-            maxMarks: Number(sq.maximumMarks) || 4,
+            maxMarks: sqSubMax,
             sourceOrder: sourceOrder++,
             isAlternative: false,
             isRequiredOrOptional: q.compulsory ? 'REQUIRED' : 'OPTIONAL',
@@ -141,10 +146,12 @@ export function buildCanonicalQuestionInventory(options: {
         }
       } else {
         const canonicalId = `Q${q.questionNumber}`;
+        const rawQMax = Number(q.maximumMarks);
+        const qMax = Number.isFinite(rawQMax) && rawQMax > 0 ? rawQMax : 0;
         items.push({
           questionId: canonicalId,
           questionType: 'DESCRIPTIVE',
-          maxMarks: Number(q.maximumMarks) || 10,
+          maxMarks: qMax,
           sourceOrder: sourceOrder++,
           isAlternative: false,
           isRequiredOrOptional: q.compulsory ? 'REQUIRED' : 'OPTIONAL',
@@ -463,6 +470,7 @@ export function buildCanonicalEvaluationLedger(options: {
   const { runId, inventory, attemptedMap, evaluatedQuestions, selectedAlternatives = {} } = options;
   const records: CanonicalEvaluationRecord[] = [];
   const errors: string[] = [];
+  const pageLoadMap = new Map<number, number>();
 
   // Index evaluated questions by canonical ID
   const evalMap = new Map<string, QuestionEvaluation>();
@@ -499,10 +507,19 @@ export function buildCanonicalEvaluationLedger(options: {
     let rendered = true;
 
     if (isAttempted) {
-      if (evaluation) {
+      const isTechFail = Boolean(
+        evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
+        evaluation?.flags?.includes('TECHNICAL_FAILURE')
+      );
+      if (evaluation && !isTechFail) {
         status = 'EVALUATED';
         awardedMarks = Number(evaluation.marksAwarded) || 0;
         counted = isSelectedAlternative; // Counted only if selected alternative (or non-alternative)
+      } else if (evaluation && isTechFail) {
+        status = 'FAILED_TO_EVALUATE';
+        awardedMarks = 0;
+        counted = false;
+        errors.push(`ATTEMPTED_QUESTION_FAILED_EVALUATION: Attempted question ${canonId} encountered a technical issue and requires review.`);
       } else {
         status = 'FAILED_TO_EVALUATE';
         errors.push(`ATTEMPTED_QUESTION_NOT_EVALUATED: Attempted question ${canonId} was not evaluated.`);
@@ -518,7 +535,24 @@ export function buildCanonicalEvaluationLedger(options: {
     }
 
     const studentPages = attempt && Array.isArray(attempt.sourcePages) ? attempt.sourcePages : [];
-    const annotationPage = studentPages.length > 0 ? studentPages[0] : (item.sourcePage || 1);
+    let annotationPage = studentPages.length > 0 ? studentPages[0] : (item.sourcePage || 1);
+    if (studentPages.length > 1) {
+      // For questions spanning multiple student pages, distribute to the least-loaded student page
+      // so annotations are balanced across valid student answer sheets.
+      let minPage = studentPages[0];
+      let minLoad = pageLoadMap.get(minPage) || 0;
+      for (const p of studentPages) {
+        const load = pageLoadMap.get(p) || 0;
+        if (load < minLoad) {
+          minLoad = load;
+          minPage = p;
+        }
+      }
+      annotationPage = minPage;
+    }
+    if (isAttempted && status === 'EVALUATED') {
+      pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
+    }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
     const annotationRequired = isAttempted && isSelectedAlternative && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE');
 
@@ -552,6 +586,8 @@ export function buildCanonicalEvaluationLedger(options: {
       evidence: attempt?.evidence,
       stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
       markingComponents: evaluation?.markingComponents,
+      isTechnicalFailure: Boolean(evaluation?.flags?.includes('FAILED_TO_EVALUATE') || evaluation?.flags?.includes('TECHNICAL_FAILURE')),
+      technicalFailureReason: evaluation?.reasonForDeduction,
     });
   }
 

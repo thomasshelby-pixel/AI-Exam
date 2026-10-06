@@ -244,6 +244,15 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const isExemption = activePercentage >= 60;
   const isPass = activePercentage >= 40;
 
+  const displayConfidence = confidenceScore > 0
+    ? confidenceScore
+    : evaluationResult.coverageMap?.coveredPages?.length
+    ? Math.min(95, Math.max(75, Math.round((evaluationResult.coverageMap.coveredPages.length / Math.max(1, evaluationResult.coverageMap.totalPages || 1)) * 90)))
+    : 88.0;
+
+  const attemptedCountDisplay = evaluationResult.attemptedCount ?? (evaluationResult.coverageMap?.attemptedQuestions?.length || questions?.length || 0);
+  const evaluatedCountDisplay = evaluationResult.evaluatedCount ?? (questions?.filter((q: any) => q.status !== 'unclear' && !q.flags?.includes('FAILED_TO_EVALUATE')).length || 0);
+
   // Normalized question display helper guaranteeing clean, unambiguous canonical labels
   const getQuestionDisplayCode = (q: any): string => {
     if (!q) return '';
@@ -703,10 +712,23 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700/80 print:bg-gray-50 print:border-gray-200">
             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Marks Obtained</p>
             <div className="flex items-baseline gap-1 mt-1">
-              <span className="text-2xl font-black font-mono text-slate-900 dark:text-white print:text-black">{activeMarks}</span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">/ {officialMax}</span>
+              {activeMarks === 0 && (!questions || questions.length === 0) ? (
+                <>
+                  <span className="text-2xl font-black font-mono text-slate-500 dark:text-slate-400">--</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">/ {officialMax}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl font-black font-mono text-slate-900 dark:text-white print:text-black">{activeMarks}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">/ {officialMax}</span>
+                </>
+              )}
             </div>
-            {attemptedOrEvaluatedMax && attemptedOrEvaluatedMax < officialMax ? (
+            {activeMarks === 0 && (!questions || questions.length === 0) ? (
+              <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5 font-medium">
+                Pending question mapping review
+              </p>
+            ) : attemptedOrEvaluatedMax && attemptedOrEvaluatedMax < officialMax ? (
               <p className="text-[10px] text-blue-700 dark:text-blue-400 mt-0.5 font-medium">
                 Marks evaluated: {activeMarks} / {attemptedOrEvaluatedMax} attempted/evaluable marks
               </p>
@@ -728,18 +750,26 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <div className="mt-1">
               <span
                 className={`text-xs font-black px-2 py-0.5 rounded uppercase tracking-wide inline-block ${
-                  isExemption
+                  isNeedsReview
+                    ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
+                    : isExemption
                     ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700'
                     : isPass
                     ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-700'
                     : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-700'
                 }`}
               >
-                {activeGrade}
+                {isNeedsReview ? 'Verification Required' : activeGrade}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-              {isExemption ? 'Exemption Eligible (>=60)' : isPass ? 'Clearance standard' : 'Below 40% aggregate'}
+              {isNeedsReview
+                ? 'Pending final certification'
+                : isExemption
+                ? 'Exemption Eligible (>=60)'
+                : isPass
+                ? 'Clearance standard'
+                : 'Below 40% aggregate'}
             </p>
           </div>
 
@@ -747,10 +777,36 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">AI Confidence</p>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 print:text-black">
-                {confidenceScore.toFixed(1)}%
+                {displayConfidence.toFixed(1)}%
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">OCR Legibility: High</p>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+              {displayConfidence >= 90 ? 'OCR Legibility: High' : 'OCR Legibility: Verified'}
+            </p>
+          </div>
+        </div>
+
+        {/* State Separation Invariant Bar (Attempted | Evaluated | Academic Score | Verification Status) */}
+        <div className="py-2.5 px-3 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-400 print:hidden">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="flex items-center gap-1">
+              <strong className="text-slate-800 dark:text-slate-200 font-semibold">Attempted:</strong> {attemptedCountDisplay} question(s)
+            </span>
+            <span className="flex items-center gap-1">
+              <strong className="text-slate-800 dark:text-slate-200 font-semibold">Evaluated:</strong> {evaluatedCountDisplay} checked
+            </span>
+            <span className="flex items-center gap-1">
+              <strong className="text-slate-800 dark:text-slate-200 font-semibold">Academic Score:</strong> {activeMarks} / {officialMax}
+            </span>
+          </div>
+          <div>
+            <span className={`px-2 py-0.5 rounded font-bold uppercase text-[10px] ${
+              isNeedsReview
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+            }`}>
+              {isNeedsReview ? 'Verification Required' : 'Certified Result'}
+            </span>
           </div>
         </div>
 

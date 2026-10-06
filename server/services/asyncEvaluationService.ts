@@ -558,8 +558,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       finalStatus === 'COMPLETED' ? 'COMPLETED' : 'NEEDS_REVIEW',
       finalStatus === 'COMPLETED'
         ? 'Evaluation complete and verified'
-        : 'Integrity checks did not pass. The evaluation is preserved for review; no final score was issued.',
-      evaluationResult.totalMarks,
+        : 'Evaluation preserved. Academic score recorded; consistency verification required before official certification.',
+      evaluationResult.canonicalLedger?.totalAwardedMarks ?? evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
       evaluationResult.grade,
