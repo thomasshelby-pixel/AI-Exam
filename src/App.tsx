@@ -293,6 +293,7 @@ const PublicAndStudentLayout: React.FC<{
   else if (pathname === '/contact') currentView = 'contact';
   else if (pathname === '/login') currentView = 'login';
   else if (pathname === '/register') currentView = 'register';
+  else if (pathname === '/features') currentView = 'features';
   else if (pathname.startsWith('/student/upload')) currentView = 'student-upload';
   else if (pathname.startsWith('/student/evaluations')) currentView = 'student-evaluations';
   else if (pathname.startsWith('/student/examiner-profile')) currentView = 'student-examiner-profile';

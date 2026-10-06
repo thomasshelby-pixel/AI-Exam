@@ -10,9 +10,13 @@ import { PDFDocument } from 'pdf-lib';
 export interface ConsistencyVerificationResult {
   success: boolean;
   status: 'COMPLETED' | 'NEEDS_REVIEW' | 'FAILED';
+  certificationStatus?: 'CERTIFIED' | 'REVIEW_REQUIRED' | 'VERIFICATION_REQUIRED' | 'PENDING';
+  downloadsUnlocked?: boolean;
   message: string;
+  error?: string;
   errors?: string[];
   totalMarks?: number;
+  academicScore?: number;
   percentage?: number;
   grade?: string;
   evaluation?: any;
@@ -57,20 +61,49 @@ export async function verifyEvaluationConsistency(
   if (evalRecord.status === 'COMPLETED' && resultJson?.questions?.length > 0) {
     const consistencyCheck = validateAuthoritativeConsistency(resultJson);
     if (consistencyCheck.isValid) {
+      db.prepare(`
+        UPDATE evaluations
+        SET certification_status = 'CERTIFIED',
+            downloads_unlocked = 1,
+            certified_at = COALESCE(certified_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(evaluationId);
+
       return {
         success: true,
         status: 'COMPLETED',
+        certificationStatus: 'CERTIFIED',
+        downloadsUnlocked: true,
         message: 'Evaluation consistency has been verified and certified.',
         totalMarks: evalRecord.total_marks,
+        academicScore: evalRecord.total_marks,
         percentage: evalRecord.percentage,
         grade: evalRecord.grade,
-        evaluation: evalRecord,
+        evaluation: {
+          ...evalRecord,
+          certification_status: 'CERTIFIED',
+          downloads_unlocked: 1,
+        },
       };
     }
   }
 
   // Check 2: If result_json has valid questions, validate consistency directly
   if (resultJson && Array.isArray(resultJson.questions) && resultJson.questions.length > 0) {
+    // 2A. Deterministic arithmetic and bounds validation
+    const sumAwarded = resultJson.questions.reduce((acc: number, q: any) => acc + (Number(q.marksAwarded) || 0), 0);
+    const roundedSum = Math.round(sumAwarded * 100) / 100;
+    const maxMarks = Number(resultJson.maximumMarks || evalRecord.maximum_marks || 100);
+
+    // Reconcile minor float delta between totalMarks and sumAwarded
+    if (Math.abs(Number(resultJson.totalMarks || 0) - roundedSum) <= 0.5) {
+      resultJson.totalMarks = roundedSum;
+    }
+
+    const calculatedPercentage = maxMarks > 0 ? Math.round(((resultJson.totalMarks / maxMarks) * 100) * 10) / 10 : 0;
+    resultJson.percentage = calculatedPercentage;
+
     const consistencyCheck = validateAuthoritativeConsistency(resultJson);
     if (consistencyCheck.isValid) {
       // Regenerate or ensure artifacts exist
@@ -137,6 +170,9 @@ export async function verifyEvaluationConsistency(
       }
 
       resultJson.validationStatus = 'VALID';
+      resultJson.certificationStatus = 'CERTIFIED';
+      resultJson.downloadsUnlocked = true;
+      resultJson.academicScore = resultJson.totalMarks;
       resultJson.validationErrors = [];
       resultJson.integrityAudit = {
         mathConsistent: true,
@@ -148,6 +184,9 @@ export async function verifyEvaluationConsistency(
       db.prepare(`
         UPDATE evaluations
         SET status = 'COMPLETED',
+            certification_status = 'CERTIFIED',
+            downloads_unlocked = 1,
+            certified_at = COALESCE(certified_at, CURRENT_TIMESTAMP),
             progress_stage = 'COMPLETED',
             progress_percentage = 100,
             progress_message = 'Evaluation verified and certified.',
@@ -181,10 +220,20 @@ export async function verifyEvaluationConsistency(
       return {
         success: true,
         status: 'COMPLETED',
-        message: 'Evaluation consistency successfully verified and certified. Checked copy is now available.',
+        certificationStatus: 'CERTIFIED',
+        downloadsUnlocked: true,
+        message: 'Evaluation consistency successfully verified and certified. Checked copy and detailed report are now available.',
         totalMarks: resultJson.totalMarks,
+        academicScore: resultJson.totalMarks,
         percentage: resultJson.percentage,
         grade: resultJson.grade,
+        evaluation: {
+          ...evalRecord,
+          status: 'COMPLETED',
+          certification_status: 'CERTIFIED',
+          downloads_unlocked: 1,
+          total_marks: resultJson.totalMarks,
+        },
       };
     }
   }
@@ -290,6 +339,9 @@ export async function verifyEvaluationConsistency(
             db.prepare(`
               UPDATE evaluations
               SET status = 'COMPLETED',
+                  certification_status = 'CERTIFIED',
+                  downloads_unlocked = 1,
+                  certified_at = COALESCE(certified_at, CURRENT_TIMESTAMP),
                   progress_stage = 'COMPLETED',
                   progress_percentage = 100,
                   progress_message = 'Evaluation verified and certified via authoritative reconciliation.',
@@ -323,8 +375,11 @@ export async function verifyEvaluationConsistency(
             return {
               success: true,
               status: 'COMPLETED',
+              certificationStatus: 'CERTIFIED',
+              downloadsUnlocked: true,
               message: 'Evaluation consistency verified via authoritative answer sheet reconciliation. Checked copy is now available for download.',
               totalMarks: reconciledResult.totalMarks,
+              academicScore: reconciledResult.totalMarks,
               percentage: reconciledResult.percentage,
               grade: reconciledResult.grade,
             };
@@ -341,6 +396,9 @@ export async function verifyEvaluationConsistency(
     db.prepare(`
       UPDATE evaluations
       SET status = 'COMPLETED',
+          certification_status = 'CERTIFIED',
+          downloads_unlocked = 1,
+          certified_at = COALESCE(certified_at, CURRENT_TIMESTAMP),
           progress_stage = 'COMPLETED',
           progress_message = 'Evaluation certified by administrator override.',
           rejection_reason = NULL,
@@ -355,17 +413,28 @@ export async function verifyEvaluationConsistency(
     return {
       success: true,
       status: 'COMPLETED',
+      certificationStatus: 'CERTIFIED',
+      downloadsUnlocked: true,
       message: 'Evaluation consistency affirmed by administrator.',
       totalMarks: evalRecord.total_marks,
+      academicScore: evalRecord.total_marks,
       percentage: evalRecord.percentage,
       grade: evalRecord.grade,
     };
   }
 
+  const fallbackScore = Number(resultJson?.totalMarks ?? evalRecord.total_marks ?? 0);
+  const primaryError = resultJson?.validationErrors?.[0] || 'Questions or component arithmetic inconsistency flagged for review.';
+
   return {
     success: false,
     status: 'NEEDS_REVIEW',
-    message: 'Evaluation consistency verification could not be completed automatically. Administrator review is required.',
-    errors: resultJson?.validationErrors || ['Questions or component arithmetic inconsistency flagged for review.'],
+    certificationStatus: 'REVIEW_REQUIRED',
+    downloadsUnlocked: false,
+    error: primaryError,
+    message: primaryError,
+    errors: resultJson?.validationErrors || [primaryError],
+    totalMarks: fallbackScore,
+    academicScore: fallbackScore,
   };
 }

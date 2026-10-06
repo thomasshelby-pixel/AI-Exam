@@ -61,9 +61,13 @@ const FEATURE_KEY_REGEX = /^[a-z0-9_-]{2,64}$/;
  * Hard rule: Never overwrite existing Super Admin settings on restart or deployment.
  * Migration is completely idempotent and preserves all existing production records.
  */
-export function initFeatureFlagsTable(): void {
+export function initFeatureFlagsTable(customDb?: any): void {
+  const targetDb = customDb || db;
+  if (!targetDb) {
+    return;
+  }
   // 1. Create base tables if they don't exist
-  db.exec(`
+  targetDb.exec(`
     CREATE TABLE IF NOT EXISTS feature_flags (
       id TEXT PRIMARY KEY,
       application TEXT NOT NULL DEFAULT 'MCQ_ARENA',

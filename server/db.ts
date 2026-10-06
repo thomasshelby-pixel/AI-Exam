@@ -974,11 +974,15 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'evaluation_run_package_id', "TEXT");
   addColumnIfNotExists('evaluations', 'score_ledger_total', "REAL");
   addColumnIfNotExists('evaluations', 'durable_persistence_confirmed', "INTEGER DEFAULT 0");
+  addColumnIfNotExists('evaluations', 'certification_status', "TEXT DEFAULT 'PENDING'");
+  addColumnIfNotExists('evaluations', 'downloads_unlocked', "INTEGER DEFAULT 1");
+  addColumnIfNotExists('evaluations', 'certified_at', "TEXT");
   try {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_evaluations_content_hash ON evaluations(student_id, content_hash);
       CREATE INDEX IF NOT EXISTS idx_evaluations_idempotency ON evaluations(student_id, idempotency_key);
       CREATE INDEX IF NOT EXISTS idx_evaluations_package_id ON evaluations(evaluation_run_package_id);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_certification ON evaluations(certification_status);
     `);
   } catch {}
 
@@ -1978,7 +1982,7 @@ function seedInitialData() {
   seedMcqAdminAndQuestions();
 
   // 13. Initialize Centralized Feature Control & Student Access System
-  initFeatureFlagsTable();
+  initFeatureFlagsTable(db);
 }
 
 function seedMcqScoringRules() {

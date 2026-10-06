@@ -2677,7 +2677,7 @@ async function getOriginalPdfBufferForAdmin(evaluationId: string, evalRecord: an
   try {
     rJson = JSON.parse(evalRecord.result_json || '{}');
   } catch {}
-  return await generateOriginalSubmissionPdf({
+  const generated = await generateOriginalSubmissionPdf({
     id: evalRecord.id,
     studentName: evalRecord.student_name || 'CA Student',
     level: evalRecord.level,
@@ -2691,6 +2691,17 @@ async function getOriginalPdfBufferForAdmin(evaluationId: string, evalRecord: an
     grade: evalRecord.grade,
     createdAt: evalRecord.created_at,
   }, rJson);
+
+  try {
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    fs.writeFileSync(origPath, generated);
+    savePersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`, 'application/pdf', generated, 'EVALUATION_ORIGINAL', {
+      ownerUserId: evalRecord.student_id,
+      evaluationId,
+    }).catch(() => {});
+  } catch {}
+
+  return generated;
 }
 
 // 15a. Admin Review & Amendment Workflow: Fetch Evaluation Details for Review
@@ -2740,9 +2751,9 @@ router.get('/evaluations/:id/review', async (req: AuthRequest, res: Response) =>
     const checkedPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
     const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
 
-    const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`));
-    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`));
-    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`));
+    const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`).catch(() => null));
+    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
+    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
 
     return res.json({
       evaluation,
@@ -2873,6 +2884,18 @@ router.get('/evaluations/:id/artifacts/checked-copy', async (req: AuthRequest, r
           createdAt: evalRecord.created_at,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson, origBuf);
+
+        if (buffer) {
+          const activePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+          try {
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(activePath, buffer);
+            savePersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`, 'application/pdf', buffer, 'EVALUATION_CHECKED_COPY', {
+              ownerUserId: evalRecord.student_id,
+              evaluationId,
+            }).catch(() => {});
+          } catch {}
+        }
       }
     }
 
@@ -2946,6 +2969,18 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
           createdAt: evalRecord.created_at,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson);
+
+        if (buffer) {
+          const activePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+          try {
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(activePath, buffer);
+            savePersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`, 'application/pdf', buffer, 'EVALUATION_REPORT', {
+              ownerUserId: evalRecord.student_id,
+              evaluationId,
+            }).catch(() => {});
+          } catch {}
+        }
       }
     }
 
@@ -2980,7 +3015,14 @@ router.post('/evaluations/:id/verify-consistency', async (req: AuthRequest, res:
       notes: notes || 'Admin verified consistency',
     });
 
-    return res.status(verificationResult.success ? 200 : 409).json(verificationResult);
+    if (verificationResult.success) {
+      return res.status(200).json(verificationResult);
+    } else {
+      return res.status(409).json({
+        error: verificationResult.error || verificationResult.message || 'Consistency verification flagged issues.',
+        ...verificationResult,
+      });
+    }
   } catch (error: any) {
     console.error('Admin verify evaluation consistency error:', error);
     return res.status(500).json({ error: 'Failed to verify evaluation consistency', message: error?.message });

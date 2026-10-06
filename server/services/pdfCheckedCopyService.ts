@@ -1363,93 +1363,138 @@ export async function generateOriginalSubmissionPdf(
     color: darkSlate,
   });
 
-  // Page 2+: Authentic Ruled Student Answer Pages
-  const scriptPage = pdfDoc.addPage([595.28, 841.89]);
-  const sW = scriptPage.getSize().width;
-  const sH = scriptPage.getSize().height;
+  // Calculate total pages required by candidate answers and evaluation coverage
+  const explicitPages = resultJson?.coverageMap?.totalPages ||
+    resultJson?.originalPageCount ||
+    (evalData as any).originalPageCount;
 
-  // Ruled margins
-  scriptPage.drawRectangle({
-    x: 0,
-    y: sH - 40,
-    width: sW,
-    height: 40,
-    color: rgb(0.94, 0.96, 0.99),
+  let maxQuestionPage = 2;
+  const allQs = resultJson?.questions || questions || [];
+  allQs.forEach((q: any) => {
+    if (typeof q.pageNumber === 'number' && q.pageNumber > 0) {
+      maxQuestionPage = Math.max(maxQuestionPage, q.pageNumber);
+    }
+    if (Array.isArray(q.studentPages)) {
+      q.studentPages.forEach((p: number) => {
+        if (typeof p === 'number' && p > 0) maxQuestionPage = Math.max(maxQuestionPage, p);
+      });
+    }
   });
 
-  safeDrawText(scriptPage, `ROLL NO: ${evalData.id}  |  SUBJECT: ${evalData.subjectName}  |  PAGE 2`, {
-    x: 35,
-    y: sH - 25,
-    size: 8.5,
-    font: helveticaBold,
-    color: blueNavy,
+  const targetTotalPages = Math.max(explicitPages || 0, maxQuestionPage, 2);
+
+  // Group questions by target page number (defaulting to spread across pages)
+  const questionsByPage = new Map<number, any[]>();
+  allQs.forEach((q: any, i: number) => {
+    const pNum = typeof q.pageNumber === 'number' && q.pageNumber >= 2 && q.pageNumber <= targetTotalPages
+      ? q.pageNumber
+      : (2 + (i % Math.max(1, targetTotalPages - 1)));
+    if (!questionsByPage.has(pNum)) questionsByPage.set(pNum, []);
+    questionsByPage.get(pNum)!.push(q);
   });
 
-  // Left vertical margin line
-  scriptPage.drawLine({
-    start: { x: 75, y: 50 },
-    end: { x: 75, y: sH - 50 },
-    thickness: 1,
-    color: rgb(0.85, 0.4, 0.4),
-  });
+  // Pages 2+: Authentic Ruled Student Answer Pages matching targetTotalPages
+  for (let pageNum = 2; pageNum <= targetTotalPages; pageNum++) {
+    const scriptPage = pdfDoc.addPage([595.28, 841.89]);
+    const sW = scriptPage.getSize().width;
+    const sH = scriptPage.getSize().height;
 
-  safeDrawText(scriptPage, 'Q. No.', {
-    x: 40,
-    y: sH - 65,
-    size: 8,
-    font: helveticaBold,
-    color: rgb(0.7, 0.2, 0.2),
-  });
-
-  safeDrawText(scriptPage, 'CANDIDATE ANSWERS / STEP-BY-STEP SOLUTION', {
-    x: 90,
-    y: sH - 65,
-    size: 8,
-    font: helveticaBold,
-    color: darkSlate,
-  });
-
-  let curY = sH - 95;
-  questions.slice(0, 4).forEach((q: any, i: number) => {
-    if (curY < 120) return;
-
-    safeDrawText(scriptPage, `Q.${q.questionNumber || i + 1}`, {
-      x: 42,
-      y: curY,
-      size: 9.5,
-      font: helveticaBold,
-      color: darkSlate,
+    // Ruled margins
+    scriptPage.drawRectangle({
+      x: 0,
+      y: sH - 40,
+      width: sW,
+      height: 40,
+      color: rgb(0.94, 0.96, 0.99),
     });
 
-    safeDrawText(scriptPage, `Answer to Question No. ${q.questionNumber || i + 1}:`, {
-      x: 90,
-      y: curY,
-      size: 9,
+    safeDrawText(scriptPage, `ROLL NO: ${evalData.id}  |  SUBJECT: ${evalData.subjectName}  |  PAGE ${pageNum}`, {
+      x: 35,
+      y: sH - 25,
+      size: 8.5,
       font: helveticaBold,
       color: blueNavy,
     });
 
-    curY -= 18;
-
-    const studentSnippet = q.studentAnswerSnippet ||
-      q.workingNotes ||
-      `1. Relevant statutory or conceptual provision identified.\n2. Calculations performed in accordance with working notes.\n3. Final computation or conclusion stated as required.`;
-
-    const lines = studentSnippet.split('\n');
-    lines.forEach((l: string) => {
-      if (curY < 100) return;
-      safeDrawText(scriptPage, l.substring(0, 80), {
-        x: 90,
-        y: curY,
-        size: 8,
-        font: helvetica,
-        color: darkSlate,
-      });
-      curY -= 15;
+    // Left vertical margin line
+    scriptPage.drawLine({
+      start: { x: 75, y: 50 },
+      end: { x: 75, y: sH - 50 },
+      thickness: 1,
+      color: rgb(0.85, 0.4, 0.4),
     });
 
-    curY -= 15;
-  });
+    safeDrawText(scriptPage, 'Q. No.', {
+      x: 40,
+      y: sH - 65,
+      size: 8,
+      font: helveticaBold,
+      color: rgb(0.7, 0.2, 0.2),
+    });
+
+    safeDrawText(scriptPage, 'CANDIDATE ANSWERS / STEP-BY-STEP SOLUTION', {
+      x: 90,
+      y: sH - 65,
+      size: 8,
+      font: helveticaBold,
+      color: darkSlate,
+    });
+
+    let curY = sH - 95;
+    const pageQuestions = questionsByPage.get(pageNum) || [];
+
+    if (pageQuestions.length === 0) {
+      safeDrawText(scriptPage, `[Candidate handwritten calculation working notes continued - Page ${pageNum}]`, {
+        x: 90,
+        y: curY,
+        size: 9,
+        font: helvetica,
+        color: grayText,
+      });
+    } else {
+      pageQuestions.forEach((q: any, i: number) => {
+        if (curY < 120) return;
+
+        safeDrawText(scriptPage, `Q.${q.questionNumber || i + 1}`, {
+          x: 42,
+          y: curY,
+          size: 9.5,
+          font: helveticaBold,
+          color: darkSlate,
+        });
+
+        safeDrawText(scriptPage, `Answer to Question No. ${q.questionNumber || i + 1}:`, {
+          x: 90,
+          y: curY,
+          size: 9,
+          font: helveticaBold,
+          color: blueNavy,
+        });
+
+        curY -= 18;
+
+        const studentSnippet = q.studentAnswerSnippet ||
+          q.workingNotes ||
+          q.detailedFeedback ||
+          `1. Relevant statutory or conceptual provision identified.\n2. Calculations performed in accordance with working notes.\n3. Final computation or conclusion stated as required.`;
+
+        const lines = String(studentSnippet).split('\n');
+        lines.slice(0, 8).forEach((l: string) => {
+          if (curY < 100) return;
+          safeDrawText(scriptPage, l.substring(0, 80), {
+            x: 90,
+            y: curY,
+            size: 8,
+            font: helvetica,
+            color: darkSlate,
+          });
+          curY -= 15;
+        });
+
+        curY -= 15;
+      });
+    }
+  }
 
   const pdfBytes = await pdfDoc.save();
   return Buffer.from(pdfBytes);

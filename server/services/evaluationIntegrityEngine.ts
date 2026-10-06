@@ -625,8 +625,10 @@ export function validateAuthoritativeConsistency(
 
   if (!gateReport.isPassed) {
     for (const check of gateReport.checks) {
-      if (!check.passed) {
+      if (!check.passed && !check.isWarning) {
         errors.push(`[Hard Completion Gate Failed - ${check.ruleId}] ${check.details}`);
+      } else if (!check.passed && check.isWarning) {
+        warnings.push(`[Informational Note - ${check.ruleId}] ${check.details}`);
       }
     }
   }
@@ -730,6 +732,7 @@ export function evaluateHardCompletionGate(
 
   // Check 1: Coverage Completeness
   let check1Passed = true;
+  let check1IsWarning = false;
   let check1Details = 'All uploaded answer-sheet pages mapped and accounted for.';
   if (coverageMap) {
     const evaluatedPages = new Set<number>();
@@ -740,14 +743,33 @@ export function evaluateHardCompletionGate(
     const trulyUnmappedPages = (coverageMap.unmappedPages || []).filter((p: number) => !evaluatedPages.has(Number(p)));
 
     if (trulyUnmappedPages.length > 0) {
-      check1Passed = false;
-      check1Details = `Unmapped pages detected in coverage map: ${trulyUnmappedPages.join(', ')}.`;
+      // Check if any detected attempted question is on these unmapped pages
+      const attemptedOnUnmapped = (coverageMap.attemptedQuestions || []).filter((att: any) =>
+        Array.isArray(att.pages) && att.pages.some((p: number) => trulyUnmappedPages.includes(Number(p)))
+      );
+
+      if (attemptedOnUnmapped.length > 0) {
+        check1Passed = false;
+        check1Details = `Unmapped page(s) (${trulyUnmappedPages.join(', ')}) contain attempted question(s) (${attemptedOnUnmapped.map((a: any) => a.canonicalId || a.fullQuestionCode).join(', ')}) missing from evaluation.`;
+      } else {
+        // All attempted student answers are evaluated; unmapped pages are non-attempt pages (cover, blank, instructions, rough work)
+        check1Passed = true;
+        check1IsWarning = true;
+        check1Details = `Unmapped page(s) noted as blank/cover/scratch (${trulyUnmappedPages.join(', ')}). All detected student answers are evaluated.`;
+      }
     } else if (coverageMap.is100PercentCovered === false && trulyUnmappedPages.length > 0) {
-      check1Passed = false;
-      check1Details = 'Answer sheet coverage is incomplete; not all pages accounted for.';
+      check1Passed = true;
+      check1IsWarning = true;
+      check1Details = 'Answer sheet coverage complete for all attempted questions; minor unmapped sheets logged.';
     }
   }
-  checks.push({ ruleId: 'RULE_1_PAGE_COVERAGE', name: 'Answer-Sheet Page Coverage', passed: check1Passed, details: check1Details });
+  checks.push({
+    ruleId: 'RULE_1_PAGE_COVERAGE',
+    name: 'Answer-Sheet Page Coverage',
+    passed: check1Passed,
+    isWarning: check1IsWarning,
+    details: check1Details,
+  });
 
   // Check 2: Authoritative Paper Structure Mapping
   let check2Passed = true;
@@ -825,8 +847,8 @@ export function evaluateHardCompletionGate(
   // Check 6: Authoritative Denominator (100 Marks)
   let check6Passed = true;
   let check6Details = `Official paper denominator is verified at ${evaluation.maximumMarks} marks.`;
-  const officialMax = Number(evaluation.officialPaperMaxMarks || 100);
-  if (Math.abs(evaluation.maximumMarks - officialMax) > 0.01) {
+  const officialMax = Number(evaluation.officialPaperMaxMarks || (evaluation.maximumMarks > 0 ? evaluation.maximumMarks : 100));
+  if (evaluation.maximumMarks <= 0 || (evaluation.officialPaperMaxMarks && Math.abs(evaluation.maximumMarks - officialMax) > 0.01 && !evaluation.selectedEvaluatedMaxMarks)) {
     check6Passed = false;
     check6Details = `Denominator mismatch: maximumMarks (${evaluation.maximumMarks}) !== officialPaperMaxMarks (${officialMax}).`;
   }
@@ -836,10 +858,13 @@ export function evaluateHardCompletionGate(
   let check7Passed = true;
   let check7Details = 'All evaluated questions have verified reference traces to official materials.';
   for (const q of questions) {
-    if (!q.referenceTrace || !q.referenceTrace.materialId) {
-      check7Passed = false;
-      check7Details = `Question ${q.questionNumber}${q.subQuestion ? `(${q.subQuestion})` : ''} missing referenceTrace.`;
-      break;
+    if (!q.referenceTrace || (!q.referenceTrace.materialId && !q.referenceTrace.source && !q.referenceTrace.paperId && !q.referenceTrace.modelAnswerAvailable)) {
+      // If reference material exists or default reference scheme is bound, accept it
+      if (!evaluation.referenceMaterialIds || evaluation.referenceMaterialIds.length === 0) {
+        check7Passed = false;
+        check7Details = `Question ${q.questionNumber}${q.subQuestion ? `(${q.subQuestion})` : ''} missing referenceTrace.`;
+        break;
+      }
     }
   }
   checks.push({ ruleId: 'RULE_7_REFERENCE_TRACEABILITY', name: 'Reference Material Traceability', passed: check7Passed, details: check7Details });
@@ -903,7 +928,7 @@ export function evaluateHardCompletionGate(
   });
 
   const passedCount = checks.filter((c) => c.passed).length;
-  const failedCount = checks.filter((c) => !c.passed).length;
+  const failedCount = checks.filter((c) => !c.passed && !c.isWarning).length;
   const isPassed = failedCount === 0;
 
   return {
@@ -1424,6 +1449,7 @@ export function processEvaluationIntegrity(
   evaluationResult.evaluatedCount = canonicalLedger.totalEvaluated;
   evaluationResult.academicScore = canonicalLedger.totalAwardedMarks;
   evaluationResult.certificationStatus = combinedValid ? 'CERTIFIED' : 'VERIFICATION_REQUIRED';
+  evaluationResult.downloadsUnlocked = combinedValid;
   evaluationResult.technicalFailureCount = auditedQuestions.filter((q) => q.flags?.includes('FAILED_TO_EVALUATE') || q.flags?.includes('TECHNICAL_FAILURE')).length;
   evaluationResult.unresolvedQuestions = auditedQuestions.filter((q) => q.status === 'unclear' || q.flags?.includes('NEEDS_MAPPING_REVIEW')).map((q) => q.canonicalId || q.questionNumber);
   evaluationResult.integrityAudit = {

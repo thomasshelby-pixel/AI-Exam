@@ -132,6 +132,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Amendment Draft State
@@ -330,7 +331,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
       await fetchReviewDetails();
     } catch (err: any) {
       console.error('Finalize error:', err);
-      setError(err.message || 'Failed to finalize review.');
+      setActionError(err.message || 'Failed to finalize review.');
     } finally {
       setSaving(false);
     }
@@ -339,7 +340,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
   const handleVerifyConsistency = async () => {
     try {
       setSaving(true);
-      setError(null);
+      setActionError(null);
       setSuccessMessage(null);
       const res = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/verify-consistency`, {
         method: 'POST',
@@ -352,7 +353,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
       await fetchReviewDetails();
     } catch (err: any) {
       console.error('Verify consistency error:', err);
-      setError(err.message || 'Failed to verify evaluation consistency.');
+      setActionError(err.message || 'Failed to verify evaluation consistency.');
     } finally {
       setSaving(false);
     }
@@ -411,6 +412,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           </button>
         </div>
       </div>
+
+      {/* Action Error Banner */}
+      {actionError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-rose-800 text-xs flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="font-semibold">{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-rose-600 hover:text-rose-800 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Success Banner */}
       {successMessage && (

@@ -37,6 +37,31 @@ try {
 
 let storageClient: Storage | null = null;
 
+interface GcsAvailabilityState {
+  isAvailable: boolean;
+  lastChecked: number;
+  reason?: string;
+}
+
+let gcsAvailabilityCache: GcsAvailabilityState | null = null;
+
+export function isGcsDirectAccessAvailable(): boolean {
+  if (!gcsAvailabilityCache) return true; // not yet determined
+  if (Date.now() - gcsAvailabilityCache.lastChecked > 300_000) {
+    // expired after 5 minutes, allow probe/retry
+    return true;
+  }
+  return gcsAvailabilityCache.isAvailable;
+}
+
+export function setGcsDirectAccessState(available: boolean, reason?: string): void {
+  gcsAvailabilityCache = {
+    isAvailable: available,
+    lastChecked: Date.now(),
+    reason,
+  };
+}
+
 /**
  * Returns the privileged server-side Google Cloud Storage client.
  * Priority:
@@ -177,6 +202,7 @@ export async function inspectCloudStorageStatus(): Promise<{
       // ignore probe delete
     }
 
+    setGcsDirectAccessState(true);
     return {
       enabled: true,
       bucket: bucketName,
@@ -189,6 +215,8 @@ export async function inspectCloudStorageStatus(): Promise<{
     const msg = err instanceof Error ? err.message : String(err);
     const is404 = msg.includes('404') || msg.includes('not exist') || msg.includes('notFound');
     const isForbidden = msg.includes('403') || msg.includes('Permission') || msg.includes('denied') || msg.includes('does not have storage');
+
+    setGcsDirectAccessState(false, msg);
 
     return {
       enabled: false,
@@ -215,60 +243,65 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
   const storagePath = buildStoragePath(options);
   const nowIso = new Date().toISOString();
 
-  const bucket = getStorageBucket(configuredBucket);
-  const file = bucket.file(storagePath);
-
   let uploadSuccess = false;
   let uploadErrorMessage: string | undefined = undefined;
 
-  try {
-    await file.save(options.buffer, {
-      contentType: options.mimeType,
-      metadata: {
-        fileId: options.fileId,
-        originalFilename: options.filename,
-        ownerUserId: options.ownerUserId || '',
-        instituteId: options.instituteId || '',
-        evaluationId: options.evaluationId || '',
-        materialId: options.materialId || '',
-        checksum: hash,
-        uploadedAt: nowIso,
-      },
-      resumable: false,
-      validation: false,
-    });
+  if (isGcsDirectAccessAvailable()) {
+    try {
+      const bucket = getStorageBucket(configuredBucket);
+      const file = bucket.file(storagePath);
 
-    // Mandatory post-upload verification in Cloud Storage
-    const [exists] = await file.exists();
-    if (!exists) {
-      throw new Error(`Upload verification failed: object '${storagePath}' not found in bucket '${configuredBucket}' after save.`);
+      await file.save(options.buffer, {
+        contentType: options.mimeType,
+        metadata: {
+          fileId: options.fileId,
+          originalFilename: options.filename,
+          ownerUserId: options.ownerUserId || '',
+          instituteId: options.instituteId || '',
+          evaluationId: options.evaluationId || '',
+          materialId: options.materialId || '',
+          checksum: hash,
+          uploadedAt: nowIso,
+        },
+        resumable: false,
+        validation: false,
+      });
+
+      // Mandatory post-upload verification in Cloud Storage
+      const [exists] = await file.exists();
+      if (!exists) {
+        throw new Error(`Upload verification failed: object '${storagePath}' not found in bucket '${configuredBucket}' after save.`);
+      }
+
+      const [remoteMeta] = await file.getMetadata();
+      const remoteSize = typeof remoteMeta.size === 'string' ? parseInt(remoteMeta.size, 10) : Number(remoteMeta.size || 0);
+      if (remoteSize <= 0) {
+        throw new Error(`Upload verification failed: object '${storagePath}' is 0 bytes in bucket '${configuredBucket}'.`);
+      }
+
+      uploadSuccess = true;
+      console.log(`[PrivilegedStorage] Verified object in Cloud Storage: ${storagePath} (${remoteSize} bytes, bucket: ${configuredBucket})`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      uploadErrorMessage = msg;
+      const isPermissionOrAccessDenied =
+        msg.includes('Permission') ||
+        msg.includes('storage.objects.create') ||
+        msg.includes('403') ||
+        msg.includes('denied') ||
+        msg.includes('does not have storage') ||
+        msg.includes('404') ||
+        msg.includes('not exist');
+
+      if (isPermissionOrAccessDenied) {
+        setGcsDirectAccessState(false, msg);
+        console.info(`[PrivilegedStorage] Direct GCS bucket upload skipped (IAM permission denied or bucket unavailable for current identity). Persisted to local disk and Cloud Firestore metadata.`);
+      } else {
+        console.info(`[PrivilegedStorage] Cloud Storage upload notice for ${storagePath}: ${msg}`);
+      }
     }
-
-    const [remoteMeta] = await file.getMetadata();
-    const remoteSize = typeof remoteMeta.size === 'string' ? parseInt(remoteMeta.size, 10) : Number(remoteMeta.size || 0);
-    if (remoteSize <= 0) {
-      throw new Error(`Upload verification failed: object '${storagePath}' is 0 bytes in bucket '${configuredBucket}'.`);
-    }
-
-    uploadSuccess = true;
-    console.log(`[PrivilegedStorage] Verified object in Cloud Storage: ${storagePath} (${remoteSize} bytes, bucket: ${configuredBucket})`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    uploadErrorMessage = msg;
-    const isPermissionOrAccessDenied =
-      msg.includes('Permission') ||
-      msg.includes('storage.objects.create') ||
-      msg.includes('403') ||
-      msg.includes('denied') ||
-      msg.includes('does not have storage') ||
-      msg.includes('404') ||
-      msg.includes('not exist');
-
-    if (isPermissionOrAccessDenied) {
-      console.warn(`[PrivilegedStorage] Direct GCS bucket upload skipped (IAM permission denied or bucket unavailable for current identity). Persisted to local disk and Cloud Firestore metadata.`);
-    } else {
-      console.warn(`[PrivilegedStorage] Cloud Storage upload notice for ${storagePath}: ${msg}`);
-    }
+  } else {
+    uploadErrorMessage = 'GCS direct upload skipped (current environment identity has restricted bucket permissions). Persisted locally.';
   }
 
   // Persist structured metadata and reference in Cloud Firestore
@@ -331,7 +364,10 @@ export async function downloadFileFromCloudStorage(
 
   const path = explicitStoragePath || metadata?.storagePath;
   if (!path) {
-    console.warn(`[PrivilegedStorage] No storage path known for file ${fileId}`);
+    return null;
+  }
+
+  if (!isGcsDirectAccessAvailable()) {
     return null;
   }
 
@@ -341,7 +377,6 @@ export async function downloadFileFromCloudStorage(
 
     const [exists] = await file.exists();
     if (!exists) {
-      console.warn(`[PrivilegedStorage] Object does not exist in bucket: ${path}`);
       return null;
     }
 
@@ -363,8 +398,24 @@ export async function downloadFileFromCloudStorage(
         storageBucket: configuredBucket,
       },
     };
-  } catch (err) {
-    console.warn(`[PrivilegedStorage] Error downloading file from path ${path}:`, err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isPermissionOrAccessDenied =
+      msg.includes('Permission') ||
+      msg.includes('storage.objects') ||
+      msg.includes('403') ||
+      msg.includes('denied') ||
+      msg.includes('does not have storage') ||
+      msg.includes('404') ||
+      msg.includes('not exist') ||
+      msg.includes('notFound');
+
+    if (isPermissionOrAccessDenied) {
+      setGcsDirectAccessState(false, msg);
+      console.info(`[PrivilegedStorage] Direct GCS download skipped for ${path} (Cloud Storage permissions restricted for current identity).`);
+    } else {
+      console.info(`[PrivilegedStorage] Cloud Storage download notice for ${path}: ${msg}`);
+    }
     return null;
   }
 }
@@ -389,14 +440,31 @@ export async function deleteFileFromCloudStorage(fileId: string, explicitPath?: 
 
   let storageDeleted = false;
   if (storagePath) {
-    try {
-      const bucket = getStorageBucket(configuredBucket);
-      const file = bucket.file(storagePath);
-      await file.delete({ ignoreNotFound: true });
-      storageDeleted = true;
-      console.log(`[PrivilegedStorage] Deleted object from Cloud Storage: ${storagePath}`);
-    } catch (err: unknown) {
-      console.warn(`[PrivilegedStorage] Warning deleting object ${storagePath}:`, err);
+    if (isGcsDirectAccessAvailable()) {
+      try {
+        const bucket = getStorageBucket(configuredBucket);
+        const file = bucket.file(storagePath);
+        await file.delete({ ignoreNotFound: true });
+        storageDeleted = true;
+        console.log(`[PrivilegedStorage] Deleted object from Cloud Storage: ${storagePath}`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isPermissionOrAccessDenied =
+          msg.includes('Permission') ||
+          msg.includes('storage.objects') ||
+          msg.includes('403') ||
+          msg.includes('denied') ||
+          msg.includes('does not have storage') ||
+          msg.includes('404') ||
+          msg.includes('not exist');
+
+        if (isPermissionOrAccessDenied) {
+          setGcsDirectAccessState(false, msg);
+          console.info(`[PrivilegedStorage] Direct GCS delete skipped for ${storagePath} (storage restricted).`);
+        } else {
+          console.info(`[PrivilegedStorage] Cloud Storage notice deleting object ${storagePath}: ${msg}`);
+        }
+      }
     }
   }
 
@@ -518,16 +586,24 @@ export async function deleteMaterialCloudFiles(materialId: string): Promise<numb
   }
 
   // 3. Direct prefix deletion on Google Cloud Storage bucket
-  try {
-    const bucket = getStorageBucket(configuredBucket);
-    const [files] = await bucket.getFiles({ prefix: `curriculum_materials/${materialId}/` });
-    for (const f of files) {
-      await f.delete({ ignoreNotFound: true });
-      deletedCount++;
-      console.log(`[PrivilegedStorage] Direct prefix delete purged GCS object: ${f.name}`);
+  if (isGcsDirectAccessAvailable()) {
+    try {
+      const bucket = getStorageBucket(configuredBucket);
+      const [files] = await bucket.getFiles({ prefix: `curriculum_materials/${materialId}/` });
+      for (const f of files) {
+        await f.delete({ ignoreNotFound: true });
+        deletedCount++;
+        console.log(`[PrivilegedStorage] Direct prefix delete purged GCS object: ${f.name}`);
+      }
+    } catch (prefixErr: unknown) {
+      const msg = prefixErr instanceof Error ? prefixErr.message : String(prefixErr);
+      if (msg.includes('Permission') || msg.includes('403') || msg.includes('denied') || msg.includes('does not have storage')) {
+        setGcsDirectAccessState(false, msg);
+        console.info(`[PrivilegedStorage] Direct prefix deletion skipped for material ${materialId} (GCS access restricted).`);
+      } else {
+        console.info(`[PrivilegedStorage] Notice during direct prefix deletion for material ${materialId}: ${msg}`);
+      }
     }
-  } catch (prefixErr) {
-    console.warn(`[PrivilegedStorage] Warning during direct prefix deletion for material ${materialId}:`, prefixErr);
   }
 
   return deletedCount;
@@ -563,29 +639,37 @@ export async function deleteStudentCloudFiles(studentId: string): Promise<number
   }
 
   // 2. Direct prefix deletion on Google Cloud Storage bucket
-  try {
-    const bucket = getStorageBucket(configuredBucket);
-    const prefixes = [
-      `student_evaluations/${studentId}/`,
-      `evaluation_reports/${studentId}/`,
-      `checked_copies/${studentId}/`,
-      `documents/${studentId}/`,
-      `submissions/${studentId}/`,
-    ];
-    for (const prefix of prefixes) {
-      try {
-        const [files] = await bucket.getFiles({ prefix });
-        for (const f of files) {
-          await f.delete({ ignoreNotFound: true });
-          deletedCount++;
-          console.log(`[PrivilegedStorage] Direct prefix delete purged student GCS object: ${f.name}`);
+  if (isGcsDirectAccessAvailable()) {
+    try {
+      const bucket = getStorageBucket(configuredBucket);
+      const prefixes = [
+        `student_evaluations/${studentId}/`,
+        `evaluation_reports/${studentId}/`,
+        `checked_copies/${studentId}/`,
+        `documents/${studentId}/`,
+        `submissions/${studentId}/`,
+      ];
+      for (const prefix of prefixes) {
+        try {
+          const [files] = await bucket.getFiles({ prefix });
+          for (const f of files) {
+            await f.delete({ ignoreNotFound: true });
+            deletedCount++;
+            console.log(`[PrivilegedStorage] Direct prefix delete purged student GCS object: ${f.name}`);
+          }
+        } catch (pErr) {
+          console.info(`[PrivilegedStorage] Notice during student prefix cleanup for ${prefix}`);
         }
-      } catch (pErr) {
-        console.warn(`[PrivilegedStorage] Warning during student prefix cleanup for ${prefix}:`, pErr);
+      }
+    } catch (bucketErr: unknown) {
+      const msg = bucketErr instanceof Error ? bucketErr.message : String(bucketErr);
+      if (msg.includes('Permission') || msg.includes('403') || msg.includes('denied') || msg.includes('does not have storage')) {
+        setGcsDirectAccessState(false, msg);
+        console.info(`[PrivilegedStorage] Direct bucket prefix deletion skipped for student ${studentId} (GCS access restricted).`);
+      } else {
+        console.info(`[PrivilegedStorage] Notice during direct bucket prefix deletion for student ${studentId}: ${msg}`);
       }
     }
-  } catch (bucketErr) {
-    console.warn(`[PrivilegedStorage] Warning during direct bucket prefix deletion for student ${studentId}:`, bucketErr);
   }
 
   return deletedCount;
@@ -633,20 +717,22 @@ export async function auditStorageConsistency(allMaterials: any[]): Promise<Stor
   // 1. Fetch all actual objects from Cloud Storage
   const storageMap = new Map<string, { name: string; size: number; updated?: string; contentType?: string }>();
 
-  try {
-    const [remoteFiles] = await bucket.getFiles();
-    for (const file of remoteFiles) {
-      if (file.name === '_privileged_probe_check.txt') continue;
-      const size = typeof file.metadata.size === 'string' ? parseInt(file.metadata.size, 10) : Number(file.metadata.size || 0);
-      storageMap.set(file.name, {
-        name: file.name,
-        size,
-        updated: file.metadata.updated,
-        contentType: file.metadata.contentType,
-      });
+  if (isGcsDirectAccessAvailable()) {
+    try {
+      const [remoteFiles] = await bucket.getFiles();
+      for (const file of remoteFiles) {
+        if (file.name === '_privileged_probe_check.txt') continue;
+        const size = typeof file.metadata.size === 'string' ? parseInt(file.metadata.size, 10) : Number(file.metadata.size || 0);
+        storageMap.set(file.name, {
+          name: file.name,
+          size,
+          updated: file.metadata.updated,
+          contentType: file.metadata.contentType,
+        });
+      }
+    } catch (bucketErr) {
+      console.info('[PrivilegedStorage] Notice: Cloud Storage getFiles skipped (access restricted):', bucketErr instanceof Error ? bucketErr.message : bucketErr);
     }
-  } catch (bucketErr) {
-    console.warn('[PrivilegedStorage] Notice: Cloud Storage getFiles skipped (access restricted):', bucketErr instanceof Error ? bucketErr.message : bucketErr);
   }
 
   // 2. Fetch all file_storage_metadata records

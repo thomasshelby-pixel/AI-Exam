@@ -207,8 +207,9 @@ export async function getPersistentFile(
       }
       return downloaded;
     }
-  } catch (err) {
-    console.warn(`[PersistentStorage] Error fetching ${fileId} from Cloud Storage:`, err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.info(`[PersistentStorage] Notice fetching ${fileId} from Cloud Storage: ${msg}`);
   }
 
   return null;
@@ -254,8 +255,9 @@ export async function deletePersistentFile(fileId: string, explicitPath?: string
   // 2. Remove from Firebase Cloud Storage & Firestore metadata
   try {
     await deleteFileFromCloudStorage(fileId, explicitPath);
-  } catch (err) {
-    console.warn(`[PersistentStorage] Error deleting from Cloud Storage for ${fileId}:`, err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.info(`[PersistentStorage] Notice deleting from Cloud Storage for ${fileId}: ${msg}`);
   }
 
   return deletedFromDisk;

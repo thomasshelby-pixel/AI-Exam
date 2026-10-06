@@ -1488,7 +1488,14 @@ router.post(
       }
 
       const verificationResult = await verifyEvaluationConsistency(evaluationId);
-      return res.status(verificationResult.success ? 200 : 409).json(verificationResult);
+      if (verificationResult.success) {
+        return res.status(200).json(verificationResult);
+      } else {
+        return res.status(409).json({
+          error: verificationResult.error || verificationResult.message,
+          ...verificationResult,
+        });
+      }
     } catch (error: any) {
       console.error('Verify evaluation consistency error:', error);
       return res.status(500).json({ error: 'Failed to perform consistency verification', message: error?.message });
@@ -1557,25 +1564,25 @@ router.get(
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
-      // If consistency verification was requested or auto-verify query param is passed
-      const shouldAutoVerify = req.query.verify === 'true' || req.query.autoVerify === 'true';
-      if ((record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') && shouldAutoVerify) {
+      // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
+      const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
+
+      if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
         const verifyRes = await verifyEvaluationConsistency(evaluationId);
         if (verifyRes.success) {
           record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        } else {
+          return res.status(409).json({
+            error: verifyRes.error || 'Evaluation consistency verification flagged issues requiring administrative review.',
+            code: 'EVALUATION_INCONSISTENCY',
+            status: record.status,
+            reason: record.rejection_reason || verifyRes.message || 'Marks or components consistency audit flagged for review.',
+            academicScore: record.total_marks,
+          });
         }
       }
 
-      if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {
-        return res.status(409).json({
-          error: 'Evaluation consistency verification required before checked copy can be downloaded.',
-          code: 'EVALUATION_INCONSISTENCY',
-          status: record.status,
-          reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
-        });
-      }
-
-      if (record.status !== 'COMPLETED') {
+      if (record.status !== 'COMPLETED' && record.certification_status !== 'CERTIFIED') {
         return res.status(409).json({
           error: 'Evaluation is still in progress. Please wait for evaluation to complete.',
           code: 'EVALUATION_IN_PROGRESS',
@@ -1783,21 +1790,29 @@ router.get(
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
-      // If consistency verification was requested or auto-verify query param is passed
-      const shouldAutoVerify = req.query.verify === 'true' || req.query.autoVerify === 'true';
-      if ((record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') && shouldAutoVerify) {
+      // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
+      const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
+
+      if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
         const verifyRes = await verifyEvaluationConsistency(evaluationId);
         if (verifyRes.success) {
           record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        } else {
+          return res.status(409).json({
+            error: verifyRes.error || 'Evaluation consistency verification flagged issues requiring administrative review.',
+            code: 'EVALUATION_INCONSISTENCY',
+            status: record.status,
+            reason: record.rejection_reason || verifyRes.message || 'Marks or components consistency audit flagged for review.',
+            academicScore: record.total_marks,
+          });
         }
       }
 
-      if (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW') {
+      if (record.status !== 'COMPLETED' && record.certification_status !== 'CERTIFIED') {
         return res.status(409).json({
-          error: 'Evaluation consistency verification required before report can be downloaded.',
-          code: 'EVALUATION_INCONSISTENCY',
+          error: 'Evaluation is still in progress. Please wait for evaluation to complete.',
+          code: 'EVALUATION_IN_PROGRESS',
           status: record.status,
-          reason: record.rejection_reason || 'Marks or components consistency audit flagged for review.',
         });
       }
 
@@ -2022,6 +2037,10 @@ router.get(
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
       fs.writeFileSync(originalFilePath, originalPdfBuffer);
+      savePersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`, 'application/pdf', originalPdfBuffer, 'EVALUATION_ORIGINAL', {
+        ownerUserId: record.student_id,
+        evaluationId,
+      }).catch(() => {});
     } catch {
       // ignore
     }

@@ -66,6 +66,7 @@ console.log('\n--- TEST 1: Separation of Academic Score vs Verification Status -
     materialType: 'MTP',
     coverageMap: {
       totalPages: 12,
+      pages: [],
       coveredPages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
       attemptedQuestions: [
         { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', pages: [1, 2], isMcq: false, status: 'ATTEMPTED_READABLE' },
@@ -101,8 +102,8 @@ console.log('\n--- TEST 2: Non-Critical Warnings Invariant ---');
   const paperStructure: AuthoritativePaperStructure = {
     paperTitle: 'CA Inter Accounting',
     subQuestions: [
-      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 10, isMcq: false },
-      { fullQuestionCode: 'Q1(b)', questionNumber: '1', subQuestionNumber: 'b', maximumMarks: 10, isMcq: false },
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 10, isMcq: false, compulsory: true, section: 'A' },
+      { fullQuestionCode: 'Q1(b)', questionNumber: '1', subQuestionNumber: 'b', maximumMarks: 10, isMcq: false, compulsory: true, section: 'A' },
     ],
     mcqs: [],
     questions: [],
@@ -142,8 +143,8 @@ console.log('\n--- TEST 3: Technical Failure Marks Deduction Safety ---');
   const paperStructure: AuthoritativePaperStructure = {
     paperTitle: 'CA Final AFM',
     subQuestions: [
-      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 12, isMcq: false },
-      { fullQuestionCode: 'Q1(b)', questionNumber: '1', subQuestionNumber: 'b', maximumMarks: 8, isMcq: false },
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 12, isMcq: false, compulsory: true, section: 'A' },
+      { fullQuestionCode: 'Q1(b)', questionNumber: '1', subQuestionNumber: 'b', maximumMarks: 8, isMcq: false, compulsory: true, section: 'A' },
     ],
     mcqs: [],
     questions: [],
@@ -208,8 +209,8 @@ console.log('\n--- TEST 4: Exactly-Once Task Identity ---');
   const paperStructure: AuthoritativePaperStructure = {
     paperTitle: 'CA Foundation Law',
     subQuestions: [
-      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 6, isMcq: false },
-      { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 6, isMcq: false },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 6, isMcq: false, compulsory: true, section: 'A' },
+      { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 6, isMcq: false, compulsory: true, section: 'A' },
     ],
     mcqs: [],
     questions: [],

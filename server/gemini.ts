@@ -36,7 +36,7 @@ import {
 } from './services/materialHardGateService.js';
 import { createEvaluationReviewResult } from './services/evaluationReviewResult.js';
 import { calculateDynamicAiConfidence } from './services/dynamicConfidenceEngine.js';
-import { AnswerCoverageMap } from './services/answerSheetCoverageService.js';
+import { AnswerCoverageMap, AttemptedQuestionMapping } from './services/answerSheetCoverageService.js';
 import { PDFDocument } from 'pdf-lib';
 import { validateBase64Upload } from './utils/fileValidation.js';
 
@@ -1186,7 +1186,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   try {
                     evalResult = await evaluateQuestionChunk({
                       subQuestion: subQ,
-                      mapping,
+                      mapping: mapping as AttemptedQuestionMapping,
                       fullPdfBuffer: pdfBuffer,
                       questionPaperText: params.referenceQuestionPaperText,
                       suggestedAnswersText: params.referenceSuggestedAnswersText,
@@ -1243,7 +1243,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 try {
                   const recoveredQ = await evaluateQuestionChunk({
                     subQuestion: targetSubQ,
-                    mapping,
+                    mapping: mapping as AttemptedQuestionMapping,
                     fullPdfBuffer: pdfBuffer,
                     questionPaperText: params.referenceQuestionPaperText,
                     suggestedAnswersText: params.referenceSuggestedAnswersText,

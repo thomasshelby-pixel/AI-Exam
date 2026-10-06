@@ -77,10 +77,17 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     message: string;
   } | null>(null);
 
+  const isCertified =
+    (evaluationResult as any).certificationStatus === 'CERTIFIED' ||
+    (evaluationResult as any).status === 'COMPLETED' ||
+    (evaluationResult as any).downloadsUnlocked === true ||
+    (evaluationResult as any).validationStatus === 'VALID';
+
   const isNeedsReview =
-    (evaluationResult as any).status === 'NEEDS_REVIEW' ||
-    (evaluationResult as any).status === 'VALIDATION_FAILED' ||
-    evaluationResult.validationStatus === 'NEEDS_REVIEW';
+    !isCertified &&
+    ((evaluationResult as any).status === 'NEEDS_REVIEW' ||
+      (evaluationResult as any).status === 'VALIDATION_FAILED' ||
+      evaluationResult.validationStatus === 'NEEDS_REVIEW');
 
   const handleRunConsistencyVerification = async (
     autoDownloadAfter = false,
@@ -427,8 +434,8 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
         </div>
       )}
 
-      {/* Flag Alert Banner for NEEDS_REVIEW / Consistency Verification Required */}
-      {isNeedsReview && (
+      {/* Flag Alert Banner for genuine NEEDS_REVIEW / Administrative Review */}
+      {isNeedsReview && !isCertified && (
         <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400/80 dark:border-amber-600/80 rounded-xl p-4 shadow-sm text-amber-950 dark:text-amber-200 space-y-3 print:hidden">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -438,17 +445,17 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded bg-amber-600 text-white">
-                    Consistency Verification Required
+                    Administrative Review in Progress
                   </span>
                   <span className="text-[11px] text-amber-800 dark:text-amber-300 font-semibold">
-                    Certified Download Protection Active
+                    Academic Score Recorded
                   </span>
                 </div>
                 <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                  Step marks and component arithmetic verification is required before certified copies can be downloaded.
+                  Your academic score of {activeMarks} / {officialMax} marks is recorded. Automated integrity checks are finalizing certified copy generation.
                 </p>
                 <p className="text-[11px] text-amber-700 dark:text-amber-300/90 leading-relaxed">
-                  Run the authoritative consistency verification to certify this evaluation and unlock your Checked Copy and Detailed Report.
+                  You can refresh or check the official certification status below.
                 </p>
               </div>
             </div>
@@ -461,12 +468,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               {isVerifyingConsistency ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying Consistency...</span>
+                  <span>Checking Status...</span>
                 </>
               ) : (
                 <>
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Verify Consistency Now</span>
+                  <span>Check Certification</span>
                 </>
               )}
             </button>
@@ -759,12 +766,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-700'
                 }`}
               >
-                {isNeedsReview ? 'Verification Required' : activeGrade}
+                {isNeedsReview ? 'Review in Progress' : activeGrade}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
               {isNeedsReview
-                ? 'Pending final certification'
+                ? 'Academic score recorded'
                 : isExemption
                 ? 'Exemption Eligible (>=60)'
                 : isPass
@@ -805,7 +812,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
                 : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
             }`}>
-              {isNeedsReview ? 'Verification Required' : 'Certified Result'}
+              {isNeedsReview ? 'Review in Progress' : 'Evaluation Verified'}
             </span>
           </div>
         </div>
