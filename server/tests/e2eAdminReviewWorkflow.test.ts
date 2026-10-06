@@ -29,7 +29,8 @@ function recordResult(item: number, description: string, condition: boolean, det
 }
 
 async function runVerification() {
-  const BASE_URL = 'http://localhost:3000';
+  const PORT = process.env.PORT || '8080';
+  const BASE_URL = `http://localhost:${PORT}`;
   const timestamp = Date.now();
   const evalId = `eval_verify_${timestamp}`;
   const v1Id = `${evalId}_v1`;

@@ -188,6 +188,9 @@ export interface ReferenceTrace {
   materialId?: string;
   materialTitle?: string;
   materialVersion?: string;
+  source?: string;
+  paperId?: string;
+  modelAnswerAvailable?: boolean;
   contentHash?: string;
   retrievedCharacterCount?: number;
   markingSchemeSection?: string;
@@ -657,7 +660,9 @@ export interface EvaluationResult {
   attemptedCount?: number;
   evaluatedCount?: number;
   academicScore?: number;
-  certificationStatus?: 'CERTIFIED' | 'VERIFICATION_REQUIRED' | 'PENDING' | 'RECHECK_REQUIRED';
+  certificationStatus?: 'CERTIFIED' | 'VERIFICATION_REQUIRED' | 'PENDING' | 'RECHECK_REQUIRED' | 'REVIEW_REQUIRED';
+  downloadsUnlocked?: boolean;
+  referenceMaterialIds?: string[];
   technicalFailureCount?: number;
   unresolvedQuestions?: string[];
   isTechnicalReviewState?: boolean;

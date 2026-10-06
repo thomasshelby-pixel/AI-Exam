@@ -1,5 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
+import { getServerPort } from '../config/serverPort.js';
 import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
 import {
   getAllFeatures,
@@ -3655,7 +3656,7 @@ router.get('/settings', (req: AuthRequest, res: Response) => {
     return res.json({
       environment: {
         nodeEnv: process.env.NODE_ENV || 'development',
-        port: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
+        port: getServerPort(),
         database: 'SQLite (local WAL mode enabled)',
         razorpayConfigured: rzpConfigured,
         razorpayKeyIdSet: !!process.env.RAZORPAY_KEY_ID,

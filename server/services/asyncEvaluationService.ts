@@ -436,7 +436,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // Check critical integrity: questions exist, ledger arithmetic is sound, no bounds violations
     const hasValidQuestions = Array.isArray(evaluationResult.questions) && evaluationResult.questions.length > 0;
     const isMathConsistent = consistencyReport.isValid && (!runPackage?.scoreLedger || runPackage.scoreLedger.isReconciled);
-    const criticalIntegrityPassed = hasValidQuestions && isMathConsistent && evaluationResult.validationStatus !== 'VALIDATION_FAILED';
+    const criticalIntegrityPassed = hasValidQuestions && isMathConsistent && (evaluationResult.validationStatus as string) !== 'VALIDATION_FAILED';
 
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';

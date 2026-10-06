@@ -22,12 +22,16 @@ import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
+import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
 
 async function startServer() {
+  const PORT = getServerPort();
+
   // Safe startup logging for Cloud Run / Firebase App Hosting
   console.log({
     nodeEnv: process.env.NODE_ENV,
-    port: process.env.PORT,
+    port: PORT,
+    host: SERVER_HOST,
     startup: 'server-start',
   });
 
@@ -36,9 +40,6 @@ async function startServer() {
   initMfaRecoveryTables();
 
   const app = express();
-  // Cloud Run and App Hosting automatically supply PORT (typically 8080).
-  // Strictly consumes process.env.PORT per Firebase App Hosting specification.
-  const PORT = Number(process.env.PORT) || 8080;
 
   // Lightweight health check endpoint for platform probes
   app.get('/healthz', (_req, res) => {

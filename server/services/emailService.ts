@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import crypto from 'crypto';
 import { db } from '../db.js';
+import { getServerPort } from '../config/serverPort.js';
 
 export interface EmailAttachment {
   filename: string;
@@ -91,7 +92,7 @@ export function getAppBaseUrl(): string {
   if (process.env.NODE_ENV === 'production') {
     return 'https://caexamcheckerai.com';
   }
-  const port = process.env.PORT || '3000';
+  const port = getServerPort();
   return `http://localhost:${port}`;
 }
 
@@ -297,8 +298,7 @@ export interface RecheckCompletedEmailParams {
 export async function sendRecheckCompletedEmail(
   params: RecheckCompletedEmailParams
 ): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string }> {
-  const port = process.env.PORT || '3000';
-  const appUrl = process.env.APP_URL || `http://localhost:${port}`;
+  const appUrl = getAppBaseUrl();
   const evalUrl = `${appUrl}/evaluations/${params.evaluationId}`;
   const displayName = params.studentName || 'Student';
 
@@ -447,8 +447,7 @@ export interface SendCheckedCopyEmailParams {
 export async function sendCheckedCopyEmail(
   params: SendCheckedCopyEmailParams
 ): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string; auditId?: string }> {
-  const port = process.env.PORT || '3000';
-  const appUrl = process.env.APP_URL || `http://localhost:${port}`;
+  const appUrl = getAppBaseUrl();
   const evalUrl = `${appUrl}/evaluations/${params.evaluationId}`;
   const displayName = params.studentName || 'Student';
 
