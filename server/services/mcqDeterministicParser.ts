@@ -1,17 +1,10 @@
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import { db } from '../db.js';
 import { PDFDocument } from 'pdf-lib';
+import * as pdfParseModule from 'pdf-parse';
 
-const nodeRequire = createRequire(import.meta.url);
-let PDFParseClass: any = null;
-try {
-  const pdfParsePkg = nodeRequire('pdf-parse');
-  PDFParseClass = pdfParsePkg?.PDFParse || pdfParsePkg?.default || pdfParsePkg;
-} catch (e) {
-  console.warn('[PDF Parser] pdf-parse module load note:', e);
-}
+const PDFParseClass: any = (pdfParseModule as any)?.PDFParse || (pdfParseModule as any)?.default?.PDFParse || (pdfParseModule as any)?.default || pdfParseModule;
 
 export interface ExtractedQuestionDraft {
   id: string;
