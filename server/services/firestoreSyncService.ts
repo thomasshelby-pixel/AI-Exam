@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, recordLocalTombstone, getAllLocalTombstoneSet } from '../db.js';
+import { db, recordLocalTombstone, getAllLocalTombstoneSet, isTombstoned as isLocalTombstoned } from '../db.js';
 import {
   getFirestoreDb,
   setFirestoreDoc,
@@ -78,14 +78,22 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
  * Permanently removes a record from Cloud Firestore and marks a tombstone
  * so it will NEVER be re-seeded or resurrected on server restarts.
  */
-export async function permanentlyDeleteFromFirestore(collectionName: string, id: string, reason?: string) {
+export async function permanentlyDeleteFromFirestore(
+  collectionName: string,
+  id: string,
+  reason?: string,
+  options: { failOnError?: boolean } = {}
+) {
   try {
     recordLocalTombstone(collectionName, id, reason);
-    await recordTombstone(collectionName, id, reason);
+    await recordTombstone(collectionName, id, reason, options);
     await deleteFirestoreDoc(collectionName, id);
     console.log(`[FirestoreSync] Permanently deleted and tombstoned ${collectionName}/${id}`);
+    return true;
   } catch (err) {
     console.warn(`[FirestoreSync] Failed to permanently delete ${collectionName}/${id}:`, err);
+    if (options.failOnError) throw err;
+    return false;
   }
 }
 
@@ -117,19 +125,12 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const tombstones = await readDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
     const localTombstones = getAllLocalTombstoneSet();
     const tombstoneSet = new Set<string>(localTombstones);
+    // Only genuine super administrative account is preserved from accidental lockout
     const PROTECTED_CORE_IDS = new Set([
       'usr_super_admin_001',
-      'usr_user_at9767',
-      'usr_student_demo_001',
-      'usr_bf97ebeeae7273b7',
-      'usr_mcq_admin_priyatca15',
     ]);
     const PROTECTED_CORE_EMAILS = new Set([
       'caexamchecker.support@gmail.com',
-      'at9767676@gmail.com',
-      'student@caexamchecker.ai',
-      'adityakumart484@gmail.com',
-      'priyatca15@gmail.com',
     ]);
 
     for (const t of tombstones) {
@@ -145,10 +146,26 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         // Clean up tombstoned records from local SQLite to prevent resurrection
         try {
-          if (col === 'reviews') {
+          if (col === 'users') {
+            db.prepare('DELETE FROM users WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM evaluations WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM assignment_submissions WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM exam_attempts WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_memberships WHERE student_id = ?').run(tid);
+          } else if (col === 'student_profiles') {
+            db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(tid);
+          } else if (col === 'student_examiner_profiles') {
+            db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(tid);
+          } else if (col === 'reviews') {
             db.prepare('DELETE FROM reviews WHERE id = ?').run(tid);
           } else if (col === 'evaluations') {
             db.prepare('DELETE FROM evaluations WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(tid);
           } else if (col === 'evaluation_materials' || col === 'materials') {
             db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(tid);
           } else if (col === 'referral_redemptions') {
@@ -156,6 +173,34 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           }
         } catch {}
       }
+    }
+
+    // Purge any local SQLite users that are tombstoned in authoritative tombstone set
+    try {
+      const allLocalUsers = db.prepare('SELECT id, email FROM users').all() as Array<{ id: string; email: string }>;
+      for (const lu of allLocalUsers) {
+        const luEmail = String(lu.email || '').trim().toLowerCase();
+        const isTomb = tombstoneSet.has(`users_${lu.id}`) ||
+                       tombstoneSet.has(`users:${lu.id}`) ||
+                       tombstoneSet.has(lu.id) ||
+                       tombstoneSet.has(`users_${luEmail}`) ||
+                       tombstoneSet.has(luEmail);
+        if (isTomb) {
+          console.log(`[FirestoreSync] Purging tombstoned user from local SQLite during hydration: ${lu.id} (${luEmail})`);
+          db.prepare('DELETE FROM users WHERE id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM evaluations WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM assignment_submissions WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM exam_attempts WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM institute_memberships WHERE student_id = ?').run(lu.id);
+        }
+      }
+    } catch (purgeErr) {
+      console.warn('[FirestoreSync] Failed to purge tombstoned users from SQLite:', purgeErr);
     }
 
     // 2. Hydrate Users
@@ -169,8 +214,17 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         continue;
       }
 
-      const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
-      if (!isProtected && tombstoneSet.has(`users_${u.id}`)) continue;
+      const isUserTombstoned = tombstoneSet.has(`users_${u.id}`) ||
+                               tombstoneSet.has(`users:${u.id}`) ||
+                               tombstoneSet.has(u.id) ||
+                               tombstoneSet.has(`users_${normEmail}`) ||
+                               tombstoneSet.has(normEmail) ||
+                               isLocalTombstoned('users', u.id) ||
+                               isLocalTombstoned('users', normEmail);
+      if (isUserTombstoned) {
+        console.log(`[FirestoreSync] Skipping tombstoned user ${u.id} (${normEmail}) during hydration.`);
+        continue;
+      }
       try {
         let targetId = u.id;
         let targetRole = u.role || 'STUDENT';
@@ -298,8 +352,16 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const profiles = await readDocs<any>('student_profiles');
     for (const p of profiles) {
       const uId = p.user_id || p.id;
+      const isProfileTombstoned = tombstoneSet.has(`student_profiles_${uId}`) ||
+                                  tombstoneSet.has(`student_profiles:${uId}`) ||
+                                  tombstoneSet.has(`users_${uId}`) ||
+                                  tombstoneSet.has(`users:${uId}`) ||
+                                  tombstoneSet.has(uId) ||
+                                  isLocalTombstoned('users', uId) ||
+                                  isLocalTombstoned('student_profiles', uId);
+      if (isProfileTombstoned) continue;
       const userActive = db.prepare('SELECT id FROM users WHERE id = ?').get(uId);
-      if (!userActive && (tombstoneSet.has(`student_profiles_${uId}`) || tombstoneSet.has(uId))) continue;
+      if (!userActive) continue;
       try {
         const lotCount = db.prepare('SELECT COUNT(*) as count FROM student_credit_purchases WHERE user_id = ?').get(uId) as { count: number };
         let finalCredits: number;
@@ -518,12 +580,21 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     for (const ev of evaluations) {
       fsEvalMap.add(ev.id);
-      // Tombstoned evaluations must always be deleted and skipped, with NO protected account bypass
-      if (tombstoneSet.has(`evaluations_${ev.id}`) || tombstoneSet.has(ev.id)) {
+      // Tombstoned evaluations or evaluations belonging to tombstoned students must always be deleted and skipped
+      const isStudentTombstoned = ev.student_id && (
+        tombstoneSet.has(`users_${ev.student_id}`) ||
+        tombstoneSet.has(`users:${ev.student_id}`) ||
+        tombstoneSet.has(ev.student_id) ||
+        isLocalTombstoned('users', ev.student_id)
+      );
+      if (tombstoneSet.has(`evaluations_${ev.id}`) || tombstoneSet.has(ev.id) || isLocalTombstoned('evaluations', ev.id) || isStudentTombstoned) {
         try {
           db.prepare('DELETE FROM evaluations WHERE id = ?').run(ev.id);
           db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(ev.id);
           db.prepare('DELETE FROM recheck_requests WHERE evaluation_id = ?').run(ev.id);
+          if (isStudentTombstoned) {
+            permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded cleanup of evaluation for tombstoned student ${ev.student_id}`).catch(() => {});
+          }
         } catch {}
         continue;
       }
@@ -1103,29 +1174,52 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     for (const orphan of orphanStudents) {
       if (!orphan.student_id) continue;
+      const sid = orphan.student_id;
+      const isStudentTombstoned = tombstoneSet.has(`users_${sid}`) ||
+                                  tombstoneSet.has(`users:${sid}`) ||
+                                  tombstoneSet.has(sid) ||
+                                  tombstoneSet.has(`student_profiles_${sid}`) ||
+                                  isLocalTombstoned('users', sid);
+
+      if (isStudentTombstoned) {
+        console.log(`[FirestoreSync] Step 15: Skipping recreation of tombstoned student ${sid}. Resolving dangling evaluations.`);
+        try {
+          const danglingEvals = db.prepare('SELECT id FROM evaluations WHERE student_id = ?').all(sid) as Array<{ id: string }>;
+          for (const dev of danglingEvals) {
+            db.prepare('DELETE FROM evaluations WHERE id = ?').run(dev.id);
+            db.prepare('DELETE FROM evaluation_materials WHERE evaluation_id = ?').run(dev.id);
+            db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(dev.id);
+            permanentlyDeleteFromFirestore('evaluations', dev.id, `Cascaded cleanup of dangling evaluation for tombstoned student ${sid}`).catch(() => {});
+          }
+        } catch (cleanErr) {
+          console.warn(`[FirestoreSync] Failed to clean dangling evaluations for tombstoned student ${sid}:`, cleanErr);
+        }
+        continue;
+      }
+
       try {
         db.prepare(`
           INSERT INTO users (id, email, password_hash, full_name, phone, role, status, created_at, updated_at)
           VALUES (?, ?, ?, 'CA Student', '+919876543210', 'STUDENT', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO NOTHING
-        `).run(orphan.student_id, `student_${orphan.student_id}@caexamchecker.ai`, 'PERSISTED_HASH');
+        `).run(sid, `student_${sid}@caexamchecker.ai`, 'PERSISTED_HASH');
 
         db.prepare(`
           INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
           VALUES (?, 'WRO123456', 'INTERMEDIATE', 0, 0)
           ON CONFLICT(user_id) DO NOTHING
-        `).run(orphan.student_id);
+        `).run(sid);
 
-        syncRecordToFirestore('users', orphan.student_id, {
-          id: orphan.student_id,
-          email: `student_${orphan.student_id}@caexamchecker.ai`,
+        syncRecordToFirestore('users', sid, {
+          id: sid,
+          email: `student_${sid}@caexamchecker.ai`,
           full_name: 'CA Student',
           role: 'STUDENT',
           status: 'ACTIVE',
           created_at: new Date().toISOString()
         }).catch(() => {});
       } catch (err) {
-        console.warn(`[FirestoreSync] Auto-heal notice for student ${orphan.student_id}:`, err);
+        console.warn(`[FirestoreSync] Auto-heal notice for student ${sid}:`, err);
       }
     }
 
@@ -1275,6 +1369,17 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUsers = db.prepare(baselineUserQuery).all() as any[];
     for (const bu of baselineUsers) {
       const normEmail = String(bu.email || '').toLowerCase().trim();
+      const isBuTombstoned = tombstoneSet.has(`users_${bu.id}`) ||
+                             tombstoneSet.has(`users:${bu.id}`) ||
+                             tombstoneSet.has(bu.id) ||
+                             tombstoneSet.has(`users_${normEmail}`) ||
+                             tombstoneSet.has(normEmail) ||
+                             isLocalTombstoned('users', bu.id) ||
+                             isLocalTombstoned('users', normEmail);
+      if (isBuTombstoned) {
+        console.log(`[FirestoreSync] Skipping baseline seeding for tombstoned user ${bu.email} (${bu.id})`);
+        continue;
+      }
       if (!existingEmailSet.has(normEmail)) {
         await setFirestoreDoc('users', bu.id, bu);
         const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;

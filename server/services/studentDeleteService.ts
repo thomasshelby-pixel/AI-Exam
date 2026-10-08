@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { db, verifyPassword } from '../db.js';
+import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
@@ -9,6 +9,7 @@ import { revokeAllSessionsForUser } from './sessionService.js';
 export interface DeleteStudentResult {
   success: boolean;
   message: string;
+  alreadyDeleted?: boolean;
   deletedStudent: {
     id: string;
     email: string;
@@ -25,12 +26,12 @@ export interface DeleteStudentResult {
   };
 }
 
-export function deleteStudentAccount(
+export async function deleteStudentAccount(
   studentId: string,
   actor: { id: string; email: string; role: string },
   ipAddress?: string | null,
   userAgent?: string | null
-): DeleteStudentResult {
+): Promise<DeleteStudentResult> {
   // 1. Authorization: Only SUPER_ADMIN can permanently delete
   const actorRole = (actor?.role || '').toUpperCase();
   const actorEmail = (actor?.email || '').toLowerCase().trim();
@@ -51,6 +52,37 @@ export function deleteStudentAccount(
   } | undefined;
 
   if (!targetUser) {
+    const wasTombstoned = isTombstoned('users', studentId) ||
+      Boolean(db.prepare("SELECT id FROM tombstones WHERE collection_name = 'users' AND entity_id = ?").get(studentId)) ||
+      Boolean(db.prepare("SELECT id FROM audit_logs WHERE action IN ('SUPER_ADMIN_PERMANENT_DELETE_STUDENT', 'STUDENT_SELF_DELETE_ACCOUNT') AND entity_id = ?").get(studentId));
+
+    if (wasTombstoned) {
+      await Promise.allSettled([
+        permanentlyDeleteFromFirestore('users', studentId, 'Idempotent deletion verification for already-deleted student'),
+        permanentlyDeleteFromFirestore('student_profiles', studentId, 'Idempotent deletion verification for student_profiles'),
+      ]);
+
+      return {
+        success: true,
+        message: 'Student account has already been permanently deleted.',
+        alreadyDeleted: true,
+        deletedStudent: {
+          id: studentId,
+          email: '',
+          fullName: 'Deleted Student',
+          accountClassification: 'NORMAL',
+        },
+        cleanupSummary: {
+          evaluationsRemoved: 0,
+          filesRemoved: 0,
+          membershipsRemoved: 0,
+          redemptionsCleaned: 0,
+          sessionsRevoked: 0,
+          financialRecordsRetained: 0,
+        },
+      };
+    }
+
     const error: any = new Error('Student account not found or has already been deleted.');
     error.statusCode = 404;
     throw error;
@@ -218,15 +250,26 @@ export function deleteStudentAccount(
     // Commit atomic transaction
     db.exec('COMMIT');
 
-    // 7I. Cloud Firestore Synchronization & Tombstoning (Prevents resurrection upon restart)
-    try {
-      permanentlyDeleteFromFirestore('users', studentId, `Super admin permanently deleted student ${targetUser.email}`);
-      permanentlyDeleteFromFirestore('student_profiles', studentId, `Deleted student profile for ${studentId}`);
-      for (const ev of studentEvaluations) {
-        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`);
-      }
-    } catch (fsErr) {
-      console.warn('[StudentDeleteService] Firestore permanent deletion warning:', fsErr);
+    // 7I. Authoritative Cloud Firestore Synchronization & Tombstoning (Prevents resurrection upon restart)
+    const cloudPromises: Promise<any>[] = [
+      permanentlyDeleteFromFirestore('users', studentId, `Super admin permanently deleted student ${targetUser.email}`, { failOnError: true }),
+      permanentlyDeleteFromFirestore('student_profiles', studentId, `Deleted student profile for ${studentId}`, { failOnError: true }),
+      permanentlyDeleteFromFirestore('student_examiner_profiles', studentId, `Deleted student examiner profile for ${studentId}`),
+    ];
+    for (const ev of studentEvaluations) {
+      cloudPromises.push(
+        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`)
+      );
+    }
+
+    const settledResults = await Promise.allSettled(cloudPromises);
+    const userDeletionResult = settledResults[0];
+    if (userDeletionResult.status === 'rejected') {
+      const errReason = (userDeletionResult as PromiseRejectedResult).reason;
+      console.error('[StudentDeleteService] Failed to persist user tombstone to Cloud Firestore:', errReason);
+      const error: any = new Error(`Local student data was purged, but authoritative Cloud Firestore tombstone could not be confirmed: ${errReason?.message || 'Cloud write failure'}.`);
+      error.statusCode = 502;
+      throw error;
     }
 
     return {
@@ -248,7 +291,9 @@ export function deleteStudentAccount(
       },
     };
   } catch (txErr) {
-    db.exec('ROLLBACK');
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
     console.error('[StudentDeleteService] Transaction error:', txErr);
     throw txErr;
   }
@@ -655,17 +700,18 @@ export async function selfDeleteStudentAccount(
     // Commit atomic transaction
     db.exec('COMMIT');
 
-    // 8J. Cloud Firestore Permanent Deletion & Tombstoning
-    try {
-      permanentlyDeleteFromFirestore('users', studentId, `Student self-deleted account: ${targetUser.email}`);
-      permanentlyDeleteFromFirestore('student_profiles', studentId, `Self-deleted student profile: ${studentId}`);
-      permanentlyDeleteFromFirestore('student_examiner_profiles', studentId, `Self-deleted student examiner profile: ${studentId}`);
-      for (const ev of studentEvaluations) {
-        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion for self-deleted student: ${studentId}`);
-      }
-    } catch (fsErr) {
-      console.warn('[StudentDeleteService] Firestore permanent deletion warning:', fsErr);
+    // 8J. Authoritative Cloud Firestore Permanent Deletion & Tombstoning
+    const cloudPromises: Promise<any>[] = [
+      permanentlyDeleteFromFirestore('users', studentId, `Student self-deleted account: ${targetUser.email}`, { failOnError: true }),
+      permanentlyDeleteFromFirestore('student_profiles', studentId, `Self-deleted student profile: ${studentId}`, { failOnError: true }),
+      permanentlyDeleteFromFirestore('student_examiner_profiles', studentId, `Self-deleted student examiner profile: ${studentId}`),
+    ];
+    for (const ev of studentEvaluations) {
+      cloudPromises.push(
+        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion for self-deleted student: ${studentId}`)
+      );
     }
+    await Promise.allSettled(cloudPromises);
 
     return {
       success: true,
@@ -681,7 +727,9 @@ export async function selfDeleteStudentAccount(
       },
     };
   } catch (txErr: any) {
-    db.exec('ROLLBACK');
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
     console.error('[StudentDeleteService] Self-deletion transaction failed:', {
       studentId,
       errorName: txErr?.name,

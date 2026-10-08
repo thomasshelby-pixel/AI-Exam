@@ -162,7 +162,12 @@ export async function getAllFirestoreDocs<T = DocumentData>(
 }
 
 // Tombstones: Ensure permanent deletions survive restarts and prevent re-seeding
-export async function recordTombstone(collectionName: string, docId: string, reason?: string): Promise<void> {
+export async function recordTombstone(
+  collectionName: string,
+  docId: string,
+  reason?: string,
+  options: { failOnError?: boolean } = {}
+): Promise<void> {
   const db = getFirestoreDb();
   if (!db || !docId) return;
   try {
@@ -174,11 +179,13 @@ export async function recordTombstone(collectionName: string, docId: string, rea
         reason: reason || 'PERMANENT_DELETION',
         deletedAt: new Date().toISOString(),
       }),
-      2500,
-      undefined
+      4000,
+      undefined,
+      `recordTombstone(${collectionName}/${docId})`
     );
   } catch (err) {
     console.warn(`[Firestore] Failed to record tombstone for ${collectionName}/${docId}:`, err);
+    if (options.failOnError) throw err;
   }
 }
 

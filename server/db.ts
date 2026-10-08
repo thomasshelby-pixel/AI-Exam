@@ -3340,8 +3340,9 @@ function seedSampleInstitute() {
     const instAdminEmail = 'institute@apexca.edu';
     const pwdHash = hashPassword('ApexCA@2026');
     const instAdminId = 'usr_inst_apex_admin';
+    const isInstTombstoned = isTombstoned('users', instAdminId) || isTombstoned('users', instAdminEmail);
     const userExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(instAdminEmail, instAdminId);
-    if (!userExists) {
+    if (!userExists && !isInstTombstoned) {
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
         VALUES (?, ?, ?, 'Director Khurana', '+919811223344', 'INSTITUTE_ADMIN', 'ACTIVE')
@@ -3351,8 +3352,9 @@ function seedSampleInstitute() {
     // Create Demo Student User
     const studentEmail = 'student@caexamchecker.ai';
     const sId = 'usr_student_demo_001';
+    const isDemoTombstoned = isTombstoned('users', sId) || isTombstoned('users', studentEmail);
     const studentExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(studentEmail, sId);
-    if (!studentExists) {
+    if (!studentExists && !isDemoTombstoned) {
       const sHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -3382,8 +3384,9 @@ function seedSampleInstitute() {
     // Seed Active Account for at9767676@gmail.com
     const userEmail = 'at9767676@gmail.com';
     const uId = 'usr_user_at9767';
+    const isAtTombstoned = isTombstoned('users', uId) || isTombstoned('users', userEmail.toLowerCase());
     const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
-    if (!activeUserExists) {
+    if (!activeUserExists && !isAtTombstoned) {
       const uHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)

@@ -1717,7 +1717,7 @@ router.get('/test-cleanup/preview', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-record', async (req: AuthRequest, res: Response) => {
   try {
     const { category, id } = req.body;
     if (!category || !id) {
@@ -1726,7 +1726,7 @@ router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => 
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = deleteSingleTestRecord(category, id, req.user!, ipAddress, userAgent);
+    const result = await deleteSingleTestRecord(category, id, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete test record error:', error);
@@ -1734,7 +1734,7 @@ router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => 
   }
 });
 
-router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-category', async (req: AuthRequest, res: Response) => {
   try {
     const { category } = req.body;
     if (!category) {
@@ -1743,7 +1743,7 @@ router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) =
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = bulkDeleteTestCategory(category, req.user!, ipAddress, userAgent);
+    const result = await bulkDeleteTestCategory(category, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete test category error:', error);
@@ -1751,7 +1751,7 @@ router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) =
   }
 });
 
-router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-all', async (req: AuthRequest, res: Response) => {
   try {
     const { confirmation } = req.body;
     if (confirmation !== 'DELETE ALL TEST DATA') {
@@ -1760,7 +1760,7 @@ router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = bulkDeleteAllTestData(req.user!, ipAddress, userAgent);
+    const result = await bulkDeleteAllTestData(req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete all test data error:', error);
@@ -1981,7 +1981,7 @@ router.patch('/students/:id/classification', (req: AuthRequest, res: Response) =
 });
 
 // Super Admin Permanent Student Account Delete
-router.delete('/students/:id', (req: AuthRequest, res: Response) => {
+router.delete('/students/:id', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     if (!studentId || typeof studentId !== 'string') {
@@ -1996,7 +1996,7 @@ router.delete('/students/:id', (req: AuthRequest, res: Response) => {
     const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
     const userAgent = (req.headers['user-agent'] || '') as string;
 
-    const result = deleteStudentAccount(studentId, req.user!, ip, userAgent);
+    const result = await deleteStudentAccount(studentId, req.user!, ip, userAgent);
     return res.json(result);
   } catch (error: any) {
     const status = error.statusCode || 500;
@@ -2006,7 +2006,7 @@ router.delete('/students/:id', (req: AuthRequest, res: Response) => {
 });
 
 // Also support router.delete('/users/:id') with role verification
-router.delete('/users/:id', (req: AuthRequest, res: Response) => {
+router.delete('/users/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.params.id;
     if (!userId || typeof userId !== 'string') {
@@ -2031,7 +2031,7 @@ router.delete('/users/:id', (req: AuthRequest, res: Response) => {
     const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
     const userAgent = (req.headers['user-agent'] || '') as string;
 
-    const result = deleteStudentAccount(userId, req.user!, ip, userAgent);
+    const result = await deleteStudentAccount(userId, req.user!, ip, userAgent);
     return res.json(result);
   } catch (error: any) {
     const status = error.statusCode || 500;
