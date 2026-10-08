@@ -2795,17 +2795,23 @@ router.post('/referral/redeem', promoRedeemRateLimiter, async (req: AuthRequest,
     }
 
     const now = new Date();
-    if (campaign.start_date && new Date(campaign.start_date) > now) {
-      db.exec('ROLLBACK');
-      return res.status(400).json({
-        error: `This promo code is not active yet (starts on ${new Date(campaign.start_date).toLocaleDateString('en-IN')}).`,
-      });
+    if (campaign.start_date) {
+      const sDate = new Date(campaign.start_date);
+      if (!isNaN(sDate.getTime()) && sDate > now) {
+        db.exec('ROLLBACK');
+        return res.status(400).json({
+          error: `This promo code is not active yet (starts on ${sDate.toLocaleDateString('en-IN')}).`,
+        });
+      }
     }
-    if (campaign.end_date && new Date(campaign.end_date) < now) {
-      db.exec('ROLLBACK');
-      return res.status(400).json({
-        error: `This promo code has expired (ended on ${new Date(campaign.end_date).toLocaleDateString('en-IN')}).`,
-      });
+    if (campaign.end_date) {
+      const eDate = new Date(campaign.end_date);
+      if (!isNaN(eDate.getTime()) && eDate < now) {
+        db.exec('ROLLBACK');
+        return res.status(400).json({
+          error: `This promo code has expired (ended on ${eDate.toLocaleDateString('en-IN')}).`,
+        });
+      }
     }
 
     // 2. Verify student has never redeemed this offer before

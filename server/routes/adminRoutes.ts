@@ -4122,6 +4122,16 @@ router.get(['/promo-codes', '/referrals'], async (req: AuthRequest, res: Respons
 });
 
 // Create new promo code
+function parseSafeIsoDate(val: any): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed || trimmed === '__CLEAR__' || trimmed === 'null' || trimmed === 'undefined') return null;
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+// Create new promo code
 router.post('/promo-codes', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
@@ -4162,6 +4172,8 @@ router.post('/promo-codes', async (req: AuthRequest, res: Response) => {
     const numMaxEvaluations = Math.max(1, parseInt(maxEvaluations, 10) || 15);
     const numDurationDays = Math.max(1, parseInt(benefitDurationDays, 10) || 30);
     const isActive = status === 'ACTIVE' ? 1 : 0;
+    const cleanStartDate = parseSafeIsoDate(startDate);
+    const cleanEndDate = parseSafeIsoDate(endDate);
 
     db.prepare(`
       INSERT INTO referral_campaigns (
@@ -4182,8 +4194,8 @@ router.post('/promo-codes', async (req: AuthRequest, res: Response) => {
       numMaxEvaluations,
       isActive,
       status,
-      startDate ? new Date(startDate).toISOString() : null,
-      endDate ? new Date(endDate).toISOString() : null,
+      cleanStartDate,
+      cleanEndDate,
       userType || 'ALL',
       termsNotes?.trim() || null
     );
@@ -4252,6 +4264,12 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], async (req: Aut
     const newStatus = status !== undefined ? status : (isActive !== undefined ? (isActive ? 'ACTIVE' : 'DISABLED') : currentCampaign.status);
     const newIsActive = newStatus === 'ACTIVE' ? 1 : 0;
 
+    const parsedStartDate = parseSafeIsoDate(startDate);
+    const clearStart = startDate === '__CLEAR__' || startDate === '' ? 1 : 0;
+
+    const parsedEndDate = parseSafeIsoDate(endDate);
+    const clearEnd = endDate === '__CLEAR__' || endDate === '' ? 1 : 0;
+
     db.prepare(`
       UPDATE referral_campaigns
       SET campaign_name = COALESCE(?, campaign_name),
@@ -4261,8 +4279,8 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], async (req: Aut
           benefit_duration_days = COALESCE(?, benefit_duration_days),
           status = COALESCE(?, status),
           is_active = ?,
-          start_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE start_date END,
-          end_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE end_date END,
+          start_date = CASE WHEN ? = 1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE start_date END,
+          end_date = CASE WHEN ? = 1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE end_date END,
           user_type = COALESCE(?, user_type),
           terms_notes = COALESCE(?, terms_notes),
           updated_at = CURRENT_TIMESTAMP
@@ -4275,8 +4293,8 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], async (req: Aut
       benefitDurationDays !== undefined ? Math.max(1, parseInt(benefitDurationDays, 10)) : null,
       newStatus,
       newIsActive,
-      startDate, startDate, startDate ? new Date(startDate).toISOString() : null,
-      endDate, endDate, endDate ? new Date(endDate).toISOString() : null,
+      clearStart, parsedStartDate, parsedStartDate,
+      clearEnd, parsedEndDate, parsedEndDate,
       userType || null,
       termsNotes !== undefined ? termsNotes?.trim() : null,
       campaignCode

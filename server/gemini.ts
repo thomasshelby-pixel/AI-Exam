@@ -20,6 +20,11 @@ import {
   markProviderCreditExhausted,
   extractRetryDelayMs,
 } from './models/modelRegistry.js';
+import {
+  sanitizeGeminiConfig,
+  getSupportedThinkingLevel,
+  buildGeminiThinkingConfig,
+} from './models/geminiThinkingHelper.js';
 import { getActiveMcqScoringRule, getCanonicalPaperName } from './mcqRules.js';
 import { processEvaluationIntegrity } from './services/evaluationIntegrityEngine.js';
 import { getAuthoritativePaperStructure } from './services/paperStructureService.js';
@@ -169,10 +174,12 @@ export async function generateContentWithResilience(
 
     for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
       try {
-        const config: any = { ...params.config };
-        // For gemini-3.1-flash-lite or fallbacks, ensure LOW thinking to minimize latency
+        // Sanitize configuration: strips deprecated temperature, top_p, top_k, thinking_budget
+        // and validates model-specific thinking level (e.g. gemini-3.8-flash never receives minimal)
+        const config: any = sanitizeGeminiConfig(params.config, model);
+        // For gemini-3.1-flash-lite or fallbacks, ensure low thinking to minimize latency
         if (model === 'gemini-3.1-flash-lite') {
-          config.thinkingConfig = { thinkingLevel: 'LOW' };
+          config.thinkingConfig = { thinkingLevel: 'low' };
         }
         const response = await ai.models.generateContent({
           model,
@@ -436,7 +443,6 @@ Return JSON in the exact specified schema.
         { text: validationPrompt },
       ],
       config: {
-        temperature: 0.1,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,

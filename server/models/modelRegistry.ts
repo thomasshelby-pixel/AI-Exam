@@ -2,6 +2,21 @@ import { getGemini } from '../gemini.js';
 import { db } from '../db.js';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import {
+  getSupportedThinkingLevel,
+  getSupportedThinkingLevels,
+  buildGeminiThinkingConfig,
+  sanitizeGeminiConfig,
+  type GeminiThinkingLevel,
+} from './geminiThinkingHelper.js';
+
+export {
+  getSupportedThinkingLevel,
+  getSupportedThinkingLevels,
+  buildGeminiThinkingConfig,
+  sanitizeGeminiConfig,
+  type GeminiThinkingLevel,
+};
 
 export type ModelProviderType = 'gemini' | 'openai' | 'anthropic';
 
@@ -474,26 +489,25 @@ async function callGemini(
 
   contents.push(params.userPrompt);
 
-  const config: any = {};
-  if (modelId === 'gemini-3.1-flash-lite') {
-    config.thinkingConfig = {
-      thinkingLevel: 'LOW',
-    };
-  } else {
-    config.thinkingConfig = {
-      thinkingLevel: effectiveThinkingLevel,
-    };
-  }
+  const supportedLevel = getSupportedThinkingLevel(modelId, effectiveThinkingLevel);
+  const baseConfig: any = {
+    thinkingConfig: {
+      thinkingLevel: supportedLevel,
+    },
+  };
 
   if (params.systemPrompt) {
-    config.systemInstruction = params.systemPrompt;
+    baseConfig.systemInstruction = params.systemPrompt;
   }
   if (params.maxTokens) {
-    config.maxOutputTokens = params.maxTokens;
+    baseConfig.maxOutputTokens = params.maxTokens;
   }
   if (params.responseMimeType) {
-    config.responseMimeType = params.responseMimeType;
+    baseConfig.responseMimeType = params.responseMimeType;
   }
+
+  // Ensure config is completely sanitized of any deprecated parameters (temperature, top_p, top_k, thinking_budget)
+  const config = sanitizeGeminiConfig(baseConfig, modelId);
 
   let response: any;
   let lastErr: any;
@@ -1288,15 +1302,17 @@ export async function testModelHealth(
   try {
     if (provider === 'gemini') {
       const ai = getGemini();
+      const supportedLevel = getSupportedThinkingLevel(modelId, 'low');
+      const testConfig = sanitizeGeminiConfig({
+        maxOutputTokens: 20,
+        thinkingConfig: {
+          thinkingLevel: supportedLevel,
+        },
+      }, modelId);
       const testResponse = await ai.models.generateContent({
         model: modelId,
         contents: 'Ping health check. Respond strictly with: OK',
-        config: {
-          maxOutputTokens: 20,
-          thinkingConfig: {
-            thinkingLevel: 'LOW' as any,
-          },
-        },
+        config: testConfig,
       });
       inferenceOutput = testResponse.text?.trim() || '';
     } else if (provider === 'openai') {

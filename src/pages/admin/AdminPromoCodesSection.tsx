@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
+import { formatDateIST, formatDateTimeIST, parseDateSafe } from '../../utils/timezone.js';
 import {
   Sparkles,
   Plus,
@@ -165,8 +165,8 @@ export function AdminPromoCodesSection() {
           maxRedemptions: parseInt(createForm.maxRedemptions, 10) || 20,
           maxEvaluations: parseInt(createForm.maxEvaluations, 10) || 15,
           benefitDurationDays: parseInt(createForm.benefitDurationDays, 10) || 30,
-          startDate: createForm.startDate ? new Date(createForm.startDate).toISOString() : null,
-          endDate: createForm.endDate ? new Date(createForm.endDate).toISOString() : null,
+          startDate: parseDateSafe(createForm.startDate)?.toISOString() || null,
+          endDate: parseDateSafe(createForm.endDate)?.toISOString() || null,
           userType: createForm.userType,
           termsNotes: createForm.termsNotes.trim(),
         }),
@@ -202,8 +202,8 @@ export function AdminPromoCodesSection() {
       maxRedemptions: String(camp.maxRedemptions ?? camp.max_redemptions ?? 20),
       maxEvaluations: String(camp.maxEvaluations ?? camp.max_evaluations ?? 15),
       benefitDurationDays: String(camp.benefitDurationDays ?? camp.benefit_duration_days ?? 30),
-      startDate: camp.startDate || camp.start_date ? new Date(camp.startDate || camp.start_date!).toISOString().slice(0, 10) : '',
-      endDate: camp.endDate || camp.end_date ? new Date(camp.endDate || camp.end_date!).toISOString().slice(0, 10) : '',
+      startDate: parseDateSafe(camp.startDate || camp.start_date)?.toISOString().slice(0, 10) || '',
+      endDate: parseDateSafe(camp.endDate || camp.end_date)?.toISOString().slice(0, 10) || '',
       userType: camp.userType || camp.user_type || 'ALL',
       termsNotes: camp.termsNotes || camp.terms_notes || '',
     });
@@ -224,8 +224,8 @@ export function AdminPromoCodesSection() {
           maxRedemptions: parseInt(editForm.maxRedemptions, 10) || 20,
           maxEvaluations: parseInt(editForm.maxEvaluations, 10) || 15,
           benefitDurationDays: parseInt(editForm.benefitDurationDays, 10) || 30,
-          startDate: editForm.startDate ? new Date(editForm.startDate).toISOString() : '__CLEAR__',
-          endDate: editForm.endDate ? new Date(editForm.endDate).toISOString() : '__CLEAR__',
+          startDate: parseDateSafe(editForm.startDate)?.toISOString() || '__CLEAR__',
+          endDate: parseDateSafe(editForm.endDate)?.toISOString() || '__CLEAR__',
           userType: editForm.userType,
           termsNotes: editForm.termsNotes.trim(),
         }),

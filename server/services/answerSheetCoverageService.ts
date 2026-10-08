@@ -398,7 +398,6 @@ Return strictly valid JSON with this schema:
       ],
       config: {
         responseMimeType: 'application/json',
-        temperature: 0.1,
       },
     });
 
