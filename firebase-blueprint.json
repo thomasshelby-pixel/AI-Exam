@@ -26,6 +26,10 @@
         "icai_registration_number": { "type": "string" },
         "ca_level": { "type": "string", "enum": ["FOUNDATION", "INTERMEDIATE", "FINAL"] },
         "free_evaluations_used": { "type": "number" },
+        "monthly_free_evaluations_used": { "type": "number" },
+        "monthly_free_evaluations_limit": { "type": "number" },
+        "free_evaluation_reset_month": { "type": "string" },
+        "paid_credits": { "type": "number" },
         "purchased_credits": { "type": "number" },
         "institute_id": { "type": "string" },
         "batch_id": { "type": "string" },
@@ -33,6 +37,26 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["user_id"]
+    },
+    "StudentCreditPurchase": {
+      "title": "StudentCreditPurchase",
+      "description": "Individual credit purchase lots with 3-month expiry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "order_id": { "type": "string" },
+        "payment_id": { "type": "string" },
+        "credits_purchased": { "type": "number" },
+        "credits_remaining": { "type": "number" },
+        "valid_from": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "purchase_date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ACTIVE", "CONSUMED", "EXPIRED"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "user_id", "credits_purchased", "credits_remaining", "status"]
     },
     "Institute": {
       "title": "Institute",
@@ -416,6 +440,10 @@
     "/evaluation_versions/{versionId}": {
       "schema": { "$ref": "#/entities/EvaluationVersion" },
       "description": "Immutable evaluation versions and recheck audit snapshots."
+    },
+    "/student_credit_purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/StudentCreditPurchase" },
+      "description": "Individual credit purchase lots with 3-month expiry."
     },
     "/credit_ledger/{ledgerId}": {
       "schema": { "$ref": "#/entities/CreditLedger" },

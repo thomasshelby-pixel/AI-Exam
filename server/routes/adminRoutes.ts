@@ -13,7 +13,7 @@ import {
 } from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -348,7 +348,7 @@ router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response)
 });
 
 // Adjust student credits manually
-router.post('/students/:id/adjust-credits', (req: AuthRequest, res: Response) => {
+router.post('/students/:id/adjust-credits', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     const { creditsDelta, reason } = req.body;
@@ -375,9 +375,19 @@ router.post('/students/:id/adjust-credits', (req: AuthRequest, res: Response) =>
       });
       newBalance = lotRes.totalValidCredits;
     } else {
-      newBalance = Math.max(0, getValidStudentCreditBalance(studentId) + delta);
-      db.prepare('UPDATE student_profiles SET purchased_credits = ? WHERE user_id = ?').run(newBalance, studentId);
+      let toDeduct = Math.abs(delta);
+      while (toDeduct > 0) {
+        try {
+          consumeCreditFEFO(studentId, `admin_adj_${Date.now()}_${toDeduct}`);
+          toDeduct--;
+        } catch {
+          break;
+        }
+      }
+      newBalance = getValidStudentCreditBalance(studentId);
     }
+
+    await syncStudentCreditsToFirestore(studentId);
 
     // Ledger record
     db.prepare(`

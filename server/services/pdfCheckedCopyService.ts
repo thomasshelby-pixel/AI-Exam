@@ -1,4 +1,7 @@
-import { generateDetailedReportPdf as generateDetailedReportPdfImpl } from './detailedReportPdfService.js';
+import {
+  generateDetailedReportPdf as generateDetailedReportPdfImpl,
+  enrichMarkingComponentsWithExaminerReasoning,
+} from './detailedReportPdfService.js';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import {
   deduplicateQuestionList,

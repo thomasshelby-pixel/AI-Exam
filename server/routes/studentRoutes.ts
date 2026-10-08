@@ -19,6 +19,7 @@ import {
   getValidStudentCreditBalance,
   consumeEvaluationEntitlementAtomic,
   getStudentCreditDetailedSummary,
+  syncStudentCreditsToFirestore,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
@@ -1054,6 +1055,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         });
         creditAlreadyConsumed = true;
         entitlementSource = deductionResult.source;
+        await syncStudentCreditsToFirestore(studentId);
       } catch (deductErr: any) {
         db.prepare(`
           UPDATE evaluations

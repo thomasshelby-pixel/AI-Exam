@@ -14,6 +14,7 @@ import {
   consumeCreditFEFO,
   consumeEvaluationEntitlementAtomic,
   refundEvaluationCreditAtomic,
+  syncStudentCreditsToFirestore,
 } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
@@ -737,6 +738,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           userId: studentId,
           evaluationId,
         });
+        await syncStudentCreditsToFirestore(studentId);
       } else {
         // Already deducted atomically at acceptance time; record completion audit log
         try {
@@ -794,6 +796,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           evaluationId,
           entitlementSource,
         });
+        await syncStudentCreditsToFirestore(studentId);
       } catch (refundErr) {
         console.warn(`[AsyncEval] Refund error on failure for ${evaluationId}:`, refundErr);
       }

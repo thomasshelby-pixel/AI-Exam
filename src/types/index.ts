@@ -158,6 +158,9 @@ export interface MarkingComponent {
   marksAwarded: number;
   marksDeducted: number;
   deductionReason?: string;
+  reason?: string;
+  whatWasMissing?: string;
+  idealAnswer?: string;
   supportingProvision?: string;
   confidence: number;
   pageNumber?: number;
@@ -866,6 +869,7 @@ export interface CanonicalEvaluationLedger {
   readonly totalRendered: number;
   readonly totalCounted: number;
   readonly totalMaxMarks: number;
+  readonly officialPaperMaxMarks?: number;
   readonly totalAwardedMarks: number;
   readonly isReconciled: boolean;
   readonly reconciliationErrors: string[];

@@ -1647,7 +1647,6 @@ function runMigrations() {
       SET free_evaluation_reset_month = COALESCE(free_evaluation_reset_month, ?),
           monthly_free_evaluations_limit = COALESCE(monthly_free_evaluations_limit, 2),
           paid_credits = CASE WHEN (paid_credits IS NULL OR paid_credits = 0) AND purchased_credits > 0 THEN purchased_credits ELSE COALESCE(paid_credits, 0) END
-      WHERE free_evaluation_reset_month IS NULL OR monthly_free_evaluations_limit IS NULL
     `).run(currentMonth);
   } catch (initErr) {
     console.warn('[DB] Monthly free evaluation column initial sync warning:', initErr);
@@ -3361,9 +3360,18 @@ function seedSampleInstitute() {
       `).run(sId, studentEmail, sHash);
 
       db.prepare(`
-        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id)
-        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 'inst_apex_academy_01', 'batch_inter_nov26')
+        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits, institute_id, batch_id)
+        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 5, 'inst_apex_academy_01', 'batch_inter_nov26')
       `).run(sId);
+
+      // Create initial active credit lot for demo student
+      const expDateDemo = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_demo_001', ?, 'ord_seed_demo', 'pay_seed_demo', 5, 5, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(sId, expDateDemo);
 
       db.prepare(`
         INSERT OR IGNORE INTO institute_memberships (id, institute_id, student_id, batch_id, status)
@@ -3383,9 +3391,18 @@ function seedSampleInstitute() {
       `).run(uId, userEmail.toLowerCase(), uHash);
 
       db.prepare(`
-        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
-        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10)
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10, 10)
       `).run(uId);
+
+      // Create initial active credit lot for at9767676@gmail.com
+      const expDateAt = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_user_at9767', ?, 'ord_seed_at9767', 'pay_seed_at9767', 10, 10, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(uId, expDateAt);
     }
   }
 

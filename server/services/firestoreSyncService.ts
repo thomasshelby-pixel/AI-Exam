@@ -11,7 +11,7 @@ import {
   isTombstoned,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
-import { getValidStudentCreditBalance } from './studentCreditService.js';
+import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
 import { initMfaRecoveryTables } from './mfaRecoveryService.js';
 
@@ -42,8 +42,30 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
       const fsTime = new Date(existingDoc._updatedAt || existingDoc.updated_at || existingDoc.completed_at || existingDoc.created_at || 0).getTime();
       const localTime = new Date(data.updated_at || data._updatedAt || data.completed_at || data.created_at || 0).getTime();
       if (fsTime > localTime && fsTime > 0) {
-        console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
-        return;
+        // Exception: For credit collections, if local data has consumed credits (lower balance or more used),
+        // local consumption must always be allowed to propagate to Firestore!
+        if (collectionName === 'student_credit_purchases' && typeof data.credits_remaining === 'number' && typeof existingDoc.credits_remaining === 'number') {
+          if (data.credits_remaining < existingDoc.credits_remaining) {
+            // Local consumption detected; allow sync to persist decrement
+          } else {
+            console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
+            return;
+          }
+        } else if (collectionName === 'student_profiles') {
+          const localPurchased = typeof data.purchased_credits === 'number' ? data.purchased_credits : 999999;
+          const fsPurchased = typeof existingDoc.purchased_credits === 'number' ? existingDoc.purchased_credits : 999999;
+          const localUsed = typeof data.free_evaluations_used === 'number' ? data.free_evaluations_used : 0;
+          const fsUsed = typeof existingDoc.free_evaluations_used === 'number' ? existingDoc.free_evaluations_used : 0;
+          if (localPurchased < fsPurchased || localUsed > fsUsed) {
+            // Local credit consumption detected; allow sync
+          } else {
+            console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
+            return;
+          }
+        } else {
+          console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
+          return;
+        }
       }
     }
     await setFirestoreDoc(collectionName, id, data);
@@ -229,33 +251,103 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
     }
 
+    // 2.5 Hydrate Student Credit Purchases (Must precede student_profiles so lots are present)
+    const creditPurchasesEarly = await readDocs<any>('student_credit_purchases');
+    for (const cp of creditPurchasesEarly) {
+      const userActive = db.prepare('SELECT id FROM users WHERE id = ?').get(cp.user_id);
+      if (!userActive && (tombstoneSet.has(`student_credit_purchases_${cp.id}`) || tombstoneSet.has(cp.id))) continue;
+      try {
+        db.prepare(`
+          INSERT INTO student_credit_purchases (id, user_id, order_id, payment_id, credits_purchased, credits_remaining, valid_from, expires_at, purchase_date, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            credits_remaining = CASE
+              WHEN student_credit_purchases.credits_remaining < excluded.credits_remaining THEN student_credit_purchases.credits_remaining
+              ELSE excluded.credits_remaining
+            END,
+            status = CASE
+              WHEN student_credit_purchases.credits_remaining < excluded.credits_remaining THEN student_credit_purchases.status
+              ELSE excluded.status
+            END,
+            expires_at = excluded.expires_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          cp.id, cp.user_id, cp.order_id || null, cp.payment_id || null,
+          cp.credits_purchased || 0, cp.credits_remaining !== undefined ? cp.credits_remaining : (cp.credits_purchased || 0),
+          cp.valid_from || new Date().toISOString(), cp.expires_at || new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString(),
+          cp.purchase_date || new Date().toISOString(), cp.status || 'ACTIVE', cp.created_at || null
+        );
+      } catch (cpErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate credit purchase ${cp.id}:`, cpErr);
+      }
+    }
+
+    // 2.6 Hydrate Credit Ledger
+    const earlyLedger = await readDocs<any>('credit_ledger');
+    for (const c of earlyLedger) {
+      try {
+        db.prepare(`
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, payment_order_id, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO NOTHING
+        `).run(c.id, c.student_id, c.amount, c.source, c.balance_after || 0, c.evaluation_id || null, c.payment_order_id || null, c.note || '', c.created_at || null);
+      } catch {}
+    }
+
     // 3. Hydrate Student Profiles
     const profiles = await readDocs<any>('student_profiles');
     for (const p of profiles) {
       const uId = p.user_id || p.id;
-      if (tombstoneSet.has(`student_profiles_${uId}`)) continue;
+      const userActive = db.prepare('SELECT id FROM users WHERE id = ?').get(uId);
+      if (!userActive && (tombstoneSet.has(`student_profiles_${uId}`) || tombstoneSet.has(uId))) continue;
       try {
-        const authoritativeCredits = getValidStudentCreditBalance(uId);
-        const finalCredits = authoritativeCredits > 0 ? authoritativeCredits : (p.purchased_credits || 0);
+        const lotCount = db.prepare('SELECT COUNT(*) as count FROM student_credit_purchases WHERE user_id = ?').get(uId) as { count: number };
+        let finalCredits: number;
+        if (lotCount && lotCount.count > 0) {
+          finalCredits = getValidStudentCreditBalance(uId);
+        } else {
+          const dedCount = db.prepare('SELECT COUNT(*) as count FROM credit_ledger WHERE student_id = ? AND amount < 0').get(uId) as { count: number };
+          if (dedCount && dedCount.count > 0) {
+            finalCredits = 0;
+          } else {
+            finalCredits = p.purchased_credits || p.paid_credits || 0;
+          }
+        }
+
         db.prepare(`
-          INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO student_profiles (
+            user_id, icai_registration_number, ca_level,
+            free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+            purchased_credits, paid_credits, institute_id, batch_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(user_id) DO UPDATE SET
             icai_registration_number = excluded.icai_registration_number,
             ca_level = excluded.ca_level,
-            free_evaluations_used = excluded.free_evaluations_used,
-            purchased_credits = ?,
+            free_evaluations_used = MAX(COALESCE(student_profiles.free_evaluations_used, 0), excluded.free_evaluations_used),
+            monthly_free_evaluations_used = CASE
+              WHEN COALESCE(student_profiles.free_evaluation_reset_month, '') = excluded.free_evaluation_reset_month
+              THEN MAX(COALESCE(student_profiles.monthly_free_evaluations_used, 0), excluded.monthly_free_evaluations_used)
+              ELSE excluded.monthly_free_evaluations_used
+            END,
+            monthly_free_evaluations_limit = COALESCE(excluded.monthly_free_evaluations_limit, student_profiles.monthly_free_evaluations_limit, 2),
+            free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
+            purchased_credits = excluded.purchased_credits,
+            paid_credits = excluded.paid_credits,
             institute_id = excluded.institute_id,
             batch_id = excluded.batch_id,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           uId, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
-          p.free_evaluations_used || 0, finalCredits,
-          p.institute_id || null, p.batch_id || null, p.created_at || null,
-          finalCredits
+          p.free_evaluations_used || 0,
+          p.monthly_free_evaluations_used || 0,
+          p.monthly_free_evaluations_limit || 2,
+          p.free_evaluation_reset_month || '2026-09',
+          finalCredits, finalCredits,
+          p.institute_id || null, p.batch_id || null, p.created_at || null
         );
-      } catch {
-        // ignore
+      } catch (spErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate student profile ${uId}:`, spErr);
       }
     }
 
@@ -1106,6 +1198,14 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
     }
 
+    // 18. Reconcile and synchronize all student credit balances across SQLite and Cloud Firestore
+    try {
+      const creditRecon = await reconcileAllStudentCredits();
+      console.log(`[FirestoreSync] Post-hydration: Reconciled credits for ${creditRecon.reconciledStudents} student(s) (${creditRecon.totalActiveCredits} total active credits).`);
+    } catch (credReconErr) {
+      console.warn('[FirestoreSync] Post-hydration credit reconciliation notice:', credReconErr);
+    }
+
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
@@ -1180,8 +1280,27 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
         const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
         if (profile) {
           await setFirestoreDoc('student_profiles', bu.id, profile);
+          const lots = db.prepare('SELECT * FROM student_credit_purchases WHERE user_id = ?').all(bu.id) as any[];
+          for (const lot of lots) {
+            await setFirestoreDoc('student_credit_purchases', lot.id, lot);
+          }
         }
         console.log(`[FirestoreSync] Seeded baseline user ${bu.email} (${bu.id}) to Cloud Firestore.`);
+      } else if (bu.role === 'STUDENT') {
+        const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
+        if (profile) {
+          const fsProfile = await getFirestoreDoc<any>('student_profiles', bu.id);
+          if (!fsProfile) {
+            await setFirestoreDoc('student_profiles', bu.id, profile);
+          }
+          const lots = db.prepare('SELECT * FROM student_credit_purchases WHERE user_id = ?').all(bu.id) as any[];
+          for (const lot of lots) {
+            const fsLot = await getFirestoreDoc<any>('student_credit_purchases', lot.id);
+            if (!fsLot) {
+              await setFirestoreDoc('student_credit_purchases', lot.id, lot);
+            }
+          }
+        }
       } else if (bu.role === 'SUPER_ADMIN') {
         // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
         // while preserving existing MFA enrollment state

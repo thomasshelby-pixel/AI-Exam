@@ -24,6 +24,7 @@ import {
   authRegisterRateLimiter,
   passwordResetRateLimiter,
 } from '../utils/rateLimiter.js';
+import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 
 const router = Router();
 
@@ -265,24 +266,57 @@ async function authenticateWithFirestoreFallback(
       if (uRole === 'STUDENT') {
         const spDoc = await getFirestoreDoc<any>('student_profiles', uId);
         if (spDoc) {
+          const lotCount = db.prepare('SELECT COUNT(*) as count FROM student_credit_purchases WHERE user_id = ?').get(uId) as { count: number };
+          let finalPurchased: number;
+          if (lotCount && lotCount.count > 0) {
+            // Lots exist in SQLite: getValidStudentCreditBalance is authoritative (never revert to stale Firestore)
+            finalPurchased = getValidStudentCreditBalance(uId);
+          } else {
+            const dedCount = db.prepare('SELECT COUNT(*) as count FROM credit_ledger WHERE student_id = ? AND amount < 0').get(uId) as { count: number };
+            if (dedCount && dedCount.count > 0) {
+              finalPurchased = 0;
+            } else {
+              finalPurchased = spDoc.purchased_credits || spDoc.paid_credits || 0;
+            }
+          }
+
           db.prepare(`
-            INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO student_profiles (
+              user_id, icai_registration_number, ca_level,
+              free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+              purchased_credits, paid_credits, institute_id, batch_id, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
               icai_registration_number = excluded.icai_registration_number,
               ca_level = excluded.ca_level,
-              free_evaluations_used = excluded.free_evaluations_used,
-              purchased_credits = excluded.purchased_credits,
+              free_evaluations_used = MAX(COALESCE(student_profiles.free_evaluations_used, 0), excluded.free_evaluations_used),
+              monthly_free_evaluations_used = CASE
+                WHEN COALESCE(student_profiles.free_evaluation_reset_month, '') = excluded.free_evaluation_reset_month
+                THEN MAX(COALESCE(student_profiles.monthly_free_evaluations_used, 0), excluded.monthly_free_evaluations_used)
+                ELSE excluded.monthly_free_evaluations_used
+              END,
+              monthly_free_evaluations_limit = COALESCE(excluded.monthly_free_evaluations_limit, student_profiles.monthly_free_evaluations_limit, 2),
+              free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
+              purchased_credits = ?,
+              paid_credits = ?,
               institute_id = excluded.institute_id,
-              batch_id = excluded.batch_id
+              batch_id = excluded.batch_id,
+              updated_at = CURRENT_TIMESTAMP
           `).run(
             uId,
             spDoc.icai_registration_number || '',
             spDoc.ca_level || 'INTERMEDIATE',
             spDoc.free_evaluations_used || 0,
-            spDoc.purchased_credits || 0,
+            spDoc.monthly_free_evaluations_used || 0,
+            spDoc.monthly_free_evaluations_limit || 2,
+            spDoc.free_evaluation_reset_month || '2026-09',
+            finalPurchased,
+            finalPurchased,
             spDoc.institute_id || null,
-            spDoc.batch_id || null
+            spDoc.batch_id || null,
+            finalPurchased,
+            finalPurchased
           );
         }
       }
@@ -1384,6 +1418,9 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
     let profileData: Record<string, unknown> = {};
 
     if (user.role === 'STUDENT') {
+      ensureMonthlyFreeEvaluationsReset(userId);
+      getValidStudentCreditBalance(userId);
+
       const studentProfile = db.prepare(`
         SELECT p.*, i.name as institute_name, b.name as batch_name
         FROM student_profiles p

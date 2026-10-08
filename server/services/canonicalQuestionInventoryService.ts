@@ -673,6 +673,7 @@ export function buildCanonicalEvaluationLedger(options: {
     totalRendered,
     totalCounted,
     totalMaxMarks,
+    officialPaperMaxMarks: inventory.totalPaperMaxMarks || 100,
     totalAwardedMarks,
     isReconciled: errors.length === 0,
     reconciliationErrors: errors,

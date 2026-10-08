@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export interface CreditLotRecord {
   id: string;
@@ -59,6 +60,40 @@ export interface StudentCreditDetailedSummary {
 }
 
 /**
+ * Authoritatively syncs a student's full credit state to Cloud Firestore.
+ * Pushes:
+ * 1. student_profiles (purchased_credits, paid_credits, free_evaluations_used, monthly_free_evaluations_used, updated_at)
+ * 2. All student_credit_purchases lots for the student
+ * 3. Recent credit_ledger entries
+ */
+export async function syncStudentCreditsToFirestore(userId: string): Promise<void> {
+  try {
+    const nowIso = new Date().toISOString();
+    const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
+    if (profile) {
+      profile.updated_at = nowIso;
+      profile._updatedAt = nowIso;
+      await syncRecordToFirestore('student_profiles', userId, profile);
+    }
+
+    const lots = db.prepare('SELECT * FROM student_credit_purchases WHERE user_id = ?').all(userId) as any[];
+    for (const lot of lots) {
+      lot.updated_at = nowIso;
+      lot._updatedAt = nowIso;
+      await syncRecordToFirestore('student_credit_purchases', lot.id, lot);
+    }
+
+    const ledgers = db.prepare('SELECT * FROM credit_ledger WHERE student_id = ? ORDER BY datetime(created_at) DESC LIMIT 10').all(userId) as any[];
+    for (const ledger of ledgers) {
+      ledger._updatedAt = nowIso;
+      await syncRecordToFirestore('credit_ledger', ledger.id, ledger);
+    }
+  } catch (err) {
+    console.warn(`[StudentCreditService] Firestore credit sync warning for user ${userId}:`, err);
+  }
+}
+
+/**
  * Returns the current calendar month formatted as 'YYYY-MM'.
  * Calculated strictly from server/database date, not client date.
  */
@@ -114,6 +149,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
     `).run(currentMonth, userId, currentMonth);
 
     const paidCredits = getValidStudentCreditBalance(userId);
+    syncStudentCreditsToFirestore(userId).catch(() => {});
     return {
       userId,
       monthlyFreeEvaluationsUsed: 0,
@@ -234,15 +270,48 @@ export function getValidStudentCreditBalance(userId: string): number {
       AND datetime(expires_at) > datetime('now')
   `).get(userId) as { valid_credits: number } | undefined;
 
-  const validCredits = row ? Number(row.valid_credits) : 0;
+  let validCredits = row ? Number(row.valid_credits) : 0;
+
+  // SAFETY NET & SELF-HEALING:
+  // ONLY backfill if this student has ZERO lots ever recorded in student_credit_purchases
+  // AND has ZERO historical deductions in credit_ledger.
+  // If a student already has lots or deductions, validCredits is authoritative (even if 0)!
+  if (validCredits === 0) {
+    try {
+      const lotCount = db.prepare('SELECT COUNT(*) as count FROM student_credit_purchases WHERE user_id = ?').get(userId) as { count: number };
+      const deductionCount = db.prepare('SELECT COUNT(*) as count FROM credit_ledger WHERE student_id = ? AND amount < 0').get(userId) as { count: number };
+      
+      if ((!lotCount || lotCount.count === 0) && (!deductionCount || deductionCount.count === 0)) {
+        const profile = db.prepare('SELECT purchased_credits, paid_credits FROM student_profiles WHERE user_id = ?').get(userId) as any;
+        const profileCreds = Math.max(Number(profile?.purchased_credits || 0), Number(profile?.paid_credits || 0));
+        if (profileCreds > 0) {
+          const now = new Date();
+          const expiresAt = calculateThreeMonthsExpiry(now);
+          const lotId = `crd_backfill_${crypto.randomBytes(6).toString('hex')}`;
+          db.prepare(`
+            INSERT INTO student_credit_purchases (
+              id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+              valid_from, expires_at, purchase_date, status, created_at, updated_at
+            ) VALUES (?, ?, 'ord_granted', 'pay_granted', ?, ?, ?, ?, ?, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `).run(lotId, userId, profileCreds, profileCreds, now.toISOString(), expiresAt, now.toISOString());
+          validCredits = profileCreds;
+          syncStudentCreditsToFirestore(userId).catch(() => {});
+        }
+      }
+    } catch (backfillErr) {
+      console.warn('[studentCreditService] Credit safety-net backfill warning:', backfillErr);
+    }
+  }
 
   // Keep student_profiles in sync with the real-time valid credit balance
   try {
     db.prepare(`
       UPDATE student_profiles
-      SET purchased_credits = ?
+      SET purchased_credits = ?,
+          paid_credits = ?,
+          updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
-    `).run(validCredits, userId);
+    `).run(validCredits, validCredits, userId);
   } catch (err) {
     console.warn('Sync student profile credits warning:', err);
   }
@@ -375,6 +444,27 @@ export function recordCreditPurchase(params: {
     console.warn('[studentCreditService] Profile sync error on purchase:', profErr);
   }
 
+  // Record into Credit Ledger
+  try {
+    const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, order_id, payment_id, note)
+      VALUES (?, ?, ?, 'PURCHASED', ?, ?, ?, ?)
+    `).run(
+      ledgerId,
+      userId,
+      creditsPurchased,
+      totalValidCredits,
+      orderId || null,
+      paymentId || null,
+      `Purchased ${creditsPurchased} evaluation credits (Lot ${lotId})`
+    );
+  } catch (ledErr) {
+    console.warn('[studentCreditService] Credit ledger write warning on purchase:', ledErr);
+  }
+
+  syncStudentCreditsToFirestore(userId).catch(() => {});
+
   return {
     lotId,
     expiresAt,
@@ -402,36 +492,48 @@ export function consumeCreditFEFO(
 } {
   expireOverdueCreditLots(userId);
 
-  // Select the earliest-expiring ACTIVE lot with credits remaining that has not expired
-  const earliestLot = db.prepare(`
-    SELECT id, credits_remaining, expires_at
-    FROM student_credit_purchases
-    WHERE user_id = ?
-      AND status = 'ACTIVE'
-      AND credits_remaining > 0
-      AND datetime(expires_at) > datetime('now')
-    ORDER BY datetime(expires_at) ASC, datetime(created_at) ASC
-    LIMIT 1
-  `).get(userId) as { id: string; credits_remaining: number; expires_at: string } | undefined;
-
-  if (!earliestLot) {
-    throw new Error('No valid, unexpired evaluation credits available. Purchased credits expire after 3 months.');
-  }
-
-  const newLotRemaining = earliestLot.credits_remaining - 1;
-  const newStatus = newLotRemaining === 0 ? 'CONSUMED' : 'ACTIVE';
-
-  db.prepare(`
-    UPDATE student_credit_purchases
-    SET credits_remaining = ?,
-        status = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(newLotRemaining, newStatus, earliestLot.id);
-
-  const totalRemaining = getValidStudentCreditBalance(userId);
-
+  let transactionActive = false;
   try {
+    db.exec('BEGIN IMMEDIATE;');
+    transactionActive = true;
+
+    // Select the earliest-expiring ACTIVE lot with credits remaining that has not expired
+    const earliestLot = db.prepare(`
+      SELECT id, credits_remaining, expires_at
+      FROM student_credit_purchases
+      WHERE user_id = ?
+        AND status = 'ACTIVE'
+        AND credits_remaining > 0
+        AND datetime(expires_at) > datetime('now')
+      ORDER BY datetime(expires_at) ASC, datetime(created_at) ASC
+      LIMIT 1
+    `).get(userId) as { id: string; credits_remaining: number; expires_at: string } | undefined;
+
+    if (!earliestLot) {
+      throw new Error('No valid, unexpired evaluation credits available. Purchased credits expire after 3 months.');
+    }
+
+    const newLotRemaining = earliestLot.credits_remaining - 1;
+    const newStatus = newLotRemaining === 0 ? 'CONSUMED' : 'ACTIVE';
+
+    db.prepare(`
+      UPDATE student_credit_purchases
+      SET credits_remaining = ?,
+          status = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newLotRemaining, newStatus, earliestLot.id);
+
+    const validRow = db.prepare(`
+      SELECT COALESCE(SUM(credits_remaining), 0) AS valid_credits
+      FROM student_credit_purchases
+      WHERE user_id = ?
+        AND status = 'ACTIVE'
+        AND credits_remaining > 0
+        AND datetime(expires_at) > datetime('now')
+    `).get(userId) as { valid_credits: number } | undefined;
+    const totalRemaining = validRow ? Number(validRow.valid_credits) : 0;
+
     db.prepare(`
       UPDATE student_profiles
       SET purchased_credits = ?,
@@ -439,30 +541,38 @@ export function consumeCreditFEFO(
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ?
     `).run(totalRemaining, totalRemaining, userId);
-  } catch (profErr) {
-    console.warn('[studentCreditService] Profile sync error on consume:', profErr);
+
+    // Credit Ledger record
+    const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+      VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, ?)
+    `).run(
+      ledgerId,
+      userId,
+      totalRemaining,
+      evaluationId,
+      `Consumed 1 purchased credit (Lot ${earliestLot.id}, Expires: ${earliestLot.expires_at})`
+    );
+
+    db.exec('COMMIT;');
+    transactionActive = false;
+
+    syncStudentCreditsToFirestore(userId).catch(() => {});
+
+    return {
+      success: true,
+      lotId: earliestLot.id,
+      lotRemaining: newLotRemaining,
+      lotExpiresAt: earliestLot.expires_at,
+      totalRemaining,
+    };
+  } catch (err) {
+    if (transactionActive) {
+      try { db.exec('ROLLBACK;'); } catch {}
+    }
+    throw err;
   }
-
-  // Credit Ledger record
-  const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
-  db.prepare(`
-    INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-    VALUES (?, ?, -1, 'CONSUMED_EVALUATION', ?, ?, ?)
-  `).run(
-    ledgerId,
-    userId,
-    totalRemaining,
-    evaluationId,
-    `Consumed 1 purchased credit (Lot ${earliestLot.id}, Expires: ${earliestLot.expires_at})`
-  );
-
-  return {
-    success: true,
-    lotId: earliestLot.id,
-    lotRemaining: newLotRemaining,
-    lotExpiresAt: earliestLot.expires_at,
-    totalRemaining,
-  };
 }
 
 /**
@@ -487,49 +597,89 @@ export function consumeEvaluationEntitlementAtomic(params: {
   const { userId, evaluationId } = params;
   const evalRefId = evaluationId || `eval_${crypto.randomBytes(6).toString('hex')}`;
 
+  // IDEMPOTENCY GUARD:
+  // If evaluationId is provided, verify whether deduction was already recorded for this exact evaluation.
+  // Prevents duplicate credit consumption on network retries, browser refresh, or remount.
+  if (evaluationId) {
+    const existingDeduction = db.prepare(`
+      SELECT source FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ? AND amount < 0
+      ORDER BY datetime(created_at) DESC LIMIT 1
+    `).get(userId, evaluationId) as { source: string } | undefined;
+
+    if (existingDeduction) {
+      const status = ensureMonthlyFreeEvaluationsReset(userId);
+      const isFree = existingDeduction.source === 'FREE_MONTHLY_EVALUATION';
+      return {
+        source: isFree ? 'PERSONAL_FREE' : 'PERSONAL_PURCHASED_CREDIT',
+        freeRemaining: status.freeEvaluationsRemaining,
+        paidCredits: status.paidCredits,
+      };
+    }
+  }
+
   // 1. Ensure monthly reset is current before consuming
   const status = ensureMonthlyFreeEvaluationsReset(userId);
 
   // 2. PRIORITY 1: Consume 1 monthly FREE evaluation if any free evaluation remains
   if (status.freeEvaluationsRemaining > 0) {
-    const updateRes = db.prepare(`
-      UPDATE student_profiles
-      SET monthly_free_evaluations_used = monthly_free_evaluations_used + 1,
-          free_evaluations_used = free_evaluations_used + 1,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-        AND monthly_free_evaluations_used < monthly_free_evaluations_limit
-    `).run(userId);
+    let freeTxActive = false;
+    try {
+      db.exec('BEGIN IMMEDIATE;');
+      freeTxActive = true;
 
-    if (updateRes.changes > 0) {
-      const newFreeRemaining = Math.max(0, status.freeEvaluationsRemaining - 1);
-      const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-        VALUES (?, ?, -1, 'FREE_MONTHLY_EVALUATION', ?, ?, ?)
-      `).run(
-        ledgerId,
-        userId,
-        newFreeRemaining,
-        evalRefId,
-        `Consumed 1 monthly free evaluation (${status.freeEvaluationResetMonth})`
-      );
+      const updateRes = db.prepare(`
+        UPDATE student_profiles
+        SET monthly_free_evaluations_used = monthly_free_evaluations_used + 1,
+            free_evaluations_used = free_evaluations_used + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+          AND monthly_free_evaluations_used < monthly_free_evaluations_limit
+      `).run(userId);
 
-      if (evaluationId) {
+      if (updateRes.changes > 0) {
+        const newFreeRemaining = Math.max(0, status.freeEvaluationsRemaining - 1);
+        const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
         db.prepare(`
-          UPDATE evaluations
-          SET entitlement_source = 'PERSONAL_FREE',
-              consumed_from_personal_credits = 0,
-              consumed_from_institute_allocation = 0
-          WHERE id = ?
-        `).run(evaluationId);
-      }
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+          VALUES (?, ?, -1, 'FREE_MONTHLY_EVALUATION', ?, ?, ?)
+        `).run(
+          ledgerId,
+          userId,
+          newFreeRemaining,
+          evalRefId,
+          `Consumed 1 monthly free evaluation (${status.freeEvaluationResetMonth})`
+        );
 
-      return {
-        source: 'PERSONAL_FREE',
-        freeRemaining: newFreeRemaining,
-        paidCredits: status.paidCredits,
-      };
+        if (evaluationId) {
+          db.prepare(`
+            UPDATE evaluations
+            SET entitlement_source = 'PERSONAL_FREE',
+                consumed_from_personal_credits = 0,
+                consumed_from_institute_allocation = 0
+            WHERE id = ?
+          `).run(evaluationId);
+        }
+
+        db.exec('COMMIT;');
+        freeTxActive = false;
+
+        syncStudentCreditsToFirestore(userId).catch(() => {});
+
+        return {
+          source: 'PERSONAL_FREE',
+          freeRemaining: newFreeRemaining,
+          paidCredits: status.paidCredits,
+        };
+      } else {
+        db.exec('COMMIT;');
+        freeTxActive = false;
+      }
+    } catch (freeErr) {
+      if (freeTxActive) {
+        try { db.exec('ROLLBACK;'); } catch {}
+      }
+      throw freeErr;
     }
   }
 
@@ -660,6 +810,7 @@ export function refundEvaluationCreditAtomic(params: {
 
     db.exec('COMMIT;');
     transactionStarted = false;
+    syncStudentCreditsToFirestore(userId).catch(() => {});
   } catch (err) {
     if (transactionStarted) {
       try { db.exec('ROLLBACK;'); } catch (rollbackErr) {
@@ -727,8 +878,8 @@ export function migrateHistoricalCreditPurchases(): number {
       db.prepare(`
         INSERT INTO student_credit_purchases (
           id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
-          valid_from, expires_at, purchase_date, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `).run(
         lotId,
         ord.student_id,
@@ -743,47 +894,55 @@ export function migrateHistoricalCreditPurchases(): number {
         purchaseDate.toISOString()
       );
       migratedCount++;
+      syncStudentCreditsToFirestore(ord.student_id).catch(() => {});
     }
 
-    // 3. For any student profile with purchased_credits > 0 and 0 active lots in student_credit_purchases:
+    // 3. For any student profile where NO lots exist in student_credit_purchases AND NO credit deductions were ever recorded:
     const profilesWithCredits = (db.prepare(`
-      SELECT p.user_id, p.purchased_credits, p.created_at
+      SELECT p.user_id, p.purchased_credits, p.paid_credits, p.created_at
       FROM student_profiles p
       LEFT JOIN (
         SELECT user_id, COUNT(*) as lot_count
         FROM student_credit_purchases
         GROUP BY user_id
       ) sc ON sc.user_id = p.user_id
-      WHERE p.purchased_credits > 0 AND (sc.lot_count IS NULL OR sc.lot_count = 0)
+      LEFT JOIN (
+        SELECT student_id, COUNT(*) as deduction_count
+        FROM credit_ledger
+        WHERE amount < 0
+        GROUP BY student_id
+      ) cl ON cl.student_id = p.user_id
+      WHERE (p.purchased_credits > 0 OR p.paid_credits > 0)
+        AND (sc.lot_count IS NULL OR sc.lot_count = 0)
+        AND (cl.deduction_count IS NULL OR cl.deduction_count = 0)
     `).all() as unknown) as Array<{
       user_id: string;
       purchased_credits: number;
+      paid_credits: number;
       created_at: string;
     }>;
 
     for (const prof of profilesWithCredits) {
-      const purchaseDate = new Date(prof.created_at || now.toISOString());
-      const expiresAt = calculateThreeMonthsExpiry(purchaseDate);
-      const isExpired = new Date(expiresAt).getTime() <= now.getTime();
+      const creds = Math.max(Number(prof.purchased_credits || 0), Number(prof.paid_credits || 0));
+      const expiresAt = calculateThreeMonthsExpiry(now);
       const lotId = `crd_${crypto.randomBytes(8).toString('hex')}`;
 
       db.prepare(`
         INSERT INTO student_credit_purchases (
           id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
-          valid_from, expires_at, purchase_date, status, created_at
-        ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES (?, ?, 'ord_granted', 'pay_granted', ?, ?, ?, ?, ?, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         lotId,
         prof.user_id,
-        prof.purchased_credits,
-        isExpired ? 0 : prof.purchased_credits,
-        purchaseDate.toISOString(),
+        creds,
+        creds,
+        now.toISOString(),
         expiresAt,
-        purchaseDate.toISOString(),
-        isExpired ? 'EXPIRED' : 'ACTIVE',
-        purchaseDate.toISOString()
+        now.toISOString()
       );
       migratedCount++;
+      syncStudentCreditsToFirestore(prof.user_id).catch(() => {});
     }
 
     // Run expiry sweep across all lots
@@ -793,5 +952,39 @@ export function migrateHistoricalCreditPurchases(): number {
   } catch (err) {
     console.error('Migration error in migrateHistoricalCreditPurchases:', err);
     return 0;
+  }
+}
+
+/**
+ * Comprehensive reconciliation of all student credits across SQLite and Cloud Firestore.
+ * - Migrates historical orders and unlinked profile credits to active lots.
+ * - Expires any overdue lots.
+ * - Recalculates exact valid balances and syncs them to student_profiles and Firestore.
+ */
+export async function reconcileAllStudentCredits(): Promise<{ reconciledStudents: number; totalActiveCredits: number }> {
+  try {
+    migrateHistoricalCreditPurchases();
+    expireOverdueCreditLots();
+
+    const students = db.prepare('SELECT user_id, purchased_credits, paid_credits FROM student_profiles').all() as Array<{
+      user_id: string;
+      purchased_credits: number;
+      paid_credits: number;
+    }>;
+
+    let totalActiveCredits = 0;
+    for (const student of students) {
+      const validCredits = getValidStudentCreditBalance(student.user_id);
+      totalActiveCredits += validCredits;
+      await syncStudentCreditsToFirestore(student.user_id);
+    }
+
+    return {
+      reconciledStudents: students.length,
+      totalActiveCredits,
+    };
+  } catch (err) {
+    console.warn('[StudentCreditService] Reconcile student credits warning:', err);
+    return { reconciledStudents: 0, totalActiveCredits: 0 };
   }
 }

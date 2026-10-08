@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { optionalAuthenticateToken, authenticateToken, AuthRequest } from '../auth.js';
 import { isRazorpayConfigured, getRazorpayKeyId } from '../razorpay.js';
-import { recordCreditPurchase } from '../services/studentCreditService.js';
+import { recordCreditPurchase, syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
 
 const router = Router();
 
@@ -170,7 +170,7 @@ router.post('/order', authenticateToken, async (req: AuthRequest, res: Response)
 });
 
 // 3. Verify Payment and Activate Plan
-router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature, planId } = req.body;
     const userId = req.user!.id;
@@ -209,6 +209,8 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
         paymentId: razorpayPaymentId,
         purchaseDate: new Date(),
       });
+
+      await syncStudentCreditsToFirestore(userId);
 
       const newCredits = lotResult.totalValidCredits;
 

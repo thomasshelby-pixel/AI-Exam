@@ -186,6 +186,19 @@ export async function isTombstoned(collectionName: string, docId: string): Promi
   const db = getFirestoreDb();
   if (!db || !docId) return false;
   try {
+    // For credit-related collections, never block updates unless the entire user account is tombstoned
+    if (collectionName === 'student_profiles' || collectionName === 'student_credit_purchases' || collectionName === 'credit_ledger') {
+      const userTombstoneSnap = await withTimeout(
+        getDoc(doc(db, 'tombstones', `users_${docId}`)),
+        2500,
+        null
+      );
+      if (userTombstoneSnap && userTombstoneSnap.exists()) {
+        return true;
+      }
+      return false;
+    }
+
     const tombstoneId = `${collectionName}_${docId}`;
     const snap = await withTimeout(
       getDoc(doc(db, 'tombstones', tombstoneId)),
