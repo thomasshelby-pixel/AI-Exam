@@ -1668,6 +1668,7 @@ function runMigrations() {
   addColumnIfNotExists('referral_redemptions', 'evaluations_remaining', 'INTEGER NOT NULL DEFAULT 15');
   addColumnIfNotExists('referral_redemptions', 'audit_note', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'created_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'revoked_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'revoked_by', 'TEXT');
@@ -3069,6 +3070,35 @@ function seedReferralCampaigns() {
           description = COALESCE(NULLIF(description, ''), 'Special promotional launch offer with 15 free evaluations for 30 days.')
       WHERE code = 'AI30'
     `).run();
+  }
+
+  // Authoritatively reconcile real student AI30 redemption if previously applied but missing from ephemeral storage
+  const adityaStudent = db.prepare('SELECT id, email, full_name FROM users WHERE id = ?').get('usr_dedda056303ee5d1') as any;
+  if (adityaStudent) {
+    const existingRed = db.prepare('SELECT id FROM referral_redemptions WHERE UPPER(referral_code) = \'AI30\' AND user_id = ?').get(adityaStudent.id);
+    if (!existingRed) {
+      const redId = `red_ai30_${adityaStudent.id}`;
+      const expiryDate = new Date(Date.now() + 30 * 86400000).toISOString();
+      db.prepare(`
+        INSERT INTO referral_redemptions (
+          id, referral_code, user_id, user_email, benefit_type,
+          redemption_number, redeemed_at, expiry_date, status,
+          max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+          created_at, updated_at
+        ) VALUES (
+          ?, 'AI30', ?, ?, '1_MONTH_FREE_ACCESS',
+          1, CURRENT_TIMESTAMP, ?, 'ACTIVE',
+          15, 0, 15, ?,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+      `).run(
+        redId,
+        adityaStudent.id,
+        adityaStudent.email,
+        expiryDate,
+        `Redemption #1 of 20 claimed by ${adityaStudent.email}`
+      );
+    }
   }
 }
 

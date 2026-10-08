@@ -6,6 +6,8 @@ import { getValidAttemptsForLevel } from '../services/attemptService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries, getSubjectKeyCandidates } from '../services/materialLookupService.js';
 import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 import { contactTicketRateLimiter } from '../utils/rateLimiter.js';
+import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
 
 const router = Router();
 
@@ -328,8 +330,74 @@ router.post('/contact', contactTicketRateLimiter, (req: Request, res: Response) 
 });
 
 // Public Reviews & Statistics (Transparent Community Showcase, Privacy-Safe)
-export const getPublicReviewsHandler = (req: Request, res: Response) => {
+export const getPublicReviewsHandler = async (req: Request, res: Response) => {
   try {
+    // 1. Authoritative multi-instance reconciliation with Cloud Firestore
+    try {
+      const fsReviews = await getAllFirestoreDocs<any>('reviews');
+      for (const rev of fsReviews) {
+        if (!rev.id || !rev.user_id) continue;
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) tags = JSON.stringify(tags);
+        else if (typeof tags !== 'string') tags = null;
+
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
+            status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            is_verified_evaluation = excluded.is_verified_evaluation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? 1,
+          rev.moderation_note || null,
+          rev.approved_at || null,
+          rev.approved_by || null,
+          rev.rejected_at || null,
+          rev.rejected_by || null,
+          rev.created_at || rev.createdAt || new Date().toISOString()
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[PublicReviews] Firestore reconciliation notice:', fsErr);
+    }
+
     const { caLevel } = req.query;
     const sortBy = (req.query.sortBy || req.query.sort) as string | undefined;
     const limitParam = req.query.limit ? Math.min(Math.max(1, parseInt(String(req.query.limit), 10) || 100), 100) : 100;
@@ -482,7 +550,7 @@ export const getPublicReviewsHandler = (req: Request, res: Response) => {
 router.get('/reviews', getPublicReviewsHandler);
 
 // Upvote / Downvote Review Interaction
-export const votePublicReviewHandler = (req: AuthRequest, res: Response) => {
+export const votePublicReviewHandler = async (req: AuthRequest, res: Response) => {
   try {
     const reviewId = req.params.id;
     const userId = req.user!.id;
@@ -575,6 +643,24 @@ export const votePublicReviewHandler = (req: AuthRequest, res: Response) => {
           INSERT INTO notifications (id, user_id, title, message, type, read, created_at)
           VALUES (?, ?, ?, ?, 'REVIEW_LIKE', 0, CURRENT_TIMESTAMP)
         `).run(notifId, review.user_id, 'Review Liked', 'A fellow CA student liked your review on CA Exam Checker AI.');
+      }
+    }
+
+    // Sync updated vote counts to Firestore
+    const fullReview = db.prepare('SELECT * FROM reviews WHERE id = ?').get(reviewId) as any;
+    if (fullReview) {
+      let tags = fullReview.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', reviewId, {
+          ...fullReview,
+          experience_tags: tags || [],
+          likes_count: updatedCounts.likes_count,
+          dislikes_count: updatedCounts.dislikes_count,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewVoteSync] Warning syncing vote to Firestore:', syncErr);
       }
     }
 

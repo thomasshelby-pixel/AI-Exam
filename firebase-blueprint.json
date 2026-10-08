@@ -321,6 +321,55 @@
         "user_agent": { "type": "string" }
       },
       "required": ["student_id", "disclaimer_version"]
+    },
+    "ReferralCampaign": {
+      "title": "ReferralCampaign",
+      "description": "Configured promotional code campaigns and access quotas.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "campaign_name": { "type": "string" },
+        "description": { "type": "string" },
+        "benefit_type": { "type": "string" },
+        "benefit_duration_days": { "type": "number" },
+        "max_redemptions": { "type": "number" },
+        "max_evaluations": { "type": "number" },
+        "is_active": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "DISABLED", "ARCHIVED", "EXHAUSTED"] },
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "user_type": { "type": "string" },
+        "terms_notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "campaign_name", "max_redemptions", "max_evaluations", "status"]
+    },
+    "ReferralRedemption": {
+      "title": "ReferralRedemption",
+      "description": "Authoritative promotional redemption records linking students to campaigns.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "referral_code": { "type": "string" },
+        "user_id": { "type": "string" },
+        "user_email": { "type": "string" },
+        "benefit_type": { "type": "string" },
+        "redemption_number": { "type": "number" },
+        "redeemed_at": { "type": "string", "format": "date-time" },
+        "expiry_date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ACTIVE", "EXPIRED", "EXHAUSTED", "REVOKED"] },
+        "max_evaluations": { "type": "number" },
+        "evaluations_used": { "type": "number" },
+        "evaluations_remaining": { "type": "number" },
+        "audit_note": { "type": "string" },
+        "revoked_at": { "type": "string" },
+        "revoked_by": { "type": "string" },
+        "revocation_reason": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referral_code", "user_id", "status", "max_evaluations", "evaluations_remaining"]
     }
   },
   "firestore": {
@@ -387,6 +436,14 @@
     "/reviews/{reviewId}": {
       "schema": { "$ref": "#/entities/Review" },
       "description": "Student ratings and feedback with server-governed moderation status."
+    },
+    "/referral_campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/ReferralCampaign" },
+      "description": "Configured promotional code campaigns and access quotas."
+    },
+    "/referral_redemptions/{redemptionId}": {
+      "schema": { "$ref": "#/entities/ReferralRedemption" },
+      "description": "Authoritative student promotional code redemptions and evaluation quotas."
     }
   }
 }

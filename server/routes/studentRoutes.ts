@@ -2765,7 +2765,7 @@ router.delete('/account', async (req: AuthRequest, res: Response) => {
 });
 
 // 7. Referral Code Redemption (AI30: 1 month free access, max 15 evaluations, strict 20 redemptions limit)
-router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: Response) => {
+router.post('/referral/redeem', promoRedeemRateLimiter, async (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
   const userEmail = req.user!.email;
   const { code } = req.body;
@@ -2843,17 +2843,25 @@ router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: 
 
     // 4. Create successful redemption record
     const redemptionNumber = countRow.total + 1;
-    const redemptionId = `red_${crypto.randomBytes(8).toString('hex')}`;
+    const redemptionId = `red_${cleanCode.toLowerCase()}_${userId}`;
     const durationDays = campaign.benefit_duration_days || 30;
     const expiryDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
     const maxEvaluations = campaign.max_evaluations ?? 15;
+    const nowIso = new Date().toISOString();
 
     db.prepare(`
       INSERT INTO referral_redemptions (
         id, referral_code, user_id, user_email, benefit_type,
         redemption_number, expiry_date, status,
-        max_evaluations, evaluations_used, evaluations_remaining, audit_note
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0, ?, ?)
+        max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        expiry_date = excluded.expiry_date,
+        status = excluded.status,
+        max_evaluations = excluded.max_evaluations,
+        evaluations_remaining = excluded.evaluations_remaining,
+        updated_at = CURRENT_TIMESTAMP
     `).run(
       redemptionId,
       cleanCode,
@@ -2869,10 +2877,47 @@ router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: 
 
     // If quota reached, mark EXHAUSTED
     if (redemptionNumber >= maxRedemptions) {
-      db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED' WHERE UPPER(code) = UPPER(?)`).run(cleanCode);
+      db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED', updated_at = CURRENT_TIMESTAMP WHERE UPPER(code) = UPPER(?)`).run(cleanCode);
     }
 
     db.exec('COMMIT');
+
+    // Authoritative Cloud sync to Firestore
+    try {
+      await syncRecordToFirestore('referral_redemptions', redemptionId, {
+        id: redemptionId,
+        referral_code: cleanCode,
+        user_id: userId,
+        user_email: userEmail,
+        benefit_type: campaign.benefit_type || '1_MONTH_FREE_ACCESS',
+        redemption_number: redemptionNumber,
+        redeemed_at: nowIso,
+        expiry_date: expiryDate,
+        status: 'ACTIVE',
+        max_evaluations: maxEvaluations,
+        evaluations_used: 0,
+        evaluations_remaining: maxEvaluations,
+        audit_note: `Redemption #${redemptionNumber} of ${maxRedemptions} claimed by ${userEmail}`,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+    } catch (syncErr) {
+      console.warn('[PromoSync] Warning syncing redemption to Firestore:', syncErr);
+    }
+
+    const updatedCampaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(cleanCode) as any;
+    if (updatedCampaign) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', cleanCode, {
+          ...updatedCampaign,
+          used_redemptions: redemptionNumber,
+          successfulRedemptions: redemptionNumber,
+          updated_at: nowIso,
+        });
+      } catch (syncErr) {
+        console.warn('[PromoSync] Warning syncing campaign to Firestore:', syncErr);
+      }
+    }
 
     // Create system notification
     db.prepare(`
@@ -2886,11 +2931,12 @@ router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: 
     );
 
     // Audit log
+    const auditLogId = `aud_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'PROMO_CODE_REDEMPTION', 'PROMO_CODE', ?, ?)
     `).run(
-      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      auditLogId,
       userId,
       cleanCode,
       JSON.stringify({
@@ -2903,6 +2949,26 @@ router.post('/referral/redeem', promoRedeemRateLimiter, (req: AuthRequest, res: 
         source: 'STUDENT_PORTAL',
       })
     );
+
+    try {
+      await syncRecordToFirestore('audit_logs', auditLogId, {
+        id: auditLogId,
+        user_id: userId,
+        action: 'PROMO_CODE_REDEMPTION',
+        entity_type: 'PROMO_CODE',
+        entity_id: cleanCode,
+        details: {
+          studentId: userId,
+          studentEmail: userEmail,
+          redemptionNumber,
+          maxRedemptions,
+          evaluationsGranted: maxEvaluations,
+          expiryDate,
+          source: 'STUDENT_PORTAL',
+        },
+        created_at: nowIso,
+      });
+    } catch {}
 
     return res.json({
       success: true,
@@ -3965,25 +4031,29 @@ router.post('/review', async (req: AuthRequest, res: Response) => {
     );
 
     // 7. Durable Cloud sync to Firestore
-    syncRecordToFirestore('reviews', reviewId, {
-      id: reviewId,
-      user_id: studentId,
-      student_name: rawName,
-      student_email: email,
-      display_name: displayName,
-      ca_level: caLevel,
-      rating: numRating,
-      review_text: sanitizedText,
-      experience_tags: sanitizedTags,
-      status: targetStatus,
-      likes_count: existing?.likes_count || 0,
-      dislikes_count: existing?.dislikes_count || 0,
-      is_verified_evaluation: 1,
-      admin_reply: existing?.admin_reply || null,
-      admin_reply_at: existing?.admin_reply_at || null,
-      admin_reply_name: existing?.admin_reply_name || null,
-      updated_at: new Date().toISOString(),
-    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing review to Firestore:', syncErr));
+    try {
+      await syncRecordToFirestore('reviews', reviewId, {
+        id: reviewId,
+        user_id: studentId,
+        student_name: rawName,
+        student_email: email,
+        display_name: displayName,
+        ca_level: caLevel,
+        rating: numRating,
+        review_text: sanitizedText,
+        experience_tags: sanitizedTags,
+        status: targetStatus,
+        likes_count: existing?.likes_count || 0,
+        dislikes_count: existing?.dislikes_count || 0,
+        is_verified_evaluation: 1,
+        admin_reply: existing?.admin_reply || null,
+        admin_reply_at: existing?.admin_reply_at || null,
+        admin_reply_name: existing?.admin_reply_name || null,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (syncErr) {
+      console.warn('[ReviewSync] Warning syncing review to Firestore:', syncErr);
+    }
 
     return res.status(isUpdate ? 200 : 201).json({
       success: true,

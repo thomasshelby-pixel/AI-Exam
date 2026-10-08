@@ -479,14 +479,22 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 
       // If referral / promo code was applied, insert redemption record transactionally
       if (promoCampaign) {
-        const redemptionId = `red_${crypto.randomBytes(8).toString('hex')}`;
+        const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
+        const nowIso = new Date().toISOString();
 
         db.prepare(`
           INSERT INTO referral_redemptions (
             id, referral_code, user_id, user_email, benefit_type,
             redemption_number, expiry_date, status,
-            max_evaluations, evaluations_used, evaluations_remaining, audit_note
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0, ?, ?)
+            max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            expiry_date = excluded.expiry_date,
+            status = excluded.status,
+            max_evaluations = excluded.max_evaluations,
+            evaluations_remaining = excluded.evaluations_remaining,
+            updated_at = CURRENT_TIMESTAMP
         `).run(
           redemptionId,
           rawReferralCode,
@@ -502,7 +510,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 
         // If this redemption reached max quota, update status to EXHAUSTED
         if (promoRedemptionNumber >= promoMaxRedemptions) {
-          db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED' WHERE UPPER(code) = UPPER(?)`).run(rawReferralCode);
+          db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED', updated_at = CURRENT_TIMESTAMP WHERE UPPER(code) = UPPER(?)`).run(rawReferralCode);
         }
       }
 
@@ -513,8 +521,47 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       return res.status(500).json({ error: 'Failed to complete student registration. Please try again.' });
     }
 
-    // Post-commit notifications and audit logging
+    // Post-commit notifications, audit logging, and durable Firestore sync
     if (promoCampaign) {
+      const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
+      const nowIso = new Date().toISOString();
+
+      try {
+        await syncRecordToFirestore('referral_redemptions', redemptionId, {
+          id: redemptionId,
+          referral_code: rawReferralCode,
+          user_id: userId,
+          user_email: normalizedEmail,
+          benefit_type: promoCampaign.benefit_type || '1_MONTH_FREE_ACCESS',
+          redemption_number: promoRedemptionNumber,
+          redeemed_at: nowIso,
+          expiry_date: promoExpiryDate,
+          status: 'ACTIVE',
+          max_evaluations: promoMaxEvals,
+          evaluations_used: 0,
+          evaluations_remaining: promoMaxEvals,
+          audit_note: `Redemption #${promoRedemptionNumber} of ${promoMaxRedemptions} claimed on registration by ${normalizedEmail}`,
+          created_at: nowIso,
+          updated_at: nowIso,
+        });
+      } catch (syncErr) {
+        console.warn('[PromoSync] Warning syncing registration redemption to Firestore:', syncErr);
+      }
+
+      const updatedCampaign = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(rawReferralCode) as any;
+      if (updatedCampaign) {
+        try {
+          await syncRecordToFirestore('referral_campaigns', rawReferralCode, {
+            ...updatedCampaign,
+            used_redemptions: promoRedemptionNumber,
+            successfulRedemptions: promoRedemptionNumber,
+            updated_at: nowIso,
+          });
+        } catch (syncErr) {
+          console.warn('[PromoSync] Warning syncing registration campaign to Firestore:', syncErr);
+        }
+      }
+
       db.prepare(`
         INSERT INTO notifications (id, user_id, title, message, type)
         VALUES (?, ?, ?, ?, 'SYSTEM')
@@ -526,11 +573,12 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       );
 
       // Promo redemption audit log
+      const auditLogId = `aud_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
         VALUES (?, ?, 'PROMO_CODE_REDEMPTION', 'PROMO_CODE', ?, ?)
       `).run(
-        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        auditLogId,
         userId,
         rawReferralCode,
         JSON.stringify({
@@ -543,6 +591,26 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
           source: 'REGISTRATION',
         })
       );
+
+      try {
+        await syncRecordToFirestore('audit_logs', auditLogId, {
+          id: auditLogId,
+          user_id: userId,
+          action: 'PROMO_CODE_REDEMPTION',
+          entity_type: 'PROMO_CODE',
+          entity_id: rawReferralCode,
+          details: {
+            studentId: userId,
+            studentEmail: normalizedEmail,
+            redemptionNumber: promoRedemptionNumber,
+            maxRedemptions: promoMaxRedemptions,
+            evaluationsGranted: promoMaxEvals,
+            expiryDate: promoExpiryDate,
+            source: 'REGISTRATION',
+          },
+          created_at: nowIso,
+        });
+      } catch {}
     }
 
     // Auto-link any pending coaching institute enrollment for this email

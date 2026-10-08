@@ -3962,8 +3962,90 @@ router.delete('/institute-plans/:id', (req: AuthRequest, res: Response) => {
 });
 
 // 24. Promo Code Management & Redemptions (/admin/promo-codes and /admin/referrals)
-router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => {
+router.get(['/promo-codes', '/referrals'], async (req: AuthRequest, res: Response) => {
   try {
+    // 1. Authoritative multi-instance reconciliation with Cloud Firestore
+    try {
+      const fsCampaigns = await getAllFirestoreDocs<any>('referral_campaigns');
+      for (const c of fsCampaigns) {
+        if (!c.code) continue;
+        db.prepare(`
+          INSERT INTO referral_campaigns (
+            code, campaign_name, description, benefit_type, benefit_duration_days,
+            max_redemptions, max_evaluations, is_active, status, start_date, end_date,
+            user_type, terms_notes, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(code) DO UPDATE SET
+            campaign_name = excluded.campaign_name,
+            description = excluded.description,
+            benefit_type = excluded.benefit_type,
+            benefit_duration_days = excluded.benefit_duration_days,
+            max_redemptions = excluded.max_redemptions,
+            max_evaluations = excluded.max_evaluations,
+            is_active = excluded.is_active,
+            status = excluded.status,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date,
+            user_type = excluded.user_type,
+            terms_notes = excluded.terms_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          c.code, c.campaign_name || c.campaignName || `${c.code} Promo`,
+          c.description || null, c.benefit_type || '1_MONTH_FREE_ACCESS',
+          c.benefit_duration_days || c.benefitDurationDays || 30,
+          c.max_redemptions ?? c.maxRedemptions ?? 20,
+          c.max_evaluations ?? c.maxEvaluations ?? 15,
+          c.is_active !== undefined ? (c.is_active ? 1 : 0) : 1,
+          c.status || 'ACTIVE',
+          c.start_date || c.startDate || null,
+          c.end_date || c.endDate || null,
+          c.user_type || c.userType || 'ALL',
+          c.terms_notes || c.termsNotes || null,
+          c.created_at || c.createdAt || null
+        );
+      }
+
+      const fsRedemptions = await getAllFirestoreDocs<any>('referral_redemptions');
+      for (const r of fsRedemptions) {
+        if (!r.id || !r.referral_code) continue;
+        db.prepare(`
+          INSERT INTO referral_redemptions (
+            id, referral_code, user_id, user_email, benefit_type,
+            redemption_number, expiry_date, status,
+            max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            referral_code = excluded.referral_code,
+            user_id = excluded.user_id,
+            user_email = excluded.user_email,
+            benefit_type = excluded.benefit_type,
+            redemption_number = excluded.redemption_number,
+            expiry_date = excluded.expiry_date,
+            status = excluded.status,
+            max_evaluations = excluded.max_evaluations,
+            evaluations_used = excluded.evaluations_used,
+            evaluations_remaining = excluded.evaluations_remaining,
+            audit_note = excluded.audit_note,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          r.id, r.referral_code || r.referralCode,
+          r.user_id || r.userId, r.user_email || r.userEmail || '',
+          r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
+          r.redemption_number ?? r.redemptionNumber ?? 1,
+          r.expiry_date || r.expiryDate,
+          r.status || 'ACTIVE',
+          r.max_evaluations ?? r.maxEvaluations ?? 15,
+          r.evaluations_used ?? r.evaluationsUsed ?? 0,
+          r.evaluations_remaining ?? r.evaluationsRemaining ?? 15,
+          r.audit_note || r.auditNote || null,
+          r.created_at || r.createdAt || null
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminPromoCodes] Firestore reconciliation notice:', fsErr);
+    }
+
     const rawCampaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all() as any[];
     const campaigns = rawCampaigns.map(c => {
       const redemptionsCount = (db.prepare(`
@@ -4040,7 +4122,7 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
 });
 
 // Create new promo code
-router.post('/promo-codes', (req: AuthRequest, res: Response) => {
+router.post('/promo-codes', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const {
@@ -4125,6 +4207,13 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
       })
     );
 
+    const createdCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(cleanCode) as any;
+    if (createdCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', cleanCode, createdCamp);
+      } catch {}
+    }
+
     return res.status(201).json({
       success: true,
       message: `Promo code ${cleanCode} created successfully.`,
@@ -4137,7 +4226,7 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
 });
 
 // Update promo code parameters
-router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthRequest, res: Response) => {
+router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4213,6 +4302,13 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
       })
     );
 
+    const updatedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (updatedCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', campaignCode, updatedCamp);
+      } catch {}
+    }
+
     return res.json({ success: true, message: `Promo code ${campaignCode} updated successfully.` });
   } catch (error: unknown) {
     console.error('Update promo code error:', error);
@@ -4221,7 +4317,7 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
 });
 
 // Quick toggle status: ACTIVE / DISABLED / ARCHIVED
-router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
+router.patch('/promo-codes/:code/status', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4254,6 +4350,13 @@ router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
       JSON.stringify({ previousStatus: currentCampaign.status, newStatus: status })
     );
 
+    const toggledCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (toggledCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', campaignCode, toggledCamp);
+      } catch {}
+    }
+
     return res.json({ success: true, message: `Promo code ${campaignCode} status set to ${status}.` });
   } catch (error: unknown) {
     console.error('Toggle promo code status error:', error);
@@ -4262,7 +4365,7 @@ router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
 });
 
 // Delete or Archive promo code
-router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
+router.delete('/promo-codes/:code', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4284,6 +4387,13 @@ router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
         SET status = 'ARCHIVED', is_active = 0, updated_at = CURRENT_TIMESTAMP
         WHERE UPPER(code) = UPPER(?)
       `).run(campaignCode);
+
+      const archivedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+      if (archivedCamp) {
+        try {
+          await syncRecordToFirestore('referral_campaigns', campaignCode, archivedCamp);
+        } catch {}
+      }
 
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -4358,7 +4468,7 @@ router.get('/promo-codes/:code/redemptions', (req: AuthRequest, res: Response) =
 });
 
 // Revoke a specific promo code redemption
-router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Response) => {
+router.post('/promo-codes/redemptions/:id/revoke', async (req: AuthRequest, res: Response) => {
   try {
     const redemptionId = req.params.id;
     const { reason } = req.body || {};
@@ -4466,7 +4576,22 @@ router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Respo
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       WHERE r.id = ?
-    `).get(redemptionId);
+    `).get(redemptionId) as any;
+
+    if (updated) {
+      try {
+        await syncRecordToFirestore('referral_redemptions', redemptionId, updated);
+      } catch {}
+    }
+
+    if (campaign) {
+      const updatedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(redemption.referral_code) as any;
+      if (updatedCamp) {
+        try {
+          await syncRecordToFirestore('referral_campaigns', redemption.referral_code, updatedCamp);
+        } catch {}
+      }
+    }
 
     return res.json({
       success: true,
@@ -5883,8 +6008,76 @@ router.get('/email-audit-logs', (req: AuthRequest, res: Response) => {
 // ============================================================================
 
 // Get counts for badge display
-router.get('/reviews/pending-count', (req: AuthRequest, res: Response) => {
+router.get('/reviews/pending-count', async (req: AuthRequest, res: Response) => {
   try {
+    try {
+      const fsReviews = await getAllFirestoreDocs<any>('reviews');
+      for (const rev of fsReviews) {
+        if (!rev.id || !rev.user_id) continue;
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) tags = JSON.stringify(tags);
+        else if (typeof tags !== 'string') tags = null;
+
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
+            status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? 1,
+          rev.moderation_note || null,
+          rev.approved_at || null,
+          rev.approved_by || null,
+          rev.rejected_at || null,
+          rev.rejected_by || null,
+          rev.created_at || rev.createdAt || new Date().toISOString()
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminReviewsPending] Firestore reconciliation notice:', fsErr);
+    }
+
     const counts = db.prepare(`
       SELECT
         COUNT(*) as total,
@@ -5908,8 +6101,79 @@ router.get('/reviews/pending-count', (req: AuthRequest, res: Response) => {
 });
 
 // List all reviews with filters, pagination, and status breakdown
-router.get('/reviews', (req: AuthRequest, res: Response) => {
+router.get('/reviews', async (req: AuthRequest, res: Response) => {
   try {
+    // 1. Authoritative multi-instance reconciliation with Cloud Firestore
+    try {
+      const fsReviews = await getAllFirestoreDocs<any>('reviews');
+      for (const rev of fsReviews) {
+        if (!rev.id || !rev.user_id) continue;
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) tags = JSON.stringify(tags);
+        else if (typeof tags !== 'string') tags = null;
+
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            student_name = COALESCE(excluded.student_name, reviews.student_name),
+            student_email = COALESCE(excluded.student_email, reviews.student_email),
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
+            status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? 1,
+          rev.moderation_note || null,
+          rev.approved_at || null,
+          rev.approved_by || null,
+          rev.rejected_at || null,
+          rev.rejected_by || null,
+          rev.created_at || rev.createdAt || new Date().toISOString()
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminReviews] Firestore reconciliation notice:', fsErr);
+    }
+
     const { status = 'ALL', search = '' } = req.query;
 
     let query = `
@@ -6059,21 +6323,20 @@ router.patch('/reviews/:id/status', async (req: AuthRequest, res: Response) => {
     }
 
     // Sync updated review to Firestore
-    syncRecordToFirestore('reviews', id, {
-      id,
-      user_id: review.user_id,
-      student_name: review.student_name,
-      student_email: review.student_email,
-      display_name: review.display_name,
-      ca_level: review.ca_level,
-      rating: review.rating,
-      review_text: review.review_text,
-      status: targetStatus,
-      moderation_reason: modReason,
-      moderated_at: now,
-      moderated_by: adminId,
-      updated_at: now,
-    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing review update to Firestore:', syncErr));
+    const updatedReview = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReview) {
+      let tags = updatedReview.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReview,
+          experience_tags: tags || [],
+          updated_at: now,
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing review update to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6133,15 +6396,21 @@ router.post('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
       VALUES (?, ?, 'Official Response Received', 'CA Exam Checker AI posted an official response to your review.', 'ADMIN_REPLY', 0, CURRENT_TIMESTAMP)
     `).run(notifId, review.user_id);
 
-    // Sync to Firestore
-    syncRecordToFirestore('reviews', id, {
-      id,
-      admin_reply: cleanReply,
-      admin_reply_at: now,
-      admin_reply_by: adminId,
-      admin_reply_name: replyName,
-      updated_at: now,
-    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing admin reply to Firestore:', syncErr));
+    // Sync full updated review to Firestore
+    const updatedReviewWithReply = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReviewWithReply) {
+      let tags = updatedReviewWithReply.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReviewWithReply,
+          experience_tags: tags || [],
+          updated_at: now,
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing admin reply to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6176,6 +6445,26 @@ router.delete('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(id);
+
+    // Sync updated review with null reply fields to Firestore
+    const updatedReviewNoReply = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReviewNoReply) {
+      let tags = updatedReviewNoReply.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReviewNoReply,
+          admin_reply: null,
+          admin_reply_at: null,
+          admin_reply_by: null,
+          admin_reply_name: null,
+          experience_tags: tags || [],
+          updated_at: new Date().toISOString(),
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing admin reply removal to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6214,9 +6503,11 @@ router.delete('/reviews/:id', async (req: AuthRequest, res: Response) => {
     );
 
     // Tombstone and delete from Firestore
-    permanentlyDeleteFromFirestore('reviews', id).catch((delErr) =>
-      console.warn('[ReviewSync] Warning deleting review from Firestore:', delErr)
-    );
+    try {
+      await permanentlyDeleteFromFirestore('reviews', id);
+    } catch (delErr) {
+      console.warn('[ReviewSync] Warning deleting review from Firestore:', delErr);
+    }
 
     return res.json({ success: true, message: 'Review has been permanently removed.' });
   } catch (error: unknown) {

@@ -112,13 +112,27 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     for (const t of tombstones) {
       const col = t.collectionName || '';
-      const tid = t.targetId || t.id;
+      const rawTid = t.targetId || t.id;
+      const tid = rawTid ? rawTid.replace(new RegExp(`^${col}_`), '') : '';
       if (col && tid) {
         if (PROTECTED_CORE_IDS.has(tid)) continue;
         tombstoneSet.add(`${col}_${tid}`);
         tombstoneSet.add(`${col}:${tid}`);
         tombstoneSet.add(tid);
         recordLocalTombstone(col, tid, 'HYDRATED_TOMBSTONE');
+
+        // Clean up tombstoned records from local SQLite to prevent resurrection
+        try {
+          if (col === 'reviews') {
+            db.prepare('DELETE FROM reviews WHERE id = ?').run(tid);
+          } else if (col === 'evaluations') {
+            db.prepare('DELETE FROM evaluations WHERE id = ?').run(tid);
+          } else if (col === 'evaluation_materials' || col === 'materials') {
+            db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(tid);
+          } else if (col === 'referral_redemptions') {
+            db.prepare('DELETE FROM referral_redemptions WHERE id = ?').run(tid);
+          }
+        } catch {}
       }
     }
 
@@ -825,23 +839,140 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       } catch {}
     }
 
-    // 14. Hydrate Student Reviews & Star Ratings
+    // 13B. Hydrate Referral Campaigns & Redemptions
+    const referralCampaigns = await readDocs<any>('referral_campaigns');
+    for (const c of referralCampaigns) {
+      if (tombstoneSet.has(`referral_campaigns_${c.code}`) || tombstoneSet.has(c.code)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO referral_campaigns (
+            code, campaign_name, description, benefit_type, benefit_duration_days,
+            max_redemptions, max_evaluations, is_active, status, start_date, end_date,
+            user_type, terms_notes, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(code) DO UPDATE SET
+            campaign_name = excluded.campaign_name,
+            description = excluded.description,
+            benefit_type = excluded.benefit_type,
+            benefit_duration_days = excluded.benefit_duration_days,
+            max_redemptions = excluded.max_redemptions,
+            max_evaluations = excluded.max_evaluations,
+            is_active = excluded.is_active,
+            status = excluded.status,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date,
+            user_type = excluded.user_type,
+            terms_notes = excluded.terms_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          c.code, c.campaign_name || c.campaignName || `${c.code} Promo`,
+          c.description || null, c.benefit_type || '1_MONTH_FREE_ACCESS',
+          c.benefit_duration_days || c.benefitDurationDays || 30,
+          c.max_redemptions ?? c.maxRedemptions ?? 20,
+          c.max_evaluations ?? c.maxEvaluations ?? 15,
+          c.is_active !== undefined ? (c.is_active ? 1 : 0) : (c.isActive !== undefined ? (c.isActive ? 1 : 0) : 1),
+          c.status || 'ACTIVE',
+          c.start_date || c.startDate || null,
+          c.end_date || c.endDate || null,
+          c.user_type || c.userType || 'ALL',
+          c.terms_notes || c.termsNotes || null,
+          c.created_at || c.createdAt || null
+        );
+      } catch (cErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate referral campaign ${c.code}:`, cErr);
+      }
+    }
+
+    const referralRedemptions = await readDocs<any>('referral_redemptions');
+    for (const r of referralRedemptions) {
+      if (tombstoneSet.has(`referral_redemptions_${r.id}`) || tombstoneSet.has(r.id)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO referral_redemptions (
+            id, referral_code, user_id, user_email, benefit_type,
+            redemption_number, redeemed_at, expiry_date, status,
+            max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            referral_code = excluded.referral_code,
+            user_id = excluded.user_id,
+            user_email = excluded.user_email,
+            benefit_type = excluded.benefit_type,
+            redemption_number = excluded.redemption_number,
+            expiry_date = excluded.expiry_date,
+            status = excluded.status,
+            max_evaluations = excluded.max_evaluations,
+            evaluations_used = excluded.evaluations_used,
+            evaluations_remaining = excluded.evaluations_remaining,
+            audit_note = excluded.audit_note,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          r.id, r.referral_code || r.referralCode,
+          r.user_id || r.userId, r.user_email || r.userEmail || '',
+          r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
+          r.redemption_number ?? r.redemptionNumber ?? 1,
+          r.redeemed_at || r.redeemedAt || new Date().toISOString(),
+          r.expiry_date || r.expiryDate || new Date().toISOString(),
+          r.status || 'ACTIVE',
+          r.max_evaluations ?? r.maxEvaluations ?? 15,
+          r.evaluations_used ?? r.evaluationsUsed ?? 0,
+          r.evaluations_remaining ?? r.evaluationsRemaining ?? 15,
+          r.audit_note || r.auditNote || null,
+          r.created_at || r.createdAt || null
+        );
+      } catch (rErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate referral redemption ${r.id}:`, rErr);
+      }
+    }
+
+    // 14. Hydrate Student Reviews & Star Ratings with complete metadata
     const reviews = await readDocs<any>('reviews');
     for (const rev of reviews) {
       if (tombstoneSet.has(`reviews_${rev.id}`)) continue;
       try {
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) {
+          tags = JSON.stringify(tags);
+        } else if (typeof tags !== 'string') {
+          tags = null;
+        }
+
         db.prepare(`
           INSERT INTO reviews (
             id, user_id, student_name, student_email, display_name, ca_level,
-            rating, review_text, status, moderation_note, approved_at, approved_by,
-            rejected_at, rejected_by, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP
+          )
           ON CONFLICT(id) DO UPDATE SET
+            student_name = COALESCE(excluded.student_name, reviews.student_name),
+            student_email = COALESCE(excluded.student_email, reviews.student_email),
             display_name = excluded.display_name,
             ca_level = excluded.ca_level,
             rating = excluded.rating,
             review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
             status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
             moderation_note = excluded.moderation_note,
             approved_at = excluded.approved_at,
             approved_by = excluded.approved_by,
@@ -851,9 +982,20 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
           rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
-          rev.review_text || '', rev.status || 'PENDING', rev.moderation_note || null,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? (rev.isVerifiedEvaluation ? 1 : 0) ?? 1,
+          rev.moderation_note || null,
           rev.approved_at || null, rev.approved_by || null, rev.rejected_at || null,
-          rev.rejected_by || null, rev.created_at || null
+          rev.rejected_by || null, rev.created_at || rev.createdAt || null
         );
       } catch (rErr) {
         console.warn(`[FirestoreSync] Failed to hydrate review ${rev.id}:`, rErr);
@@ -1110,6 +1252,51 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       }
     } else {
       console.log('[FirestoreSync] Authoritative evaluations exist in Cloud Firestore; skipping baseline evaluation re-seeding to prevent reintroducing stale or deleted records.');
+    }
+
+    // Seed Referral Campaigns to Cloud Firestore if empty
+    const existingFsCampaigns = await getAllFirestoreDocs<any>('referral_campaigns');
+    if (existingFsCampaigns.length === 0) {
+      console.log('[FirestoreSync] Seeding baseline referral campaigns to Cloud Firestore...');
+      const localCampaigns = db.prepare('SELECT * FROM referral_campaigns').all() as any[];
+      for (const lc of localCampaigns) {
+        if (!tombstoneSet.has(`referral_campaigns_${lc.code}`) && !tombstoneSet.has(lc.code)) {
+          await setFirestoreDoc('referral_campaigns', lc.code, lc);
+        }
+      }
+    }
+
+    // Seed Referral Redemptions to Cloud Firestore if empty
+    const existingFsRedemptions = await getAllFirestoreDocs<any>('referral_redemptions');
+    if (existingFsRedemptions.length === 0) {
+      const localRedemptions = db.prepare('SELECT * FROM referral_redemptions').all() as any[];
+      if (localRedemptions.length > 0) {
+        console.log(`[FirestoreSync] Seeding ${localRedemptions.length} referral redemption(s) to Cloud Firestore...`);
+        for (const lr of localRedemptions) {
+          if (!tombstoneSet.has(`referral_redemptions_${lr.id}`) && !tombstoneSet.has(lr.id)) {
+            await setFirestoreDoc('referral_redemptions', lr.id, lr);
+          }
+        }
+      }
+    }
+
+    // Seed Student Reviews to Cloud Firestore if empty
+    const existingFsReviews = await getAllFirestoreDocs<any>('reviews');
+    if (existingFsReviews.length === 0) {
+      console.log('[FirestoreSync] Seeding baseline reviews to Cloud Firestore...');
+      const localReviews = db.prepare('SELECT * FROM reviews').all() as any[];
+      for (const lr of localReviews) {
+        if (!tombstoneSet.has(`reviews_${lr.id}`) && !tombstoneSet.has(lr.id)) {
+          let tags = lr.experience_tags;
+          if (typeof tags === 'string') {
+            try { tags = JSON.parse(tags); } catch { tags = []; }
+          }
+          await setFirestoreDoc('reviews', lr.id, {
+            ...lr,
+            experience_tags: tags || [],
+          });
+        }
+      }
     }
   } catch (err) {
     console.warn('[FirestoreSync] Baseline seeding warning:', err);

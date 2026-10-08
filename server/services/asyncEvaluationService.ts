@@ -725,6 +725,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
             consumed_from_personal_credits = 0
         WHERE id = ?
       `).run(evaluationId);
+
+      const updatedRed = db.prepare('SELECT * FROM referral_redemptions WHERE id = ?').get(personalEntitlement.referralRedemptionId) as any;
+      if (updatedRed) {
+        syncRecordToFirestore('referral_redemptions', personalEntitlement.referralRedemptionId, updatedRed).catch(() => {});
+      }
     } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
       if (!job.creditAlreadyConsumed) {
         // If not already deducted at acceptance time, atomically deduct now
