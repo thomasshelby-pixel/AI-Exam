@@ -77,15 +77,15 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       }
 
       const backupPath = path.join(DATA_DIR, `ca_exam_checker.corrupt.${Date.now()}.db`);
-      fs.copyFileSync(DB_FILE, backupPath);
-      console.log(`[DB Integrity] Preserved corrupted database backup at ${backupPath}`);
 
       // Attempt salvage: in WAL mode, corruption is frequently confined to stale uncommitted WAL/SHM frames
       // Clearing dirty wal/shm and re-indexing the main SQLite file can recover user data intact
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
+      try { fs.unlinkSync(`${DB_FILE}-journal`); } catch {}
 
       let salvageConn: DatabaseSync | null = null;
+      let salvageSucceeded = false;
       try {
         salvageConn = new DatabaseSync(DB_FILE);
         salvageConn.exec('PRAGMA busy_timeout = 10000;');
@@ -97,21 +97,35 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
           salvageConn.exec('PRAGMA synchronous = NORMAL;');
           salvageConn.exec('PRAGMA foreign_keys = ON;');
           salvageConn.exec('PRAGMA wal_autocheckpoint = 1000;');
+          salvageSucceeded = true;
           return salvageConn;
         }
       } catch (salvageErr) {
         console.warn('[DB Integrity] WAL salvage failed, wiping database file for fresh rebuild:', salvageErr);
       } finally {
-        if (salvageConn) {
+        // Crucial fix: do NOT close salvageConn if salvage succeeded!
+        if (!salvageSucceeded && salvageConn) {
           try { salvageConn.close(); } catch {}
           salvageConn = null;
         }
       }
 
-      try { fs.unlinkSync(DB_FILE); } catch {}
+      // If salvage could not recover the database, preserve backup and wipe clean for fresh recreation
+      try {
+        fs.renameSync(DB_FILE, backupPath);
+        console.log(`[DB Integrity] Moved corrupted database file to backup at ${backupPath}`);
+      } catch {
+        try { fs.copyFileSync(DB_FILE, backupPath); } catch {}
+        try { fs.unlinkSync(DB_FILE); } catch {}
+      }
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-journal`); } catch {}
+
+      // If DB_FILE still exists somehow, force rename it
+      if (fs.existsSync(DB_FILE)) {
+        try { fs.renameSync(DB_FILE, `${DB_FILE}.unlinked_${Date.now()}`); } catch {}
+      }
 
       // Retain at most 2 corrupt backups to prevent disk exhaustion
       try {
@@ -3708,11 +3722,20 @@ export function getAllLocalTombstoneSet(): Set<string> {
   }
 }
 
+let isDatabaseClosed = false;
+
 export function checkpointWal(): { ok: boolean; message?: string } {
+  if (isDatabaseClosed) {
+    return { ok: true, message: 'Database is already closed' };
+  }
   try {
     db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     return { ok: true, message: 'WAL checkpoint completed successfully' };
   } catch (err: any) {
+    if (err?.message?.includes('not open')) {
+      isDatabaseClosed = true;
+      return { ok: true, message: 'Database is not open' };
+    }
     console.error('[db] checkpointWal error:', err);
     return { ok: false, message: err?.message || 'WAL checkpoint failed' };
   }
@@ -3725,6 +3748,15 @@ export function checkDatabaseIntegrity(): {
   fileSizeBytes: number;
   walSizeBytes: number;
 } {
+  if (isDatabaseClosed) {
+    return {
+      ok: false,
+      quickCheck: 'database is closed',
+      integrityCheck: 'database is closed',
+      fileSizeBytes: 0,
+      walSizeBytes: 0,
+    };
+  }
   try {
     const quickResult = db.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
     const integrityResult = db.prepare('PRAGMA integrity_check;').all() as Array<{ integrity_check: string }>;
@@ -3887,11 +3919,17 @@ export function loadEvaluationRunPackage(evaluationId: string): any | null {
 }
 
 export function closeDatabaseCleanly(): void {
+  if (isDatabaseClosed) return;
   try {
     checkpointWal();
+    isDatabaseClosed = true;
     db.close();
     console.log('[DB] Database connection closed cleanly.');
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.message?.includes('not open')) {
+      isDatabaseClosed = true;
+      return;
+    }
     console.warn('[DB] Warning while closing database:', err);
   }
 }
