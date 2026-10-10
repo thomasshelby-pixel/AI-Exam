@@ -105,6 +105,10 @@ const EvaluationReportWrapper: React.FC = () => {
       }>(`/api/student/evaluations/${id}`);
 
       const evalData = res.evaluation;
+      const canonicalDisplayId = (evalData as any)?.display_id || (evalData as any)?.displayId;
+      if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
+        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true, state: location.state });
+      }
       if (evalData?.resultJson) {
         setReport(evalData.resultJson);
         setLoading(false);

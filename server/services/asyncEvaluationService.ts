@@ -717,35 +717,29 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
         );
       }
-    } else if (entitlementSource === 'PROMO' && personalEntitlement?.referralRedemptionId) {
-      db.prepare(`
-        UPDATE referral_redemptions
-        SET evaluations_used = evaluations_used + 1,
-            evaluations_remaining = MAX(0, evaluations_remaining - 1),
-            status = CASE WHEN evaluations_remaining - 1 <= 0 THEN 'EXHAUSTED' ELSE status END
-        WHERE id = ?
-      `).run(personalEntitlement.referralRedemptionId);
-
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-        VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, 'Consumed 1 promotional evaluation (${personalEntitlement.referralCode || 'AI30'})')
-      `).run(
-        `cld_${crypto.randomBytes(8).toString('hex')}`,
-        studentId,
-        Math.max(0, (personalEntitlement.referralEvaluationsRemaining || 1) - 1),
-        evaluationId
-      );
-
-      db.prepare(`
-        UPDATE evaluations
-        SET consumed_from_institute_allocation = 0,
-            consumed_from_personal_credits = 0
-        WHERE id = ?
-      `).run(evaluationId);
-
-      const updatedRed = db.prepare('SELECT * FROM referral_redemptions WHERE id = ?').get(personalEntitlement.referralRedemptionId) as any;
-      if (updatedRed) {
-        syncRecordToFirestore('referral_redemptions', personalEntitlement.referralRedemptionId, updatedRed).catch(() => {});
+    } else if (entitlementSource === 'PROMO') {
+      if (!job.creditAlreadyConsumed) {
+        // If not already deducted at acceptance time, atomically deduct now
+        consumeEvaluationEntitlementAtomic({
+          userId: studentId,
+          evaluationId,
+          forcedSource: 'PROMO',
+        });
+      } else {
+        // Already deducted atomically at acceptance time; record completion audit log
+        try {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, 'EVALUATION_COMPLETED_PROMO', 'EVALUATION', ?, ?)
+          `).run(
+            `aud_${crypto.randomBytes(8).toString('hex')}`,
+            studentId,
+            evaluationId,
+            `Evaluation completed successfully under promotional entitlement (${personalEntitlement?.referralCode || 'AI30'})`
+          );
+        } catch (auditErr) {
+          console.warn('[AsyncEval] Audit log error:', auditErr);
+        }
       }
     } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
       if (!job.creditAlreadyConsumed) {
@@ -804,8 +798,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
 
-    // Refund credit/free evaluation atomically if it was already deducted on acceptance
-    if (job.creditAlreadyConsumed && (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+    // Refund credit/free/promo evaluation atomically if it was already deducted on acceptance
+    if (job.creditAlreadyConsumed && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
       try {
         refundEvaluationCreditAtomic({
           userId: studentId,

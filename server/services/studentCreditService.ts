@@ -579,22 +579,28 @@ export function consumeCreditFEFO(
  * Atomic evaluation credit deduction on evaluation start/acceptance.
  * 
  * EVALUATION CONSUMPTION PRIORITY:
+ * ZERO   -> Active Promotional Entitlement (e.g. AI30: 15 evaluations) if active and evaluations remaining > 0.
  * FIRST  -> Consume 1 monthly FREE evaluation if any free evaluation remains.
- * SECOND -> Only after all monthly free evaluations are exhausted, consume 1 PAID CREDIT.
+ * SECOND -> Only after all promotional and monthly free evaluations are exhausted, consume 1 PAID CREDIT.
  * 
- * If free = 0 AND paid = 0, throws:
+ * If promo = 0 AND free = 0 AND paid = 0, throws:
  * "Your free evaluations for this month are exhausted. Please purchase credits to continue."
  */
 export function consumeEvaluationEntitlementAtomic(params: {
   userId: string;
   evaluationId?: string;
+  forcedSource?: 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
 }): {
-  source: 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+  source: 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+  promoRemaining?: number;
+  promoCode?: string;
+  promoGranted?: number;
+  promoConsumed?: number;
   freeRemaining: number;
   paidCredits: number;
   consumedLotId?: string;
 } {
-  const { userId, evaluationId } = params;
+  const { userId, evaluationId, forcedSource } = params;
   const evalRefId = evaluationId || `eval_${crypto.randomBytes(6).toString('hex')}`;
 
   // IDEMPOTENCY GUARD:
@@ -609,6 +615,23 @@ export function consumeEvaluationEntitlementAtomic(params: {
 
     if (existingDeduction) {
       const status = ensureMonthlyFreeEvaluationsReset(userId);
+      if (existingDeduction.source.includes('PROMO')) {
+        const activePromo = db.prepare(`
+          SELECT referral_code, evaluations_remaining, max_evaluations, evaluations_used
+          FROM referral_redemptions
+          WHERE user_id = ? AND status = 'ACTIVE'
+          ORDER BY expiry_date DESC LIMIT 1
+        `).get(userId) as any;
+        return {
+          source: 'PROMO',
+          promoRemaining: activePromo?.evaluations_remaining ?? 0,
+          promoCode: activePromo?.referral_code ?? 'AI30',
+          promoGranted: activePromo?.max_evaluations ?? 15,
+          promoConsumed: activePromo?.evaluations_used ?? 0,
+          freeRemaining: status.freeEvaluationsRemaining,
+          paidCredits: status.paidCredits,
+        };
+      }
       const isFree = existingDeduction.source === 'FREE_MONTHLY_EVALUATION';
       return {
         source: isFree ? 'PERSONAL_FREE' : 'PERSONAL_PURCHASED_CREDIT',
@@ -621,8 +644,96 @@ export function consumeEvaluationEntitlementAtomic(params: {
   // 1. Ensure monthly reset is current before consuming
   const status = ensureMonthlyFreeEvaluationsReset(userId);
 
-  // 2. PRIORITY 1: Consume 1 monthly FREE evaluation if any free evaluation remains
-  if (status.freeEvaluationsRemaining > 0) {
+  // 2. PRIORITY 0: Consume 1 PROMOTIONAL evaluation if active promo offer exists with evaluations remaining
+  if (!forcedSource || forcedSource === 'PROMO') {
+    const activePromo = db.prepare(`
+      SELECT id, referral_code, evaluations_remaining, max_evaluations, evaluations_used, expiry_date
+      FROM referral_redemptions
+      WHERE user_id = ?
+        AND status = 'ACTIVE'
+        AND datetime(expiry_date) > datetime('now')
+        AND evaluations_remaining > 0
+      ORDER BY expiry_date DESC
+      LIMIT 1
+    `).get(userId) as {
+      id: string;
+      referral_code: string;
+      evaluations_remaining: number;
+      max_evaluations: number;
+      evaluations_used: number;
+      expiry_date: string;
+    } | undefined;
+
+    if (activePromo) {
+      let promoTxActive = false;
+      try {
+        db.exec('BEGIN IMMEDIATE;');
+        promoTxActive = true;
+
+        const newRemaining = Math.max(0, (activePromo.evaluations_remaining ?? 1) - 1);
+        const newUsed = (activePromo.evaluations_used ?? 0) + 1;
+        const newStatus = newRemaining <= 0 ? 'EXHAUSTED' : 'ACTIVE';
+
+        db.prepare(`
+          UPDATE referral_redemptions
+          SET evaluations_used = ?,
+              evaluations_remaining = ?,
+              status = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(newUsed, newRemaining, newStatus, activePromo.id);
+
+        const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+          VALUES (?, ?, -1, 'CONSUMED_PROMO_AI30', ?, ?, ?)
+        `).run(
+          ledgerId,
+          userId,
+          newRemaining,
+          evalRefId,
+          `Consumed 1 promotional evaluation (${activePromo.referral_code || 'AI30'})`
+        );
+
+        if (evaluationId) {
+          db.prepare(`
+            UPDATE evaluations
+            SET entitlement_source = 'PROMO',
+                consumed_from_personal_credits = 0,
+                consumed_from_institute_allocation = 0
+            WHERE id = ?
+          `).run(evaluationId);
+        }
+
+        db.exec('COMMIT;');
+        promoTxActive = false;
+
+        const updatedRow = db.prepare('SELECT * FROM referral_redemptions WHERE id = ?').get(activePromo.id) as any;
+        if (updatedRow) {
+          syncRecordToFirestore('referral_redemptions', activePromo.id, updatedRow).catch(() => {});
+        }
+        syncStudentCreditsToFirestore(userId).catch(() => {});
+
+        return {
+          source: 'PROMO',
+          promoRemaining: newRemaining,
+          promoCode: activePromo.referral_code,
+          promoGranted: activePromo.max_evaluations ?? 15,
+          promoConsumed: newUsed,
+          freeRemaining: status.freeEvaluationsRemaining,
+          paidCredits: status.paidCredits,
+        };
+      } catch (promoErr) {
+        if (promoTxActive) {
+          try { db.exec('ROLLBACK;'); } catch {}
+        }
+        throw promoErr;
+      }
+    }
+  }
+
+  // 3. PRIORITY 1: Consume 1 monthly FREE evaluation if any free evaluation remains
+  if ((!forcedSource || forcedSource === 'PERSONAL_FREE') && status.freeEvaluationsRemaining > 0) {
     let freeTxActive = false;
     try {
       db.exec('BEGIN IMMEDIATE;');
@@ -683,7 +794,7 @@ export function consumeEvaluationEntitlementAtomic(params: {
     }
   }
 
-  // 3. PRIORITY 2: Only after all monthly free evaluations are exhausted, consume 1 PAID CREDIT
+  // 4. PRIORITY 2: Only after all promotional and monthly free evaluations are exhausted, consume 1 PAID CREDIT
   const validPaid = getValidStudentCreditBalance(userId);
   if (validPaid > 0) {
     const fefoResult = consumeCreditFEFO(userId, evalRefId);
@@ -706,7 +817,7 @@ export function consumeEvaluationEntitlementAtomic(params: {
     };
   }
 
-  // 4. INSUFFICIENT CREDITS (free = 0 AND paid = 0)
+  // 5. INSUFFICIENT CREDITS (promo = 0 AND free = 0 AND paid = 0)
   throw new Error('Your free evaluations for this month are exhausted. Please purchase credits to continue.');
 }
 
@@ -720,9 +831,11 @@ export function refundEvaluationCreditAtomic(params: {
 }): void {
   const { userId, evaluationId, entitlementSource } = params;
   const evalRefId = evaluationId || 'unknown_eval';
-  const refundSource = entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY'
-    ? 'REFUND_MONTHLY_FREE'
-    : 'REFUND_PURCHASED_CREDIT';
+  const refundSource = entitlementSource === 'PROMO'
+    ? 'REFUND_PROMO'
+    : (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY'
+      ? 'REFUND_MONTHLY_FREE'
+      : 'REFUND_PURCHASED_CREDIT');
   let transactionStarted = false;
 
   try {
@@ -744,7 +857,43 @@ export function refundEvaluationCreditAtomic(params: {
       }
     }
 
-    if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY') {
+    if (entitlementSource === 'PROMO') {
+      const redemption = db.prepare(`
+        SELECT id, referral_code, max_evaluations, evaluations_used, evaluations_remaining
+        FROM referral_redemptions
+        WHERE user_id = ?
+        ORDER BY updated_at DESC LIMIT 1
+      `).get(userId) as any;
+
+      if (redemption) {
+        const newUsed = Math.max(0, (redemption.evaluations_used ?? 1) - 1);
+        const newRemaining = (redemption.evaluations_remaining ?? 0) + 1;
+        db.prepare(`
+          UPDATE referral_redemptions
+          SET evaluations_used = ?,
+              evaluations_remaining = ?,
+              status = 'ACTIVE',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(newUsed, newRemaining, redemption.id);
+
+        const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+          VALUES (?, ?, 1, 'REFUND_PROMO', ?, ?, 'Restored 1 promotional evaluation due to evaluation processing failure')
+        `).run(ledgerId, userId, newRemaining, evalRefId);
+
+        db.exec('COMMIT;');
+        transactionStarted = false;
+
+        const updatedRow = db.prepare('SELECT * FROM referral_redemptions WHERE id = ?').get(redemption.id) as any;
+        if (updatedRow) {
+          syncRecordToFirestore('referral_redemptions', redemption.id, updatedRow).catch(() => {});
+        }
+        syncStudentCreditsToFirestore(userId).catch(() => {});
+        return;
+      }
+    } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY') {
       db.prepare(`
         UPDATE student_profiles
         SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,

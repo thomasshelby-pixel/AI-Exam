@@ -239,7 +239,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           setActiveEvaluationId(null);
           await refreshUser();
           if (data.evaluation.resultJson) {
-            onEvaluationComplete(activeEvaluationId, data.evaluation.resultJson);
+            const finalEvalId = (data.evaluation as any).display_id || (data.evaluation as any).displayId || activeEvaluationId;
+            onEvaluationComplete(finalEvalId, data.evaluation.resultJson);
           }
         } else if (data.evaluation?.status === 'REJECTED' || data.evaluation?.status === 'FAILED') {
           clearInterval(interval);
@@ -626,7 +627,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         setActiveEvaluationId(null);
         setEvalStep('IDLE');
         await refreshUser();
-        onEvaluationComplete(response.evaluationId, response.result);
+        const finalEvalId = (response as any).displayId || (response as any).display_id || response.evaluationId;
+        onEvaluationComplete(finalEvalId, response.result);
       } else {
         // Backend started async job! Keep activeEvaluationId active, and let polling take over.
         setEvalStep('EVALUATING_ANSWERS');

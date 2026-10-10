@@ -1871,12 +1871,41 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const { search, caLevel, classification } = req.query;
     let query = `
       SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at,
+             p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
              p.city,
              i.name as institute_name,
              pfe.is_active as permanent_free_active,
              COUNT(e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage
+             AVG(e.percentage) as average_percentage,
+             COALESCE((
+               SELECT SUM(r.max_evaluations)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_granted,
+             COALESCE((
+               SELECT SUM(r.evaluations_used)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_consumed,
+             COALESCE((
+               SELECT SUM(r.evaluations_remaining)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_remaining,
+             (
+               SELECT r.referral_code
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_code,
+             (
+               SELECT r.expiry_date
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_expiry
       FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
@@ -1887,8 +1916,8 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const params: any[] = [];
 
     if (search) {
-      query += ' AND (u.email LIKE ? OR u.full_name LIKE ? OR p.icai_registration_number LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.email LIKE ? OR u.full_name LIKE ? OR p.icai_registration_number LIKE ? OR p.student_code LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (caLevel && caLevel !== 'ALL') {
       query += ' AND p.ca_level = ?';
@@ -1914,13 +1943,42 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
     const studentId = req.params.id;
     const student = db.prepare(`
       SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at, u.updated_at,
+             p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
              p.city, p.preferred_subjects,
              i.id as institute_id, i.name as institute_name,
              b.id as batch_id, b.name as batch_name,
              pfe.is_active as permanent_free_active,
              COUNT(DISTINCT e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage
+             AVG(e.percentage) as average_percentage,
+             COALESCE((
+               SELECT SUM(r.max_evaluations)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_granted,
+             COALESCE((
+               SELECT SUM(r.evaluations_used)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_consumed,
+             COALESCE((
+               SELECT SUM(r.evaluations_remaining)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_remaining,
+             (
+               SELECT r.referral_code
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_code,
+             (
+               SELECT r.expiry_date
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_expiry
       FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
@@ -1953,10 +2011,20 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LIMIT 10
     `).all(studentId);
 
+    // Promo code redemptions history for this student
+    const promoRedemptions = db.prepare(`
+      SELECT id, referral_code, benefit_type, status, max_evaluations, evaluations_used, evaluations_remaining,
+             redeemed_at, expiry_date, revoked_at, revoked_by, revocation_reason, audit_note, created_at, updated_at
+      FROM referral_redemptions
+      WHERE user_id = ?
+      ORDER BY redeemed_at DESC
+    `).all(studentId);
+
     return res.json({
       student,
       recentEvaluations: recentEvals,
       creditLedger,
+      promoRedemptions,
     });
   } catch (error: unknown) {
     console.error('Get student details error:', error);
@@ -4632,6 +4700,117 @@ router.post('/promo-codes/redemptions/:id/revoke', async (req: AuthRequest, res:
     try { db.exec('ROLLBACK'); } catch (_) {}
     console.error('Revoke promo redemption error:', error);
     return res.status(500).json({ error: 'Failed to revoke promo redemption.' });
+  }
+});
+
+// Reinstate / Unrevoke a previously revoked promo code redemption
+router.post('/promo-codes/redemptions/:id/reinstate', async (req: AuthRequest, res: Response) => {
+  try {
+    const redemptionId = req.params.id;
+    const { reason } = req.body || {};
+    const adminEmail = req.user?.email || 'admin';
+    const adminId = req.user?.id || 'admin';
+
+    const redemption = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId) as any;
+
+    if (!redemption) {
+      return res.status(404).json({ error: 'Promo redemption record not found.' });
+    }
+
+    if (redemption.status !== 'REVOKED') {
+      return res.status(400).json({ error: 'This promo redemption is not in REVOKED status.' });
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+
+    // Restore ONLY the legitimate remaining balance: max_evaluations - evaluations_used
+    const maxEvals = redemption.max_evaluations ?? 15;
+    const usedEvals = redemption.evaluations_used ?? 0;
+    const legitimateRemaining = Math.max(0, maxEvals - usedEvals);
+
+    const reinstatedAt = new Date().toISOString();
+    const auditNote = (redemption.audit_note ? redemption.audit_note + ' | ' : '') +
+      `REINSTATED by ${adminEmail} on ${reinstatedAt}${reason ? ': ' + reason : ''}`;
+
+    db.prepare(`
+      UPDATE referral_redemptions
+      SET status = 'ACTIVE',
+          evaluations_remaining = ?,
+          revoked_at = NULL,
+          revoked_by = NULL,
+          revocation_reason = NULL,
+          audit_note = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      legitimateRemaining,
+      auditNote,
+      reinstatedAt,
+      redemptionId
+    );
+
+    // Ledger record
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, note)
+      VALUES (?, ?, ?, 'REINSTATE_PROMO', ?, ?)
+    `).run(
+      `cld_${crypto.randomBytes(8).toString('hex')}`,
+      redemption.user_id,
+      legitimateRemaining,
+      legitimateRemaining,
+      `Restored ${legitimateRemaining} promotional evaluation(s) for promo ${redemption.referral_code} by ${adminEmail}`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'PROMO_CODE_REINSTATEMENT', 'PROMO_REDEMPTION', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      redemptionId,
+      JSON.stringify({
+        studentId: redemption.user_id,
+        studentEmail: redemption.user_email,
+        promoCode: redemption.referral_code,
+        evaluationsGranted: maxEvals,
+        evaluationsUsed: usedEvals,
+        evaluationsRemainingRestored: legitimateRemaining,
+        reinstatedBy: adminEmail,
+        reinstatedAt,
+        reason: reason || 'Reinstated by administrator',
+      })
+    );
+
+    db.exec('COMMIT');
+
+    const updated = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId) as any;
+
+    if (updated) {
+      try {
+        await syncRecordToFirestore('referral_redemptions', redemptionId, updated);
+      } catch {}
+    }
+
+    return res.json({
+      success: true,
+      message: `Promo benefit for ${redemption.user_name || redemption.user_email || 'student'} has been reinstated with ${legitimateRemaining} remaining evaluation(s).`,
+      redemption: updated,
+    });
+  } catch (error: unknown) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    console.error('Reinstate promo redemption error:', error);
+    return res.status(500).json({ error: 'Failed to reinstate promo redemption.' });
   }
 });
 

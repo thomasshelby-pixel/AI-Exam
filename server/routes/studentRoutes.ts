@@ -1062,7 +1062,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
     let creditAlreadyConsumed = false;
-    if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
+    if (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
       try {
         const deductionResult = consumeEvaluationEntitlementAtomic({
           userId: studentId,
@@ -1129,6 +1129,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     return res.json({
       success: true,
       evaluationId,
+      displayId: evalDisplayId,
       status: 'PROCESSING',
       progressStage: 'QUEUED',
       progressPercentage: 5,
@@ -2936,6 +2937,19 @@ router.post('/referral/redeem', promoRedeemRateLimiter, async (req: AuthRequest,
       maxEvaluations,
       maxEvaluations,
       `Redemption #${redemptionNumber} of ${maxRedemptions} claimed by ${userEmail}`
+    );
+
+    // Record authoritative promotional grant in credit_ledger
+    const promoLedgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, note)
+      VALUES (?, ?, ?, 'PROMO_GRANT_AI30', ?, ?)
+    `).run(
+      promoLedgerId,
+      userId,
+      maxEvaluations,
+      maxEvaluations,
+      `Granted ${maxEvaluations} promotional evaluations via promo code ${cleanCode} (Valid until ${new Date(expiryDate).toLocaleDateString('en-IN')})`
     );
 
     // If quota reached, mark EXHAUSTED

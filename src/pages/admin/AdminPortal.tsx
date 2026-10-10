@@ -70,6 +70,7 @@ import {
   Target,
   Zap,
   Sliders,
+  Tag,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -2071,7 +2072,7 @@ export const AdminPortal: React.FC = () => {
                           <th className="py-2.5 px-3 font-bold">ICAI Reg</th>
                           <th className="py-2.5 px-3 font-bold">Level</th>
                           <th className="py-2.5 px-3 font-bold">Evaluations</th>
-                          <th className="py-2.5 px-3 font-bold">Credits</th>
+                          <th className="py-2.5 px-3 font-bold">Available Evaluations</th>
                           <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
@@ -2090,6 +2091,11 @@ export const AdminPortal: React.FC = () => {
                                   <div>
                                     <p className="font-bold text-slate-900">{st.full_name}</p>
                                     <p className="text-[11px] text-slate-400">{st.email}</p>
+                                    {st.student_code && (
+                                      <span className="font-mono text-[10px] text-slate-500 font-semibold block mt-0.5">
+                                        ID: {st.student_code}
+                                      </span>
+                                    )}
                                     {st.permanent_free_active && (
                                       <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                                         <Sparkles className="w-2.5 h-2.5" /> Permanent Free Access
@@ -2134,8 +2140,48 @@ export const AdminPortal: React.FC = () => {
                                   </span>
                                 )}
                               </td>
-                              <td className="py-3 px-3 font-mono font-bold text-blue-600">
-                                {st.purchased_credits || 0}
+                              <td className="py-3 px-3">
+                                {st.permanent_free_active ? (
+                                  <div>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> Unlimited
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block mt-0.5">Permanent Free</span>
+                                    {Number(st.purchased_credits || 0) > 0 && (
+                                      <span className="text-[10px] text-blue-600 font-mono block">Paid: {st.purchased_credits}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-bold text-slate-900 text-sm">
+                                        {(Number(st.promo_evaluations_remaining || 0) + Number(st.purchased_credits || 0))}
+                                      </span>
+                                      <span className="text-[10px] text-slate-500 font-medium">available</span>
+                                    </div>
+
+                                    <div className="flex flex-col gap-0.5 text-[10px]">
+                                      {/* Promotional evaluations breakdown */}
+                                      {Number(st.promo_evaluations_granted || 0) > 0 ? (
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-bold text-[10px] inline-flex items-center gap-0.5">
+                                            <span>{st.active_promo_code || 'Promo'}:</span>
+                                            <span>{st.promo_evaluations_remaining ?? 0}</span>
+                                          </span>
+                                          <span className="text-[9px] text-slate-400" title={`Granted: ${st.promo_evaluations_granted}, Consumed: ${st.promo_evaluations_consumed}, Remaining: ${st.promo_evaluations_remaining}`}>
+                                            ({st.promo_evaluations_consumed || 0}/{st.promo_evaluations_granted || 0} used)
+                                          </span>
+                                        </div>
+                                      ) : null}
+
+                                      {/* Paid credits breakdown */}
+                                      <div className="flex items-center gap-1 text-slate-500">
+                                        <span className="text-slate-400">Paid credits:</span>
+                                        <span className="font-mono font-semibold text-blue-600">{st.purchased_credits || 0}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                               <td className="py-3 px-3 text-right">
                                 <div className="flex items-center justify-end gap-1.5 flex-wrap">
@@ -2865,7 +2911,14 @@ export const AdminPortal: React.FC = () => {
                                   {/* Evaluation ID & Badges */}
                                   <td className="py-2.5 px-3">
                                     <div className="space-y-1">
-                                      <p className="font-mono font-medium text-slate-700">{ev.id}</p>
+                                      {ev.display_id ? (
+                                        <>
+                                          <p className="font-mono font-bold text-blue-700 dark:text-blue-400 text-xs tracking-tight">{ev.display_id}</p>
+                                          <p className="font-mono text-[10px] text-slate-400">Ref: {ev.id}</p>
+                                        </>
+                                      ) : (
+                                        <p className="font-mono font-medium text-slate-700">{ev.id}</p>
+                                      )}
                                       <div className="flex flex-wrap items-center gap-1">
                                         {ev.account_classification === 'TEST' && (
                                           <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold">
@@ -2888,6 +2941,11 @@ export const AdminPortal: React.FC = () => {
                                   {/* Student */}
                                   <td className="py-2.5 px-3">
                                     <p className="font-bold text-slate-800">{ev.student_name || '—'}</p>
+                                    {ev.student_code && (
+                                      <p className="text-[10px] font-mono font-bold text-indigo-600">
+                                        {ev.student_code}
+                                      </p>
+                                    )}
                                     <p className="text-[10px] text-slate-400 truncate max-w-[160px]" title={ev.student_email}>
                                       {ev.student_email || '—'}
                                     </p>
@@ -4076,28 +4134,76 @@ export const AdminPortal: React.FC = () => {
             {/* Student Information Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">CA Level</span>
-                <span className="text-xs font-bold text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.ca_level || 'INTERMEDIATE'}
-                </span>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">ICAI Reg Number</span>
+                <span className="text-[11px] text-slate-400 block font-medium">Student Code</span>
                 <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.icai_registration_number || 'N/A'}
+                  {viewStudentModal.student.student_code || '—'}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">Purchased Credits</span>
+                <span className="text-[11px] text-slate-400 block font-medium">ICAI Reg / Level</span>
+                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
+                  {viewStudentModal.student.icai_registration_number || 'N/A'} • {viewStudentModal.student.ca_level || 'INTERMEDIATE'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Total Available</span>
+                <span className="text-xs font-bold font-mono text-emerald-700 mt-0.5 block">
+                  {viewStudentModal.student.permanent_free_active
+                    ? 'Unlimited'
+                    : `${(Number(viewStudentModal.student.promo_evaluations_remaining || 0) + Number(viewStudentModal.student.purchased_credits || 0))} evaluations`}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Paid Credits</span>
                 <span className="text-xs font-bold font-mono text-blue-600 mt-0.5 block">
-                  {viewStudentModal.student.purchased_credits || 0}
+                  {viewStudentModal.student.purchased_credits || 0} credits
                 </span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">Free Evals Used</span>
-                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.free_evaluations_used || 0}/2
-                </span>
+            </div>
+
+            {/* Promotional Entitlements Card */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-50/70 to-blue-50/70 border border-emerald-200/80 mb-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <h4 className="text-xs font-bold text-slate-900">Promotional & Evaluation Balance</h4>
+                </div>
+                {Number(viewStudentModal.student.promo_evaluations_granted || 0) > 0 ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Promo: {viewStudentModal.student.active_promo_code || 'AI30'}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                    No Active Promo
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Granted</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm">
+                    {viewStudentModal.student.promo_evaluations_granted || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Consumed</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm">
+                    {viewStudentModal.student.promo_evaluations_consumed || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Remaining</span>
+                  <span className="font-mono font-bold text-emerald-600 text-sm">
+                    {viewStudentModal.student.promo_evaluations_remaining || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Monthly Free Quota</span>
+                  <span className="font-mono font-bold text-slate-700 text-sm">
+                    {viewStudentModal.student.free_evaluations_used || 0}/2 used
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -4122,6 +4228,60 @@ export const AdminPortal: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            {/* Promo Redemptions History */}
+            {viewStudentModal.details?.promoRedemptions?.length ? (
+              <div className="mb-5">
+                <h4 className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Promo Code Redemptions ({viewStudentModal.details.promoRedemptions.length})</span>
+                </h4>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                        <th className="py-2 px-3">Promo Code</th>
+                        <th className="py-2 px-3">Status</th>
+                        <th className="py-2 px-3">Evaluations</th>
+                        <th className="py-2 px-3">Redeemed At</th>
+                        <th className="py-2 px-3 text-right">Expiry Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {viewStudentModal.details.promoRedemptions.map((pr: any) => (
+                        <tr key={pr.id} className="hover:bg-slate-50/60">
+                          <td className="py-2 px-3 font-mono font-bold text-slate-900">
+                            {pr.referral_code}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              pr.status === 'ACTIVE'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : pr.status === 'REVOKED'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {pr.status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 font-mono">
+                            <span className="font-bold text-emerald-600">{pr.evaluations_remaining ?? 0}</span>
+                            <span className="text-slate-400 text-[10px]"> / {pr.max_evaluations ?? 15} left</span>
+                            <span className="text-slate-400 text-[9px] ml-1">({pr.evaluations_used ?? 0} used)</span>
+                          </td>
+                          <td className="py-2 px-3 text-slate-600">
+                            {pr.redeemed_at ? formatDateIST(pr.redeemed_at) : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-right text-slate-600">
+                            {pr.expiry_date ? formatDateIST(pr.expiry_date) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
 
             {/* Recent Evaluations */}
             <div className="mb-5">

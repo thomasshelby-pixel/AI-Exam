@@ -372,8 +372,16 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-base font-bold text-slate-900">Admin Evaluation Review & Amendment</h2>
+              {(evaluation as any).display_id && (
+                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                  {(evaluation as any).display_id}
+                </span>
+              )}
+              <span className="font-mono text-[10px] text-slate-400">
+                Ref: {evaluation.id}
+              </span>
               <span
                 className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                   evaluation.status === 'NEEDS_REVIEW'
@@ -526,6 +534,11 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <User className="w-3.5 h-3.5" /> Student Profile
           </div>
           <p className="font-bold text-slate-800 text-sm">{evaluation.student_name || 'CA Student'}</p>
+          {(evaluation as any).student_code && (
+            <p className="text-[11px] font-mono font-bold text-indigo-600">
+              {(evaluation as any).student_code}
+            </p>
+          )}
           <p className="text-slate-500 font-mono text-[11px]">{evaluation.student_email}</p>
           {evaluation.icai_registration_number && (
             <p className="text-[11px] text-slate-600 font-medium">

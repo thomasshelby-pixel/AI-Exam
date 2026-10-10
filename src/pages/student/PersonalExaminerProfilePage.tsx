@@ -479,7 +479,7 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                                       -{ev.marksLost} marks
                                     </span>
                                     <button
-                                      onClick={() => onViewReport(ev.evaluationId)}
+                                      onClick={() => onViewReport((ev as any).displayId || (ev as any).display_id || ev.evaluationId)}
                                       className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
                                     >
                                       View Report →

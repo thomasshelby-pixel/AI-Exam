@@ -372,7 +372,7 @@ export async function generateDetailedReportPdf(
       color: rgb(0.85, 0.92, 1),
     });
 
-    const displayEvalId = evalData.displayId || (evalData.id ? evalData.id.slice(0, 16).toUpperCase() : 'CA-EVAL');
+    const displayEvalId = evalData.displayId || evalData.id || 'CA-EVAL';
     safeDrawText(page, `Evaluation ID: ${displayEvalId}`, {
       x: width - Math.min(260, displayEvalId.length * 6.5 + 95),
       y: height - 34,

@@ -17,9 +17,11 @@ export const CANONICAL_SUBJECT_CODES: Record<string, string> = {
   inter_advanced_accounting: 'AA',
   inter_corporate_law: 'LAW',
   inter_taxation: 'TX',
-  inter_costing: 'CMA',
+  inter_costing: 'COST',
   inter_auditing: 'AUD',
-  inter_fm_sm: 'FMSM',
+  inter_fm_sm: 'FM-SM',
+  inter_financial_management: 'FM',
+  inter_strategic_management: 'SM',
 
   // CA Final
   final_fr: 'FR',
@@ -62,13 +64,22 @@ export function getCanonicalSubjectCode(
     return 'TX';
   }
   if (normName.includes('cost') || normName.includes('management accounting')) {
-    return 'CMA';
+    return 'COST';
   }
   if (normName.includes('audit')) {
     return 'AUD';
   }
-  if (normName.includes('financial management') || normName.includes('strategic management') || normName.includes('fm')) {
-    return 'FMSM';
+  if ((normName.includes('financial management') && normName.includes('strategic management')) || normName.includes('fm-sm') || normName.includes('fm sm') || normName.includes('fm & sm')) {
+    return 'FM-SM';
+  }
+  if (normName.includes('financial management') || normName === 'fm') {
+    return 'FM';
+  }
+  if (normName.includes('strategic management') || normName === 'sm') {
+    return 'SM';
+  }
+  if (normName.includes('fm')) {
+    return 'FM-SM';
   }
   if (normName.includes('financial reporting') || normName.includes('fr')) {
     return 'FR';
