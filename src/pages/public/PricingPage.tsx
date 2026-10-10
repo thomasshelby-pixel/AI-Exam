@@ -743,7 +743,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
           <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-xs">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>Razorpay 256-Bit SSL</span>
+            <span>Secure, encrypted payment</span>
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
             Bank-grade encryption supporting all UPI apps, RuPay, Visa, Mastercard, and Netbanking.
