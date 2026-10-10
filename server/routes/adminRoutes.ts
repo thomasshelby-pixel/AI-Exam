@@ -11,9 +11,9 @@ import {
   removeTesterFromFeature,
   FeatureApplication,
 } from '../services/featureControlService.js';
-import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -1930,7 +1930,39 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     }
 
     query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
-    const students = db.prepare(query).all(...params);
+    const rawStudents = db.prepare(query).all(...params) as any[];
+
+    // Authoritative enrichment using existing student evaluation entitlement and credit status systems
+    const students = rawStudents.map((st) => {
+      const entitlement = getStudentEntitlement(st.id, 'PUBLIC');
+      const monthlyStatus = ensureMonthlyFreeEvaluationsReset(st.id);
+      const creditStatus = getStudentCreditStatus(st.id);
+      const isPermanentFree = Boolean(st.permanent_free_active || entitlement.hasPermanentFreeAccess);
+      const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
+      const validPaidCredits = creditStatus.totalValidCredits ?? 0;
+      const promoRemaining = Number(st.promo_evaluations_remaining || 0);
+
+      // Total usable available evaluations based on authoritative calculation:
+      // If student has permanent free access: unlimited (-1 sentinel or handled via isPermanentFree)
+      // Otherwise: sum of usable entitlements (monthly free remaining + promo remaining + valid paid credits)
+      const totalAvailableEvaluations = isPermanentFree
+        ? 9999
+        : (monthlyFreeRemaining + promoRemaining + validPaidCredits);
+
+      return {
+        ...st,
+        permanent_free_active: isPermanentFree ? 1 : 0,
+        has_permanent_free_access: isPermanentFree,
+        monthly_free_evaluations_remaining: monthlyFreeRemaining,
+        monthly_free_evaluations_used: monthlyStatus.monthlyFreeEvaluationsUsed ?? 0,
+        monthly_free_evaluations_limit: monthlyStatus.monthlyFreeEvaluationsLimit ?? 2,
+        purchased_credits: validPaidCredits,
+        paid_credits: validPaidCredits,
+        total_available_evaluations: totalAvailableEvaluations,
+        entitlement_tier: entitlement.tier,
+      };
+    });
+
     return res.json({ students });
   } catch (error: unknown) {
     console.error('Get students error:', error);
@@ -1942,7 +1974,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
 router.get('/students/:id', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
-    const student = db.prepare(`
+    const studentRaw = db.prepare(`
       SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at, u.updated_at,
              p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
@@ -1988,9 +2020,9 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
       WHERE u.id = ? AND u.role = 'STUDENT'
       GROUP BY u.id
-    `).get(studentId);
+    `).get(studentId) as any;
 
-    if (!student) {
+    if (!studentRaw) {
       return res.status(404).json({ error: 'Student not found.' });
     }
 
@@ -2020,6 +2052,32 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       WHERE user_id = ?
       ORDER BY redeemed_at DESC
     `).all(studentId);
+
+    // Authoritative enrichment using existing student evaluation entitlement and credit status systems
+    const entitlement = getStudentEntitlement(studentId, 'PUBLIC');
+    const monthlyStatus = ensureMonthlyFreeEvaluationsReset(studentId);
+    const creditStatus = getStudentCreditStatus(studentId);
+    const isPermanentFree = Boolean(studentRaw.permanent_free_active || entitlement.hasPermanentFreeAccess);
+    const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
+    const validPaidCredits = creditStatus.totalValidCredits ?? 0;
+    const promoRemaining = Number(studentRaw.promo_evaluations_remaining || 0);
+
+    const totalAvailableEvaluations = isPermanentFree
+      ? 9999
+      : (monthlyFreeRemaining + promoRemaining + validPaidCredits);
+
+    const student = {
+      ...studentRaw,
+      permanent_free_active: isPermanentFree ? 1 : 0,
+      has_permanent_free_access: isPermanentFree,
+      monthly_free_evaluations_remaining: monthlyFreeRemaining,
+      monthly_free_evaluations_used: monthlyStatus.monthlyFreeEvaluationsUsed ?? 0,
+      monthly_free_evaluations_limit: monthlyStatus.monthlyFreeEvaluationsLimit ?? 2,
+      purchased_credits: validPaidCredits,
+      paid_credits: validPaidCredits,
+      total_available_evaluations: totalAvailableEvaluations,
+      entitlement_tier: entitlement.tier,
+    };
 
     return res.json({
       student,
@@ -4087,8 +4145,39 @@ router.get(['/promo-codes', '/referrals'], async (req: AuthRequest, res: Respons
       }
 
       const fsRedemptions = await getAllFirestoreDocs<any>('referral_redemptions');
+      const tombstones = await getAllFirestoreDocs<any>('tombstones');
+      const tombstoneSet = new Set(
+        tombstones.flatMap((t: any) => [
+          `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
+          `${t.collectionName || t.entity_type}:${t.targetId || t.entity_id || t.id}`,
+          t.targetId,
+          t.entity_id,
+          t.id,
+        ].filter(Boolean))
+      );
+
       for (const r of fsRedemptions) {
         if (!r.id || !r.referral_code) continue;
+        const targetUserId = r.user_id || r.userId;
+        if (!targetUserId) continue;
+
+        // Ensure user is not tombstoned or deleted
+        if (
+          tombstoneSet.has(`referral_redemptions_${r.id}`) ||
+          tombstoneSet.has(r.id) ||
+          tombstoneSet.has(`users_${targetUserId}`) ||
+          tombstoneSet.has(`users:${targetUserId}`) ||
+          tombstoneSet.has(targetUserId)
+        ) {
+          continue;
+        }
+
+        // Validate user exists in local SQLite to satisfy FOREIGN KEY constraint
+        const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+        if (!userExists) {
+          continue;
+        }
+
         db.prepare(`
           INSERT INTO referral_redemptions (
             id, referral_code, user_id, user_email, benefit_type,
@@ -4111,7 +4200,7 @@ router.get(['/promo-codes', '/referrals'], async (req: AuthRequest, res: Respons
             updated_at = CURRENT_TIMESTAMP
         `).run(
           r.id, r.referral_code || r.referralCode,
-          r.user_id || r.userId, r.user_email || r.userEmail || '',
+          targetUserId, r.user_email || r.userEmail || '',
           r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
           r.redemption_number ?? r.redemptionNumber ?? 1,
           r.expiry_date || r.expiryDate,

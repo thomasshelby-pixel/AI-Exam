@@ -1054,6 +1054,23 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const referralRedemptions = await readDocs<any>('referral_redemptions');
     for (const r of referralRedemptions) {
       if (tombstoneSet.has(`referral_redemptions_${r.id}`) || tombstoneSet.has(r.id)) continue;
+      const targetUserId = r.user_id || r.userId;
+      if (!targetUserId) continue;
+
+      if (
+        tombstoneSet.has(`users_${targetUserId}`) ||
+        tombstoneSet.has(`users:${targetUserId}`) ||
+        tombstoneSet.has(targetUserId)
+      ) {
+        continue;
+      }
+
+      // Verify user exists to satisfy SQLite foreign key
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+      if (!userExists) {
+        continue;
+      }
+
       try {
         db.prepare(`
           INSERT INTO referral_redemptions (
@@ -1077,7 +1094,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             updated_at = CURRENT_TIMESTAMP
         `).run(
           r.id, r.referral_code || r.referralCode,
-          r.user_id || r.userId, r.user_email || r.userEmail || '',
+          targetUserId, r.user_email || r.userEmail || '',
           r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
           r.redemption_number ?? r.redemptionNumber ?? 1,
           r.redeemed_at || r.redeemedAt || new Date().toISOString(),

@@ -1854,7 +1854,7 @@ function runMigrations() {
 
   // Backfill existing student accounts and evaluations
   try {
-    const backfillResult = backfillStudentCodesAndEvaluationIds();
+    const backfillResult = backfillStudentCodesAndEvaluationIds(db);
     if (backfillResult.studentsBackfilled > 0 || backfillResult.evaluationsBackfilled > 0) {
       console.log(`[DB Migration] Backfilled ${backfillResult.studentsBackfilled} student codes and ${backfillResult.evaluationsBackfilled} evaluation IDs.`);
     }

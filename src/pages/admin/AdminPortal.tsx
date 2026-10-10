@@ -2155,12 +2155,28 @@ export const AdminPortal: React.FC = () => {
                                   <div className="space-y-1">
                                     <div className="flex items-center gap-1.5">
                                       <span className="font-mono font-bold text-slate-900 text-sm">
-                                        {(Number(st.promo_evaluations_remaining || 0) + Number(st.purchased_credits || 0))}
+                                        {st.total_available_evaluations !== undefined
+                                          ? st.total_available_evaluations
+                                          : (Number(st.monthly_free_evaluations_remaining !== undefined
+                                              ? st.monthly_free_evaluations_remaining
+                                              : Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))) +
+                                             Number(st.promo_evaluations_remaining || 0) +
+                                             Number(st.purchased_credits || 0))}
                                       </span>
                                       <span className="text-[10px] text-slate-500 font-medium">available</span>
                                     </div>
 
                                     <div className="flex flex-col gap-0.5 text-[10px]">
+                                      {/* Monthly free evaluations breakdown */}
+                                      <div className="flex items-center gap-1 text-slate-600">
+                                        <span className="text-slate-400">Monthly Free:</span>
+                                        <span className="font-mono font-semibold text-emerald-700">
+                                          {st.monthly_free_evaluations_remaining !== undefined
+                                            ? `${st.monthly_free_evaluations_remaining}/${st.monthly_free_evaluations_limit ?? 2}`
+                                            : `${Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))}/${st.monthly_free_evaluations_limit ?? 2}`}
+                                        </span>
+                                      </div>
+
                                       {/* Promotional evaluations breakdown */}
                                       {Number(st.promo_evaluations_granted || 0) > 0 ? (
                                         <div className="flex items-center gap-1 flex-wrap">
@@ -4150,7 +4166,9 @@ export const AdminPortal: React.FC = () => {
                 <span className="text-xs font-bold font-mono text-emerald-700 mt-0.5 block">
                   {viewStudentModal.student.permanent_free_active
                     ? 'Unlimited'
-                    : `${(Number(viewStudentModal.student.promo_evaluations_remaining || 0) + Number(viewStudentModal.student.purchased_credits || 0))} evaluations`}
+                    : viewStudentModal.student.total_available_evaluations !== undefined
+                    ? `${viewStudentModal.student.total_available_evaluations} evaluations`
+                    : `${(Number(viewStudentModal.student.monthly_free_evaluations_remaining !== undefined ? viewStudentModal.student.monthly_free_evaluations_remaining : Math.max(0, 2 - (viewStudentModal.student.free_evaluations_used || 0))) + Number(viewStudentModal.student.promo_evaluations_remaining || 0) + Number(viewStudentModal.student.purchased_credits || 0))} evaluations`}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
@@ -4201,7 +4219,7 @@ export const AdminPortal: React.FC = () => {
                 <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
                   <span className="text-[10px] text-slate-400 block">Monthly Free Quota</span>
                   <span className="font-mono font-bold text-slate-700 text-sm">
-                    {viewStudentModal.student.free_evaluations_used || 0}/2 used
+                    {viewStudentModal.student.monthly_free_evaluations_used ?? viewStudentModal.student.free_evaluations_used ?? 0}/{viewStudentModal.student.monthly_free_evaluations_limit ?? 2} used ({viewStudentModal.student.monthly_free_evaluations_remaining ?? Math.max(0, (viewStudentModal.student.monthly_free_evaluations_limit ?? 2) - (viewStudentModal.student.monthly_free_evaluations_used ?? viewStudentModal.student.free_evaluations_used ?? 0))} left)
                   </span>
                 </div>
               </div>

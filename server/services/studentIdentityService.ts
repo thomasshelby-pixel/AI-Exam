@@ -1,5 +1,12 @@
-import { db } from '../db.js';
+import { db as defaultDb } from '../db.js';
 import crypto from 'node:crypto';
+
+/**
+ * Helper to safely resolve active database handle
+ */
+export function getDb(customDb?: any) {
+  return customDb || defaultDb;
+}
 
 /**
  * Character set for permanent Student Codes:
@@ -123,11 +130,12 @@ function generateRandomStudentSuffix(): string {
  * Generate a new permanent, unique Student Code (e.g. ST-K7P4).
  * Collision-safe with database-backed uniqueness verification.
  */
-export function generateUniqueStudentCode(): string {
+export function generateUniqueStudentCode(customDb?: any): string {
+  const activeDb = getDb(customDb);
   const maxAttempts = 100;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const candidate = `ST-${generateRandomStudentSuffix()}`;
-    const existing = db.prepare('SELECT student_code FROM student_profiles WHERE student_code = ?').get(candidate);
+    const existing = activeDb.prepare('SELECT student_code FROM student_profiles WHERE student_code = ?').get(candidate);
     if (!existing) {
       return candidate;
     }
@@ -140,11 +148,12 @@ export function generateUniqueStudentCode(): string {
  * Get or assign a permanent Student Code for a student account.
  * Never regenerates if already assigned; persists permanently.
  */
-export function getOrAssignStudentCode(userId: string): string {
+export function getOrAssignStudentCode(userId: string, customDb?: any): string {
   if (!userId) return 'ST-GEN0';
+  const activeDb = getDb(customDb);
 
   // 1. Check if student already has a permanent Student Code in student_profiles
-  const profileRow = db.prepare('SELECT student_code FROM student_profiles WHERE user_id = ?').get(userId) as {
+  const profileRow = activeDb.prepare('SELECT student_code FROM student_profiles WHERE user_id = ?').get(userId) as {
     student_code?: string | null;
   } | undefined;
 
@@ -153,13 +162,13 @@ export function getOrAssignStudentCode(userId: string): string {
   }
 
   // 2. Generate and atomically set if profile exists
-  const newCode = generateUniqueStudentCode();
+  const newCode = generateUniqueStudentCode(activeDb);
   if (profileRow) {
-    db.prepare('UPDATE student_profiles SET student_code = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(newCode, userId);
+    activeDb.prepare('UPDATE student_profiles SET student_code = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(newCode, userId);
   } else {
     // If student_profiles record does not exist yet, create or insert
     try {
-      db.prepare(`
+      activeDb.prepare(`
         INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, student_code, created_at, updated_at)
         VALUES (?, 'REG-PENDING', 'INTERMEDIATE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET student_code = COALESCE(student_profiles.student_code, excluded.student_code)
@@ -170,7 +179,7 @@ export function getOrAssignStudentCode(userId: string): string {
   }
 
   // Return authoritative code (check again in case of concurrent insert)
-  const finalRow = db.prepare('SELECT student_code FROM student_profiles WHERE user_id = ?').get(userId) as {
+  const finalRow = activeDb.prepare('SELECT student_code FROM student_profiles WHERE user_id = ?').get(userId) as {
     student_code?: string | null;
   } | undefined;
   return (finalRow?.student_code || newCode).toUpperCase();
@@ -188,13 +197,14 @@ export function formatSequenceNumber(seq: number): string {
  * Continuous across all subjects, calendar years, and evaluation types.
  * Deleted sequence numbers are never reused (MAX + 1 logic backed by persistent student profile watermark).
  */
-export function getNextEvaluationSequence(studentId: string): number {
+export function getNextEvaluationSequence(studentId: string, customDb?: any): number {
   if (!studentId) return 1;
+  const activeDb = getDb(customDb);
 
   // 1. Fetch current highest_evaluation_sequence recorded on student_profiles
   let profileHighest = 0;
   try {
-    const profileRow = db.prepare(`
+    const profileRow = activeDb.prepare(`
       SELECT highest_evaluation_sequence FROM student_profiles WHERE user_id = ?
     `).get(studentId) as { highest_evaluation_sequence?: number | null } | undefined;
     profileHighest = Number(profileRow?.highest_evaluation_sequence) || 0;
@@ -203,7 +213,7 @@ export function getNextEvaluationSequence(studentId: string): number {
   }
 
   // 2. Find maximum evaluation_sequence assigned to this student so far in evaluations
-  const row = db.prepare(`
+  const row = activeDb.prepare(`
     SELECT MAX(evaluation_sequence) as max_seq
     FROM evaluations
     WHERE student_id = ?
@@ -211,7 +221,7 @@ export function getNextEvaluationSequence(studentId: string): number {
   const evalMax = Number(row?.max_seq) || 0;
 
   // 3. Fallback: If evaluations exist but evaluation_sequence was null (prior to backfill), count total evaluations
-  const countRow = db.prepare('SELECT COUNT(*) as c FROM evaluations WHERE student_id = ?').get(studentId) as {
+  const countRow = activeDb.prepare('SELECT COUNT(*) as c FROM evaluations WHERE student_id = ?').get(studentId) as {
     c: number;
   } | undefined;
   const countVal = Number(countRow?.c) || 0;
@@ -222,7 +232,7 @@ export function getNextEvaluationSequence(studentId: string): number {
   // 4. Atomically persist the watermark on student profile so even if this evaluation is later deleted,
   // the sequence number will never be reused!
   try {
-    db.prepare(`
+    activeDb.prepare(`
       UPDATE student_profiles
       SET highest_evaluation_sequence = MAX(COALESCE(highest_evaluation_sequence, 0), ?),
           updated_at = CURRENT_TIMESTAMP
@@ -302,17 +312,41 @@ export function generateCanonicalEvaluationId(params: {
   subjectName?: string | null;
   level?: string | null;
   createdAt?: string | Date | null;
-}): { displayId: string; sequence: number; studentCode: string; subjectCode: string } {
-  const studentCode = getOrAssignStudentCode(params.studentId);
-  const sequence = getNextEvaluationSequence(params.studentId);
+}, customDb?: any): { displayId: string; sequence: number; studentCode: string; subjectCode: string } {
+  const activeDb = getDb(customDb);
+  const studentCode = getOrAssignStudentCode(params.studentId, activeDb);
+  const initialSeq = getNextEvaluationSequence(params.studentId, activeDb);
+  let sequence = initialSeq;
   const subjectCode = getCanonicalSubjectCode(params.subjectKey, params.subjectName, params.level);
 
-  const displayId = formatEvaluationDisplayId({
+  let displayId = formatEvaluationDisplayId({
     year: params.createdAt || new Date(),
     studentCode,
     subjectCode,
     sequence,
   });
+
+  // Collision safeguard: ensure displayId is unique across the database
+  while (activeDb.prepare('SELECT 1 FROM evaluations WHERE display_id = ?').get(displayId)) {
+    sequence++;
+    displayId = formatEvaluationDisplayId({
+      year: params.createdAt || new Date(),
+      studentCode,
+      subjectCode,
+      sequence,
+    });
+  }
+
+  if (sequence !== initialSeq) {
+    try {
+      activeDb.prepare(`
+        UPDATE student_profiles
+        SET highest_evaluation_sequence = MAX(COALESCE(highest_evaluation_sequence, 0), ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(sequence, params.studentId);
+    } catch {}
+  }
 
   return {
     displayId,
@@ -326,35 +360,36 @@ export function generateCanonicalEvaluationId(params: {
  * Backfill existing student accounts and evaluations with Student Code and Evaluation ID.
  * Runs idempotently on startup or database initialization.
  */
-export function backfillStudentCodesAndEvaluationIds(): {
+export function backfillStudentCodesAndEvaluationIds(customDb?: any): {
   studentsBackfilled: number;
   evaluationsBackfilled: number;
 } {
+  const activeDb = getDb(customDb);
   let studentsBackfilled = 0;
   let evaluationsBackfilled = 0;
 
   try {
     // 1. Backfill student_profiles where student_code IS NULL or empty
-    const profilesWithoutCode = db.prepare(`
+    const profilesWithoutCode = activeDb.prepare(`
       SELECT user_id FROM student_profiles WHERE student_code IS NULL OR TRIM(student_code) = ''
     `).all() as Array<{ user_id: string }>;
 
     for (const p of profilesWithoutCode) {
-      const code = generateUniqueStudentCode();
-      db.prepare('UPDATE student_profiles SET student_code = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(code, p.user_id);
+      const code = generateUniqueStudentCode(activeDb);
+      activeDb.prepare('UPDATE student_profiles SET student_code = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(code, p.user_id);
       studentsBackfilled++;
     }
 
     // Also check student users who may not have a student_profiles row yet
-    const studentUsersWithoutProfile = db.prepare(`
+    const studentUsersWithoutProfile = activeDb.prepare(`
       SELECT u.id FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
       WHERE u.role = 'STUDENT' AND p.user_id IS NULL
     `).all() as Array<{ id: string }>;
 
     for (const u of studentUsersWithoutProfile) {
-      const code = generateUniqueStudentCode();
-      db.prepare(`
+      const code = generateUniqueStudentCode(activeDb);
+      activeDb.prepare(`
         INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, student_code, created_at, updated_at)
         VALUES (?, 'REG-PENDING', 'INTERMEDIATE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(u.id, code);
@@ -362,15 +397,15 @@ export function backfillStudentCodesAndEvaluationIds(): {
     }
 
     // 2. Backfill evaluations where display_id IS NULL or evaluation_sequence IS NULL
-    const studentsWithEvals = db.prepare(`
+    const studentsWithEvals = activeDb.prepare(`
       SELECT DISTINCT student_id FROM evaluations ORDER BY student_id ASC
     `).all() as Array<{ student_id: string }>;
 
     for (const s of studentsWithEvals) {
-      const studentCode = getOrAssignStudentCode(s.student_id);
+      const studentCode = getOrAssignStudentCode(s.student_id, activeDb);
 
       // Fetch all evaluations for this student ordered by creation date ascending
-      const evals = db.prepare(`
+      const evals = activeDb.prepare(`
         SELECT id, subject_key, subject_name, level, created_at, display_id, evaluation_sequence
         FROM evaluations
         WHERE student_id = ?
@@ -385,38 +420,94 @@ export function backfillStudentCodesAndEvaluationIds(): {
         evaluation_sequence?: number | null;
       }>;
 
-      let currentSeq = 1;
+      // Collect all already assigned sequences for this student
+      const assignedSequences = new Set<number>();
       for (const ev of evals) {
-        if (!ev.display_id || !ev.evaluation_sequence) {
+        if (ev.evaluation_sequence != null && Number(ev.evaluation_sequence) > 0) {
+          assignedSequences.add(Number(ev.evaluation_sequence));
+        } else if (ev.display_id) {
+          const match = ev.display_id.match(/-(\d+)$/);
+          if (match) {
+            const parsedSeq = parseInt(match[1], 10);
+            if (!isNaN(parsedSeq) && parsedSeq > 0) {
+              assignedSequences.add(parsedSeq);
+              try {
+                activeDb.prepare('UPDATE evaluations SET evaluation_sequence = ? WHERE id = ?').run(parsedSeq, ev.id);
+              } catch {}
+            }
+          }
+        }
+      }
+
+      // Check current watermark on student profile
+      const profileRow = activeDb.prepare('SELECT highest_evaluation_sequence FROM student_profiles WHERE user_id = ?').get(s.student_id) as {
+        highest_evaluation_sequence?: number | null;
+      } | undefined;
+      let highestSeq = Math.max(0, ...Array.from(assignedSequences), Number(profileRow?.highest_evaluation_sequence || 0));
+
+      for (const ev of evals) {
+        if (ev.display_id && !ev.evaluation_sequence) {
+          let nextSeq = highestSeq + 1;
+          const match = ev.display_id.match(/-(\d+)$/);
+          const parsedSeq = match ? parseInt(match[1], 10) : 0;
+          if (parsedSeq > 0 && !assignedSequences.has(parsedSeq)) {
+            nextSeq = parsedSeq;
+          } else {
+            while (assignedSequences.has(nextSeq)) {
+              nextSeq++;
+            }
+          }
+          activeDb.prepare('UPDATE evaluations SET evaluation_sequence = ? WHERE id = ?').run(nextSeq, ev.id);
+          assignedSequences.add(nextSeq);
+          highestSeq = Math.max(highestSeq, nextSeq);
+          evaluationsBackfilled++;
+          continue;
+        }
+
+        if (!ev.display_id) {
+          let nextSeq = highestSeq + 1;
+          while (assignedSequences.has(nextSeq)) {
+            nextSeq++;
+          }
+
           const subCode = getCanonicalSubjectCode(ev.subject_key, ev.subject_name, ev.level);
-          const displayId = formatEvaluationDisplayId({
+          let displayId = formatEvaluationDisplayId({
             year: ev.created_at || '2026',
             studentCode,
             subjectCode: subCode,
-            sequence: currentSeq,
+            sequence: nextSeq,
           });
 
-          db.prepare(`
+          // Safeguard: Ensure displayId is globally unique across evaluations table
+          while (activeDb.prepare('SELECT 1 FROM evaluations WHERE display_id = ?').get(displayId)) {
+            nextSeq++;
+            displayId = formatEvaluationDisplayId({
+              year: ev.created_at || '2026',
+              studentCode,
+              subjectCode: subCode,
+              sequence: nextSeq,
+            });
+          }
+
+          activeDb.prepare(`
             UPDATE evaluations
             SET display_id = ?, evaluation_sequence = ?
             WHERE id = ?
-          `).run(displayId, currentSeq, ev.id);
+          `).run(displayId, nextSeq, ev.id);
 
+          assignedSequences.add(nextSeq);
+          highestSeq = Math.max(highestSeq, nextSeq);
           evaluationsBackfilled++;
-        } else {
-          currentSeq = Math.max(currentSeq, ev.evaluation_sequence);
         }
-        currentSeq++;
       }
 
       // Record highest sequence reached for this student
-      if (evals.length > 0) {
-        const finalMax = currentSeq - 1;
-        db.prepare(`
+      if (highestSeq > 0) {
+        activeDb.prepare(`
           UPDATE student_profiles
           SET highest_evaluation_sequence = MAX(COALESCE(highest_evaluation_sequence, 0), ?)
           WHERE user_id = ?
-        `).run(finalMax, s.student_id);
+        `).run(highestSeq, s.student_id);
       }
     }
   } catch (err) {
