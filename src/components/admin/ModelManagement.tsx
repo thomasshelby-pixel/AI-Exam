@@ -44,8 +44,10 @@ interface ProviderStatus {
   provider: string;
   name: string;
   configured: boolean;
-  keyMasked: string;
+  status?: string;
+  configurationStatus?: string;
   modelsCount?: number;
+  lastTestedAt?: string | null;
 }
 
 interface FallbackHierarchyItem {
@@ -322,7 +324,7 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> Missing Key
+                  <AlertTriangle className="w-3 h-3" /> Inactive
                 </span>
               )}
             </div>
@@ -333,8 +335,11 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
           </div>
 
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-            <div className="text-slate-500">
-              Key: <span className="font-mono text-slate-700">{providers.gemini?.keyMasked || 'Not set'}</span>
+            <div className="flex items-center gap-1.5 text-slate-600">
+              <span className="text-slate-500">API Configuration:</span>
+              <span className={`font-semibold ${providers.gemini?.configured ? 'text-emerald-700 font-medium' : 'text-slate-500'}`}>
+                {providers.gemini?.configured ? 'Configured' : 'Not configured'}
+              </span>
             </div>
             <button
               onClick={() => handleTestProvider('gemini')}
@@ -342,7 +347,7 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
               className="px-2 py-1 rounded bg-blue-50 text-blue-700 border border-blue-200 font-semibold hover:bg-blue-100 disabled:opacity-50 text-[10px] cursor-pointer inline-flex items-center gap-1"
             >
               {testingProvider === 'gemini' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5" />}
-              Test All (5)
+              Test All ({providers.gemini?.modelsCount || 5})
             </button>
           </div>
         </div>
@@ -377,8 +382,11 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
           </div>
 
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-            <div className="text-slate-500">
-              Key: <span className="font-mono text-slate-700">{providers.anthropic?.keyMasked || 'Not set'}</span>
+            <div className="flex items-center gap-1.5 text-slate-600">
+              <span className="text-slate-500">API Configuration:</span>
+              <span className={`font-semibold ${providers.anthropic?.configured ? 'text-emerald-700 font-medium' : 'text-slate-500'}`}>
+                {providers.anthropic?.configured ? 'Configured' : 'Not configured'}
+              </span>
             </div>
             <button
               onClick={() => handleTestProvider('anthropic')}
@@ -386,7 +394,7 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
               className="px-2 py-1 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold hover:bg-amber-100 disabled:opacity-50 text-[10px] cursor-pointer inline-flex items-center gap-1"
             >
               {testingProvider === 'anthropic' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5" />}
-              Test All (2)
+              Test All ({providers.anthropic?.modelsCount || 2})
             </button>
           </div>
         </div>
@@ -421,8 +429,11 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
           </div>
 
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-            <div className="text-slate-500">
-              Key: <span className="font-mono text-slate-700">{providers.openai?.keyMasked || 'Not set'}</span>
+            <div className="flex items-center gap-1.5 text-slate-600">
+              <span className="text-slate-500">API Configuration:</span>
+              <span className={`font-semibold ${providers.openai?.configured ? 'text-emerald-700 font-medium' : 'text-slate-500'}`}>
+                {providers.openai?.configured ? 'Configured' : 'Not configured'}
+              </span>
             </div>
             <button
               onClick={() => handleTestProvider('openai')}
@@ -430,7 +441,7 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
               className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold hover:bg-emerald-100 disabled:opacity-50 text-[10px] cursor-pointer inline-flex items-center gap-1"
             >
               {testingProvider === 'openai' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5" />}
-              Test All (2)
+              Test All ({providers.openai?.modelsCount || 2})
             </button>
           </div>
         </div>

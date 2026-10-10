@@ -69,6 +69,7 @@ import {
   computeContentHash,
   normalizeExtractedContent,
 } from '../services/materialDuplicateProtectionService.js';
+import { sanitizeSecretStrings } from '../models/modelRegistry.js';
 
 const router = Router();
 
@@ -4931,32 +4932,48 @@ router.get('/models', (req: AuthRequest, res: Response) => {
       SELECT * FROM model_configs ORDER BY is_primary DESC, fallback_order ASC, display_name ASC
     `).all() as any[];
 
-    // Provider environment availability check
+    // Provider environment availability check (Safe non-sensitive status only)
     const geminiKey = process.env.GEMINI_API_KEY || '';
     const openaiKey = process.env.OPENAI_API_KEY || '';
     const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
+
+    const getLastTested = (providerName: string) => {
+      const providerModels = models.filter((m) => m.provider === providerName && m.last_tested_at);
+      if (providerModels.length === 0) return null;
+      return providerModels.sort((a, b) => new Date(b.last_tested_at).getTime() - new Date(a.last_tested_at).getTime())[0]?.last_tested_at || null;
+    };
+
+    const isGeminiConfigured = Boolean(geminiKey && geminiKey.trim().length > 5);
+    const isOpenaiConfigured = Boolean(openaiKey && openaiKey.trim().length > 5);
+    const isAnthropicConfigured = Boolean(anthropicKey && anthropicKey.trim().length > 5);
 
     const providerStatus = {
       gemini: {
         provider: 'gemini',
         name: 'Google Gemini',
-        configured: Boolean(geminiKey && geminiKey.length > 5),
-        keyMasked: geminiKey ? `${geminiKey.slice(0, 4)}••••${geminiKey.slice(-4)}` : 'Not Configured',
+        configured: isGeminiConfigured,
+        status: isGeminiConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isGeminiConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'gemini').length,
+        lastTestedAt: getLastTested('gemini'),
       },
       openai: {
         provider: 'openai',
         name: 'OpenAI',
-        configured: Boolean(openaiKey && openaiKey.length > 5),
-        keyMasked: openaiKey ? `${openaiKey.slice(0, 3)}••••${openaiKey.slice(-4)}` : 'Not Configured',
+        configured: isOpenaiConfigured,
+        status: isOpenaiConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isOpenaiConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'openai').length,
+        lastTestedAt: getLastTested('openai'),
       },
       anthropic: {
         provider: 'anthropic',
         name: 'Anthropic',
-        configured: Boolean(anthropicKey && anthropicKey.length > 5),
-        keyMasked: anthropicKey ? `${anthropicKey.slice(0, 4)}••••${anthropicKey.slice(-4)}` : 'Not Configured',
+        configured: isAnthropicConfigured,
+        status: isAnthropicConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isAnthropicConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'anthropic').length,
+        lastTestedAt: getLastTested('anthropic'),
       },
     };
 
@@ -5065,12 +5082,15 @@ router.post('/models/test-connection', async (req: AuthRequest, res: Response) =
     const { testModelHealth } = await import('../models/modelRegistry.js');
     const targetStage = stage === 'CONNECTIVITY' || stage === 'INFERENCE' || stage === 'EVALUATION_READINESS' ? stage : 'EVALUATION_READINESS';
     const result = await testModelHealth(modelId, targetStage);
-    return res.json(result);
+    return res.json({
+      ...result,
+      message: sanitizeSecretStrings(result.message || ''),
+    });
   } catch (error: any) {
     console.error('Test model connection error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Connection test failed',
+      message: sanitizeSecretStrings(error?.message || 'Connection test failed'),
     });
   }
 });
@@ -5089,7 +5109,7 @@ router.post('/models/benchmark-test', async (req: AuthRequest, res: Response) =>
     console.error('Run model benchmark error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Model benchmark failed',
+      message: sanitizeSecretStrings(error?.message || 'Model benchmark failed'),
     });
   }
 });
@@ -5109,7 +5129,7 @@ router.post('/models/consistency-test', async (req: AuthRequest, res: Response) 
     console.error('Run model consistency error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Model consistency test failed',
+      message: sanitizeSecretStrings(error?.message || 'Model consistency test failed'),
     });
   }
 });
@@ -5139,7 +5159,10 @@ router.post('/models/test-provider', async (req: AuthRequest, res: Response) => 
         continue;
       }
       const resTest = await testModelConnection(m.id);
-      results.push(resTest);
+      results.push({
+        ...resTest,
+        message: sanitizeSecretStrings(resTest.message || ''),
+      });
       if (i < providerModels.length - 1 && resTest.success) {
         await new Promise((r) => setTimeout(r, 600));
       }
@@ -5154,7 +5177,7 @@ router.post('/models/test-provider', async (req: AuthRequest, res: Response) => 
     console.error('Test provider error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Provider connection test failed',
+      message: sanitizeSecretStrings(error?.message || 'Provider connection test failed'),
     });
   }
 });

@@ -346,18 +346,51 @@ export function extractRetryDelayMs(errMsg: string, defaultMs = 30000): number {
   return defaultMs;
 }
 
+/**
+ * Redact secret API keys, tokens, or credential fragments from error strings, logs, and diagnostic payloads.
+ */
+export function sanitizeSecretStrings(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  let sanitized = input;
+
+  // 1. Redact any known server environment secrets if present
+  const secrets = [
+    process.env.GEMINI_API_KEY,
+    process.env.OPENAI_API_KEY,
+    process.env.ANTHROPIC_API_KEY,
+    process.env.RAZORPAY_KEY_SECRET,
+    process.env.JWT_SECRET,
+  ].filter((s): s is string => Boolean(s && s.length > 5));
+
+  for (const secret of secrets) {
+    if (sanitized.includes(secret)) {
+      sanitized = sanitized.replaceAll(secret, '[REDACTED]');
+    }
+  }
+
+  // 2. Redact common API key patterns (Google API keys, OpenAI keys, Anthropic keys, Bearer tokens, query params)
+  sanitized = sanitized.replace(/AIza[0-9A-Za-z-_]{35}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/sk-[A-Za-z0-9-_]{20,}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/sk-ant-[A-Za-z0-9-_]{20,}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/(key=|api_key=|apiKey=|token=)[a-zA-Z0-9_\-\.]{10,}/gi, '$1[REDACTED]');
+  sanitized = sanitized.replace(/Bearer\s+[a-zA-Z0-9_\-\.]{15,}/gi, 'Bearer [REDACTED]');
+
+  return sanitized;
+}
+
 export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string, silent = false) {
   const existing = providerCreditExhaustedUntil.get(provider);
   const now = Date.now();
   // Keep provider marked credit-exhausted for 10 minutes so we can periodically retry if balance is restored
   providerCreditExhaustedUntil.set(provider, now + 10 * 60 * 1000);
+  const safeReason = sanitizeSecretStrings(reason || 'credit balance too low');
   if (!silent && (!existing || now > existing)) {
-    console.info(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${reason || 'credit balance too low'}`);
+    console.info(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${safeReason}`);
   }
   try {
     db.prepare(
       "UPDATE model_configs SET status = 'INSUFFICIENT_CREDITS', health_details = ?, last_tested_at = CURRENT_TIMESTAMP WHERE provider = ?"
-    ).run(reason ? reason.slice(0, 250) : 'Credit balance depleted', provider);
+    ).run(safeReason.slice(0, 250), provider);
   } catch {}
 }
 
@@ -1347,7 +1380,8 @@ export async function testModelHealth(
     clearProviderCreditExhausted(provider);
   } catch (err: any) {
     const latencyMs = Date.now() - overallStart;
-    const errMsg = err?.message || String(err);
+    const rawErrMsg = err?.message || String(err);
+    const errMsg = sanitizeSecretStrings(rawErrMsg);
     const errMsgLower = errMsg.toLowerCase();
 
     const isTimeout =
@@ -1413,12 +1447,13 @@ export async function testModelHealth(
       status = 'TEMPORARILY_UNAVAILABLE';
     }
 
-    const userFacingMsg =
+    const userFacingMsg = sanitizeSecretStrings(
       status === 'INSUFFICIENT_CREDITS'
         ? `Provider ${provider.toUpperCase()} has insufficient credits/quota: ${errMsg.slice(0, 180)}. Model is registered but billing refill is required.`
         : status === 'INVALID_MODEL'
         ? `Model ID ${modelId} was rejected by ${provider.toUpperCase()} API (invalid or unavailable model).`
-        : errMsg.slice(0, 200);
+        : errMsg.slice(0, 200)
+    );
 
     try {
       db.prepare(
@@ -1594,7 +1629,8 @@ TASK: Return strictly a valid JSON object matching this schema:
     };
   } catch (evalErr: any) {
     const totalLatency = Date.now() - overallStart;
-    const errMsg = evalErr?.message || String(evalErr);
+    const rawErrMsg = evalErr?.message || String(evalErr);
+    const errMsg = sanitizeSecretStrings(rawErrMsg);
     const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('resource_exhausted');
 
     if (isRateLimit) {
