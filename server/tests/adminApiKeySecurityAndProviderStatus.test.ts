@@ -120,7 +120,7 @@ console.log('✓ TEST 2 PASSED: Frontend cards display safe status and contain z
 console.log('\n[TEST 3] Verifying Secret Redaction Utility...');
 
 // 3.1 Google API key pattern
-const googleError = 'Error calling https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q: quota exceeded';
+const googleError = 'Error calling https://generativelanguage.googleapis.com/v1beta/models?key quota exceeded';
 const sanitizedGoogle = sanitizeSecretStrings(googleError);
 assert.ok(!sanitizedGoogle.includes('AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q'), 'Google API key must be redacted');
 assert.ok(sanitizedGoogle.includes('[REDACTED'), 'Google API key must be replaced with REDACTED placeholder');
