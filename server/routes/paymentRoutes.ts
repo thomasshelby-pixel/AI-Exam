@@ -90,16 +90,55 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // Razorpay Webhook Receiver
-router.post('/webhook', (req: Request, res: Response) => {
+router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    const signature = req.headers['x-razorpay-signature'] as string;
-    const rawBody = JSON.stringify(req.body);
+    const signature = req.headers['x-razorpay-signature'] as string | undefined;
+    const rawBody = (req as any).rawBody;
 
-    processRazorpayWebhook(rawBody, signature);
-    return res.status(200).json({ received: true });
+    if (!rawBody || (Buffer.isBuffer(rawBody) && rawBody.length === 0)) {
+      return res.status(400).json({ error: 'Missing webhook raw request body' });
+    }
+
+    if (!signature) {
+      return res.status(400).json({ error: 'Missing Razorpay webhook signature header' });
+    }
+
+    const result = await processRazorpayWebhook(rawBody, signature);
+
+    if (result.status === 'ignored') {
+      return res.status(200).json({
+        received: true,
+        status: 'ignored',
+        event: result.event,
+        reason: result.reason,
+      });
+    }
+
+    return res.status(200).json({
+      received: true,
+      status: result.status,
+      event: result.event,
+      creditsAdded: result.creditsAdded ?? 0,
+      alreadyProcessed: result.alreadyFulfilled ?? false,
+    });
   } catch (error: unknown) {
     console.error('Webhook error:', error);
-    return res.status(400).json({ error: 'Webhook processing failed' });
+    const message = error instanceof Error ? error.message : 'Webhook processing failed';
+
+    // Distinguish signature and secret errors (400) from server/database failures (500)
+    if (
+      message.toLowerCase().includes('signature') ||
+      message.toLowerCase().includes('secret') ||
+      message.toLowerCase().includes('missing') ||
+      message.toLowerCase().includes('invalid json')
+    ) {
+      return res.status(400).json({ error: message });
+    }
+
+    return res.status(500).json({
+      error: 'Webhook fulfillment failed',
+      message,
+    });
   }
 });
 

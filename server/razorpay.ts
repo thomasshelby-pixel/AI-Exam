@@ -192,7 +192,285 @@ export interface VerifyPaymentParams {
 }
 
 /**
- * Verifies Razorpay HMAC SHA256 signature and applies credits idempotently.
+ * Verifies Razorpay Checkout payment HMAC SHA-256 signature:
+ * HMAC_SHA256(order_id + "|" + payment_id, RAZORPAY_KEY_SECRET) === signature
+ */
+export function verifyCheckoutPaymentSignature(params: {
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+}): boolean {
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
+  if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+    return false;
+  }
+
+  const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
+  if (!keySecret) {
+    throw new Error('Razorpay gateway is not configured. Please configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Settings > Secrets.');
+  }
+
+  const generatedSignature = crypto
+    .createHmac('sha256', keySecret)
+    .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+    .digest('hex');
+
+  return safeTimingCompare(generatedSignature, razorpaySignature);
+}
+
+/**
+ * Verifies Razorpay Webhook HMAC SHA-256 signature using the exact raw request body bytes:
+ * HMAC_SHA256(rawBody, RAZORPAY_WEBHOOK_SECRET) === x-razorpay-signature
+ */
+export function verifyWebhookSignature(rawBody: Buffer | string, signature?: string | null): boolean {
+  const webhookSecret = getCleanEnv('RAZORPAY_WEBHOOK_SECRET');
+  if (!webhookSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('RAZORPAY_WEBHOOK_SECRET not configured. Rejecting untrusted webhook.');
+    }
+    throw new Error('RAZORPAY_WEBHOOK_SECRET is required for webhook signature verification.');
+  }
+
+  if (!signature || typeof signature !== 'string') {
+    throw new Error('Missing Razorpay webhook signature header');
+  }
+
+  const payloadBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
+
+  const expectedSignature = crypto
+    .createHmac('sha256', webhookSecret)
+    .update(payloadBuffer)
+    .digest('hex');
+
+  if (!safeTimingCompare(expectedSignature, signature)) {
+    throw new Error('Invalid Razorpay webhook signature');
+  }
+
+  return true;
+}
+
+export interface FulfillPaymentParams {
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  studentId?: string;
+  signatureRecord?: string;
+  source: 'CHECKOUT' | 'WEBHOOK';
+  paymentAmountPaise?: number;
+  paymentCurrency?: string;
+}
+
+export interface FulfillPaymentResult {
+  success: boolean;
+  creditsAdded: number;
+  alreadyFulfilled: boolean;
+  orderId: string;
+  studentId: string;
+}
+
+/**
+ * Shared, idempotent payment fulfillment engine.
+ * Authoritative single point for credit granting, transactional recording,
+ * and ledger updates across both Checkout verification and Webhook delivery.
+ */
+export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymentResult {
+  const {
+    razorpayOrderId,
+    razorpayPaymentId,
+    studentId: expectedStudentId,
+    signatureRecord,
+    source,
+    paymentAmountPaise,
+    paymentCurrency,
+  } = params;
+
+  if (!razorpayOrderId || !razorpayPaymentId) {
+    throw new Error('Missing required order or payment identifiers for fulfillment.');
+  }
+
+  // 1. Fetch internal order by razorpay_order_id
+  const order = db.prepare(`
+    SELECT id, student_id, quantity, amount_paise, currency, status
+    FROM payment_orders
+    WHERE razorpay_order_id = ?
+  `).get(razorpayOrderId) as {
+    id: string;
+    student_id: string;
+    quantity: number;
+    amount_paise: number;
+    currency: string;
+    status: string;
+  } | undefined;
+
+  if (!order) {
+    throw new Error(`Order not found for Razorpay order ID: ${razorpayOrderId}`);
+  }
+
+  // 2. Ownership verification: if studentId is provided, verify match
+  if (expectedStudentId && order.student_id !== expectedStudentId) {
+    throw new Error('Order does not belong to the specified student.');
+  }
+
+  const authoritativeStudentId = order.student_id;
+
+  // 3. Amount and currency verification against stored authoritative order
+  if (paymentAmountPaise !== undefined && paymentAmountPaise !== null) {
+    if (paymentAmountPaise !== order.amount_paise) {
+      throw new Error(
+        `Payment amount mismatch: received ${paymentAmountPaise} paise, order requires ${order.amount_paise} paise`
+      );
+    }
+  }
+
+  if (paymentCurrency && paymentCurrency.toUpperCase() !== order.currency.toUpperCase()) {
+    throw new Error(
+      `Payment currency mismatch: received ${paymentCurrency}, order requires ${order.currency}`
+    );
+  }
+
+  // 4. Idempotency check: Has this payment ID or order already been fulfilled?
+  const idempotencyKey = `tx_${razorpayPaymentId}`;
+  const existingTx = db.prepare(`
+    SELECT id, order_id, student_id, status FROM payment_transactions
+    WHERE idempotency_key = ? OR razorpay_payment_id = ?
+  `).get(idempotencyKey, razorpayPaymentId) as { id: string } | undefined;
+
+  if (existingTx || order.status === 'SUCCESS') {
+    // Already fulfilled cleanly and idempotently
+    return {
+      success: true,
+      creditsAdded: 0,
+      alreadyFulfilled: true,
+      orderId: order.id,
+      studentId: authoritativeStudentId,
+    };
+  }
+
+  // 5. Atomic fulfillment transaction
+  let inTx = false;
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    inTx = true;
+
+    // Double check inside transaction for race-condition prevention under concurrency
+    const txCheck = db.prepare(`
+      SELECT id FROM payment_transactions WHERE idempotency_key = ? OR razorpay_payment_id = ?
+    `).get(idempotencyKey, razorpayPaymentId);
+
+    const orderCheck = db.prepare(`
+      SELECT status FROM payment_orders WHERE id = ?
+    `).get(order.id) as { status: string } | undefined;
+
+    if (txCheck || orderCheck?.status === 'SUCCESS') {
+      db.exec('COMMIT');
+      inTx = false;
+      return {
+        success: true,
+        creditsAdded: 0,
+        alreadyFulfilled: true,
+        orderId: order.id,
+        studentId: authoritativeStudentId,
+      };
+    }
+
+    const txId = `txn_${crypto.randomBytes(8).toString('hex')}`;
+    const storedSignature = signatureRecord || (source === 'WEBHOOK' ? 'WEBHOOK_VERIFIED' : 'CHECKOUT_VERIFIED');
+
+    // Insert payment transaction record
+    db.prepare(`
+      INSERT INTO payment_transactions (id, order_id, student_id, razorpay_payment_id, razorpay_signature, amount_paise, status, idempotency_key)
+      VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?)
+    `).run(
+      txId,
+      order.id,
+      authoritativeStudentId,
+      razorpayPaymentId,
+      storedSignature,
+      order.amount_paise,
+      idempotencyKey
+    );
+
+    // Update order status to SUCCESS
+    db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE id = ?").run(order.id);
+
+    // Record credit purchase with exact 3-month validity lot in student_credit_purchases
+    const lotResult = recordCreditPurchase({
+      userId: authoritativeStudentId,
+      creditsPurchased: order.quantity,
+      orderId: order.id,
+      paymentId: razorpayPaymentId,
+      purchaseDate: new Date(),
+    });
+
+    const newBalance = lotResult.totalValidCredits;
+    const expiryFormatted = new Date(lotResult.expiresAt).toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    // Credit ledger entry
+    const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, order_id, payment_id, note)
+      VALUES (?, ?, ?, 'PURCHASED', ?, ?, ?, ?)
+    `).run(
+      ledgerId,
+      authoritativeStudentId,
+      order.quantity,
+      newBalance,
+      order.id,
+      razorpayPaymentId,
+      `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId}) [${source}]. Valid for 3 months until ${expiryFormatted}.`
+    );
+
+    // In-app notification
+    const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, ?, ?, 'CREDIT')
+    `).run(
+      notifId,
+      authoritativeStudentId,
+      'Payment Successful - Credits Added',
+      `Your payment of ₹${order.amount_paise / 100} was successful. ${order.quantity} evaluation credits have been added to your account (valid for 3 months until ${expiryFormatted}).`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'PAYMENT_CREDITED', 'PAYMENT', ?, ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      authoritativeStudentId,
+      order.id,
+      `Added ${order.quantity} credits via ${source}. Razorpay Payment ID: ${razorpayPaymentId}`
+    );
+
+    db.exec('COMMIT');
+    inTx = false;
+
+    return {
+      success: true,
+      creditsAdded: order.quantity,
+      alreadyFulfilled: false,
+      orderId: order.id,
+      studentId: authoritativeStudentId,
+    };
+  } catch (error) {
+    if (inTx) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // ignore rollback errors if already aborted
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Verifies Razorpay HMAC SHA256 Checkout signature and applies credits idempotently.
+ * Preserves the exact signature and interface used by /api/payments/verify.
  */
 export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success: boolean; creditsAdded: number } {
   const { studentId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
@@ -214,146 +492,132 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
     throw new Error('Order not found or does not belong to this student.');
   }
 
-  // 2. Cryptographic signature check
-  const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
-  if (!isRazorpayConfigured()) {
-    db.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').run('FAILED', order.id);
-    throw new Error('Razorpay gateway is not configured. Please configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in Settings > Secrets.');
-  }
+  // 2. Cryptographic Checkout signature verification
+  const isValid = verifyCheckoutPaymentSignature({
+    razorpayOrderId,
+    razorpayPaymentId,
+    razorpaySignature,
+  });
 
-  const generatedSignature = crypto
-    .createHmac('sha256', keySecret)
-    .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-    .digest('hex');
-
-  if (!safeTimingCompare(generatedSignature, razorpaySignature)) {
-    db.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').run('FAILED', order.id);
+  if (!isValid) {
+    // Only mark FAILED if the order has not already been fulfilled (never downgrade SUCCESS)
+    if (order.status !== 'SUCCESS') {
+      db.prepare("UPDATE payment_orders SET status = 'FAILED' WHERE id = ?").run(order.id);
+    }
     throw new Error('Payment signature verification failed. Untrusted payment.');
   }
 
-  // 3. Idempotency protection - check if transaction already processed
-  const idempotencyKey = `tx_${razorpayPaymentId}`;
-  const existingTx = db.prepare(`
-    SELECT id FROM payment_transactions WHERE idempotency_key = ?
-  `).get(idempotencyKey);
-
-  if (existingTx || order.status === 'SUCCESS') {
-    // Already fulfilled idempotently, return without duplicate credit addition
-    return { success: true, creditsAdded: 0 };
-  }
-
-  // 4. Record payment transaction
-  const txId = `txn_${crypto.randomBytes(8).toString('hex')}`;
-  db.prepare(`
-    INSERT INTO payment_transactions (id, order_id, student_id, razorpay_payment_id, razorpay_signature, amount_paise, status, idempotency_key)
-    VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?)
-  `).run(txId, order.id, studentId, razorpayPaymentId, razorpaySignature, order.amount_paise, idempotencyKey);
-
-  // 5. Update order status
-  db.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').run('SUCCESS', order.id);
-
-  // 6. Record credit purchase with exact 3-month validity lot
-  const lotResult = recordCreditPurchase({
-    userId: studentId,
-    creditsPurchased: order.quantity,
-    orderId: order.id,
-    paymentId: razorpayPaymentId,
-    purchaseDate: new Date(),
-  });
-
-  const newBalance = lotResult.totalValidCredits;
-  const expiryFormatted = new Date(lotResult.expiresAt).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-
-  // 7. Credit ledger entry
-  const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
-  db.prepare(`
-    INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, order_id, payment_id, note)
-    VALUES (?, ?, ?, 'PURCHASED', ?, ?, ?, ?)
-  `).run(
-    ledgerId,
-    studentId,
-    order.quantity,
-    newBalance,
-    order.id,
+  // 3. Shared idempotent fulfillment
+  const fulfillment = fulfillPaymentOrder({
+    razorpayOrderId,
     razorpayPaymentId,
-    `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId}). Valid for 3 months until ${expiryFormatted}.`
-  );
-
-  // 8. In-app notification
-  const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
-  db.prepare(`
-    INSERT INTO notifications (id, user_id, title, message, type)
-    VALUES (?, ?, ?, ?, 'CREDIT')
-  `).run(
-    notifId,
     studentId,
-    'Payment Successful - Credits Added',
-    `Your payment of ₹${order.amount_paise / 100} was successful. ${order.quantity} evaluation credits have been added to your account (valid for 3 months until ${expiryFormatted}).`
-  );
+    signatureRecord: razorpaySignature,
+    source: 'CHECKOUT',
+  });
 
-  // 9. Audit log
-  db.prepare(`
-    INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-    VALUES (?, ?, 'PAYMENT_CREDITED', 'PAYMENT', ?, ?)
-  `).run(
-    `log_${crypto.randomBytes(8).toString('hex')}`,
-    studentId,
-    order.id,
-    `Added ${order.quantity} credits. Razorpay Payment ID: ${razorpayPaymentId}`
-  );
+  return { success: true, creditsAdded: fulfillment.creditsAdded };
+}
 
-  return { success: true, creditsAdded: order.quantity };
+export interface WebhookProcessResult {
+  received: boolean;
+  status: 'processed' | 'already_processed' | 'ignored';
+  event?: string;
+  reason?: string;
+  creditsAdded?: number;
+  alreadyFulfilled?: boolean;
 }
 
 /**
  * Handles official Razorpay Webhooks (payment.captured, order.paid).
+ * Uses exact raw request bytes and dedicated RAZORPAY_WEBHOOK_SECRET.
+ * Dispatches to shared fulfillPaymentOrder without passing webhook signature into Checkout verification.
  */
-export function processRazorpayWebhook(rawBody: string, signature: string): { received: boolean } {
-  const webhookSecret = getCleanEnv('RAZORPAY_WEBHOOK_SECRET');
-  if (!webhookSecret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('RAZORPAY_WEBHOOK_SECRET not configured. Rejecting untrusted webhook.');
-    }
-  } else {
-    if (!signature) {
-      throw new Error('Missing Razorpay webhook signature header');
-    }
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(rawBody)
-      .digest('hex');
+export async function processRazorpayWebhook(
+  rawBody: Buffer | string,
+  signature?: string | null
+): Promise<WebhookProcessResult> {
+  // 1. Cryptographic Webhook signature verification
+  verifyWebhookSignature(rawBody, signature);
 
-    if (!safeTimingCompare(expectedSignature, signature)) {
-      throw new Error('Invalid Razorpay webhook signature');
-    }
+  // 2. Parse payload from raw request bytes
+  const rawString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+  let event: any;
+  try {
+    event = JSON.parse(rawString);
+  } catch {
+    throw new Error('Invalid JSON payload in webhook body');
   }
 
-  const event = JSON.parse(rawBody);
-  if (event.event === 'payment.captured' || event.event === 'order.paid') {
+  const eventType = event.event;
+
+  // 3. Handle successful payment events (payment.captured, order.paid)
+  if (eventType === 'payment.captured' || eventType === 'order.paid') {
+    const payment = event.payload?.payment?.entity;
+    const orderPayload = event.payload?.order?.entity;
+
+    const orderId = payment?.order_id || orderPayload?.id;
+    const paymentId = payment?.id;
+    const studentId = payment?.notes?.studentId || orderPayload?.notes?.studentId;
+    const amount = payment?.amount ?? orderPayload?.amount;
+    const currency = payment?.currency ?? orderPayload?.currency;
+
+    if (!orderId || !paymentId) {
+      console.warn(`[Razorpay Webhook] Missing order_id or payment_id in ${eventType} payload`);
+      return {
+        received: true,
+        status: 'ignored',
+        event: eventType,
+        reason: 'Missing order_id or payment id in event payload',
+      };
+    }
+
+    // Call shared idempotent fulfillment directly
+    const result = fulfillPaymentOrder({
+      razorpayOrderId: orderId,
+      razorpayPaymentId: paymentId,
+      studentId: studentId || undefined,
+      signatureRecord: signature || 'WEBHOOK_VERIFIED',
+      source: 'WEBHOOK',
+      paymentAmountPaise: typeof amount === 'number' ? amount : undefined,
+      paymentCurrency: typeof currency === 'string' ? currency : undefined,
+    });
+
+    return {
+      received: true,
+      status: result.alreadyFulfilled ? 'already_processed' : 'processed',
+      event: eventType,
+      creditsAdded: result.creditsAdded,
+      alreadyFulfilled: result.alreadyFulfilled,
+    };
+  }
+
+  // 4. Handle payment.failed event: never downgrade an already SUCCESS order
+  if (eventType === 'payment.failed') {
     const payment = event.payload?.payment?.entity;
     const orderId = payment?.order_id;
-    const paymentId = payment?.id;
-    const studentId = payment?.notes?.studentId;
-
-    if (orderId && paymentId && studentId) {
-      try {
-        verifyAndFulfillPayment({
-          studentId,
-          razorpayOrderId: orderId,
-          razorpayPaymentId: paymentId,
-          razorpaySignature: signature || 'webhook_verified',
-        });
-      } catch (err) {
-        console.warn('Webhook auto-fulfill warning:', err);
+    if (orderId) {
+      const order = db.prepare('SELECT id, status FROM payment_orders WHERE razorpay_order_id = ?').get(orderId) as { id: string; status: string } | undefined;
+      // Do NOT overwrite an already SUCCESS order!
+      if (order && order.status !== 'SUCCESS') {
+        db.prepare("UPDATE payment_orders SET status = 'FAILED' WHERE id = ?").run(order.id);
       }
     }
+    return {
+      received: true,
+      status: 'ignored',
+      event: eventType,
+      reason: 'Payment failed event recorded without touching successful orders',
+    };
   }
 
-  return { received: true };
+  // 5. Deliberate ignore policy for all other unhandled event types
+  return {
+    received: true,
+    status: 'ignored',
+    event: eventType,
+    reason: `Event type ${eventType} acknowledged but not configured for credit grants`,
+  };
 }
 
 export interface CreateInstituteOrderParams {

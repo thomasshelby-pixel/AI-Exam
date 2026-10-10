@@ -68,7 +68,15 @@ async function startServer() {
   });
 
   // Body parsers with 50MB payload limit for PDF/image answer sheet uploads
-  app.use(express.json({ limit: '50mb' }));
+  // Preserves original raw request-body buffer via verify callback for cryptographic webhook signature verification
+  app.use(
+    express.json({
+      limit: '50mb',
+      verify: (req: any, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // API Routes
