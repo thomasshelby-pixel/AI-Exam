@@ -32,7 +32,11 @@ export function getLegalSettings(): Record<string, string> {
   const settings: Record<string, string> = { ...DEFAULT_LEGAL_SETTINGS };
   for (const row of rows) {
     if (row.value && row.value.trim() !== '') {
-      settings[row.key] = row.value;
+      let val = row.value;
+      if (val === 'caexamchecker.support@gmail.com') {
+        val = 'support@caexamcheckerai.com';
+      }
+      settings[row.key] = val;
     }
   }
   return settings;
@@ -44,7 +48,7 @@ export function getLegalSettings(): Record<string, string> {
 export function getPublicLegalSettings(): Record<string, string> {
   const settings = getLegalSettings();
   const publicSettings: Record<string, string> = {
-    support_email: settings.support_email || 'caexamchecker.support@gmail.com',
+    support_email: settings.support_email || 'support@caexamcheckerai.com',
     instagram_url: settings.instagram_url || 'https://insta.openinapp.co/utw2r',
     governing_law: settings.governing_law || 'Laws of India',
   };
@@ -411,7 +415,7 @@ router.post('/admin/publish/:id', authenticateToken, requireRole('SUPER_ADMIN'),
     return res.status(404).json({ error: 'Legal document not found' });
   }
 
-  const adminEmail = req.user?.email || 'caexamchecker.support@gmail.com';
+  const adminEmail = req.user?.email || 'support@caexamcheckerai.com';
   const nowIso = new Date().toISOString();
 
   // 1. Archive previous published version of the same doc_type
@@ -511,8 +515,8 @@ router.put('/admin/settings', authenticateToken, requireRole('SUPER_ADMIN'), asy
   const updates: Record<string, string> = {
     legal_entity_name: legal_entity_name?.trim() || '',
     business_address: business_address?.trim() || '',
-    privacy_email: privacy_email?.trim() || 'caexamchecker.support@gmail.com',
-    support_email: support_email?.trim() || 'caexamchecker.support@gmail.com',
+    privacy_email: privacy_email?.trim() || 'support@caexamcheckerai.com',
+    support_email: support_email?.trim() || 'support@caexamcheckerai.com',
     instagram_url: instagram_url?.trim() || 'https://insta.openinapp.co/utw2r',
     governing_law: governing_law?.trim() || 'Laws of India',
     dispute_jurisdiction: dispute_jurisdiction?.trim() || 'Courts of India',

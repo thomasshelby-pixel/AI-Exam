@@ -23,6 +23,9 @@ import { useAuth } from '../../context/AuthContext.js';
 
 interface EvaluationItem {
   id: string;
+  display_id?: string;
+  displayId?: string;
+  evaluation_sequence?: number;
   level: string;
   material_type: string;
   subject_key: string;
@@ -140,6 +143,8 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
       return (
         (ev.subject_name || '').toLowerCase().includes(q) ||
         (ev.material_type || '').toLowerCase().includes(q) ||
+        (ev.display_id || ev.displayId || '').toLowerCase().includes(q) ||
+        (ev.id || '').toLowerCase().includes(q) ||
         (ev.institute_name && ev.institute_name.toLowerCase().includes(q))
       );
     }
@@ -262,7 +267,14 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                   return (
                     <tr key={ev.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4">
-                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{ev.subject_name}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{ev.subject_name}</span>
+                          {(ev.display_id || ev.displayId) && (
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                              {ev.display_id || ev.displayId}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">CA {ev.level}</span>
                       </td>
                       <td className="py-3 px-4">

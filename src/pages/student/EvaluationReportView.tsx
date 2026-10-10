@@ -234,6 +234,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     isMcqPaper,
   } = evaluationResult;
 
+  const displayEvaluationId = (evaluationResult as any).displayId || (evaluationResult as any).display_id || evaluationResult.evaluationId;
+  const studentCode = (evaluationResult as any).studentCode || (evaluationResult as any).student_code;
+
   // The official paper maximum is authoritative (e.g. 100 for CA Intermediate/Final papers)
   const officialMax = officialPaperMaxMarks || (maximumMarks >= 100 ? maximumMarks : 100);
   const attemptedOrEvaluatedMax =
@@ -640,7 +643,14 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                 </div>
               )}
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white print:text-black">{subjectName}</h1>
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white print:text-black">{subjectName}</h1>
+              {displayEvaluationId && (
+                <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/80 tracking-wider">
+                  {displayEvaluationId}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 print:text-gray-600 flex items-center flex-wrap gap-1.5">
               <span>CA {caLevel} • {materialType === 'MTP' && mtpSeries ? `MTP Series ${mtpSeries}` : `${materialType} Series`} • {attempt || 'May 2026'}</span>
             </p>
@@ -648,6 +658,11 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
           <div className="text-left sm:text-right text-xs text-slate-500 dark:text-slate-400 print:text-gray-600">
             <p className="font-bold text-slate-800 dark:text-slate-100 print:text-black">{studentName}</p>
+            {studentCode && (
+              <p className="font-mono text-indigo-600 dark:text-indigo-400 font-bold mt-0.5">
+                Student Code: {studentCode}
+              </p>
+            )}
             <p className="font-mono mt-0.5">
               Roll / Reg: {!icaiRegistrationNumber || icaiRegistrationNumber === '000' || icaiRegistrationNumber === 'N/A' || icaiRegistrationNumber === 'NA' || icaiRegistrationNumber === 'WRO0987654' ? 'Not provided' : icaiRegistrationNumber}
             </p>

@@ -2508,7 +2508,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const { status, level, search, classification, source } = req.query;
     let query = `
-      SELECT e.id, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
+      SELECT e.id, e.display_id, e.evaluation_sequence, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
              e.paper, e.attempt, COALESCE(e.evaluation_source, 'PUBLIC') as evaluation_source, e.institute_id, e.sponsoring_institute_id,
              e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
              e.grade, e.confidence_score, e.status, e.document_validation_status,
@@ -2516,6 +2516,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
              e.created_at, e.completed_at,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
              COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
+             p.student_code,
              p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
@@ -2543,8 +2544,8 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(source);
     }
     if (search) {
-      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ? OR e.paper LIKE ? OR i.name LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ? OR e.display_id LIKE ? OR p.student_code LIKE ? OR e.paper LIKE ? OR i.name LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     query += ' ORDER BY e.created_at DESC LIMIT 300';
@@ -2562,22 +2563,23 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
       SELECT e.*,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
              COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
+             p.student_code,
              p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
       LEFT JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
-      WHERE e.id = ?
-    `).get(req.params.id);
+      WHERE e.id = ? OR e.display_id = ?
+    `).get(req.params.id, req.params.id);
 
     if (!evaluation) {
       // Check if deleted
       const wasDeleted = db.prepare(`
         SELECT details, created_at FROM audit_logs
-        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
         ORDER BY created_at DESC LIMIT 1
-      `).get(req.params.id);
+      `).get(req.params.id, `%"${req.params.id}"%`);
 
       if (wasDeleted) {
         return res.status(404).json({
@@ -3507,7 +3509,7 @@ router.put('/pricing', (req: AuthRequest, res: Response) => {
       { key: 'PRICE_PER_CREDIT_INR', value: String(pricePerCredit || '10') },
       { key: 'FREE_TIER_EVALUATIONS', value: String(freeTierEvaluations || '2') },
       { key: 'DEFAULT_INSTITUTE_QUOTA', value: String(defaultInstituteQuota || '500') },
-      { key: 'SUPPORT_EMAIL', value: String(supportEmail || 'caexamchecker.support@gmail.com') },
+      { key: 'SUPPORT_EMAIL', value: String(supportEmail || 'support@caexamcheckerai.com') },
       { key: 'INSTAGRAM_URL', value: String(instagramUrl || 'https://insta.openinapp.co/utw2r') },
     ];
 

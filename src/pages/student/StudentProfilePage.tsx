@@ -36,6 +36,8 @@ import {
   X,
   ShieldAlert,
   Loader2,
+  Fingerprint,
+  Copy,
 } from 'lucide-react';
 
 interface StudentProfilePageProps {
@@ -57,6 +59,8 @@ interface ProfileApiResponse {
     updatedAt: string;
   };
   profile: {
+    studentCode?: string;
+    student_code?: string;
     caLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
     icaiRegistrationNumber: string;
     city: string;
@@ -290,6 +294,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
   const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [copiedStudentCode, setCopiedStudentCode] = useState<boolean>(false);
 
   // Password States
   const [currentPassword, setCurrentPassword] = useState<string>('');
@@ -565,7 +570,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         </div>
 
         {/* Quick Stats Banner */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900/60 rounded-xl px-4 py-2.5 shadow-sm text-left">
+            <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+              <Fingerprint className="w-3.5 h-3.5" />
+              Student Code
+            </p>
+            <p className="text-lg font-mono font-bold text-indigo-900 dark:text-indigo-100 tracking-wide">
+              {profile?.studentCode || profile?.student_code || 'ST-PENDING'}
+            </p>
+          </div>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 shadow-sm text-right">
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Evaluations Taken</p>
             <p className="text-lg font-bold text-slate-900 dark:text-white">{stats?.totalEvaluations || 0} Sheets</p>
@@ -825,6 +839,44 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     value={profile?.icaiRegistrationNumber || 'REG-PENDING'}
                     className="w-full pl-9 pr-3.5 py-2.5 text-sm bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 rounded-xl cursor-not-allowed font-mono text-xs"
                   />
+                </div>
+              </div>
+
+              {/* Permanent Student Code (System / Read-only) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                  <span>Permanent Student Code</span>
+                  <span className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold flex items-center gap-1">
+                    <Fingerprint className="w-3 h-3" /> Unique ID
+                  </span>
+                </label>
+                <div className="relative">
+                  <Fingerprint className="w-4 h-4 text-indigo-500 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    disabled
+                    value={profile?.studentCode || profile?.student_code || 'ST-PENDING'}
+                    className="w-full pl-9 pr-10 py-2.5 text-sm bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/50 text-indigo-900 dark:text-indigo-200 rounded-xl cursor-default font-mono font-bold text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const code = profile?.studentCode || profile?.student_code;
+                      if (code) {
+                        navigator.clipboard.writeText(code);
+                        setCopiedStudentCode(true);
+                        setTimeout(() => setCopiedStudentCode(false), 2000);
+                      }
+                    }}
+                    title="Copy Student Code"
+                    className="absolute right-2 top-2 p-1.5 rounded-lg text-indigo-600 hover:text-indigo-800 dark:hover:text-indigo-300 hover:bg-indigo-100/70 dark:hover:bg-indigo-900/50 transition cursor-pointer"
+                  >
+                    {copiedStudentCode ? (
+                      <Check className="w-4 h-4 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
 

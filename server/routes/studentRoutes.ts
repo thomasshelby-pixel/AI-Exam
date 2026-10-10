@@ -37,6 +37,10 @@ import { validateSrn } from '../utils/srnValidator.js';
 import { selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
+import {
+  getOrAssignStudentCode,
+  generateCanonicalEvaluationId,
+} from '../services/studentIdentityService.js';
 
 const router = Router();
 
@@ -240,7 +244,7 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
     // Evaluations summary
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
     const evaluations = db.prepare(`
-      SELECT e.id, e.subject_name, e.level, e.material_type, e.total_marks, e.maximum_marks, e.percentage, e.grade,
+      SELECT e.id, e.display_id, e.evaluation_sequence, e.subject_name, e.level, e.material_type, e.total_marks, e.maximum_marks, e.percentage, e.grade,
              e.confidence_score, e.status, e.document_validation_status, e.created_at, e.completed_at
       FROM evaluations e
       LEFT JOIN users u ON u.id = e.student_id
@@ -936,17 +940,26 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     const evalModelProviderRow = db.prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_MODEL_PROVIDER'").get() as { value: string } | undefined;
     const modelUsed = evalModelProviderRow?.value || 'gemini-3.8-flash';
 
+    // Generate canonical human-friendly Evaluation ID & continuous sequence
+    const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
+      studentId,
+      subjectKey,
+      subjectName,
+      level,
+      createdAt: new Date(),
+    });
+
     // Step C: Initialize Evaluation Record with initial state and material tracking
     db.prepare(`
       INSERT INTO evaluations (
-        id, student_id, evaluation_source, material_source, sponsoring_institute_id,
+        id, display_id, evaluation_sequence, student_id, evaluation_source, material_source, sponsoring_institute_id,
         institute_id, institute_enrollment_id, batch_id,
         level, material_type, mtp_series, pyq_source_format, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status,
         entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
       ) VALUES (
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
@@ -955,6 +968,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       )
     `).run(
       evaluationId,
+      evalDisplayId,
+      evalSequence,
       studentId,
       requestedEvalSource,
       materialSource,
@@ -1171,7 +1186,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
     let query = `
-      SELECT e.id, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
+      SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
              e.rejection_reason, e.created_at, e.completed_at,
              e.evaluation_source, e.material_source, e.sponsoring_institute_id,
@@ -1204,8 +1219,8 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(status);
     }
     if (search) {
-      query += ' AND (e.subject_name LIKE ? OR e.original_filename LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`);
+      query += ' AND (e.subject_name LIKE ? OR e.original_filename LIKE ? OR e.display_id LIKE ? OR e.id LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     query += ' ORDER BY e.created_at DESC';
@@ -1265,27 +1280,27 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
     }
 
     if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId) as any;
     } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
       record = db.prepare(`
         SELECT e.* FROM evaluations e
         LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
-        WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ?)
-      `).get(evaluationId, studentId, (req.user as any)?.instituteId || '') as any;
+        WHERE (e.id = ? OR e.display_id = ?) AND (e.student_id = ? OR sp.institute_id = ?)
+      `).get(evaluationId, evaluationId, studentId, (req.user as any)?.instituteId || '') as any;
     } else {
       record = db.prepare(`
         SELECT e.* FROM evaluations e
         LEFT JOIN users u ON u.id = e.student_id
-        WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
-      `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail)) as any;
+        WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
+      `).get(evaluationId, evaluationId, ...getStudentOwnershipParams(studentId, studentEmail)) as any;
     }
 
     if (!record) {
       const wasDeleted = db.prepare(`
         SELECT details, created_at FROM audit_logs
-        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
         ORDER BY created_at DESC LIMIT 1
-      `).get(evaluationId);
+      `).get(evaluationId, `%"${evaluationId}"%`);
 
       if (wasDeleted) {
         return res.status(404).json({
@@ -1344,7 +1359,8 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
           resultJson.originalEvaluationSnapshot = auditMeta.originalEvaluationSnapshot || null;
 
           // Single Source of Truth: inject authoritative EvaluationRunPackage if available
-          const runPkg = loadEvaluationRunPackage(evaluationId);
+          const realEvaluationId = record.id;
+          const runPkg = loadEvaluationRunPackage(realEvaluationId);
           if (runPkg) {
             resultJson.evaluationRunPackage = runPkg;
             resultJson.canonicalLedger = runPkg.scoreLedger;
@@ -1358,11 +1374,23 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
       }
     }
 
-    const runPackage = loadEvaluationRunPackage(evaluationId);
+    const realEvaluationId = record.id;
+    const runPackage = loadEvaluationRunPackage(realEvaluationId);
+    const studentCode = getOrAssignStudentCode(record.student_id as string);
+    const displayId = (record.display_id as string) || record.id;
+
+    if (resultJson) {
+      (resultJson as any).displayId = displayId;
+      (resultJson as any).studentCode = studentCode;
+    }
 
     return res.json({
       evaluation: {
         ...record,
+        displayId,
+        display_id: displayId,
+        studentCode,
+        student_code: studentCode,
         institute_name: instituteName,
         sponsoring_institute_name: sponsoringInstituteName || instituteName,
         material_source: record.material_source || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL'),
@@ -1394,24 +1422,25 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     let record: any;
     const roleStr = String(userRole);
     if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
     } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
       record = db.prepare(`
         SELECT e.* FROM evaluations e
         LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
-        WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
-      `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+        WHERE (e.id = ? OR e.display_id = ?) AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+      `).get(evaluationId, evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
     } else {
-      record = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
+      record = db.prepare('SELECT * FROM evaluations WHERE (id = ? OR display_id = ?) AND student_id = ?').get(evaluationId, evaluationId, studentId);
     }
 
     if (!record) {
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
-    const checkedCopyPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
-    const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+    const checkedCopyPath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
+    const reportPath = path.join(uploadsDir, `${realEvaluationId}_report.pdf`);
 
     const checkedCopyReady = record.checked_copy_status === 'READY' || record.checked_copy_status === 'GENERATED' || fs.existsSync(checkedCopyPath);
     const reportReady = record.report_status === 'READY' || fs.existsSync(reportPath);
@@ -1470,26 +1499,27 @@ router.post(
       let record: any;
       const roleStr = String(userRole);
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-        record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
       } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
-          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
-        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+          WHERE (e.id = ? OR e.display_id = ?) AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
       } else {
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN users u ON u.id = e.student_id
-          WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
-        `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
+          WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
+        `).get(evaluationId, evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
       }
 
       if (!record) {
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
-      const verificationResult = await verifyEvaluationConsistency(evaluationId);
+      const realEvaluationId = record.id;
+      const verificationResult = await verifyEvaluationConsistency(realEvaluationId);
       if (verificationResult.success) {
         return res.status(200).json(verificationResult);
       } else {
@@ -1533,28 +1563,28 @@ router.get(
 
       let record: any;
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-        record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
       } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
-          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
-        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+          WHERE (e.id = ? OR e.display_id = ?) AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
       } else {
         const studentEmail = req.user!.email?.toLowerCase().trim() || '';
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN users u ON u.id = e.student_id
-          WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
-        `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
+          WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
+        `).get(evaluationId, evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
       }
 
       if (!record) {
         const wasDeleted = db.prepare(`
           SELECT details, created_at FROM audit_logs
-          WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+          WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
           ORDER BY created_at DESC LIMIT 1
-        `).get(evaluationId);
+        `).get(evaluationId, `%"${evaluationId}"%`);
 
         if (wasDeleted) {
           return res.status(404).json({
@@ -1566,13 +1596,17 @@ router.get(
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
+      const realEvaluationId = record.id;
+      const evalDisplayId = record.display_id || record.id;
+      const studentCode = getOrAssignStudentCode(record.student_id);
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
       const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
 
       if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
-        const verifyRes = await verifyEvaluationConsistency(evaluationId);
+        const verifyRes = await verifyEvaluationConsistency(realEvaluationId);
         if (verifyRes.success) {
-          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(realEvaluationId);
         } else {
           return res.status(409).json({
             error: verifyRes.error || 'Evaluation consistency verification flagged issues requiring administrative review.',
@@ -1597,30 +1631,30 @@ router.get(
 
       // If specific version is requested, serve that archived version
       if (requestedVersion === 'v1') {
-        const v1Path = path.join(uploadsDir, `${evaluationId}_checked_copy_v1.pdf`);
+        const v1Path = path.join(uploadsDir, `${realEvaluationId}_checked_copy_v1.pdf`);
         if (fs.existsSync(v1Path)) {
           const v1Buffer = fs.readFileSync(v1Path);
           res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}_v1_archived.pdf"`);
+          res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evalDisplayId}_v1_archived.pdf"`);
           return res.send(v1Buffer);
         }
       }
 
-      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+      const checkedFilePath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
 
       // If pre-generated checked copy is already cached on disk, serve directly
       if (fs.existsSync(checkedFilePath)) {
         const cachedCheckedBuffer = fs.readFileSync(checkedFilePath);
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evalDisplayId}.pdf"`);
         return res.send(cachedCheckedBuffer);
       }
 
       // Check persistent cloud storage
-      const persistentChecked = await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`);
+      const persistentChecked = await getPersistentFile(`${realEvaluationId}_checked_copy`, `${realEvaluationId}_checked_copy.pdf`);
       if (persistentChecked && persistentChecked.buffer) {
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evalDisplayId}.pdf"`);
         return res.send(persistentChecked.buffer);
       }
 
@@ -1695,6 +1729,8 @@ router.get(
       const checkedCopyBuffer = await generateCheckedCopyPdf(
         {
           id: record.id,
+          displayId: evalDisplayId,
+          studentCode,
           studentName: studentRow?.full_name || 'CA Student',
           level: record.level,
           subjectName: record.subject_name,
@@ -1723,7 +1759,7 @@ router.get(
       }
 
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evaluationId}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="Checked_Copy_${evalDisplayId}.pdf"`);
       return res.send(checkedCopyBuffer);
     } catch (error: unknown) {
       console.error('Download checked copy error:', error);
@@ -1759,28 +1795,28 @@ router.get(
 
       let record: any;
       if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-        record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+        record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
       } else if (roleStr === 'INSTITUTE_ADMIN' || roleStr === 'FACULTY') {
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
-          WHERE e.id = ? AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
-        `).get(evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
+          WHERE (e.id = ? OR e.display_id = ?) AND (e.student_id = ? OR sp.institute_id = ? OR e.institute_id = ?)
+        `).get(evaluationId, evaluationId, studentId, (req.user as any)?.instituteId || '', (req.user as any)?.instituteId || '');
       } else {
         const studentEmail = req.user!.email?.toLowerCase().trim() || '';
         record = db.prepare(`
           SELECT e.* FROM evaluations e
           LEFT JOIN users u ON u.id = e.student_id
-          WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
-        `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
+          WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
+        `).get(evaluationId, evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
       }
 
       if (!record) {
         const wasDeleted = db.prepare(`
           SELECT details, created_at FROM audit_logs
-          WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+          WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
           ORDER BY created_at DESC LIMIT 1
-        `).get(evaluationId);
+        `).get(evaluationId, `%"${evaluationId}"%`);
 
         if (wasDeleted) {
           return res.status(404).json({
@@ -1792,13 +1828,17 @@ router.get(
         return res.status(404).json({ error: 'Evaluation not found' });
       }
 
+      const realEvaluationId = record.id;
+      const evalDisplayId = record.display_id || record.id;
+      const studentCode = getOrAssignStudentCode(record.student_id);
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
       const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
 
       if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
-        const verifyRes = await verifyEvaluationConsistency(evaluationId);
+        const verifyRes = await verifyEvaluationConsistency(realEvaluationId);
         if (verifyRes.success) {
-          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+          record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(realEvaluationId);
         } else {
           return res.status(409).json({
             error: verifyRes.error || 'Evaluation consistency verification flagged issues requiring administrative review.',
@@ -1822,29 +1862,29 @@ router.get(
       const requestedVersion = (req.query.version as string || '').toLowerCase();
 
       if (requestedVersion === 'v1') {
-        const v1Path = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+        const v1Path = path.join(uploadsDir, `${realEvaluationId}_report_v1.pdf`);
         if (fs.existsSync(v1Path)) {
           const v1Buffer = fs.readFileSync(v1Path);
           res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}_v1_archived.pdf"`);
+          res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evalDisplayId}_v1_archived.pdf"`);
           return res.send(v1Buffer);
         }
       }
 
       // Check if report PDF was already pre-generated and cached on disk
-      const reportFilePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+      const reportFilePath = path.join(uploadsDir, `${realEvaluationId}_report.pdf`);
       if (fs.existsSync(reportFilePath)) {
         const cachedBuffer = fs.readFileSync(reportFilePath);
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evalDisplayId}.pdf"`);
         return res.send(cachedBuffer);
       }
 
       // Check persistent cloud storage
-      const persistentReport = await getPersistentFile(`${evaluationId}_report`, `Evaluation_Report_${evaluationId}.pdf`);
+      const persistentReport = await getPersistentFile(`${realEvaluationId}_report`, `Evaluation_Report_${realEvaluationId}.pdf`);
       if (persistentReport && persistentReport.buffer) {
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evalDisplayId}.pdf"`);
         return res.send(persistentReport.buffer);
       }
 
@@ -1860,7 +1900,7 @@ router.get(
       if (record.result_json) {
         try {
           resultJson = JSON.parse(record.result_json);
-          const runPkg = loadEvaluationRunPackage(evaluationId);
+          const runPkg = loadEvaluationRunPackage(realEvaluationId);
           if (runPkg) {
             resultJson.evaluationRunPackage = runPkg;
             resultJson.canonicalLedger = runPkg.scoreLedger;
@@ -1889,6 +1929,8 @@ router.get(
       const reportBuffer = await generateDetailedReportPdf(
         {
           id: record.id,
+          displayId: evalDisplayId,
+          studentCode,
           studentName: studentRow?.full_name || 'CA Student',
           level: record.level,
           subjectName: record.subject_name,
@@ -1909,20 +1951,20 @@ router.get(
 
       // Persist generated report to Firebase Cloud Storage
       savePersistentFile(
-        `${evaluationId}_report`,
-        `Evaluation_Report_${evaluationId}.pdf`,
+        `${realEvaluationId}_report`,
+        `Evaluation_Report_${evalDisplayId}.pdf`,
         'application/pdf',
         reportBuffer,
         'EVALUATION_REPORT',
         {
           ownerUserId: record.student_id,
-          evaluationId,
+          evaluationId: realEvaluationId,
           instituteId: record.institute_id || null,
         }
       ).catch((e) => console.warn('[StudentRoutes] Report persist note:', e));
 
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evaluationId}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="Evaluation_Report_${evalDisplayId}.pdf"`);
       return res.send(reportBuffer);
     } catch (error: unknown) {
       console.error('Download report error:', error);
@@ -1948,21 +1990,21 @@ router.get(
     let record: any;
     const roleStr = String(userRole);
     if (roleStr === 'SUPER_ADMIN' || roleStr === 'ADMIN') {
-      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
     } else {
       record = db.prepare(`
         SELECT e.* FROM evaluations e
         LEFT JOIN users u ON u.id = e.student_id
-        WHERE e.id = ? AND ${buildStudentOwnershipSql('e', 'u')}
-      `).get(evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
+        WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
+      `).get(evaluationId, evaluationId, ...getStudentOwnershipParams(studentId, studentEmail));
     }
 
     if (!record) {
       const wasDeleted = db.prepare(`
         SELECT details, created_at FROM audit_logs
-        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
         ORDER BY created_at DESC LIMIT 1
-      `).get(evaluationId);
+      `).get(evaluationId, `%"${evaluationId}"%`);
 
       if (wasDeleted) {
         return res.status(404).json({
@@ -1974,20 +2016,21 @@ router.get(
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
-    const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
+    const originalFilePath = path.join(uploadsDir, `${realEvaluationId}_original.pdf`);
 
     if (fs.existsSync(originalFilePath)) {
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${evaluationId}.pdf`}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
       return res.sendFile(originalFilePath);
     }
 
     // Check persistent cloud storage
-    const persistentOriginal = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
+    const persistentOriginal = await getPersistentFile(`${realEvaluationId}_original`, `${realEvaluationId}_original.pdf`);
     if (persistentOriginal && persistentOriginal.buffer) {
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${evaluationId}.pdf`}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
       return res.send(persistentOriginal.buffer);
     }
 
@@ -2085,11 +2128,12 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
 
     // Verify evaluation exists and belongs to student
     const evaluation = db.prepare(`
-      SELECT id, student_id, status, subject_name, paper, total_marks, percentage, audit_metadata_json
+      SELECT id, display_id, student_id, status, subject_name, paper, total_marks, percentage, audit_metadata_json
       FROM evaluations 
-      WHERE id = ?
-    `).get(evaluationId) as {
+      WHERE id = ? OR display_id = ?
+    `).get(evaluationId, evaluationId) as {
       id: string;
+      display_id?: string;
       student_id: string;
       status: string;
       subject_name: string;
@@ -2103,6 +2147,8 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    const realEvaluationId = evaluation.id;
+
     if (evaluation.student_id !== studentId && req.user!.role !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Unauthorized to request recheck for this evaluation' });
     }
@@ -2115,7 +2161,7 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
     const existing = db.prepare(`
       SELECT id FROM recheck_requests 
       WHERE evaluation_id = ? AND (question_number = ? OR question_number = 'ALL' OR ? = 'ALL') AND status = 'PENDING'
-    `).get(evaluationId, questionNumber, questionNumber);
+    `).get(realEvaluationId, questionNumber, questionNumber);
 
     if (existing) {
       return res.status(409).json({ error: 'A pending review request already exists for this evaluation / question.' });
@@ -2183,7 +2229,7 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
     `).run(
       `log_${crypto.randomBytes(8).toString('hex')}`,
       studentId,
-      evaluationId,
+      realEvaluationId,
       `Student requested recheck for ${questionNumber} (${requestType}): ${finalReason}`
     );
 
@@ -2205,7 +2251,7 @@ router.get('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
     const evaluationId = req.params.id;
 
     // Verify ownership
-    const evaluation = db.prepare('SELECT student_id FROM evaluations WHERE id = ?').get(evaluationId) as { student_id: string } | undefined;
+    const evaluation = db.prepare('SELECT id, student_id FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId) as { id: string; student_id: string } | undefined;
     if (!evaluation) {
       return res.status(404).json({ error: 'Evaluation not found' });
     }
@@ -2213,11 +2259,12 @@ router.get('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Unauthorized to view rechecks for this evaluation' });
     }
 
+    const realEvaluationId = evaluation.id;
     const requests = db.prepare(`
       SELECT * FROM recheck_requests 
       WHERE evaluation_id = ? 
       ORDER BY created_at DESC
-    `).all(evaluationId);
+    `).all(realEvaluationId);
 
     return res.json({ success: true, requests });
   } catch (error: unknown) {
@@ -2235,18 +2282,19 @@ router.get(['/evaluations/:id/recheck-evidence', '/evaluations/:id/evidence'], a
 
     let evaluation: any = null;
     if ((userRole as string) === 'SUPER_ADMIN' || userRole === 'INSTITUTE_ADMIN') {
-      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ? OR display_id = ?').get(evaluationId, evaluationId);
     } else {
-      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ? AND student_id = ?').get(evaluationId, studentId);
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE (id = ? OR display_id = ?) AND student_id = ?').get(evaluationId, evaluationId, studentId);
     }
 
     if (!evaluation) {
       return res.status(404).json({ error: 'Evaluation not found or unauthorized' });
     }
 
+    const realEvaluationId = evaluation.id;
     const recheck = db.prepare(`
       SELECT * FROM recheck_requests WHERE evaluation_id = ? ORDER BY created_at DESC LIMIT 1
-    `).get(evaluationId) as any;
+    `).get(realEvaluationId) as any;
 
     let evalResult: any = {};
     try {
@@ -2447,6 +2495,8 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         updatedAt: user.updated_at,
       },
       profile: {
+        studentCode: profile?.student_code || getOrAssignStudentCode(studentId),
+        student_code: profile?.student_code || getOrAssignStudentCode(studentId),
         caLevel: profile?.ca_level || 'INTERMEDIATE',
         icaiRegistrationNumber: profile?.icai_registration_number || '',
         city: profile?.city || '',
@@ -2548,15 +2598,17 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
       ? JSON.stringify(Array.isArray(preferredSubjects) ? preferredSubjects : [preferredSubjects])
       : null;
 
-    const existingProfile = db.prepare('SELECT user_id FROM student_profiles WHERE user_id = ?').get(studentId);
+    const existingProfile = db.prepare('SELECT user_id, student_code FROM student_profiles WHERE user_id = ?').get(studentId) as { user_id: string; student_code?: string } | undefined;
     if (!existingProfile) {
+      const newStudentCode = getOrAssignStudentCode(studentId);
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
+          user_id, student_code, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
           free_evaluations_used, purchased_credits, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         studentId,
+        newStudentCode,
         normalizedSrn || 'REG-PENDING',
         caLevel || 'INTERMEDIATE',
         city !== undefined ? (city ? city.trim() : '') : '',
@@ -2564,6 +2616,9 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
         avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : ''
       );
     } else {
+      if (!existingProfile.student_code) {
+        getOrAssignStudentCode(studentId);
+      }
       db.prepare(`
         UPDATE student_profiles
         SET icai_registration_number = CASE WHEN ? = 1 THEN ? ELSE icai_registration_number END,
@@ -3590,14 +3645,25 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       }
     ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
 
+    // Generate canonical human-friendly Evaluation ID & continuous sequence
+    const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
+      studentId,
+      subjectKey: (test as any).subject_key || null,
+      subjectName: test.title || test.subject_name || null,
+      level: test.level,
+      createdAt: new Date(),
+    });
+
     // Initial evaluation record (100% Institute Sponsored, zero student credit deduction)
     db.prepare(`
       INSERT INTO evaluations (
-        id, student_id, institute_id, material_id, subject_name, level, material_type,
+        id, display_id, evaluation_sequence, student_id, institute_id, material_id, subject_name, level, material_type,
         paper, attempt, checking_mode, status, document_validation_status
-      ) VALUES (?, ?, ?, ?, ?, ?, 'MOCK_EXAM', ?, 'Institute Series', ?, 'PROCESSING', 'VERIFIED')
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MOCK_EXAM', ?, 'Institute Series', ?, 'PROCESSING', 'VERIFIED')
     `).run(
       evaluationId,
+      evalDisplayId,
+      evalSequence,
       studentId,
       test.institute_id,
       test.id,
@@ -3722,14 +3788,25 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       }
     ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
 
+    // Generate canonical human-friendly Evaluation ID & continuous sequence
+    const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
+      studentId,
+      subjectKey: material.subject_key || null,
+      subjectName: material.subject_name || material.title || null,
+      level: material.level,
+      createdAt: new Date(),
+    });
+
     // Initial evaluation record (100% Institute Sponsored, zero student credit deduction)
     db.prepare(`
       INSERT INTO evaluations (
-        id, student_id, institute_id, material_id, subject_name, level, material_type,
+        id, display_id, evaluation_sequence, student_id, institute_id, material_id, subject_name, level, material_type,
         paper, attempt, checking_mode, status, document_validation_status
-      ) VALUES (?, ?, ?, ?, ?, ?, 'MOCK_EXAM', ?, 'Institute Series', ?, 'PROCESSING', 'VERIFIED')
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MOCK_EXAM', ?, 'Institute Series', ?, 'PROCESSING', 'VERIFIED')
     `).run(
       evaluationId,
+      evalDisplayId,
+      evalSequence,
       studentId,
       material.institute_id,
       material.id,

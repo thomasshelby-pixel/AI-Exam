@@ -25,6 +25,7 @@ import {
   passwordResetRateLimiter,
 } from '../utils/rateLimiter.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
+import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
 
@@ -505,11 +506,12 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
         VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
       `).run(userId, normalizedEmail, passwordHash, fullName.trim(), phone?.trim() || null, role);
 
-      // Insert student profile (default 0 used, 0 purchased, First 2 free)
+      // Insert student profile with permanent unique student code (default 0 used, 0 purchased, First 2 free)
+      const studentCode = generateUniqueStudentCode();
       db.prepare(`
-        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
-        VALUES (?, ?, ?, 0, 0)
-      `).run(userId, srnValidation.normalized, caLevel || 'INTERMEDIATE');
+        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code)
+        VALUES (?, ?, ?, 0, 0, ?)
+      `).run(userId, srnValidation.normalized, caLevel || 'INTERMEDIATE', studentCode);
 
       // If referral / promo code was applied, insert redemption record transactionally
       if (promoCampaign) {
@@ -714,9 +716,10 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const lookupEmail = normalizedEmail === 'caexamchecker.support@gmail.com' ? 'support@caexamcheckerai.com' : normalizedEmail;
     let user = db.prepare(`
       SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
-    `).get(normalizedEmail) as {
+    `).get(lookupEmail) as {
       id: string;
       email: string;
       password_hash: string;
@@ -732,7 +735,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       isAuthenticated = true;
     } else {
       // Direct Cloud Firestore fallback & self-healing
-      const firestoreUser = await authenticateWithFirestoreFallback(normalizedEmail, password);
+      const firestoreUser = await authenticateWithFirestoreFallback(lookupEmail, password);
       if (firestoreUser) {
         user = firestoreUser;
         isAuthenticated = true;
@@ -1429,7 +1432,12 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         WHERE p.user_id = ?
       `).get(userId) as Record<string, unknown> | undefined;
 
-      profileData = studentProfile || {};
+      const permanentCode = (studentProfile?.student_code as string) || getOrAssignStudentCode(userId);
+      profileData = {
+        ...(studentProfile || {}),
+        student_code: permanentCode,
+        studentCode: permanentCode,
+      };
     } else if (user.role === 'INSTITUTE_ADMIN') {
       const institute = db.prepare(`
         SELECT * FROM institutes WHERE email = ?

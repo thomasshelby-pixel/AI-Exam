@@ -10,7 +10,7 @@ async function runTests() {
 
   const superAdmin = {
     id: 'usr_super_admin_001',
-    email: 'caexamchecker.support@gmail.com',
+    email: 'support@caexamcheckerai.com',
     role: 'SUPER_ADMIN',
   };
 

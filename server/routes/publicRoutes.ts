@@ -87,7 +87,7 @@ router.get('/pricing', (req: Request, res: Response) => {
   return res.json({
     pricePerCreditINR,
     freeTierEvaluations,
-    supportEmail: settingsMap.SUPPORT_EMAIL || 'caexamchecker.support@gmail.com',
+    supportEmail: settingsMap.SUPPORT_EMAIL || 'support@caexamcheckerai.com',
     instagramUrl: settingsMap.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
     plans,
     institutePlans,

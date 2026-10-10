@@ -293,6 +293,17 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     let reportStatus = 'PENDING';
     let structuredAnnotationsJson = '[]';
 
+    const evalIdentityRow = db.prepare(`
+      SELECT e.display_id, p.student_code, p.icai_registration_number, u.full_name
+      FROM evaluations e
+      LEFT JOIN student_profiles p ON p.user_id = e.student_id
+      LEFT JOIN users u ON u.id = e.student_id
+      WHERE e.id = ?
+    `).get(evaluationId) as any;
+    const resolvedDisplayId = evalIdentityRow?.display_id || evaluationId;
+    const resolvedStudentCode = evalIdentityRow?.student_code || undefined;
+    const resolvedRegNo = evalIdentityRow?.icai_registration_number || undefined;
+
     // 5A. Generate Checked Copy PDF
     try {
       const origDoc = await PDFDocument.load(job.pdfBuf, { ignoreEncryption: true });
@@ -300,7 +311,10 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
       const meta = {
         id: evaluationId,
-        studentName: job.studentName,
+        displayId: resolvedDisplayId,
+        studentCode: resolvedStudentCode,
+        icaiRegistrationNumber: resolvedRegNo,
+        studentName: evalIdentityRow?.full_name || job.studentName,
         level: job.level,
         subjectName: job.subjectName,
         paper: job.paper || 'Paper 1',
@@ -342,10 +356,12 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
     // 5B. Generate Detailed Report PDF
     try {
-      const studentRow = db.prepare('SELECT full_name FROM users WHERE id = ?').get(studentId) as any;
       const reportMeta = {
         id: evaluationId,
-        studentName: studentRow?.full_name || job.studentName || 'CA Student',
+        displayId: resolvedDisplayId,
+        studentCode: resolvedStudentCode,
+        icaiRegistrationNumber: resolvedRegNo,
+        studentName: evalIdentityRow?.full_name || job.studentName || 'CA Student',
         level: job.level,
         subjectName: job.subjectName,
         paper: job.paper || 'Paper 1',

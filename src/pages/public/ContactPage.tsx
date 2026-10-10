@@ -57,10 +57,10 @@ export const ContactPage: React.FC = () => {
             <h3 className="font-bold text-slate-900 dark:text-white text-sm">Email Support</h3>
             <p className="text-xs text-slate-600 dark:text-slate-400">Direct response within 12 hours for all candidate inquiries.</p>
             <a
-              href="mailto:caexamchecker.support@gmail.com"
+              href="mailto:support@caexamcheckerai.com"
               className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline block break-all"
             >
-              caexamchecker.support@gmail.com
+              support@caexamcheckerai.com
             </a>
           </div>
 

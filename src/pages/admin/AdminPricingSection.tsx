@@ -70,7 +70,7 @@ export const AdminPricingSection: React.FC<AdminPricingSectionProps> = ({ onNoti
   const [pricePerCredit, setPricePerCredit] = useState<string>('10');
   const [freeTierEvaluations, setFreeTierEvaluations] = useState<string>('2');
   const [defaultInstituteQuota, setDefaultInstituteQuota] = useState<string>('500');
-  const [supportEmail, setSupportEmail] = useState<string>('caexamchecker.support@gmail.com');
+  const [supportEmail, setSupportEmail] = useState<string>('support@caexamcheckerai.com');
   const [instagramUrl, setInstagramUrl] = useState<string>('https://insta.openinapp.co/utw2r');
 
   // Student Credit Packs
@@ -94,7 +94,7 @@ export const AdminPricingSection: React.FC<AdminPricingSectionProps> = ({ onNoti
         setPricePerCredit(globalRes.settings.PRICE_PER_CREDIT_INR || '10');
         setFreeTierEvaluations(globalRes.settings.FREE_TIER_EVALUATIONS || '2');
         setDefaultInstituteQuota(globalRes.settings.DEFAULT_INSTITUTE_QUOTA || '500');
-        setSupportEmail(globalRes.settings.SUPPORT_EMAIL || 'caexamchecker.support@gmail.com');
+        setSupportEmail(globalRes.settings.SUPPORT_EMAIL || 'support@caexamcheckerai.com');
         setInstagramUrl(globalRes.settings.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r');
       }
 

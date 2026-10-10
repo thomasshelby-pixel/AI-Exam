@@ -11,6 +11,7 @@ import {
 } from './services/legalConstants.js';
 import { initMcqTables, seedMcqAdminAndQuestions } from './services/mcqService.js';
 import { initFeatureFlagsTable } from './services/featureControlService.js';
+import { backfillStudentCodesAndEvaluationIds } from './services/studentIdentityService.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -196,6 +197,7 @@ export function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS student_profiles (
       user_id TEXT PRIMARY KEY,
+      student_code TEXT UNIQUE,
       icai_registration_number TEXT NOT NULL,
       ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
       free_evaluations_used INTEGER NOT NULL DEFAULT 0,
@@ -337,6 +339,8 @@ export function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS evaluations (
       id TEXT PRIMARY KEY,
+      display_id TEXT UNIQUE,
+      evaluation_sequence INTEGER,
       student_id TEXT NOT NULL,
       institute_id TEXT,
       assignment_id TEXT,
@@ -1832,17 +1836,42 @@ function runMigrations() {
   } catch (revMigErr) {
     console.warn('[DB Migration] Error migrating review tables/statuses:', revMigErr);
   }
+
+  // Student Code and Canonical Evaluation ID Migration
+  addColumnIfNotExists('student_profiles', 'student_code', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'highest_evaluation_sequence', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'display_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'evaluation_sequence', 'INTEGER');
+  try {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_student_profiles_student_code ON student_profiles(student_code);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_display_id ON evaluations(display_id);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_student_sequence ON evaluations(student_id, evaluation_sequence);
+    `);
+  } catch (idxErr) {
+    console.warn('[DB Migration] Warning ensuring student_code/display_id indexes:', idxErr);
+  }
+
+  // Backfill existing student accounts and evaluations
+  try {
+    const backfillResult = backfillStudentCodesAndEvaluationIds();
+    if (backfillResult.studentsBackfilled > 0 || backfillResult.evaluationsBackfilled > 0) {
+      console.log(`[DB Migration] Backfilled ${backfillResult.studentsBackfilled} student codes and ${backfillResult.evaluationsBackfilled} evaluation IDs.`);
+    }
+  } catch (bfErr) {
+    console.warn('[DB Migration] Error during student code and evaluation ID backfill:', bfErr);
+  }
 }
 
 function seedInitialData() {
-  // 1. Authoritative Super Admin Migration to Accessible Mailbox: caexamchecker.support@gmail.com
+  // 1. Authoritative Super Admin Migration to Accessible Mailbox: support@caexamcheckerai.com
   const adminPassword = process.env.ADMIN_PASSWORD || 'BgMi@2006';
   const superAdminHash = hashPassword(adminPassword);
 
   // Authoritative super admin ID is 'usr_super_admin_001'
-  // First, if a duplicate or support record existed under caexamchecker.support@gmail.com (e.g. usr_admin_support_002),
+  // First, if a duplicate or support record existed under support@caexamcheckerai.com (e.g. usr_admin_support_002),
   // merge any references and clean up so usr_super_admin_001 holds the email authoritatively:
-  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
+  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'support@caexamcheckerai.com'").get() as { id: string } | undefined;
   if (supportAccount && supportAccount.id !== 'usr_super_admin_001') {
     try {
       db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
@@ -1854,12 +1883,25 @@ function seedInitialData() {
     }
   }
 
+  // Also consolidate any legacy caexamchecker.support@gmail.com account if separate from usr_super_admin_001
+  const legacySupportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
+  if (legacySupportAccount && legacySupportAccount.id !== 'usr_super_admin_001') {
+    try {
+      db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("UPDATE user_sessions SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("UPDATE notifications SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("DELETE FROM users WHERE id = ?").run(legacySupportAccount.id);
+    } catch (e) {
+      console.warn('[DB] Error consolidating legacy support account to primary super admin:', e);
+    }
+  }
+
   // Now ensure usr_super_admin_001 is updated with the accessible email, preserving its ID, audit history, and password
   const existingSuperAdmin = db.prepare("SELECT id, email, password_hash FROM users WHERE id = 'usr_super_admin_001'").get() as { id: string; email: string; password_hash: string } | undefined;
   if (existingSuperAdmin) {
     db.prepare(`
       UPDATE users
-      SET email = 'caexamchecker.support@gmail.com',
+      SET email = 'support@caexamcheckerai.com',
           full_name = 'Super Administrator',
           role = 'SUPER_ADMIN',
           status = 'ACTIVE',
@@ -1871,12 +1913,12 @@ function seedInitialData() {
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to caexamchecker.support@gmail.com while preserving all permissions, history, and credentials')
+      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to support@caexamcheckerai.com while preserving all permissions, history, and credentials')
     `).run(`log_mig_super_admin_${Date.now()}`);
   } else {
     db.prepare(`
       INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-      VALUES ('usr_super_admin_001', 'caexamchecker.support@gmail.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
+      VALUES ('usr_super_admin_001', 'support@caexamcheckerai.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
     `).run(superAdminHash);
 
     db.prepare(`
@@ -1886,7 +1928,7 @@ function seedInitialData() {
   }
 
   // Safely deactivate old non-accessible admin logins so they cannot log in as active Super Admin
-  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com'];
+  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com', 'caexamchecker.support@gmail.com'];
   for (const oldEmail of oldAdminEmails) {
     const oldRow = db.prepare("SELECT id, status FROM users WHERE lower(email) = ?").get(oldEmail) as { id: string; status: string } | undefined;
     if (oldRow && oldRow.id !== 'usr_super_admin_001') {
@@ -1897,7 +1939,7 @@ function seedInitialData() {
       `).run(
         `log_mig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         oldRow.id,
-        `Deactivated superseded admin email ${oldEmail} following authoritative migration to caexamchecker.support@gmail.com`
+        `Deactivated superseded admin email ${oldEmail} following authoritative migration to support@caexamcheckerai.com`
       );
     }
   }
@@ -1909,6 +1951,14 @@ function seedInitialData() {
       db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(la.id);
     }
   } catch {}
+
+  // Auto-migrate settings support email in existing database instances
+  try {
+    db.prepare("UPDATE pricing_settings SET value = 'support@caexamcheckerai.com' WHERE key = 'SUPPORT_EMAIL' AND value = 'caexamchecker.support@gmail.com'").run();
+    db.prepare("UPDATE legal_settings SET value = 'support@caexamcheckerai.com' WHERE key IN ('support_email', 'privacy_email') AND value = 'caexamchecker.support@gmail.com'").run();
+  } catch (err) {
+    console.warn('[DB] Warning updating settings support email:', err);
+  }
 
   // 2. Permanent Free Entitlements
   const permanentEmails = [
@@ -1936,7 +1986,7 @@ function seedInitialData() {
     { key: 'PRICE_PER_CREDIT_INR', value: '10', description: 'Price in INR for single evaluation credit' },
     { key: 'FREE_TIER_EVALUATIONS', value: '2', description: 'Number of free evaluations for normal individual students' },
     { key: 'DEFAULT_INSTITUTE_QUOTA', value: '500', description: 'Default student allocation per institute' },
-    { key: 'SUPPORT_EMAIL', value: 'caexamchecker.support@gmail.com', description: 'Official support email' },
+    { key: 'SUPPORT_EMAIL', value: 'support@caexamcheckerai.com', description: 'Official support email' },
     { key: 'INSTAGRAM_URL', value: 'https://insta.openinapp.co/utw2r', description: 'Official Instagram support link' },
     { key: 'EVAL_CHECKING_MODE', value: 'standard', description: 'Default checking strictness mode (standard, strict, lenient)' },
     { key: 'EVAL_MODEL_PROVIDER', value: 'gemini-3.8-flash', description: 'Primary AI model provider for examination evaluation' },

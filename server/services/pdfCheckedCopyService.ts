@@ -17,6 +17,8 @@ import {
 
 export interface EvaluationData {
   id: string;
+  displayId?: string;
+  studentCode?: string;
   studentName?: string;
   icaiRegistrationNumber?: string;
   level: string;
@@ -1136,12 +1138,13 @@ export async function generateOriginalSubmissionPdf(
     color: rgb(0.75, 0.88, 1),
   });
 
-  safeDrawText(cover, `SUBMISSION ID: ${evalData.id}`, {
-    x: width - 220,
+  const displayId = evalData.displayId || evalData.id;
+  safeDrawText(cover, `EVALUATION ID: ${displayId}`, {
+    x: width - Math.min(270, displayId.length * 6.5 + 110),
     y: height - 48,
     size: 8.5,
-    font: helvetica,
-    color: rgb(0.85, 0.9, 1),
+    font: helveticaBold,
+    color: rgb(0.9, 0.95, 1),
   });
 
   // Candidate particulars box
@@ -1172,7 +1175,8 @@ export async function generateOriginalSubmissionPdf(
       ? evalData.icaiRegistrationNumber
       : 'Not provided';
 
-  safeDrawText(cover, `Roll / Reg. No.: ${validRegNo}`, {
+  const studentCodeStr = evalData.studentCode ? `  |  Student Code: ${evalData.studentCode}` : '';
+  safeDrawText(cover, `Roll / Reg. No.: ${validRegNo}${studentCodeStr}`, {
     x: 50,
     y: height - 150,
     size: 9.5,
@@ -1411,7 +1415,9 @@ export async function generateOriginalSubmissionPdf(
       color: rgb(0.94, 0.96, 0.99),
     });
 
-    safeDrawText(scriptPage, `ROLL NO: ${evalData.id}  |  SUBJECT: ${evalData.subjectName}  |  PAGE ${pageNum}`, {
+    const displayEvalId = evalData.displayId || evalData.id;
+    const studentTag = evalData.studentCode ? `STUDENT: ${evalData.studentCode}` : `ID: ${displayEvalId}`;
+    safeDrawText(scriptPage, `EVAL ID: ${displayEvalId}  |  ${studentTag}  |  SUBJECT: ${evalData.subjectName}  |  PAGE ${pageNum}`, {
       x: 35,
       y: sH - 25,
       size: 8.5,

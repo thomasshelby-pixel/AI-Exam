@@ -21,11 +21,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </p>
             <div className="flex flex-wrap items-center gap-4 pt-1">
               <a
-                href="mailto:caexamchecker.support@gmail.com"
+                href="mailto:support@caexamcheckerai.com"
                 className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition"
               >
                 <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                caexamchecker.support@gmail.com
+                support@caexamcheckerai.com
               </a>
               <a
                 href="https://insta.openinapp.co/utw2r"

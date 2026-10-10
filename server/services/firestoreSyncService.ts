@@ -130,6 +130,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       'usr_super_admin_001',
     ]);
     const PROTECTED_CORE_EMAILS = new Set([
+      'support@caexamcheckerai.com',
       'caexamchecker.support@gmail.com',
     ]);
 
@@ -231,9 +232,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         let targetStatus = u.status || 'ACTIVE';
 
         // Super Admin migration enforcement:
-        if (normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
+        if (normEmail === 'support@caexamcheckerai.com' || normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
           targetId = 'usr_super_admin_001';
-          normEmail = 'caexamchecker.support@gmail.com';
+          normEmail = 'support@caexamcheckerai.com';
           targetRole = 'SUPER_ADMIN';
           targetStatus = 'ACTIVE';
 
@@ -378,12 +379,13 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         db.prepare(`
           INSERT INTO student_profiles (
-            user_id, icai_registration_number, ca_level,
+            user_id, student_code, icai_registration_number, ca_level,
             free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
             purchased_credits, paid_credits, institute_id, batch_id, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(user_id) DO UPDATE SET
+            student_code = COALESCE(excluded.student_code, student_profiles.student_code),
             icai_registration_number = excluded.icai_registration_number,
             ca_level = excluded.ca_level,
             free_evaluations_used = MAX(COALESCE(student_profiles.free_evaluations_used, 0), excluded.free_evaluations_used),
@@ -400,7 +402,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             batch_id = excluded.batch_id,
             updated_at = CURRENT_TIMESTAMP
         `).run(
-          uId, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
+          uId, p.student_code || p.studentCode || null, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
           p.free_evaluations_used || 0,
           p.monthly_free_evaluations_used || 0,
           p.monthly_free_evaluations_limit || 2,
@@ -601,7 +603,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       try {
         db.prepare(`
           INSERT INTO evaluations (
-            id, student_id, institute_id, sponsoring_institute_id, batch_id,
+            id, display_id, evaluation_sequence, student_id, institute_id, sponsoring_institute_id, batch_id,
             level, material_type, subject_key, subject_name, paper, attempt,
             checking_mode, evaluation_source, material_source, entitlement_source,
             consumed_from_institute_allocation, consumed_from_personal_credits,
@@ -610,8 +612,10 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             original_filename, current_evaluation_version_id, evaluation_version,
             admin_review_status, admin_reviewed_at, admin_reviewer_id, admin_reviewer_email, admin_review_notes,
             account_classification, created_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
+            display_id = COALESCE(excluded.display_id, evaluations.display_id),
+            evaluation_sequence = COALESCE(excluded.evaluation_sequence, evaluations.evaluation_sequence),
             student_id = excluded.student_id,
             status = excluded.status,
             total_marks = excluded.total_marks,
@@ -633,7 +637,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, evaluations.account_classification, 'NORMAL'),
             completed_at = excluded.completed_at
         `).run(
-          ev.id, ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
+          ev.id, ev.display_id || ev.displayId || null, ev.evaluation_sequence || ev.evaluationSequence || null,
+          ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
           ev.level, ev.material_type || 'EXAM', ev.subject_key, ev.subject_name, ev.paper || 'Paper 1', ev.attempt || 'Current',
           ev.checking_mode || 'STANDARD', ev.evaluation_source || 'PUBLIC', ev.material_source || 'GLOBAL',
           ev.entitlement_source || 'PERSONAL_FREE', ev.consumed_from_institute_allocation || 0, ev.consumed_from_personal_credits || 0,
@@ -1360,7 +1365,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUserQuery = `
       SELECT * FROM users 
       WHERE email IN (
-        'caexamchecker.support@gmail.com',
+        'support@caexamcheckerai.com',
         'institute@apexca.edu',
         'student@caexamchecker.ai',
         'at9767676@gmail.com'
@@ -1438,7 +1443,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     }
 
     // Clean up old support admin document in Firestore if it had a different id
-    const oldSupportDoc = existingUsers.find((u) => u.email === 'caexamchecker.support@gmail.com' && u.id !== 'usr_super_admin_001');
+    const oldSupportDoc = existingUsers.find((u) => (u.email === 'caexamchecker.support@gmail.com' || u.email === 'support@caexamcheckerai.com') && u.id !== 'usr_super_admin_001');
     if (oldSupportDoc) {
       await deleteFirestoreDoc('users', oldSupportDoc.id).catch(() => {});
       console.log(`[FirestoreSync] Cleaned up legacy support admin doc ${oldSupportDoc.id} in Firestore.`);

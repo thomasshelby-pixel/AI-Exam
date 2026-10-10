@@ -84,6 +84,8 @@ export interface MfaRecoveryRequest {
 
 export interface StudentProfile {
   userId: string;
+  studentCode?: string;
+  student_code?: string;
   icaiRegistrationNumber: string;
   caLevel: CALevel;
   freeEvaluationsUsed: number;
@@ -990,6 +992,12 @@ export interface SupportTicketItem {
 
 export interface EvaluationRecord {
   id: string;
+  displayId?: string;
+  display_id?: string;
+  evaluationSequence?: number;
+  evaluation_sequence?: number;
+  studentCode?: string;
+  student_code?: string;
   studentId: string;
   studentName: string;
   icaiRegistrationNumber: string;

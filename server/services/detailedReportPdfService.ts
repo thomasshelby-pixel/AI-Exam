@@ -372,10 +372,11 @@ export async function generateDetailedReportPdf(
       color: rgb(0.85, 0.92, 1),
     });
 
-    safeDrawText(page, `Report ID: ${evalData.id ? evalData.id.slice(0, 8).toUpperCase() : 'CA-EVAL'}`, {
-      x: width - 180,
+    const displayEvalId = evalData.displayId || (evalData.id ? evalData.id.slice(0, 16).toUpperCase() : 'CA-EVAL');
+    safeDrawText(page, `Evaluation ID: ${displayEvalId}`, {
+      x: width - Math.min(260, displayEvalId.length * 6.5 + 95),
       y: height - 34,
-      size: 8.5,
+      size: 8,
       font: helveticaBold,
       color: rgb(1, 1, 1),
     });
@@ -449,7 +450,8 @@ export async function generateDetailedReportPdf(
       ? evalData.icaiRegistrationNumber
       : 'Not provided';
 
-  safeDrawText(p1, `Roll / Reg No: ${cleanRegNo}`, {
+  const studentCodeDisplay = evalData.studentCode ? `  |  Student Code: ${evalData.studentCode}` : '';
+  safeDrawText(p1, `Roll / Reg No: ${cleanRegNo}${studentCodeDisplay}`, {
     x: 48,
     y: y - 52,
     size: 8.5,

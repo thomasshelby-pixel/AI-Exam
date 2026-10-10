@@ -277,7 +277,7 @@ export const AdminPortal: React.FC = () => {
     pricePerCredit: '10',
     freeTierEvaluations: '2',
     defaultInstituteQuota: '500',
-    supportEmail: 'caexamchecker.support@gmail.com',
+    supportEmail: 'support@caexamcheckerai.com',
     instagramUrl: 'https://insta.openinapp.co/utw2r',
   });
 
@@ -424,7 +424,7 @@ export const AdminPortal: React.FC = () => {
             pricePerCredit: res.settings?.PRICE_PER_CREDIT_INR || '10',
             freeTierEvaluations: res.settings?.FREE_TIER_EVALUATIONS || '2',
             defaultInstituteQuota: res.settings?.DEFAULT_INSTITUTE_QUOTA || '500',
-            supportEmail: res.settings?.SUPPORT_EMAIL || 'caexamchecker.support@gmail.com',
+            supportEmail: res.settings?.SUPPORT_EMAIL || 'support@caexamcheckerai.com',
             instagramUrl: res.settings?.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
           });
           break;

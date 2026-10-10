@@ -1011,7 +1011,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {data.recentEvaluations.map((ev) => (
                     <tr key={ev.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="px-6 py-3 font-semibold text-slate-800 dark:text-slate-200">
-                        {ev.subject_name}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{ev.subject_name}</span>
+                          {((ev as any).display_id || (ev as any).displayId) && (
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                              {(ev as any).display_id || (ev as any).displayId}
+                            </span>
+                          )}
+                        </div>
                         <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-normal">CA {ev.level}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">

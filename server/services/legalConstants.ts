@@ -130,7 +130,7 @@ These Terms of Service are governed by and construed in accordance with the appl
 For questions, support, or notices regarding these Terms, please contact our official support channels:
 
 Email:
-caexamchecker.support@gmail.com
+support@caexamcheckerai.com
 
 Instagram:
 Official CA Exam Checker AI Instagram
@@ -234,7 +234,7 @@ Subject to applicable law, users may have rights regarding their personal inform
 - raise privacy grievances.
 
 Requests may be submitted to:
-caexamchecker.support@gmail.com
+support@caexamcheckerai.com
 
 The Platform may verify the identity of the requester before processing a request.
 
@@ -259,7 +259,7 @@ The latest version will display its effective and update dates.
 For privacy-related inquiries, requests, or questions regarding this Privacy Policy, please reach out to us at:
 
 Email:
-caexamchecker.support@gmail.com
+support@caexamcheckerai.com
 
 Instagram:
 Official CA Exam Checker AI Instagram
@@ -286,7 +286,7 @@ Expired or unused credits are not ordinarily refundable.
 
 If payment is successfully deducted but credits or a subscription are not correctly issued because of a verified technical or payment failure, the customer may contact:
 
-caexamchecker.support@gmail.com
+support@caexamcheckerai.com
 
 The transaction will be verified and, where appropriate, the entitlement may be corrected or a refund may be processed through the applicable payment mechanism.
 
@@ -307,7 +307,7 @@ Nothing in this policy limits any refund or consumer right that cannot legally b
 For refund inquiries, payment verification, or support, please contact:
 
 Email:
-caexamchecker.support@gmail.com
+support@caexamcheckerai.com
 
 Instagram:
 Official CA Exam Checker AI Instagram
@@ -316,8 +316,8 @@ Official CA Exam Checker AI Instagram
 export const DEFAULT_LEGAL_SETTINGS = {
   legal_entity_name: '',
   business_address: '',
-  privacy_email: 'caexamchecker.support@gmail.com',
-  support_email: 'caexamchecker.support@gmail.com',
+  privacy_email: 'support@caexamcheckerai.com',
+  support_email: 'support@caexamcheckerai.com',
   instagram_url: 'https://insta.openinapp.co/utw2r',
   governing_law: 'Laws of India',
   dispute_jurisdiction: 'Courts of India',
