@@ -215,9 +215,15 @@ async function runSuperAdminMfaResetVerification() {
   console.log('================================================================');
   console.log('✅ ALL SUPER ADMIN MFA RESET VERIFICATION CHECKS PASSED CLEANLY');
   console.log('================================================================');
+
+  const { closeFirestoreCleanly } = await import('../services/firestoreDbService.js');
+  await closeFirestoreCleanly();
+  process.exit(0);
 }
 
-runSuperAdminMfaResetVerification().catch((err) => {
+runSuperAdminMfaResetVerification().catch(async (err) => {
   console.error('❌ Test failed with error:', err);
+  const { closeFirestoreCleanly } = await import('../services/firestoreDbService.js');
+  await closeFirestoreCleanly();
   process.exit(1);
 });

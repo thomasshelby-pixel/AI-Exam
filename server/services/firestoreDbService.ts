@@ -13,9 +13,36 @@ import {
   where,
   Firestore,
   DocumentData,
+  terminate,
+  setLogLevel,
 } from 'firebase/firestore';
+import { setUserLogHandler } from '@firebase/logger';
 
 import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
+
+// Suppress benign internal gRPC stream cancellations (e.g. idle stream Code 1 CANCELLED)
+// that occur during normal stream recycling or server idle periods.
+try {
+  setLogLevel('error');
+  setUserLogHandler((logEntry) => {
+    const msg = logEntry.message || '';
+    if (
+      msg.includes('1 CANCELLED') ||
+      msg.includes('Call cancelled') ||
+      (msg.includes("RPC 'Listen' stream") && msg.includes('Code: 1')) ||
+      (msg.includes("RPC 'Write' stream") && msg.includes('Code: 1'))
+    ) {
+      return;
+    }
+    if (logEntry.level === 'error') {
+      console.error(`[${logEntry.type || 'Firestore'}] ${msg}`);
+    } else if (logEntry.level === 'warn') {
+      console.warn(`[${logEntry.type || 'Firestore'}] ${msg}`);
+    }
+  });
+} catch {
+  // Safe fallback if logger cannot be customized
+}
 
 let firestoreInstance: Firestore | null = null;
 let initAttempted = false;
@@ -39,6 +66,18 @@ export function getFirestoreDb(): Firestore | null {
   }
 }
 
+export async function closeFirestoreCleanly(): Promise<void> {
+  if (firestoreInstance) {
+    try {
+      await terminate(firestoreInstance);
+      console.log('[Firestore] Cleanly terminated database connection.');
+    } catch {
+      // Ignore cleanup error on process exit
+    }
+    firestoreInstance = null;
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number = 12000, fallback: T, operationName: string = 'Firestore operation'): Promise<T> {
   let timeoutHandle: any;
   const timeoutPromise = new Promise<T>((resolve) => {
@@ -47,6 +86,10 @@ async function withTimeout<T>(promise: Promise<T>, ms: number = 12000, fallback:
       resolve(fallback);
     }, ms);
   });
+
+  // Attach a silent catch handler to promise so that if it finishes/rejects after timeout,
+  // it never triggers an unhandled promise rejection or unhandled stream error.
+  promise.catch(() => {});
 
   try {
     const result = await Promise.race([promise, timeoutPromise]);

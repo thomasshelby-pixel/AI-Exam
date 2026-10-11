@@ -18,6 +18,7 @@ import mcqRoutes from './server/routes/mcqRoutes.js';
 import featureRoutes from './server/routes/featureRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
@@ -266,15 +267,17 @@ export default {};
 
   const handleShutdown = (signal: string) => {
     console.log(`[Server] Graceful shutdown initiated (${signal}).`);
-    server.close(() => {
+    server.close(async () => {
       console.log('[Server] HTTP connections closed. Closing database cleanly...');
       closeDatabaseCleanly();
+      await closeFirestoreCleanly().catch(() => {});
       process.exit(0);
     });
     // Force exit if connections take too long to close
-    setTimeout(() => {
+    setTimeout(async () => {
       console.warn('[Server] Force shutdown after timeout.');
       closeDatabaseCleanly();
+      await closeFirestoreCleanly().catch(() => {});
       process.exit(0);
     }, 5000).unref();
   };

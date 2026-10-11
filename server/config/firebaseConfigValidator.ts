@@ -147,8 +147,10 @@ export function loadAndValidateFirebaseConfig(): {
 export async function testFirestoreConnection(fdb: Firestore): Promise<boolean> {
   try {
     const testDocRef = doc(fdb, '_health', 'connection_test');
+    const docPromise = getDocFromServer(testDocRef);
+    docPromise.catch(() => {});
     await Promise.race([
-      getDocFromServer(testDocRef),
+      docPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Connection test timeout (5s)')), 5000)),
     ]).catch((err: any) => {
       // If document does not exist, connection is still valid (it reached the server)

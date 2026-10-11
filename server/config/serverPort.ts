@@ -14,7 +14,7 @@ export function getServerPort(): number {
       return parsed;
     }
   }
-  return 8080;
+  return process.env.NODE_ENV === 'production' ? 8080 : 3000;
 }
 
 export const SERVER_PORT: number = getServerPort();
