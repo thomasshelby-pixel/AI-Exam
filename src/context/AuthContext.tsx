@@ -86,6 +86,17 @@ interface AuthContextType {
     caLevel: string;
     referralCode?: string;
   }) => Promise<User>;
+  initiateRegister: (data: {
+    email: string;
+    password: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }) => Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
+  verifyRegisterOtp: (email: string, otp: string) => Promise<User>;
+  resendRegisterOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
   submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -733,6 +744,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.user;
   };
 
+  const initiateRegister = async (data: {
+    email: string;
+    password: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }): Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }> => {
+    return await apiRequest<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>(
+      '/api/auth/register',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  };
+
+  const verifyRegisterOtp = async (email: string, otp: string): Promise<User> => {
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp }),
+    });
+
+    localStorage.setItem('ca_exam_checker_token', res.token);
+    setToken(res.token);
+    setUser(res.user);
+    setSuspendedAccount(null);
+
+    refreshUser().catch(() => {});
+    return res.user;
+  };
+
+  const resendRegisterOtp = async (email: string): Promise<{ success: boolean; message: string; cooldownSeconds: number }> => {
+    return await apiRequest<{ success: boolean; message: string; cooldownSeconds: number }>('/api/auth/resend-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  };
+
   const submitRevocationRequest = async (
     appealReason: string,
     explanation: string,
@@ -871,6 +922,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         instituteLogin,
         instituteRegister,
         register,
+        initiateRegister,
+        verifyRegisterOtp,
+        resendRegisterOtp,
         submitRevocationRequest,
         logout,
         refreshUser,

@@ -272,10 +272,12 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         const uMfaEnabled = u.mfa_enabled ? 1 : 0;
         const uMfaEnrolledAt = u.mfa_enrolled_at || null;
         const uTotpSecret = u.totp_secret || null;
+        const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
+        const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -290,6 +292,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             role = excluded.role,
             status = excluded.status,
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
+            email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
+            email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
             mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
             mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
             totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
@@ -297,6 +301,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
+          uEmailVerified, uEmailVerifiedAt,
           uMfaEnabled, uMfaEnrolledAt, uTotpSecret,
           u.created_at || null
         );

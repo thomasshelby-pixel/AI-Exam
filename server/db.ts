@@ -184,6 +184,8 @@ export function initDatabase() {
       role TEXT NOT NULL DEFAULT 'STUDENT',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
+      email_verified INTEGER NOT NULL DEFAULT 0,
+      email_verified_at TEXT,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
@@ -1329,6 +1331,21 @@ function runMigrations() {
   addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('evaluations', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'email_verified_at', 'TEXT');
+
+  // CRITICAL MIGRATION: Pre-existing accounts created before OTP deployment remain trusted/verified automatically.
+  // Backfill existing accounts as verified so existing students, admins, and testing accounts continue login uninterrupted.
+  try {
+    db.prepare(`
+      UPDATE users
+      SET email_verified = 1,
+          email_verified_at = COALESCE(email_verified_at, created_at, CURRENT_TIMESTAMP)
+      WHERE email_verified IS NULL OR email_verified = 0
+    `).run();
+  } catch (backfillErr) {
+    console.warn('[DB Migration] Warning backfilling existing user email verification:', backfillErr);
+  }
 
   // Explicitly tag identified development/testing entities as TEST so they can be cleaned up
   try {

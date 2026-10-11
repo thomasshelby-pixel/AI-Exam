@@ -21,6 +21,9 @@ import {
   EyeOff,
   ShieldCheck,
   X,
+  MailCheck,
+  ArrowLeft,
+  RotateCw,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -32,7 +35,7 @@ interface LoginPageProps {
 export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onSuccess, onNavigateHome }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, register, suspendedAccount, clearSuspension } = useAuth();
+  const { login, register, initiateRegister, verifyRegisterOtp, resendRegisterOtp, suspendedAccount, clearSuspension } = useAuth();
   const accountDeletedMessage = (location.state as any)?.accountDeletedMessage;
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
 
@@ -47,9 +50,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
   const [caLevel, setCaLevel] = useState<'FOUNDATION' | 'INTERMEDIATE' | 'FINAL'>('INTERMEDIATE');
   const [referralCode, setReferralCode] = useState('');
 
+  // OTP Verification states for new student registrations
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
+
+  // Countdown timer effect for OTP resend cooldown
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -78,7 +98,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
     }
   };
 
-  // Handle registration
+  // Handle registration submission: calls backend to validate inputs and dispatch 6-digit OTP
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -97,18 +117,69 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
     setIsLoading(true);
 
     try {
-      const newUser = await register({
-        email,
+      const data = await initiateRegister({
+        email: email.trim().toLowerCase(),
         password,
-        fullName,
-        phone: phone || undefined,
+        fullName: fullName.trim(),
+        phone: phone.trim() || undefined,
         icaiRegistrationNumber: srnValidation.normalized,
         caLevel,
         referralCode: referralCode.trim() || undefined,
       });
-      onSuccess(newUser);
+
+      if (data.requiresOtpVerification) {
+        setIsVerifyingOtp(true);
+        setPendingEmail(data.email || email.trim().toLowerCase());
+        setMaskedEmail(data.emailMasked || email.trim().toLowerCase());
+        setResendCooldown(data.cooldownSeconds || 60);
+        setOtpSuccessMessage(data.message || `A 6-digit verification code has been dispatched to ${data.emailMasked || email}.`);
+        setOtpCode('');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle OTP verification submission
+  const handleOtpVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+
+    const cleanOtp = otpCode.trim();
+    if (cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
+      setErrorMessage('Please enter a valid 6-digit verification code.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const activatedUser = await verifyRegisterOtp(pendingEmail || email.trim().toLowerCase(), cleanOtp);
+      onSuccess(activatedUser);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Verification failed. Please try again.';
+      setErrorMessage(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle resend OTP request
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || isLoading) return;
+    setErrorMessage('');
+    setIsLoading(true);
+
+    try {
+      const data = await resendRegisterOtp(pendingEmail || email.trim().toLowerCase());
+      setResendCooldown(data.cooldownSeconds || 60);
+      setOtpSuccessMessage(data.message || 'A fresh 6-digit verification code has been dispatched to your email.');
+      setOtpCode('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to resend code. Please try again.';
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
@@ -204,40 +275,147 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
           </div>
         )}
 
-        {/* Mode Switch Tabs */}
-        <div className="flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-5 border border-slate-200 dark:border-slate-700">
-          <button
-            type="button"
-            onClick={() => {
-              setMode('login');
-              setErrorMessage('');
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-              mode === 'login'
-                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode('register');
-              setErrorMessage('');
-            }}
-            className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-              mode === 'register'
-                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            Create Account
-          </button>
-        </div>
+        {/* Mode Switch Tabs (hidden during OTP verification) */}
+        {!isVerifyingOtp && (
+          <div className="flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-5 border border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('login');
+                setErrorMessage('');
+              }}
+              className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
+                mode === 'login'
+                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('register');
+                setErrorMessage('');
+              }}
+              className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
+                mode === 'register'
+                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+        )}
+
+        {/* Email OTP Verification Screen */}
+        {isVerifyingOtp && (
+          <div id="email-otp-verification-section" className="space-y-4">
+            <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-center">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                <MailCheck className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Verify Your Email Address</h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                We sent a 6-digit verification code to
+              </p>
+              <p className="text-xs font-mono font-bold text-blue-700 dark:text-blue-300 mt-0.5">
+                {maskedEmail || email}
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
+                Code expires in <strong>10 minutes</strong>. Single-use only.
+              </p>
+            </div>
+
+            {otpSuccessMessage && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>{otpSuccessMessage}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleOtpVerifySubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 text-center">
+                  Enter 6-Digit Verification Code
+                </label>
+                <div className="relative">
+                  <input
+                    id="input-verification-otp"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    required
+                    autoFocus
+                    placeholder="123456"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="w-full py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 text-center text-xl font-mono font-bold tracking-widest text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                id="btn-verify-otp-submit"
+                type="submit"
+                disabled={isLoading || otpCode.trim().length !== 6}
+                className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Verifying Code...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Verify & Activate Account</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center justify-between pt-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsVerifyingOtp(false);
+                    setErrorMessage('');
+                    setOtpSuccessMessage('');
+                  }}
+                  className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Edit Details</span>
+                </button>
+
+                <button
+                  id="btn-resend-otp"
+                  type="button"
+                  disabled={resendCooldown > 0 || isLoading}
+                  onClick={handleResendOtp}
+                  className={`font-semibold flex items-center gap-1.5 transition ${
+                    resendCooldown > 0 || isLoading
+                      ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                      : 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
+                  }`}
+                >
+                  <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  {resendCooldown > 0 ? (
+                    <span>Resend in {resendCooldown}s</span>
+                  ) : (
+                    <span>Resend Code</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {/* Login Form */}
-        {mode === 'login' && (
+        {!isVerifyingOtp && mode === 'login' && (
           <div className="space-y-4">
             <form onSubmit={handleLoginSubmit} className="space-y-3.5">
               <div>
@@ -325,7 +503,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
         )}
 
         {/* Student Registration Form */}
-        {mode === 'register' && (
+        {!isVerifyingOtp && mode === 'register' && (
           <div className="space-y-4">
             <form onSubmit={handleRegisterSubmit} className="space-y-3">
               <div>

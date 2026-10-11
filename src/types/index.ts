@@ -35,6 +35,7 @@ export interface User {
   status: UserStatus;
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
+  emailVerified?: boolean;
   mfaEnabled?: boolean;
   mfaPhone?: string | null;
   mfaVerified?: boolean;

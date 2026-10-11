@@ -99,6 +99,30 @@ export const authRegisterRateLimiter = createRateLimiter({
   keyGenerator: (req) => `reg:${getClientIp(req)}`,
 });
 
+// 2b. OTP Verification: 15 verification attempts per 10 minutes per IP and email
+export const otpVerifyRateLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 15,
+  message: 'Too many verification attempts. Please wait 10 minutes before trying again.',
+  keyGenerator: (req) => {
+    const ip = getClientIp(req);
+    const email = (req.body?.email || '').toLowerCase().trim();
+    return `otp_verify:${ip}:${email || 'none'}`;
+  },
+});
+
+// 2c. OTP Resend: 5 resend requests per 15 minutes per IP and email
+export const otpResendRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many verification code requests. Please wait a few minutes before requesting another code.',
+  keyGenerator: (req) => {
+    const ip = getClientIp(req);
+    const email = (req.body?.email || '').toLowerCase().trim();
+    return `otp_resend:${ip}:${email || 'none'}`;
+  },
+});
+
 // 3. Password Reset: 5 requests per 15 minutes per IP and email
 export const passwordResetRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,

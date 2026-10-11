@@ -23,7 +23,14 @@ import {
   authLoginRateLimiter,
   authRegisterRateLimiter,
   passwordResetRateLimiter,
+  otpVerifyRateLimiter,
+  otpResendRateLimiter,
 } from '../utils/rateLimiter.js';
+import {
+  initiateStudentRegistrationOtp,
+  verifyAndConsumeRegistrationOtp,
+  maskEmail,
+} from '../services/studentRegistrationOtpService.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
@@ -383,7 +390,7 @@ function syncPendingInstituteEnrollments(userId: string, email: string) {
   }
 }
 
-// Student Registration
+// Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
@@ -463,11 +470,150 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       }
     }
 
-    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
     const passwordHash = hashPassword(password);
-    const role: UserRole = 'STUDENT';
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
 
-    // Begin immediate transaction to prevent concurrent race conditions
+    // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
+    const otpResult = await initiateStudentRegistrationOtp({
+      email: normalizedEmail,
+      fullName: fullName.trim(),
+      passwordHash,
+      phone: phone?.trim() || null,
+      icaiRegistrationNumber: srnValidation.normalized,
+      caLevel: caLevel || 'INTERMEDIATE',
+      referralCode: rawReferralCode || null,
+      clientIp,
+    });
+
+    if (!otpResult.success) {
+      return res.status(400).json({
+        error: otpResult.message,
+        cooldownSeconds: otpResult.cooldownSeconds,
+        alreadyRegistered: otpResult.alreadyRegistered,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      requiresOtpVerification: true,
+      message: otpResult.message,
+      email: normalizedEmail,
+      emailMasked: otpResult.emailMasked || maskEmail(normalizedEmail),
+      cooldownSeconds: otpResult.cooldownSeconds || 60,
+      expiresInSeconds: otpResult.expiresInSeconds || 600,
+    });
+  } catch (error: unknown) {
+    console.error('Register error:', error);
+    return res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
+});
+
+// Student Registration: Resend OTP
+router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check existing registered user
+    const existingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
+    if (existingUser) {
+      return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
+    }
+
+    // Retrieve pending challenge payload
+    const pendingRow = db.prepare('SELECT payload_json FROM student_registration_otps WHERE email = ?').get(normalizedEmail) as any;
+    if (!pendingRow) {
+      return res.status(400).json({
+        error: 'No active registration challenge found for this email. Please fill out the registration form again.',
+        code: 'NOT_FOUND',
+      });
+    }
+
+    const payload = JSON.parse(pendingRow.payload_json);
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+
+    const otpResult = await initiateStudentRegistrationOtp({
+      email: normalizedEmail,
+      fullName: payload.fullName,
+      passwordHash: payload.passwordHash,
+      phone: payload.phone,
+      icaiRegistrationNumber: payload.icaiRegistrationNumber,
+      caLevel: payload.caLevel,
+      referralCode: payload.referralCode,
+      clientIp,
+    });
+
+    if (!otpResult.success) {
+      return res.status(400).json({
+        error: otpResult.message,
+        cooldownSeconds: otpResult.cooldownSeconds,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: otpResult.message,
+      email: normalizedEmail,
+      emailMasked: otpResult.emailMasked || maskEmail(normalizedEmail),
+      cooldownSeconds: otpResult.cooldownSeconds || 60,
+      expiresInSeconds: otpResult.expiresInSeconds || 600,
+    });
+  } catch (err: unknown) {
+    console.error('Resend OTP error:', err);
+    return res.status(500).json({ error: 'Failed to resend verification code. Please try again.' });
+  }
+});
+
+// Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
+router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and 6-digit verification code are required.' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Verify and consume OTP atomically (guarantees single-use & handles attempt limits)
+    const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
+
+    if (!verification.success || !verification.registrationData) {
+      return res.status(400).json({
+        error: verification.message,
+        code: verification.code,
+        attemptsRemaining: verification.attemptsRemaining,
+      });
+    }
+
+    const regData = verification.registrationData;
+
+    // Check existing email again to eliminate race condition duplicates
+    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
+    if (existing) {
+      return res.status(400).json({
+        error: 'An account with this email address already exists. Please sign in.',
+        code: 'ALREADY_EXISTS',
+      });
+    }
+
+    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const role: UserRole = 'STUDENT';
+    const rawReferralCode = regData.referralCode || '';
+
+    // Re-validate promo code if specified
+    let promoCampaign: any = null;
+    if (rawReferralCode) {
+      promoCampaign = db.prepare(`
+        SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)
+      `).get(rawReferralCode) as any;
+    }
+
+    // Begin immediate transaction to create student account exactly once
     db.exec('BEGIN IMMEDIATE');
     let promoRedemptionNumber = 0;
     let promoExpiryDate: string = '';
@@ -475,8 +621,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     let promoMaxRedemptions = 20;
 
     try {
-      if (promoCampaign) {
-        // Re-check redemption limit inside transaction write lock (excluding TEST accounts)
+      if (promoCampaign && promoCampaign.is_active && promoCampaign.status !== 'DISABLED' && promoCampaign.status !== 'ARCHIVED') {
         const lockedCount = db.prepare(`
           SELECT COUNT(*) as total
           FROM referral_redemptions r
@@ -486,38 +631,52 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
         `).get(rawReferralCode) as { total: number };
 
         promoMaxRedemptions = promoCampaign.max_redemptions ?? 20;
-        if (lockedCount.total >= promoMaxRedemptions) {
-          db.exec('ROLLBACK');
-          db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED' WHERE UPPER(code) = UPPER(?)`).run(rawReferralCode);
-          return res.status(400).json({
-            error: `This promo offer has reached its maximum limit of ${promoMaxRedemptions} redemptions.`,
-          });
+        if (lockedCount.total < promoMaxRedemptions) {
+          promoRedemptionNumber = lockedCount.total + 1;
+          promoMaxEvals = promoCampaign.max_evaluations ?? 15;
+          const durationDays = promoCampaign.benefit_duration_days ?? 30;
+          promoExpiryDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+        } else {
+          promoCampaign = null; // Quota was filled in the interim; continue as standard registration
         }
-
-        promoRedemptionNumber = lockedCount.total + 1;
-        promoMaxEvals = promoCampaign.max_evaluations ?? 15;
-        const durationDays = promoCampaign.benefit_duration_days ?? 30;
-        promoExpiryDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+      } else {
+        promoCampaign = null;
       }
 
-      // Insert user
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
-      `).run(userId, normalizedEmail, passwordHash, fullName.trim(), phone?.trim() || null, role);
+      const nowIso = new Date().toISOString();
 
-      // Insert student profile with permanent unique student code (default 0 used, 0 purchased, First 2 free)
+      // Insert active student account with verified email
+      db.prepare(`
+        INSERT INTO users (
+          id, email, password_hash, full_name, phone, role, status,
+          email_verified, email_verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(
+        userId,
+        normalizedEmail,
+        regData.passwordHash,
+        regData.fullName.trim(),
+        regData.phone?.trim() || null,
+        role,
+        nowIso
+      );
+
+      // Insert student profile with permanent unique student code
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
-        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code)
-        VALUES (?, ?, ?, 0, 0, ?)
-      `).run(userId, srnValidation.normalized, caLevel || 'INTERMEDIATE', studentCode);
+        INSERT INTO student_profiles (
+          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
+        ) VALUES (?, ?, ?, 0, 0, ?)
+      `).run(
+        userId,
+        regData.icaiRegistrationNumber,
+        regData.caLevel || 'INTERMEDIATE',
+        studentCode
+      );
 
-      // If referral / promo code was applied, insert redemption record transactionally
+      // If promo campaign was valid and claimed, insert redemption record transactionally
       if (promoCampaign) {
         const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
-        const nowIso = new Date().toISOString();
-
         db.prepare(`
           INSERT INTO referral_redemptions (
             id, referral_code, user_id, user_email, benefit_type,
@@ -541,10 +700,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
           promoExpiryDate,
           promoMaxEvals,
           promoMaxEvals,
-          `Redemption #${promoRedemptionNumber} of ${promoMaxRedemptions} claimed on registration by ${normalizedEmail}`
+          `Redemption #${promoRedemptionNumber} of ${promoMaxRedemptions} claimed on verified registration by ${normalizedEmail}`
         );
 
-        // If this redemption reached max quota, update status to EXHAUSTED
         if (promoRedemptionNumber >= promoMaxRedemptions) {
           db.prepare(`UPDATE referral_campaigns SET status = 'EXHAUSTED', updated_at = CURRENT_TIMESTAMP WHERE UPPER(code) = UPPER(?)`).run(rawReferralCode);
         }
@@ -552,9 +710,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 
       db.exec('COMMIT');
     } catch (txErr: any) {
-      db.exec('ROLLBACK');
-      console.error('Registration transaction error:', txErr);
-      return res.status(500).json({ error: 'Failed to complete student registration. Please try again.' });
+      try { db.exec('ROLLBACK'); } catch {}
+      console.error('Registration activation transaction error:', txErr);
+      return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
@@ -576,7 +734,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
           max_evaluations: promoMaxEvals,
           evaluations_used: 0,
           evaluations_remaining: promoMaxEvals,
-          audit_note: `Redemption #${promoRedemptionNumber} of ${promoMaxRedemptions} claimed on registration by ${normalizedEmail}`,
+          audit_note: `Redemption #${promoRedemptionNumber} of ${promoMaxRedemptions} claimed on verified registration by ${normalizedEmail}`,
           created_at: nowIso,
           updated_at: nowIso,
         });
@@ -627,26 +785,6 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
           source: 'REGISTRATION',
         })
       );
-
-      try {
-        await syncRecordToFirestore('audit_logs', auditLogId, {
-          id: auditLogId,
-          user_id: userId,
-          action: 'PROMO_CODE_REDEMPTION',
-          entity_type: 'PROMO_CODE',
-          entity_id: rawReferralCode,
-          details: {
-            studentId: userId,
-            studentEmail: normalizedEmail,
-            redemptionNumber: promoRedemptionNumber,
-            maxRedemptions: promoMaxRedemptions,
-            evaluationsGranted: promoMaxEvals,
-            expiryDate: promoExpiryDate,
-            source: 'REGISTRATION',
-          },
-          created_at: nowIso,
-        });
-      } catch {}
     }
 
     // Auto-link any pending coaching institute enrollment for this email
@@ -655,7 +793,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     // Welcome Notification
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your account has been created. You receive 2 free full-paper evaluations!', 'SYSTEM')
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
     `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
 
     // Audit log
@@ -666,10 +804,10 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       `log_${crypto.randomBytes(8).toString('hex')}`,
       userId,
       userId,
-      promoCampaign ? `New student account registered with promo code ${rawReferralCode}` : 'New student account registered'
+      promoCampaign ? `New verified student account registered with promo code ${rawReferralCode}` : 'New verified student account registered'
     );
 
-    const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: fullName.trim() });
+    const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
     const isPermanentFree = checkPermanentFreeAccess(normalizedEmail);
 
     // Sync newly registered user and profile to Cloud Firestore immediately
@@ -689,9 +827,10 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       user: {
         id: userId,
         email: normalizedEmail,
-        fullName: fullName.trim(),
+        fullName: regData.fullName.trim(),
         role,
         hasPermanentFreeAccess: isPermanentFree,
+        emailVerified: true,
       },
       promoApplied: !!promoCampaign,
       promoDetails: promoCampaign ? {
@@ -701,8 +840,8 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       } : undefined,
     });
   } catch (error: unknown) {
-    console.error('Register error:', error);
-    return res.status(500).json({ error: 'Registration failed. Please try again.' });
+    console.error('Verify OTP error:', error);
+    return res.status(500).json({ error: 'Verification failed. Please try again.' });
   }
 });
 
