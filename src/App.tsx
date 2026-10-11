@@ -25,6 +25,7 @@ import { RefundPolicyPage } from './pages/public/RefundPolicyPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
 import { ReviewsPage } from './pages/public/ReviewsPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
+import { UnifiedAuthPage } from './pages/auth/UnifiedAuthPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
@@ -894,7 +895,7 @@ const AppRoutes: React.FC = () => {
           path="/login"
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-              <LoginRoute mode="login" />
+              <UnifiedAuthPage initialMode="login" />
             </PublicAndStudentLayout>
           }
         />
@@ -903,7 +904,7 @@ const AppRoutes: React.FC = () => {
           path="/register"
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-              <LoginRoute mode="register" />
+              <UnifiedAuthPage initialMode="register" defaultType="student" />
             </PublicAndStudentLayout>
           }
         />

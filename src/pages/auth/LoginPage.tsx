@@ -24,15 +24,24 @@ import {
   MailCheck,
   ArrowLeft,
   RotateCw,
+  Building2,
 } from 'lucide-react';
 
 interface LoginPageProps {
   initialMode?: 'login' | 'register';
   onSuccess: (user: any) => void;
   onNavigateHome: () => void;
+  onSwitchToInstitute?: () => void;
+  onBackToSelector?: () => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onSuccess, onNavigateHome }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  initialMode = 'login',
+  onSuccess,
+  onNavigateHome,
+  onSwitchToInstitute,
+  onBackToSelector,
+}) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { login, register, initiateRegister, verifyRegisterOtp, resendRegisterOtp, suspendedAccount, clearSuspension } = useAuth();
@@ -227,7 +236,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
           <div className="flex justify-center mb-3">
             <BrandLogo variant="full" size="sm" onClick={onNavigateHome} />
           </div>
-          <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white mt-2">
+          <div className="flex items-center justify-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 text-xs font-semibold mx-auto w-fit mb-2">
+            <GraduationCap className="w-3.5 h-3.5" />
+            <span>CA Student Portal</span>
+          </div>
+          <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white mt-1">
             {mode === 'login' ? 'Sign in to Your Account' : 'Create Your Account'}
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -657,6 +670,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ initialMode = 'login', onS
             </form>
           </div>
         )}
+
+        {/* Switch to Institute Portal */}
+        <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500 dark:text-slate-400">
+          <span>Are you a CA Coaching Academy or Faculty? </span>
+          <button
+            id="btn-goto-institute-portal"
+            type="button"
+            onClick={() => {
+              if (onSwitchToInstitute) {
+                onSwitchToInstitute();
+              } else {
+                navigate('/institute/login');
+              }
+            }}
+            className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-bold ml-1 hover:underline cursor-pointer"
+          >
+            Go to Institute Portal →
+          </button>
+        </div>
 
         {/* Terms notice */}
         <p className="text-[10px] text-slate-400 dark:text-slate-400 text-center mt-6 leading-relaxed">

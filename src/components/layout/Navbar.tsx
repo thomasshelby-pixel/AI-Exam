@@ -217,7 +217,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
                   <button
                     id="nav-register-btn"
-                    onClick={() => onNavigate('login', { mode: 'register' })}
+                    onClick={() => onNavigate('register')}
                     className="text-xs xl:text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition shadow-xs whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     Get 2 Free Checks
@@ -550,7 +550,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
                 </button>
                 <button
                   onClick={() => {
-                    onNavigate('login', { mode: 'register' });
+                    onNavigate('register');
                     setMobileMenuOpen(false);
                   }}
                   className="w-full py-2 text-sm font-bold text-center rounded-lg bg-blue-600 text-white shadow-sm"
