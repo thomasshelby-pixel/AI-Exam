@@ -13,7 +13,7 @@ import {
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
-import { initMfaRecoveryTables } from './mfaRecoveryService.js';
+import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -62,6 +62,11 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
             console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
             return;
           }
+        } else if (
+          collectionName.startsWith('mfa_') ||
+          (collectionName === 'users' && (data.mfa_enabled !== undefined || data.mfa_reset_required !== undefined || data.totp_secret !== undefined))
+        ) {
+          // Authoritative MFA lifecycle event (enrollment, reset, validation): local security update must propagate to Firestore
         } else {
           console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
           return;
@@ -272,12 +277,13 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         const uMfaEnabled = u.mfa_enabled ? 1 : 0;
         const uMfaEnrolledAt = u.mfa_enrolled_at || null;
         const uTotpSecret = u.totp_secret || null;
+        const uMfaResetRequired = u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
         const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -296,13 +302,14 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
             mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
             mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
-            totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
+            totp_secret = CASE WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret ELSE users.totp_secret END,
+            mfa_reset_required = excluded.mfa_reset_required,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
           uEmailVerified, uEmailVerifiedAt,
-          uMfaEnabled, uMfaEnrolledAt, uTotpSecret,
+          uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
         );
         uHydrated++;
@@ -1292,29 +1299,32 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       const healResult = db.prepare(`
         UPDATE users
         SET mfa_enabled = 1,
+            mfa_reset_required = 0,
             mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
             updated_at = CURRENT_TIMESTAMP
-        WHERE mfa_enabled != 1 AND (
-          id IN (SELECT DISTINCT user_id FROM mfa_authenticators)
-          OR id IN (SELECT DISTINCT user_id FROM mfa_recovery_codes)
-          OR mfa_enrolled_at IS NOT NULL
-          OR totp_secret IS NOT NULL
-        )
+        WHERE (
+          id IN (SELECT DISTINCT user_id FROM mfa_authenticators WHERE totp_secret IS NOT NULL)
+          OR (totp_secret IS NOT NULL AND length(totp_secret) >= 16)
+        ) AND (mfa_enabled != 1 OR mfa_reset_required = 1)
       `).run();
       if (healResult.changes > 0) {
         console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${healResult.changes} user account(s).`);
       }
 
-      // Ensure Firestore users collection has mfa_enabled = 1 for all locally enrolled accounts
-      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1').all() as any[];
+      // Ensure Firestore users collection has mfa_enabled = 1, mfa_reset_required = 0 for all locally enrolled accounts
+      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1 AND totp_secret IS NOT NULL').all() as any[];
       for (const mfu of allMfaUsers) {
         setFirestoreDoc('users', mfu.id, {
           mfa_enabled: 1,
+          mfa_reset_required: 0,
           mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
-          totp_secret: mfu.totp_secret || null,
+          totp_secret: mfu.totp_secret,
           updated_at: new Date().toISOString(),
         }).catch(() => {});
       }
+
+      // Safe, post-hydration admin consistency check with Firestore grounding
+      await fixInconsistentAdminMfaStates();
     } catch (healMfaErr) {
       console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
     }

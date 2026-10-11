@@ -48,6 +48,7 @@ import {
   recordMfaFailedAttempt,
   clearMfaRateLimit,
 } from '../services/mfaRecoveryService.js';
+import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
 import { mfaRecoveryRateLimiter } from '../utils/rateLimiter.js';
 
@@ -295,17 +296,23 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
 
     const candidateSecrets: Array<{ secret: string; createdAt: string | null }> = [];
     if (dbUser?.totp_secret) {
-      candidateSecrets.push({
-        secret: dbUser.totp_secret,
-        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
-      });
+      const dec = decryptMfaSecret(dbUser.totp_secret);
+      if (dec && dec.length >= 16) {
+        candidateSecrets.push({
+          secret: dec,
+          createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+        });
+      }
     }
     authenticators.forEach((a) => {
-      if (a.totp_secret && !candidateSecrets.some((s) => s.secret === a.totp_secret)) {
-        candidateSecrets.push({
-          secret: a.totp_secret,
-          createdAt: a.created_at || null,
-        });
+      if (a.totp_secret) {
+        const dec = decryptMfaSecret(a.totp_secret);
+        if (dec && dec.length >= 16 && !candidateSecrets.some((s) => s.secret === dec)) {
+          candidateSecrets.push({
+            secret: dec,
+            createdAt: a.created_at || null,
+          });
+        }
       }
     });
 
@@ -462,7 +469,8 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     }
 
     const userRow = db.prepare('SELECT pending_totp_secret, totp_secret FROM users WHERE id = ?').get(user.id) as any;
-    const candidateSecret = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || userRow?.pending_totp_secret || userRow?.totp_secret || null;
+    const rawCandidate = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || userRow?.pending_totp_secret || userRow?.totp_secret || null;
+    const candidateSecret = decryptMfaSecret(rawCandidate);
     const otpCode = (req.body?.otpCode as string || req.body?.code as string || '').trim().replace(/\D/g, '');
 
     if (!candidateSecret) {
@@ -518,6 +526,9 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       });
     }
 
+    // Encrypt stored secret at rest using AES-256-GCM
+    const encryptedSecret = encryptMfaSecret(candidateSecret);
+
     // Update user record in SQLite: enable MFA, store persistent TOTP secret, clear pending_totp_secret, and clear mfa_reset_required
     db.prepare(`
       UPDATE users
@@ -528,7 +539,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
           mfa_reset_required = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(candidateSecret, user.id);
+    `).run(encryptedSecret, user.id);
 
     // Ensure primary authenticator record exists with persistent secret
     const primaryId = `auth_prim_${user.id}`;
@@ -538,7 +549,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       ON CONFLICT(id) DO UPDATE SET
         totp_secret = excluded.totp_secret,
         last_used_at = CURRENT_TIMESTAMP
-    `).run(primaryId, user.id, candidateSecret);
+    `).run(primaryId, user.id, encryptedSecret);
 
     // Provisions recovery codes if not already present
     let recoveryCodes: string[] | undefined = undefined;
@@ -556,11 +567,27 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       remainingCodes = existingStatus.remaining;
     }
 
-    // Mirror full updated user record to Firestore to preserve complete credentials
+    // Mirror full updated user record and authenticator to Firestore to preserve complete credentials
     const fullEnrolledUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
     if (fullEnrolledUser) {
-      syncRecordToFirestore('users', user.id, fullEnrolledUser).catch(() => {});
+      syncRecordToFirestore('users', user.id, {
+        ...fullEnrolledUser,
+        mfa_enabled: 1,
+        mfa_reset_required: 0,
+        totp_secret: encryptedSecret,
+        updated_at: new Date().toISOString(),
+      }).catch(() => {});
     }
+
+    syncRecordToFirestore('mfa_authenticators', primaryId, {
+      id: primaryId,
+      user_id: user.id,
+      factor_type: 'PRIMARY_TOTP',
+      label: 'Primary Authenticator App',
+      totp_secret: encryptedSecret,
+      created_at: new Date().toISOString(),
+      last_used_at: new Date().toISOString(),
+    }).catch(() => {});
 
     logMfaAudit({
       userId: user.id,
@@ -1409,17 +1436,23 @@ const handleValidateTotp = async (req: Request, res: Response) => {
 
     const possibleSecrets: Array<{ secret: string; createdAt: string | null }> = [];
     if (dbUser?.totp_secret) {
-      possibleSecrets.push({
-        secret: dbUser.totp_secret,
-        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
-      });
+      const dec = decryptMfaSecret(dbUser.totp_secret);
+      if (dec && dec.length >= 16) {
+        possibleSecrets.push({
+          secret: dec,
+          createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+        });
+      }
     }
     authenticators.forEach((a) => {
-      if (a.totp_secret && !possibleSecrets.some((s) => s.secret === a.totp_secret)) {
-        possibleSecrets.push({
-          secret: a.totp_secret,
-          createdAt: a.created_at || null,
-        });
+      if (a.totp_secret) {
+        const dec = decryptMfaSecret(a.totp_secret);
+        if (dec && dec.length >= 16 && !possibleSecrets.some((s) => s.secret === dec)) {
+          possibleSecrets.push({
+            secret: dec,
+            createdAt: a.created_at || null,
+          });
+        }
       }
     });
 

@@ -247,6 +247,7 @@ async function authenticateWithFirestoreFallback(
     const uMfaEnabled = fUserDoc.mfa_enabled ? 1 : 0;
     const uMfaEnrolledAt = fUserDoc.mfa_enrolled_at || null;
     const uTotpSecret = fUserDoc.totp_secret || null;
+    const uMfaResetRequired = fUserDoc.mfa_reset_required === 1 ? 1 : 0;
 
     try {
       const colliding = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normalizedEmail, uId) as { id: string } | undefined;
@@ -255,8 +256,8 @@ async function authenticateWithFirestoreFallback(
       }
 
       db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           email = excluded.email,
           password_hash = excluded.password_hash,
@@ -267,9 +268,10 @@ async function authenticateWithFirestoreFallback(
           account_classification = excluded.account_classification,
           mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
           mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
-          totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
+          totp_secret = CASE WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret ELSE users.totp_secret END,
+          mfa_reset_required = excluded.mfa_reset_required,
           updated_at = CURRENT_TIMESTAMP
-      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, fUserDoc.created_at || null);
+      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired, fUserDoc.created_at || null);
 
       if (uRole === 'STUDENT') {
         const spDoc = await getFirestoreDoc<any>('student_profiles', uId);

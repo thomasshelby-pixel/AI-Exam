@@ -5,7 +5,10 @@ import {
   initMfaRecoveryTables,
   executeServerMfaReset,
   getAuthoritativeUserMfaState,
+  getOrCreatePendingMfaSetup,
 } from '../services/mfaRecoveryService.js';
+import { encryptMfaSecret } from '../services/mfaCryptoService.js';
+import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import {
   ensureTrustedDevicesTable,
   getTrustedDevicesForUser,
@@ -211,6 +214,36 @@ async function runSuperAdminMfaResetVerification() {
   assert.ok(mfaAuditLog, 'MFA reset audit log entry must exist');
   assert.strictEqual(mfaAuditLog.status, 'SUCCESS');
   console.log('[PASS] Security audit trail entry verified.');
+
+  // 11. Complete re-enrollment to leave Super Admin authoritatively enrolled
+  console.log('\n[STEP 11] Completing fresh enrollment for Super Admin to restore enrolled state...');
+  const freshSetup = await getOrCreatePendingMfaSetup('usr_super_admin_001', 'support@caexamcheckerai.com', 'SUPER_ADMIN');
+  const encSec = encryptMfaSecret(freshSetup.secretKey);
+  db.prepare(`
+    UPDATE users
+    SET mfa_enabled = 1,
+        mfa_enrolled_at = CURRENT_TIMESTAMP,
+        totp_secret = ?,
+        pending_totp_secret = NULL,
+        mfa_reset_required = 0,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = 'usr_super_admin_001'
+  `).run(encSec);
+  db.prepare(`
+    INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+    VALUES ('auth_prim_usr_super_admin_001', 'usr_super_admin_001', 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret
+  `).run(encSec);
+  await syncRecordToFirestore('users', 'usr_super_admin_001', {
+    id: 'usr_super_admin_001',
+    mfa_enabled: 1,
+    mfa_reset_required: 0,
+    totp_secret: encSec,
+    updated_at: new Date().toISOString(),
+  });
+  const restoredState = await getAuthoritativeUserMfaState('usr_super_admin_001');
+  assert.strictEqual(restoredState.state, 'MFA_ENROLLED');
+  console.log('[PASS] Super Admin restored to authoritative MFA_ENROLLED state.');
 
   console.log('================================================================');
   console.log('✅ ALL SUPER ADMIN MFA RESET VERIFICATION CHECKS PASSED CLEANLY');
