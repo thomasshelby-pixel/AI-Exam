@@ -5119,7 +5119,6 @@ router.get('/models', (req: AuthRequest, res: Response) => {
       { order: 5, modelId: 'gpt-6-astra', provider: 'openai', role: 'Deep Reasoning / Cross-Check' },
       { order: 6, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Legal / Accounting / Audit Evaluation' },
       { order: 7, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
-      { order: 8, modelId: 'claude-haiku-4.5', provider: 'anthropic', role: 'Fast Multimodal Fallback' },
     ];
 
     return res.json({
@@ -5136,7 +5135,7 @@ router.get('/models', (req: AuthRequest, res: Response) => {
 router.put('/models/:id', (req: AuthRequest, res: Response) => {
   try {
     const modelId = req.params.id;
-    const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4.5'];
+    const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
     if (!allowed.includes(modelId)) {
       return res.status(400).json({ error: `Model '${modelId}' is not in the approved runtime model whitelist.` });
     }

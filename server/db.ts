@@ -2987,7 +2987,6 @@ function seedModelConfigs() {
     'gpt-6-astra',
     'claude-opus-5',
     'claude-sonnet-5',
-    'claude-haiku-4.5',
   ];
   const placeholders = approvedIds.map(() => '?').join(',');
 
@@ -3027,7 +3026,7 @@ function seedModelConfigs() {
   const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 5);
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 5);
 
-  // 3. Approved Production Multi-Provider Models (Strict Whitelist: 3 Gemini, 3 OpenAI, 3 Claude)
+  // 3. Approved Production Multi-Provider Models (Strict Whitelist: 3 Gemini, 3 OpenAI, 2 Claude)
   const models = [
     // Gemini — Exactly three approved models
     {
@@ -3070,7 +3069,7 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
 
-    // OpenAI — Preserved configured entries
+    // OpenAI — Preserved configured entries (3 Models)
     {
       id: 'gpt-5.6-sol',
       provider: 'openai',
@@ -3111,7 +3110,7 @@ function seedModelConfigs() {
       status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
 
-    // Anthropic Claude — Preserved configured entries
+    // Anthropic Claude — Preserved configured entries (2 Models)
     {
       id: 'claude-opus-5',
       provider: 'anthropic',
@@ -3133,19 +3132,6 @@ function seedModelConfigs() {
       is_primary: 0,
       fallback_order: 7,
       thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'claude-haiku-4.5',
-      provider: 'anthropic',
-      display_name: 'Claude Haiku 4.5 (Anthropic)',
-      role: 'Fast Multimodal & High-Speed Fallback',
-      is_primary: 0,
-      fallback_order: 8,
-      thinking_level: 'LOW',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,

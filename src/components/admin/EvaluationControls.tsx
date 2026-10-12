@@ -26,6 +26,7 @@ import {
 
 export interface EvaluationModelItem {
   id: string;
+  provider: 'gemini' | 'openai' | 'anthropic';
   displayName: string;
   category: 'primary' | 'flash' | 'flash_lite' | 'pro' | 'alias' | 'preview' | 'deprecated';
   status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE';
@@ -34,7 +35,7 @@ export interface EvaluationModelItem {
   contextWindow: number;
   supportsMultimodal: boolean;
   supportsThinking: boolean;
-  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
   costTier: 'LOW' | 'STANDARD' | 'PRO';
   isSelectable: boolean;
   isPrimaryCandidate: boolean;
@@ -42,8 +43,10 @@ export interface EvaluationModelItem {
 }
 
 const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
+  // 1. Google Gemini — 3 Approved Models
   {
     id: 'gemini-3.8-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.8 Flash (Primary CA Evaluation — Default)',
     category: 'primary',
     status: 'STABLE',
@@ -59,6 +62,7 @@ const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
   },
   {
     id: 'gemini-3.6-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.6 Flash (Primary Fallback Model)',
     category: 'flash',
     status: 'STABLE',
@@ -70,14 +74,15 @@ const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
     defaultThinkingLevel: 'MEDIUM',
     costTier: 'STANDARD',
     isSelectable: true,
-    isPrimaryCandidate: false,
+    isPrimaryCandidate: true,
   },
   {
     id: 'gemini-3.1-flash-lite',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.1 Flash Lite (Cost-Efficient Flash-Lite)',
     category: 'flash_lite',
     status: 'STABLE',
-    role: 'Cost-Efficient Flash-Lite Evaluation',
+    role: 'Fast Multimodal & High-Volume Fallback',
     description: 'Ultra-low latency, cost-effective multimodal evaluation model with 1M context window and low thinking latency.',
     contextWindow: 1048576,
     supportsMultimodal: true,
@@ -87,8 +92,95 @@ const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
     isSelectable: true,
     isPrimaryCandidate: true,
   },
+
+  // 2. OpenAI — 3 Preserved Models
+  {
+    id: 'gpt-5.6-sol',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Sol (Deep Reasoning & Calculation Cross-Check)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning & Calculation Cross-Check',
+    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-5.6-terra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Terra (Fast Multimodal & OCR)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Fast High-Volume / Multimodal / Low Latency',
+    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, and speed-critical fallback processing.',
+    contextWindow: 128000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-6-astra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-6 Astra (Deep Reasoning & Verification)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning / Calculation Verification / Cross-Check',
+    description: 'Deep reasoning, calculation verification, cross-checking, and difficult CA accounting, tax, law, and audit evaluation.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 3. Anthropic Claude — 2 Preserved Models
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    displayName: 'Claude Opus 5 (Anthropic — Deep Legal/Audit Evaluation)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Legal / Accounting / Audit Evaluation',
+    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    displayName: 'Claude Sonnet 5 (Anthropic — Balanced Evaluation)',
+    category: 'primary',
+    status: 'STABLE',
+    role: 'Balanced CA Evaluation / Fallback',
+    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 4. Deprecated / Retired Models
   {
     id: 'gemini-2.5-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Flash (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -105,6 +197,7 @@ const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
   },
   {
     id: 'gemini-2.5-pro',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Pro (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -121,6 +214,7 @@ const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
   },
   {
     id: 'gemini-2.5-flash-lite',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Flash Lite (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -552,7 +646,7 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
               </button>
             </div>
             <p className="text-xs text-slate-500">
-              Underlying Google Gemini multimodal architecture employed for handwriting OCR, step marking, and semantic verification.
+              Unified multi-provider AI evaluation engine supporting Google Gemini, OpenAI, and Anthropic Claude for handwriting OCR, step marking, and semantic verification.
             </p>
 
             <div className="space-y-3">
@@ -562,7 +656,7 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                     Model Engine
                   </label>
                   <span className="text-[10px] text-slate-400">
-                    {modelRegistry.filter((m) => m.isSelectable).length} eligible models available
+                    {modelRegistry.filter((m) => m.isSelectable).length} approved models available (3 Gemini, 3 OpenAI, 2 Claude)
                   </span>
                 </div>
                 <select
@@ -571,10 +665,10 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                   onChange={(e) => setSettings({ ...settings, EVAL_MODEL_PROVIDER: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none focus:ring-1 focus:ring-purple-500 font-medium"
                 >
-                  {/* Category: Primary Production Model */}
-                  <optgroup label="🌟 Primary Production Model (Recommended)">
+                  {/* Category: Google Gemini */}
+                  <optgroup label="🌐 Google Gemini (3 Models)">
                     {modelRegistry
-                      .filter((m) => m.category === 'primary')
+                      .filter((m) => m.provider === 'gemini' && m.isSelectable)
                       .map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.displayName}
@@ -582,10 +676,10 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                       ))}
                   </optgroup>
 
-                  {/* Category: Stable Flash Production Models */}
-                  <optgroup label="⚡ Stable Flash Production Models">
+                  {/* Category: OpenAI */}
+                  <optgroup label="🧠 OpenAI (3 Models)">
                     {modelRegistry
-                      .filter((m) => m.category === 'flash')
+                      .filter((m) => m.provider === 'openai' && m.isSelectable)
                       .map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.displayName}
@@ -593,32 +687,10 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                       ))}
                   </optgroup>
 
-                  {/* Category: Cost-Efficient Flash-Lite Models */}
-                  <optgroup label="💡 Cost-Efficient Flash-Lite Models (Low Latency)">
+                  {/* Category: Anthropic Claude */}
+                  <optgroup label="⚖️ Anthropic Claude (2 Models)">
                     {modelRegistry
-                      .filter((m) => m.category === 'flash_lite')
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.displayName}
-                        </option>
-                      ))}
-                  </optgroup>
-
-                  {/* Category: Canonical Production Aliases */}
-                  <optgroup label="🔗 Canonical Production Aliases">
-                    {modelRegistry
-                      .filter((m) => m.category === 'alias')
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.displayName}
-                        </option>
-                      ))}
-                  </optgroup>
-
-                  {/* Category: Deep Reasoning & Preview Models */}
-                  <optgroup label="🔬 Deep Reasoning & Preview Models">
-                    {modelRegistry
-                      .filter((m) => m.category === 'pro' || m.category === 'preview')
+                      .filter((m) => m.provider === 'anthropic' && m.isSelectable)
                       .map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.displayName}
@@ -627,10 +699,10 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                   </optgroup>
 
                   {/* Category: Deprecated / Retired Models */}
-                  {modelRegistry.some((m) => m.category === 'deprecated') && (
+                  {modelRegistry.some((m) => m.status === 'DEPRECATED') && (
                     <optgroup label="⚠️ Deprecated / Retired Models (Unsupported)">
                       {modelRegistry
-                        .filter((m) => m.category === 'deprecated')
+                        .filter((m) => m.status === 'DEPRECATED')
                         .map((m) => (
                           <option key={m.id} value={m.id} disabled>
                             {m.displayName}
@@ -665,7 +737,7 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                       <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-bold">Deprecated Model Warning:</span>{' '}
-                        <span>{currentModel.deprecationReason || 'This model has been retired by Google and cannot be used for evaluations.'}</span>
+                        <span>{currentModel.deprecationReason || 'This model has been retired and cannot be used for evaluations.'}</span>
                         <p className="text-[10px] text-rose-700 mt-0.5">
                           Please switch to <span className="font-mono font-bold">gemini-3.8-flash</span> or another active model.
                         </p>
@@ -679,6 +751,21 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-mono">
                         {currentModel.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          currentModel.provider === 'gemini'
+                            ? 'bg-blue-100 text-blue-700'
+                            : currentModel.provider === 'openai'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {currentModel.provider === 'gemini'
+                          ? 'Google Gemini'
+                          : currentModel.provider === 'openai'
+                          ? 'OpenAI'
+                          : 'Anthropic Claude'}
                       </span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${

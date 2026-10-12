@@ -216,28 +216,11 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Intermediate and Foundation level evaluations',
     ],
   },
-  {
-    id: 'claude-haiku-4.5',
-    provider: 'anthropic',
-    displayName: 'Claude Haiku 4.5 (Anthropic)',
-    description: 'Fast lightweight multimodal evaluation, rapid OCR transcription, and high-speed fallback processing.',
-    contextWindow: 200000,
-    recommended: false,
-    role: 'Fast Multimodal & High-Speed Fallback',
-    defaultThinkingLevel: 'LOW',
-    fallbackOrder: 8,
-    recommendedReasoning: 'LOW',
-    useCases: [
-      'High-speed multimodal evaluation',
-      'Rapid OCR transcription',
-      'Low-latency routine question evaluation',
-      'High-throughput emergency fallback',
-    ],
-  },
 ];
 
 export interface EvaluationModelRegistryItem {
   id: string;
+  provider: ModelProviderType;
   displayName: string;
   category: 'primary' | 'flash' | 'flash_lite' | 'pro' | 'alias' | 'preview' | 'deprecated';
   status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE';
@@ -246,7 +229,7 @@ export interface EvaluationModelRegistryItem {
   contextWindow: number;
   supportsMultimodal: boolean;
   supportsThinking: boolean;
-  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
   costTier: 'LOW' | 'STANDARD' | 'PRO';
   isSelectable: boolean;
   isPrimaryCandidate: boolean;
@@ -254,9 +237,10 @@ export interface EvaluationModelRegistryItem {
 }
 
 export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
-  // 1. PRIMARY PRODUCTION MODEL
+  // 1. GOOGLE GEMINI — EXACTLY 3 APPROVED MODELS
   {
     id: 'gemini-3.8-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.8 Flash (Primary CA Evaluation — Default)',
     category: 'primary',
     status: 'STABLE',
@@ -270,10 +254,9 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     isSelectable: true,
     isPrimaryCandidate: true,
   },
-
-  // 2. STABLE FLASH PRODUCTION FALLBACK
   {
     id: 'gemini-3.6-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.6 Flash (Primary Fallback Model)',
     category: 'flash',
     status: 'STABLE',
@@ -285,16 +268,15 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     defaultThinkingLevel: 'MEDIUM',
     costTier: 'STANDARD',
     isSelectable: true,
-    isPrimaryCandidate: false,
+    isPrimaryCandidate: true,
   },
-
-  // 3. COST-EFFICIENT FLASH-LITE MODEL
   {
     id: 'gemini-3.1-flash-lite',
+    provider: 'gemini',
     displayName: 'Google Gemini 3.1 Flash Lite (Cost-Efficient Flash-Lite)',
     category: 'flash_lite',
     status: 'STABLE',
-    role: 'Cost-Efficient Flash-Lite Evaluation',
+    role: 'Fast Multimodal & High-Volume Fallback',
     description: 'Ultra-low latency, cost-effective multimodal evaluation model with 1M context window and low thinking latency.',
     contextWindow: 1048576,
     supportsMultimodal: true,
@@ -305,9 +287,94 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     isPrimaryCandidate: true,
   },
 
+  // 2. OPENAI — PRESERVED CONFIGURED MODELS (3 MODELS)
+  {
+    id: 'gpt-5.6-sol',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Sol (Deep Reasoning & Calculation Cross-Check)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning & Calculation Cross-Check',
+    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-5.6-terra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Terra (Fast Multimodal & OCR)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Fast High-Volume / Multimodal / Low Latency',
+    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, and speed-critical fallback processing.',
+    contextWindow: 128000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-6-astra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-6 Astra (Deep Reasoning & Verification)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning / Calculation Verification / Cross-Check',
+    description: 'Deep reasoning, calculation verification, cross-checking, and difficult CA accounting, tax, law, and audit evaluation.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 3. ANTHROPIC CLAUDE — PRESERVED CONFIGURED MODELS (2 MODELS)
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    displayName: 'Claude Opus 5 (Anthropic — Deep Legal/Audit Evaluation)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Legal / Accounting / Audit Evaluation',
+    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    displayName: 'Claude Sonnet 5 (Anthropic — Balanced Evaluation)',
+    category: 'primary',
+    status: 'STABLE',
+    role: 'Balanced CA Evaluation / Fallback',
+    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
   // 4. DEPRECATED / RETIRED MODELS (CLEARLY LABELED, NOT SELECTABLE FOR PRODUCTION)
   {
     id: 'gemini-2.5-flash',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Flash (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -324,6 +391,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   },
   {
     id: 'gemini-2.5-pro',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Pro (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -340,6 +408,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   },
   {
     id: 'gemini-2.5-flash-lite',
+    provider: 'gemini',
     displayName: 'Google Gemini 2.5 Flash Lite (Deprecated — Retired by Google)',
     category: 'deprecated',
     status: 'DEPRECATED',
@@ -374,7 +443,7 @@ export function validateEvaluationModelId(modelId: string): {
   if (!entry) {
     return {
       valid: false,
-      error: `Unsupported AI model '${trimmed}'. Must be a recognized Google Gemini multimodal evaluation model.`,
+      error: `Unsupported AI model '${trimmed}'. Must be an approved Google Gemini, OpenAI, or Anthropic Claude evaluation model.`,
     };
   }
 
@@ -396,8 +465,24 @@ export function getEvaluationModelRegistry(): {
   models: EvaluationModelRegistryItem[];
   defaultModelId: string;
 } {
+  const dynamicModels = EVALUATION_MODEL_REGISTRY.map((m) => {
+    if (m.status === 'DEPRECATED') return m;
+    const configured = isProviderConfigured(m.provider);
+    const exhausted = isProviderCreditExhausted(m.provider);
+    let status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE' = m.status;
+    if (!configured) {
+      status = 'UNAVAILABLE';
+    } else if (exhausted) {
+      status = 'UNAVAILABLE';
+    }
+    return {
+      ...m,
+      status,
+    };
+  });
+
   return {
-    models: EVALUATION_MODEL_REGISTRY,
+    models: dynamicModels,
     defaultModelId: 'gemini-3.8-flash',
   };
 }
@@ -1116,7 +1201,7 @@ export function determineModelRouting(context?: {
     routingReason = `Default Primary Routing: ${defaultGemini} for standard ICAI evaluation`;
   }
 
-  // 2. Build deterministic multi-provider fallback hierarchy across approved 9 models:
+  // 2. Build deterministic multi-provider fallback hierarchy across approved 8 models:
   const canonicalFallbackOrder = [
     'gemini-3.8-flash',
     'gemini-3.6-flash',
@@ -1125,7 +1210,6 @@ export function determineModelRouting(context?: {
     'gpt-5.6-sol',
     'claude-sonnet-5',
     'gpt-5.6-terra',
-    'claude-haiku-4.5',
     'gpt-6-astra',
   ];
 

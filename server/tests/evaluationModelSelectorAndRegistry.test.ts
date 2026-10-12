@@ -46,29 +46,34 @@ async function runTests() {
     'OpenAI inventory must strictly contain GPT-5.6 Sol, GPT-5.6 Terra, and GPT-6 Astra'
   );
 
-  // 1C. Anthropic Claude: Exactly 3 entries preserved
+  // 1C. Anthropic Claude: Exactly 2 entries preserved
   const anthropicModels = APPROVED_MODELS.filter((m) => m.provider === 'anthropic');
-  assert.strictEqual(anthropicModels.length, 3, 'Anthropic Claude must preserve exactly 3 configured entries');
+  assert.strictEqual(anthropicModels.length, 2, 'Anthropic Claude must preserve exactly 2 configured entries');
   const anthropicIds = anthropicModels.map((m) => m.id);
   assert.deepStrictEqual(
     anthropicIds.sort(),
-    ['claude-haiku-4.5', 'claude-opus-5', 'claude-sonnet-5'].sort(),
-    'Anthropic Claude inventory must strictly contain Claude Opus 5, Claude Sonnet 5, and Claude Haiku 4.5'
+    ['claude-opus-5', 'claude-sonnet-5'].sort(),
+    'Anthropic Claude inventory must strictly contain Claude Opus 5 and Claude Sonnet 5'
   );
 
-  // Total approved models = 9
-  assert.strictEqual(APPROVED_MODELS.length, 9, 'APPROVED_MODELS must have exactly 9 entries (3 Gemini, 3 OpenAI, 3 Claude)');
+  // Total approved models = 8 (3 Gemini, 3 OpenAI, 2 Claude)
+  assert.strictEqual(APPROVED_MODELS.length, 8, 'APPROVED_MODELS must have exactly 8 entries (3 Gemini, 3 OpenAI, 2 Claude)');
 
   // 1D. Evaluation Selection Registry
   const { models, defaultModelId } = getEvaluationModelRegistry();
   assert.strictEqual(defaultModelId, 'gemini-3.8-flash', 'Default model must remain gemini-3.8-flash');
 
   const selectableModels = models.filter((m) => m.isSelectable);
-  assert.strictEqual(selectableModels.length, 3, 'Selectable evaluation models registry must strictly contain the 3 approved Gemini models');
+  assert.strictEqual(selectableModels.length, 8, 'Selectable evaluation models registry must contain all 8 approved models (3 Gemini, 3 OpenAI, 2 Claude)');
   const selectableIds = selectableModels.map((m) => m.id);
   assert.ok(selectableIds.includes('gemini-3.8-flash'), 'Must include gemini-3.8-flash');
   assert.ok(selectableIds.includes('gemini-3.6-flash'), 'Must include gemini-3.6-flash');
   assert.ok(selectableIds.includes('gemini-3.1-flash-lite'), 'Must include gemini-3.1-flash-lite');
+  assert.ok(selectableIds.includes('gpt-5.6-sol'), 'Must include gpt-5.6-sol');
+  assert.ok(selectableIds.includes('gpt-5.6-terra'), 'Must include gpt-5.6-terra');
+  assert.ok(selectableIds.includes('gpt-6-astra'), 'Must include gpt-6-astra');
+  assert.ok(selectableIds.includes('claude-opus-5'), 'Must include claude-opus-5');
+  assert.ok(selectableIds.includes('claude-sonnet-5'), 'Must include claude-sonnet-5');
 
   // Verify unapproved Gemini models are completely absent from active selection lists
   const unapprovedTestIds = [
@@ -93,7 +98,7 @@ async function runTests() {
     assert.ok(dep.deprecationReason, `Deprecated model ${dep.id} must have clear deprecation reason`);
   }
 
-  console.log('  ✓ Strict inventory validated: 3 Gemini, 3 OpenAI, 3 Claude. Unapproved models rejected.');
+  console.log('  ✓ Strict inventory validated: 3 Gemini, 3 OpenAI, 2 Claude. Unapproved models rejected.');
 
   // ---------------------------------------------------------------------------
   // TEST 2: SERVER-SIDE VALIDATION & REJECTION LOGIC
@@ -134,7 +139,7 @@ async function runTests() {
 
   // Verify database model_configs table strictly has the approved models
   const dbModelConfigs = db.prepare('SELECT id, provider, is_primary FROM model_configs').all() as any[];
-  assert.strictEqual(dbModelConfigs.length, 9, 'model_configs table must contain exactly 9 approved models');
+  assert.strictEqual(dbModelConfigs.length, 8, 'model_configs table must contain exactly 8 approved models');
   for (const m of dbModelConfigs) {
     assert.ok(APPROVED_MODELS.some((am) => am.id === m.id), `Database contains unapproved model: ${m.id}`);
   }
