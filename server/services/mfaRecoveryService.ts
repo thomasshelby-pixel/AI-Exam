@@ -388,7 +388,7 @@ export async function getOrCreatePendingMfaSetup(
     db.prepare('UPDATE users SET pending_totp_secret = ? WHERE id = ?').run(encSecret, userId);
   }
 
-  const issuer = 'MCQ Arena';
+  const issuer = role === 'MCQ_ADMIN' ? 'MCQ Arena' : 'CA Exam Checker AI';
   const accountLabel = role === 'MCQ_ADMIN' ? 'MCQ Admin' : role === 'SUPER_ADMIN' ? 'Super Admin' : 'Institute Admin';
   const encodedIssuer = encodeURIComponent(issuer);
   const encodedEmail = encodeURIComponent(accountEmail);
