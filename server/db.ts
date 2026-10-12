@@ -1880,6 +1880,56 @@ function runMigrations() {
   }
 }
 
+function seedCoreStudents() {
+  try {
+    // 1. Seed Demo Student User
+    const studentEmail = 'student@caexamchecker.ai';
+    const sId = 'usr_student_demo_001';
+    const isDemoTombstoned = isTombstoned('users', sId) || isTombstoned('users', studentEmail);
+    const studentExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(studentEmail.toLowerCase(), sId);
+    if (!studentExists && !isDemoTombstoned) {
+      const sHash = hashPassword('Student@CA2026!');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, 'Rahul Sharma', '+919876543211', 'STUDENT', 'ACTIVE')
+      `).run(sId, studentEmail, sHash);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 5)
+      `).run(sId);
+    }
+
+    // 2. Seed Active Account for at9767676@gmail.com
+    const userEmail = 'at9767676@gmail.com';
+    const uId = 'usr_user_at9767';
+    const isAtTombstoned = isTombstoned('users', uId) || isTombstoned('users', userEmail.toLowerCase());
+    const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
+    if (!activeUserExists && !isAtTombstoned) {
+      const uHash = hashPassword('Student@CA2026!');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, 'Verified CA Candidate', '+919876543210', 'STUDENT', 'ACTIVE')
+      `).run(uId, userEmail.toLowerCase(), uHash);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10, 10)
+      `).run(uId);
+
+      const expDateAt = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_user_at9767', ?, 'ord_seed_at9767', 'pay_seed_at9767', 10, 10, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(uId, expDateAt);
+    }
+  } catch (err) {
+    console.warn('[DB] Warning seeding core students:', err);
+  }
+}
+
 function seedInitialData() {
   // 1. Authoritative Super Admin Migration to Accessible Mailbox: support@caexamcheckerai.com
   const adminPassword = process.env.ADMIN_PASSWORD || 'BgMi@2006';
@@ -1976,6 +2026,9 @@ function seedInitialData() {
   } catch (err) {
     console.warn('[DB] Warning updating settings support email:', err);
   }
+
+  // 1b. Seed Core Student Accounts for Test & Active User Authentication
+  seedCoreStudents();
 
   // 2. Permanent Free Entitlements
   const permanentEmails = [
@@ -2924,14 +2977,21 @@ export function seedPricingPlans() {
 function seedModelConfigs() {
   const approvedIds = [
     'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
+    'gemini-pro-latest',
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite-preview',
     'claude-opus-5',
     'gpt-5.6-sol',
     'claude-sonnet-5',
     'gpt-5.6-terra',
-    'gemini-3.7-flash',
     'gpt-6-astra',
   ];
   const placeholders = approvedIds.map(() => '?').join(',');
@@ -2952,7 +3012,7 @@ function seedModelConfigs() {
   db.prepare(`
     UPDATE pricing_settings
     SET value = 'gemini-flash-latest'
-    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}) OR value = 'claude-opus-5' OR value LIKE '%3.6%')
+    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}) OR value = 'claude-opus-5')
   `).run(...approvedIds);
 
   db.prepare(`
@@ -3086,6 +3146,97 @@ function seedModelConfigs() {
       is_primary: 0,
       fallback_order: 8,
       thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.6-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.6 Flash',
+      role: 'Primary Fallback Model',
+      is_primary: 0,
+      fallback_order: 10,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.5-flash',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.5 Flash',
+      role: 'Secondary Fallback Model',
+      is_primary: 0,
+      fallback_order: 11,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.5-flash-lite',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.5 Flash Lite',
+      role: 'Cost-Efficient Flash-Lite Evaluation',
+      is_primary: 0,
+      fallback_order: 12,
+      thinking_level: 'LOW',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-flash-lite-latest',
+      provider: 'gemini',
+      display_name: 'Google Gemini Flash-Lite Latest',
+      role: 'Canonical Flash-Lite Alias',
+      is_primary: 0,
+      fallback_order: 13,
+      thinking_level: 'LOW',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-pro-latest',
+      provider: 'gemini',
+      display_name: 'Google Gemini Pro Latest',
+      role: 'Canonical Pro Alias',
+      is_primary: 0,
+      fallback_order: 14,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3-flash-preview',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3 Flash Preview',
+      role: 'Preview Flash Evaluation',
+      is_primary: 0,
+      fallback_order: 15,
+      thinking_level: 'MEDIUM',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+    {
+      id: 'gemini-3.1-flash-lite-preview',
+      provider: 'gemini',
+      display_name: 'Google Gemini 3.1 Flash Lite Preview',
+      role: 'Preview Flash-Lite Evaluation',
+      is_primary: 0,
+      fallback_order: 16,
+      thinking_level: 'LOW',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,

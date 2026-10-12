@@ -69,7 +69,12 @@ import {
   computeContentHash,
   normalizeExtractedContent,
 } from '../services/materialDuplicateProtectionService.js';
-import { sanitizeSecretStrings } from '../models/modelRegistry.js';
+import {
+  sanitizeSecretStrings,
+  getEvaluationModelRegistry,
+  validateEvaluationModelId,
+  EVALUATION_MODEL_REGISTRY,
+} from '../models/modelRegistry.js';
 
 const router = Router();
 
@@ -1496,13 +1501,36 @@ router.get('/evaluation-controls', (req: AuthRequest, res: Response) => {
       settingsMap[r.key] = r.value;
     }
 
+    const { models, defaultModelId } = getEvaluationModelRegistry();
+    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
+
     return res.json({
       settings: settingsMap,
       definitions: rows,
+      modelRegistry: models,
+      defaultModelId,
+      geminiConfigured: isGeminiConfigured,
     });
   } catch (error: unknown) {
     console.error('Get evaluation controls error:', error);
     return res.status(500).json({ error: 'Failed to load evaluation controls' });
+  }
+});
+
+router.get('/evaluation-controls/model-registry', (req: AuthRequest, res: Response) => {
+  try {
+    const { models, defaultModelId } = getEvaluationModelRegistry();
+    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
+
+    return res.json({
+      models,
+      defaultModelId,
+      geminiConfigured: isGeminiConfigured,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: unknown) {
+    console.error('Get evaluation model registry error:', error);
+    return res.status(500).json({ error: 'Failed to load evaluation model registry' });
   }
 });
 
@@ -1511,6 +1539,18 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
     const settings = req.body;
     if (!settings || typeof settings !== 'object') {
       return res.status(400).json({ error: 'Invalid settings object' });
+    }
+
+    // SERVER-SIDE MODEL VALIDATION: Ensure selected model is an approved, non-deprecated evaluation model
+    if (settings.EVAL_MODEL_PROVIDER !== undefined) {
+      const modelId = String(settings.EVAL_MODEL_PROVIDER).trim();
+      const validation = validateEvaluationModelId(modelId);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: validation.error || `Invalid model identifier: '${modelId}'`,
+          modelId,
+        });
+      }
     }
 
     const updateStmt = db.prepare(`
@@ -1525,6 +1565,12 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Synchronize model_configs is_primary state with EVAL_MODEL_PROVIDER
+    if (settings.EVAL_MODEL_PROVIDER) {
+      const selectedModelId = String(settings.EVAL_MODEL_PROVIDER).trim();
+      db.prepare('UPDATE model_configs SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END').run(selectedModelId);
+    }
+
     // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, details)
@@ -1532,7 +1578,7 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
     `).run(
       `log_${crypto.randomBytes(8).toString('hex')}`,
       req.user!.id,
-      `Admin updated evaluation rules: ${Object.keys(settings).join(', ')}`
+      `Admin updated evaluation rules: ${Object.keys(settings).join(', ')}${settings.EVAL_MODEL_PROVIDER ? ` (Model: ${settings.EVAL_MODEL_PROVIDER})` : ''}`
     );
 
     return res.json({ success: true, message: 'Evaluation controls updated successfully' });
@@ -3934,14 +3980,12 @@ router.get('/ai-settings', (req: AuthRequest, res: Response) => {
         strictnessMode: map.EVAL_STRICTNESS_MODE || 'BALANCED',
         confidenceThreshold: Number(map.CONFIDENCE_THRESHOLD) || 85,
         geminiConfigured: !!process.env.GEMINI_API_KEY,
-        availableModels: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Primary CA Evaluation)' },
-          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Fast Review & High-Volume Fallback)' },
-          { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Primary Fallback Model)' },
-          { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash (Secondary Fallback Model)' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (Ultra-Fast Fallback Model)' },
-          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Complex & Legal Reasoning)' },
-        ],
+        availableModels: EVALUATION_MODEL_REGISTRY.filter((m) => m.isSelectable).map((m) => ({
+          id: m.id,
+          name: m.displayName,
+          status: m.status,
+          category: m.category,
+        })),
       },
     });
   } catch (error: unknown) {

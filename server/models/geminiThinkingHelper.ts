@@ -23,10 +23,15 @@ const MODEL_SUPPORTED_THINKING_LEVELS: Record<string, GeminiThinkingLevel[]> = {
   'gemini-3.8-flash': ['low', 'medium', 'high'], // IMPORTANT: 'minimal' is strictly prohibited
   'gemini-3.7-flash': ['low', 'medium', 'high'],
   'gemini-3.6-flash': ['minimal', 'low', 'medium', 'high'],
-  'gemini-3.1-flash-lite': ['minimal', 'low', 'medium', 'high'],
-  'gemini-3.1-pro-preview': ['low', 'medium', 'high'],
-  'gemini-flash-latest': ['low', 'medium', 'high'],
   'gemini-3.5-flash': ['low', 'medium', 'high'],
+  'gemini-3.1-pro-preview': ['low', 'medium', 'high'],
+  'gemini-3.1-flash-lite': ['minimal', 'low', 'medium', 'high'],
+  'gemini-3.5-flash-lite': ['minimal', 'low', 'medium', 'high'],
+  'gemini-flash-latest': ['low', 'medium', 'high'],
+  'gemini-flash-lite-latest': ['minimal', 'low', 'medium', 'high'],
+  'gemini-pro-latest': ['low', 'medium', 'high'],
+  'gemini-3-flash-preview': ['low', 'medium', 'high'],
+  'gemini-3.1-flash-lite-preview': ['minimal', 'low', 'medium', 'high'],
 };
 
 /**

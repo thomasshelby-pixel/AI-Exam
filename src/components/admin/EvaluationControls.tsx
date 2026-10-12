@@ -17,7 +17,260 @@ import {
   X,
   Check,
   AlertCircle,
+  Sparkles,
+  Zap,
+  Cpu,
+  FileCheck2,
+  Info,
 } from 'lucide-react';
+
+export interface EvaluationModelItem {
+  id: string;
+  displayName: string;
+  category: 'primary' | 'flash' | 'flash_lite' | 'pro' | 'alias' | 'preview' | 'deprecated';
+  status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE';
+  role: string;
+  description: string;
+  contextWindow: number;
+  supportsMultimodal: boolean;
+  supportsThinking: boolean;
+  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  costTier: 'LOW' | 'STANDARD' | 'PRO';
+  isSelectable: boolean;
+  isPrimaryCandidate: boolean;
+  deprecationReason?: string;
+}
+
+const DEFAULT_EVAL_MODELS: EvaluationModelItem[] = [
+  {
+    id: 'gemini-3.8-flash',
+    displayName: 'Google Gemini 3.8 Flash (Primary CA Evaluation — Default)',
+    category: 'primary',
+    status: 'STABLE',
+    role: 'Primary CA Evaluation (Recommended)',
+    description: 'Flagship production model for CA handwritten answer-sheet evaluation, OCR, step marking, working notes inspection, and ICAI report generation.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.7-flash',
+    displayName: 'Google Gemini 3.7 Flash (Advanced Multimodal & High-Volume)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Advanced Multimodal Evaluation',
+    description: 'High-throughput multimodal evaluation with fast reasoning for descriptive and practical CA question papers.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.6-flash',
+    displayName: 'Google Gemini 3.6 Flash (Primary Fallback Model)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Primary Production Fallback',
+    description: 'Battle-tested Flash model for evaluation resilience when primary model encounters transient rate limits.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: false,
+  },
+  {
+    id: 'gemini-3.5-flash',
+    displayName: 'Google Gemini 3.5 Flash (Secondary Fallback Model)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Secondary Production Fallback',
+    description: 'High-volume production Flash model for fast review, MCQ scoring, and secondary fallback tier.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: false,
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    displayName: 'Google Gemini 3.1 Flash Lite (Cost-Efficient Flash-Lite)',
+    category: 'flash_lite',
+    status: 'STABLE',
+    role: 'Cost-Efficient Flash-Lite Evaluation',
+    description: 'Ultra-low latency, cost-effective multimodal evaluation model with 1M context window and low thinking latency.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    displayName: 'Google Gemini 3.5 Flash Lite (Next-Gen Cost-Efficient Flash-Lite)',
+    category: 'flash_lite',
+    status: 'STABLE',
+    role: 'Next-Gen Cost-Efficient Flash-Lite',
+    description: 'Latest Flash-Lite architecture delivering sub-second multimodal inference for high-volume student batches.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-flash-latest',
+    displayName: 'Google Gemini Flash Latest (Canonical Stable Flash Alias)',
+    category: 'alias',
+    status: 'STABLE',
+    role: 'Canonical Production Flash Alias',
+    description: 'Always points automatically to the latest stable Google Gemini Flash model without manual redeployments.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-flash-lite-latest',
+    displayName: 'Google Gemini Flash-Lite Latest (Canonical Flash-Lite Alias)',
+    category: 'alias',
+    status: 'STABLE',
+    role: 'Canonical Production Flash-Lite Alias',
+    description: 'Always points automatically to the latest stable Google Gemini Flash-Lite model for lowest latency.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-pro-latest',
+    displayName: 'Google Gemini Pro Latest (Canonical Stable Pro Alias)',
+    category: 'alias',
+    status: 'STABLE',
+    role: 'Canonical Production Pro Alias',
+    description: 'Always points automatically to the latest stable Google Gemini Pro model for deep complex reasoning.',
+    contextWindow: 2097152,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    displayName: 'Google Gemini 3.1 Pro Preview (Complex Legal & Tax Reasoning)',
+    category: 'pro',
+    status: 'PREVIEW',
+    role: 'Deep Reasoning & Pro Analysis',
+    description: 'Advanced 2M token context model for ambiguous CA Final corporate law, direct tax case studies, and Ind AS standards.',
+    contextWindow: 2097152,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    displayName: 'Google Gemini 3 Flash Preview (Preview Experimental Flash)',
+    category: 'preview',
+    status: 'PREVIEW',
+    role: 'Experimental Flash Preview',
+    description: 'Preview Flash model for experimental evaluation testing (non-production).',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: false,
+  },
+  {
+    id: 'gemini-3.1-flash-lite-preview',
+    displayName: 'Google Gemini 3.1 Flash Lite Preview (Preview Experimental Flash-Lite)',
+    category: 'preview',
+    status: 'PREVIEW',
+    role: 'Experimental Flash-Lite Preview',
+    description: 'Preview Flash-Lite model for experimental low-latency evaluation (non-production).',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: true,
+    isPrimaryCandidate: false,
+  },
+  {
+    id: 'gemini-2.5-flash',
+    displayName: 'Google Gemini 2.5 Flash (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.8-flash.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'STANDARD',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.8-flash.',
+  },
+  {
+    id: 'gemini-2.5-pro',
+    displayName: 'Google Gemini 2.5 Pro (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.1-pro-preview.',
+    contextWindow: 2097152,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'PRO',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.1-pro-preview.',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    displayName: 'Google Gemini 2.5 Flash Lite (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.5-flash-lite.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.5-flash-lite.',
+  },
+];
 
 interface EvaluationControlsProps {
   onNotify?: (message: string, type: 'success' | 'error') => void;
@@ -63,6 +316,11 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
     EVAL_MATERIAL_PRIORITY: 'STRICT_ACTIVE',
   });
 
+  // Model Registry State
+  const [modelRegistry, setModelRegistry] = useState<EvaluationModelItem[]>(DEFAULT_EVAL_MODELS);
+  const [refreshingModels, setRefreshingModels] = useState<boolean>(false);
+  const [geminiApiConfigured, setGeminiApiConfigured] = useState<boolean>(true);
+
   // MCQ Scoring Rules State
   const [mcqRules, setMcqRules] = useState<McqScoringRule[]>([]);
   const [loadingRules, setLoadingRules] = useState<boolean>(true);
@@ -77,15 +335,51 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
   const fetchControls = async () => {
     try {
       setLoading(true);
-      const res = await apiRequest<{ settings: Record<string, string> }>('/api/admin/evaluation-controls');
+      const res = await apiRequest<{
+        settings: Record<string, string>;
+        modelRegistry?: EvaluationModelItem[];
+        defaultModelId?: string;
+        geminiConfigured?: boolean;
+      }>('/api/admin/evaluation-controls');
       if (res.settings) {
         setSettings((prev) => ({ ...prev, ...res.settings }));
+      }
+      if (res.modelRegistry && res.modelRegistry.length > 0) {
+        setModelRegistry(res.modelRegistry);
+      }
+      if (res.geminiConfigured !== undefined) {
+        setGeminiApiConfigured(res.geminiConfigured);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load evaluation rules';
       onNotify?.(msg, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Safely refresh model registry without modifying active settings
+  const handleRefreshModelRegistry = async () => {
+    try {
+      setRefreshingModels(true);
+      const res = await apiRequest<{
+        models: EvaluationModelItem[];
+        defaultModelId?: string;
+        geminiConfigured?: boolean;
+      }>('/api/admin/evaluation-controls/model-registry');
+      if (res.models && res.models.length > 0) {
+        setModelRegistry(res.models);
+        if (res.geminiConfigured !== undefined) {
+          setGeminiApiConfigured(res.geminiConfigured);
+        }
+        const activeCount = res.models.filter((m) => m.isSelectable).length;
+        onNotify?.(`AI Model Registry refreshed successfully (${activeCount} active models available)`, 'success');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to refresh model registry';
+      onNotify?.(msg, 'error');
+    } finally {
+      setRefreshingModels(false);
     }
   };
 
@@ -376,29 +670,188 @@ export const EvaluationControls: React.FC<EvaluationControlsProps> = ({ onNotify
 
           {/* Card 2: AI Model & Confidence Engine */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
-              <Brain className="w-4 h-4 text-purple-600" />
-              <span>Vision & LLM Reasoning Model</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                <Brain className="w-4 h-4 text-purple-600" />
+                <span>Vision & LLM Reasoning Model</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRefreshModelRegistry}
+                disabled={refreshingModels}
+                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition cursor-pointer disabled:opacity-50"
+                title="Refresh eligible models from server registry"
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin text-purple-600' : ''}`} />
+                <span>{refreshingModels ? 'Refreshing...' : 'Refresh Registry'}</span>
+              </button>
             </div>
             <p className="text-xs text-slate-500">
-              Underlying Google Gemini multimodal architecture employed for handwriting OCR and semantic verification.
+              Underlying Google Gemini multimodal architecture employed for handwriting OCR, step marking, and semantic verification.
             </p>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Model Engine</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="eval-model-select" className="block text-xs font-bold text-slate-700">
+                    Model Engine
+                  </label>
+                  <span className="text-[10px] text-slate-400">
+                    {modelRegistry.filter((m) => m.isSelectable).length} eligible models available
+                  </span>
+                </div>
                 <select
+                  id="eval-model-select"
                   value={settings.EVAL_MODEL_PROVIDER}
                   onChange={(e) => setSettings({ ...settings, EVAL_MODEL_PROVIDER: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:outline-none focus:ring-1 focus:ring-purple-500 font-medium"
                 >
-                  <option value="gemini-3.8-flash">Gemini 3.8 Flash (Primary CA Evaluation — Default)</option>
-                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Secondary Complex & Legal Reasoning)</option>
-                  <option value="gemini-3.7-flash">Gemini 3.7 Flash (Fast Review & MCQ Evaluator)</option>
-                  <option value="gemini-3.6-flash">Gemini 3.6 Flash (Primary Fallback Model)</option>
-                  <option value="gemini-3.5-flash">Gemini 3.5 Flash (Secondary Fallback Model)</option>
+                  {/* Category: Primary Production Model */}
+                  <optgroup label="🌟 Primary Production Model (Recommended)">
+                    {modelRegistry
+                      .filter((m) => m.category === 'primary')
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                  </optgroup>
+
+                  {/* Category: Stable Flash Production Models */}
+                  <optgroup label="⚡ Stable Flash Production Models">
+                    {modelRegistry
+                      .filter((m) => m.category === 'flash')
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                  </optgroup>
+
+                  {/* Category: Cost-Efficient Flash-Lite Models */}
+                  <optgroup label="💡 Cost-Efficient Flash-Lite Models (Low Latency)">
+                    {modelRegistry
+                      .filter((m) => m.category === 'flash_lite')
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                  </optgroup>
+
+                  {/* Category: Canonical Production Aliases */}
+                  <optgroup label="🔗 Canonical Production Aliases">
+                    {modelRegistry
+                      .filter((m) => m.category === 'alias')
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                  </optgroup>
+
+                  {/* Category: Deep Reasoning & Preview Models */}
+                  <optgroup label="🔬 Deep Reasoning & Preview Models">
+                    {modelRegistry
+                      .filter((m) => m.category === 'pro' || m.category === 'preview')
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.displayName}
+                        </option>
+                      ))}
+                  </optgroup>
+
+                  {/* Category: Deprecated / Retired Models */}
+                  {modelRegistry.some((m) => m.category === 'deprecated') && (
+                    <optgroup label="⚠️ Deprecated / Retired Models (Unsupported)">
+                      {modelRegistry
+                        .filter((m) => m.category === 'deprecated')
+                        .map((m) => (
+                          <option key={m.id} value={m.id} disabled>
+                            {m.displayName}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
+
+              {/* Selected Model Details & Capability Badges */}
+              {(() => {
+                const currentModel = modelRegistry.find((m) => m.id === settings.EVAL_MODEL_PROVIDER);
+                if (!currentModel) {
+                  return (
+                    <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Unrecognized Model Identifier:</span>{' '}
+                        <code className="bg-amber-100 px-1 py-0.5 rounded text-[10px] font-mono">{settings.EVAL_MODEL_PROVIDER}</code>
+                        <p className="text-[10px] text-amber-700 mt-0.5">
+                          This model is not in the active evaluation registry. Please select a verified production model above.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (currentModel.status === 'DEPRECATED' || !currentModel.isSelectable) {
+                  return (
+                    <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Deprecated Model Warning:</span>{' '}
+                        <span>{currentModel.deprecationReason || 'This model has been retired by Google and cannot be used for evaluations.'}</span>
+                        <p className="text-[10px] text-rose-700 mt-0.5">
+                          Please switch to <span className="font-mono font-bold">gemini-3.8-flash</span> or another active model.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-mono">
+                        {currentModel.id}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          currentModel.status === 'STABLE'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {currentModel.status}
+                      </span>
+                      {currentModel.costTier && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          Cost: {currentModel.costTier}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                        Thinking: {currentModel.defaultThinkingLevel}
+                      </span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                        {(currentModel.contextWindow / 1024).toFixed(0)}k Context
+                      </span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                        <FileCheck2 className="w-3 h-3 text-emerald-600" />
+                        <span>Multimodal PDF/OCR</span>
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {currentModel.description}
+                    </p>
+
+                    <div className="pt-1.5 border-t border-slate-200 flex items-center justify-between text-[10px] text-slate-500">
+                      <span>Role: <strong className="text-slate-700">{currentModel.role}</strong></span>
+                      <span className="text-slate-400">Deterministic Fallback: Active</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div>
                 <div className="flex items-center justify-between text-xs mb-1">
