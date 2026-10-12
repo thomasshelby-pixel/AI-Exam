@@ -522,52 +522,52 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
             <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal OCR</div>
           </div>
 
-          {/* Fallback 5: Gemini 3.1 Pro (Preview) */}
-          <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-600 text-white">
+          {/* Fallback 5: Gemini 3.6 Flash */}
+          <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/20 flex flex-col justify-between relative">
+            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
               Fallback 5
             </span>
             <div>
-              <div className="text-[10px] font-black uppercase text-blue-600">Gemini (Preview)</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.1-pro</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Deep Reasoning (Preview)</div>
-          </div>
-
-          {/* Fallback 6: Gemini 3.7 Flash */}
-          <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-600 text-white">
-              Fallback 6
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-blue-600">Gemini</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.7-flash</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal</div>
-          </div>
-
-          {/* Fallback 7: Gemini 3.6 Flash */}
-          <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-600 text-white">
-              Fallback 7
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-blue-600">Gemini</div>
+              <div className="text-[10px] font-black uppercase text-blue-700">Google Gemini</div>
               <div className="font-bold text-xs text-slate-900 truncate">gemini-3.6-flash</div>
             </div>
             <div className="text-[10px] text-slate-500 mt-2 font-medium">Standard Fallback</div>
           </div>
 
-          {/* Fallback 8: Gemini 3.5 Flash */}
-          <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-600 text-white">
+          {/* Fallback 6: Gemini 3.1 Flash Lite */}
+          <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/20 flex flex-col justify-between relative">
+            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
+              Fallback 6
+            </span>
+            <div>
+              <div className="text-[10px] font-black uppercase text-blue-700">Google Gemini</div>
+              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.1-flash-lite</div>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal</div>
+          </div>
+
+          {/* Fallback 7: Claude Haiku 4.5 */}
+          <div className="p-2.5 rounded-lg border border-amber-200 bg-amber-50/20 flex flex-col justify-between relative">
+            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-600 text-white">
+              Fallback 7
+            </span>
+            <div>
+              <div className="text-[10px] font-black uppercase text-amber-700">Anthropic</div>
+              <div className="font-bold text-xs text-slate-900 truncate">claude-haiku-4.5</div>
+            </div>
+            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal</div>
+          </div>
+
+          {/* Fallback 8: GPT-6 Astra */}
+          <div className="p-2.5 rounded-lg border border-emerald-200 bg-emerald-50/20 flex flex-col justify-between relative">
+            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-700 text-white">
               Fallback 8
             </span>
             <div>
-              <div className="text-[10px] font-black uppercase text-blue-600">Gemini</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.5-flash</div>
+              <div className="text-[10px] font-black uppercase text-emerald-700">OpenAI</div>
+              <div className="font-bold text-xs text-slate-900 truncate">gpt-6-astra</div>
             </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">High-Volume Backup</div>
+            <div className="text-[10px] text-slate-500 mt-2 font-medium">Deep Reasoning / Cross-Check</div>
           </div>
         </div>
       </div>

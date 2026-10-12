@@ -64,6 +64,7 @@ export interface ModelDescriptor {
  * NOTE: Legacy obsolete models (GPT-4o, Claude 3.5, Gemini 1.5, Gemini 2.5) are permanently excluded.
  */
 export const APPROVED_MODELS: ModelDescriptor[] = [
+  // 1. Google Gemini — Exactly three approved models
   {
     id: 'gemini-3.8-flash',
     provider: 'gemini',
@@ -84,6 +85,23 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     ],
   },
   {
+    id: 'gemini-3.6-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.6 Flash',
+    description: 'Reliable production Flash model for multimodal evaluation, step marking, and resilient fallback.',
+    contextWindow: 1048576,
+    recommended: true,
+    role: 'Primary Fallback Model',
+    defaultThinkingLevel: 'MEDIUM',
+    fallbackOrder: 1,
+    recommendedReasoning: 'MEDIUM',
+    useCases: [
+      'Standard multimodal evaluation',
+      'Step-marking and calculation verification',
+      'Primary production fallback tier',
+    ],
+  },
+  {
     id: 'gemini-3.1-flash-lite',
     provider: 'gemini',
     displayName: 'Google Gemini 3.1 Flash Lite',
@@ -92,7 +110,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Fast Multimodal & High-Volume Fallback',
     defaultThinkingLevel: 'LOW',
-    fallbackOrder: 1,
+    fallbackOrder: 2,
     recommendedReasoning: 'LOW',
     useCases: [
       'Rapid multimodal PDF evaluation',
@@ -100,59 +118,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'High-throughput fallback when other models are saturated',
     ],
   },
-  {
-    id: 'gemini-flash-latest',
-    provider: 'gemini',
-    displayName: 'Google Gemini Flash Latest',
-    description: 'Standard reliable production Flash fallback when primary models encounter transient rate limits or high-demand spikes.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Production Flash Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 2,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Standard reliable fallback tier',
-      'Rate limit recovery',
-      'High-volume routine processing',
-    ],
-  },
-  {
-    id: 'gemini-3.1-pro-preview',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.1 Pro (Preview)',
-    description: 'Difficult and highly ambiguous CA evaluations, complex legal/accounting/tax/audit reasoning, difficult calculations, consequential-error analysis and cases requiring deeper reasoning. (PREVIEW: Not for default production).',
-    contextWindow: 2097152,
-    recommended: false,
-    role: 'Deep Reasoning & Pro Analysis',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 3,
-    isPreview: true,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Difficult calculations & consequential-error analysis',
-      'Extreme context preview cases',
-    ],
-  },
-  {
-    id: 'claude-opus-5',
-    provider: 'anthropic',
-    displayName: 'Claude Opus 5 (Anthropic)',
-    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
-    contextWindow: 200000,
-    recommended: true,
-    role: 'Deep Legal / Accounting / Audit Evaluation',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 4,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Deep legal reasoning & statutory interpretation',
-      'Complex corporate and economic laws',
-      'Ind AS / AS accounting standard application',
-      'Advanced auditing principles and ethics',
-      'High-stakes ambiguous student answer arbitration',
-    ],
-  },
+
+  // 2. OpenAI — Preserved configured entries
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
@@ -162,7 +129,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Deep Reasoning & Calculation Cross-Check',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 5,
+    fallbackOrder: 3,
     recommendedReasoning: 'HIGH or XHIGH',
     useCases: [
       'Difficult CA answer evaluation',
@@ -171,25 +138,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Ambiguous answers & deep marking verification',
       'Score calculation cross-check & annotation instructions',
       'Detailed evaluation report generation',
-      'Difficult quality-review cases',
-    ],
-  },
-  {
-    id: 'claude-sonnet-5',
-    provider: 'anthropic',
-    displayName: 'Claude Sonnet 5 (Anthropic)',
-    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
-    contextWindow: 200000,
-    recommended: true,
-    role: 'Balanced CA Evaluation / Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 6,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Balanced CA answer evaluation',
-      'Fast high-reliability fallback',
-      'Structured theory and practical question grading',
-      'Intermediate and Foundation level evaluations',
     ],
   },
   {
@@ -201,7 +149,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: false,
     role: 'Fast High-Volume / Multimodal / Low Latency',
     defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 7,
+    fallbackOrder: 4,
     recommendedReasoning: 'LOW or MEDIUM',
     useCases: [
       'Fast evaluation & speed-critical fallbacks',
@@ -209,138 +157,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Routine question evaluation',
       'Standard practical/theory evaluation',
       'High-concurrency batch evaluation',
-    ],
-  },
-  {
-    id: 'gemini-3.7-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.7 Flash',
-    description: 'Advanced CA evaluation, multimodal answer-sheet understanding, long/complex descriptive evaluation, step marking, and high-volume production evaluation.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Advanced CA Evaluation / Multimodal / High-Volume',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 8,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Advanced CA answer-sheet evaluation',
-      'Multimodal answer-sheet understanding',
-      'Long/complex descriptive evaluation',
-      'Step-marking and sub-part analysis',
-      'High-volume production evaluation',
-    ],
-  },
-  {
-    id: 'gemini-3.6-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.6 Flash',
-    description: 'Reliable production Flash model for multimodal evaluation, step marking, and resilient fallback.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Primary Fallback Model',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 10,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Standard multimodal evaluation',
-      'Step-marking and calculation verification',
-    ],
-  },
-  {
-    id: 'gemini-3.5-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.5 Flash',
-    description: 'High-volume production Flash model for fast review, MCQ checking, and secondary fallback tier.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Secondary Fallback Model',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 11,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'High-volume answer sheet evaluations',
-      'Fast review and MCQ scoring',
-    ],
-  },
-  {
-    id: 'gemini-3.5-flash-lite',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.5 Flash Lite',
-    description: 'Next-generation ultra-fast, cost-efficient multimodal evaluation model with 1M context window and sub-second response times.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Cost-Efficient Flash-Lite Evaluation',
-    defaultThinkingLevel: 'LOW',
-    fallbackOrder: 12,
-    recommendedReasoning: 'LOW',
-    useCases: [
-      'Rapid multimodal PDF evaluation',
-      'Ultra-low-latency response generation',
-      'High-throughput fallback when primary models are saturated',
-    ],
-  },
-  {
-    id: 'gemini-flash-lite-latest',
-    provider: 'gemini',
-    displayName: 'Google Gemini Flash-Lite Latest',
-    description: 'Canonical production alias pointing to the latest stable Flash-Lite model for lowest-cost multimodal evaluation.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Canonical Flash-Lite Alias',
-    defaultThinkingLevel: 'LOW',
-    fallbackOrder: 13,
-    recommendedReasoning: 'LOW',
-    useCases: [
-      'Production alias for lowest-cost multimodal evaluation',
-      'Automated alias updating without code redeployment',
-    ],
-  },
-  {
-    id: 'gemini-pro-latest',
-    provider: 'gemini',
-    displayName: 'Google Gemini Pro Latest',
-    description: 'Canonical production alias pointing to the latest stable Pro model for deep reasoning in complex and legal questions.',
-    contextWindow: 2097152,
-    recommended: false,
-    role: 'Canonical Pro Alias',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 14,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Deep reasoning on complex CA problems',
-      'Statutory interpretation & Ind AS applications',
-    ],
-  },
-  {
-    id: 'gemini-3-flash-preview',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3 Flash Preview',
-    description: 'Preview Flash model for experimental CA evaluation testing.',
-    contextWindow: 1048576,
-    recommended: false,
-    role: 'Preview Flash Evaluation',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 15,
-    isPreview: true,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Preview testing of next-generation Flash capabilities',
-    ],
-  },
-  {
-    id: 'gemini-3.1-flash-lite-preview',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.1 Flash Lite Preview',
-    description: 'Preview Flash-Lite model with minimal latency for high-speed evaluation experiments.',
-    contextWindow: 1048576,
-    recommended: false,
-    role: 'Preview Flash-Lite Evaluation',
-    defaultThinkingLevel: 'LOW',
-    fallbackOrder: 16,
-    isPreview: true,
-    recommendedReasoning: 'LOW',
-    useCases: [
-      'Preview testing of Flash-Lite features',
     ],
   },
   {
@@ -352,13 +168,70 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: false,
     role: 'Deep Reasoning / Calculation Verification / Cross-Check',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 9,
+    fallbackOrder: 5,
     recommendedReasoning: 'HIGH',
     useCases: [
       'Deep reasoning and calculation verification',
       'Cross-checking difficult accounting, tax, law, and audit answers',
       'Complex multi-step numerical audits',
       'High-precision quality review and arbitration',
+    ],
+  },
+
+  // 3. Anthropic Claude — Preserved configured entries
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    displayName: 'Claude Opus 5 (Anthropic)',
+    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
+    contextWindow: 200000,
+    recommended: true,
+    role: 'Deep Legal / Accounting / Audit Evaluation',
+    defaultThinkingLevel: 'HIGH',
+    fallbackOrder: 6,
+    recommendedReasoning: 'HIGH',
+    useCases: [
+      'Deep legal reasoning & statutory interpretation',
+      'Complex corporate and economic laws',
+      'Ind AS / AS accounting standard application',
+      'Advanced auditing principles and ethics',
+      'High-stakes ambiguous student answer arbitration',
+    ],
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    displayName: 'Claude Sonnet 5 (Anthropic)',
+    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
+    contextWindow: 200000,
+    recommended: true,
+    role: 'Balanced CA Evaluation / Fallback',
+    defaultThinkingLevel: 'MEDIUM',
+    fallbackOrder: 7,
+    recommendedReasoning: 'MEDIUM',
+    useCases: [
+      'Balanced CA answer evaluation',
+      'Fast high-reliability fallback',
+      'Structured theory and practical question grading',
+      'Intermediate and Foundation level evaluations',
+    ],
+  },
+  {
+    id: 'claude-haiku-4.5',
+    provider: 'anthropic',
+    displayName: 'Claude Haiku 4.5 (Anthropic)',
+    description: 'Fast lightweight multimodal evaluation, rapid OCR transcription, and high-speed fallback processing.',
+    contextWindow: 200000,
+    recommended: false,
+    role: 'Fast Multimodal & High-Speed Fallback',
+    defaultThinkingLevel: 'LOW',
+    fallbackOrder: 8,
+    recommendedReasoning: 'LOW',
+    useCases: [
+      'High-speed multimodal evaluation',
+      'Rapid OCR transcription',
+      'Low-latency routine question evaluation',
+      'High-throughput emergency fallback',
     ],
   },
 ];
@@ -398,22 +271,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     isPrimaryCandidate: true,
   },
 
-  // 2. STABLE FLASH PRODUCTION MODELS
-  {
-    id: 'gemini-3.7-flash',
-    displayName: 'Google Gemini 3.7 Flash (Advanced Multimodal & High-Volume)',
-    category: 'flash',
-    status: 'STABLE',
-    role: 'Advanced Multimodal Evaluation',
-    description: 'High-throughput multimodal evaluation with fast reasoning for descriptive and practical CA question papers.',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'HIGH',
-    costTier: 'STANDARD',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
+  // 2. STABLE FLASH PRODUCTION FALLBACK
   {
     id: 'gemini-3.6-flash',
     displayName: 'Google Gemini 3.6 Flash (Primary Fallback Model)',
@@ -429,23 +287,8 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     isSelectable: true,
     isPrimaryCandidate: false,
   },
-  {
-    id: 'gemini-3.5-flash',
-    displayName: 'Google Gemini 3.5 Flash (Secondary Fallback Model)',
-    category: 'flash',
-    status: 'STABLE',
-    role: 'Secondary Production Fallback',
-    description: 'High-volume production Flash model for fast review, MCQ scoring, and secondary fallback tier.',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'MEDIUM',
-    costTier: 'STANDARD',
-    isSelectable: true,
-    isPrimaryCandidate: false,
-  },
 
-  // 3. COST-EFFICIENT FLASH-LITE MODELS
+  // 3. COST-EFFICIENT FLASH-LITE MODEL
   {
     id: 'gemini-3.1-flash-lite',
     displayName: 'Google Gemini 3.1 Flash Lite (Cost-Efficient Flash-Lite)',
@@ -461,117 +304,8 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     isSelectable: true,
     isPrimaryCandidate: true,
   },
-  {
-    id: 'gemini-3.5-flash-lite',
-    displayName: 'Google Gemini 3.5 Flash Lite (Next-Gen Cost-Efficient Flash-Lite)',
-    category: 'flash_lite',
-    status: 'STABLE',
-    role: 'Next-Gen Cost-Efficient Flash-Lite',
-    description: 'Latest Flash-Lite architecture delivering sub-second multimodal inference for high-volume student batches.',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'LOW',
-    costTier: 'LOW',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
 
-  // 4. CANONICAL PRODUCTION ALIASES
-  {
-    id: 'gemini-flash-latest',
-    displayName: 'Google Gemini Flash Latest (Canonical Stable Flash Alias)',
-    category: 'alias',
-    status: 'STABLE',
-    role: 'Canonical Production Flash Alias',
-    description: 'Always points automatically to the latest stable Google Gemini Flash model without manual redeployments.',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'MEDIUM',
-    costTier: 'STANDARD',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
-  {
-    id: 'gemini-flash-lite-latest',
-    displayName: 'Google Gemini Flash-Lite Latest (Canonical Flash-Lite Alias)',
-    category: 'alias',
-    status: 'STABLE',
-    role: 'Canonical Production Flash-Lite Alias',
-    description: 'Always points automatically to the latest stable Google Gemini Flash-Lite model for lowest latency.',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'LOW',
-    costTier: 'LOW',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
-  {
-    id: 'gemini-pro-latest',
-    displayName: 'Google Gemini Pro Latest (Canonical Stable Pro Alias)',
-    category: 'alias',
-    status: 'STABLE',
-    role: 'Canonical Production Pro Alias',
-    description: 'Always points automatically to the latest stable Google Gemini Pro model for deep complex reasoning.',
-    contextWindow: 2097152,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'HIGH',
-    costTier: 'PRO',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
-
-  // 5. PREVIEW REASONING & RESEARCH MODELS
-  {
-    id: 'gemini-3.1-pro-preview',
-    displayName: 'Google Gemini 3.1 Pro Preview (Complex Legal & Tax Reasoning)',
-    category: 'pro',
-    status: 'PREVIEW',
-    role: 'Deep Reasoning & Pro Analysis',
-    description: 'Advanced 2M token context model for ambiguous CA Final corporate law, direct tax case studies, and Ind AS standards.',
-    contextWindow: 2097152,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'HIGH',
-    costTier: 'PRO',
-    isSelectable: true,
-    isPrimaryCandidate: true,
-  },
-  {
-    id: 'gemini-3-flash-preview',
-    displayName: 'Google Gemini 3 Flash Preview (Preview Experimental Flash)',
-    category: 'preview',
-    status: 'PREVIEW',
-    role: 'Experimental Flash Preview',
-    description: 'Preview Flash model for experimental evaluation testing (non-production).',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'MEDIUM',
-    costTier: 'STANDARD',
-    isSelectable: true,
-    isPrimaryCandidate: false,
-  },
-  {
-    id: 'gemini-3.1-flash-lite-preview',
-    displayName: 'Google Gemini 3.1 Flash Lite Preview (Preview Experimental Flash-Lite)',
-    category: 'preview',
-    status: 'PREVIEW',
-    role: 'Experimental Flash-Lite Preview',
-    description: 'Preview Flash-Lite model for experimental low-latency evaluation (non-production).',
-    contextWindow: 1048576,
-    supportsMultimodal: true,
-    supportsThinking: true,
-    defaultThinkingLevel: 'LOW',
-    costTier: 'LOW',
-    isSelectable: true,
-    isPrimaryCandidate: false,
-  },
-
-  // 6. DEPRECATED / RETIRED MODELS (CLEARLY LABELED, NOT SELECTABLE FOR PRODUCTION)
+  // 4. DEPRECATED / RETIRED MODELS (CLEARLY LABELED, NOT SELECTABLE FOR PRODUCTION)
   {
     id: 'gemini-2.5-flash',
     displayName: 'Google Gemini 2.5 Flash (Deprecated — Retired by Google)',
@@ -594,7 +328,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     category: 'deprecated',
     status: 'DEPRECATED',
     role: 'Legacy Retired Model',
-    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.1-pro-preview.',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.8-flash.',
     contextWindow: 2097152,
     supportsMultimodal: true,
     supportsThinking: false,
@@ -602,7 +336,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     costTier: 'PRO',
     isSelectable: false,
     isPrimaryCandidate: false,
-    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.1-pro-preview.',
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.8-flash.',
   },
   {
     id: 'gemini-2.5-flash-lite',
@@ -610,7 +344,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     category: 'deprecated',
     status: 'DEPRECATED',
     role: 'Legacy Retired Model',
-    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.5-flash-lite.',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.1-flash-lite.',
     contextWindow: 1048576,
     supportsMultimodal: true,
     supportsThinking: false,
@@ -618,7 +352,7 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
     costTier: 'LOW',
     isSelectable: false,
     isPrimaryCandidate: false,
-    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.5-flash-lite.',
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.1-flash-lite.',
   },
 ];
 
@@ -863,6 +597,14 @@ export function isModelCoolingDown(modelId: string): boolean {
     return false;
   }
   return true;
+}
+
+export function clearModelCooldown(modelId?: string) {
+  if (modelId) {
+    modelCooldownUntil.delete(modelId);
+  } else {
+    modelCooldownUntil.clear();
+  }
 }
 
 // Check database for any previously rate-limited or credit-exhausted models on startup
@@ -1329,7 +1071,7 @@ export function determineModelRouting(context?: {
 
   let defaultGemini = 'gemini-3.8-flash';
   if (isModelCoolingDown(defaultGemini) || !isModelUsable(defaultGemini)) {
-    const usableGemini = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.7-flash'].find((m) => isModelUsable(m));
+    const usableGemini = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'].find((m) => isModelUsable(m));
     if (usableGemini) {
       defaultGemini = usableGemini;
     }
@@ -1338,7 +1080,7 @@ export function determineModelRouting(context?: {
   let selectedModel = defaultGemini;
   // If Gemini provider is credit exhausted or unusable, pick first healthy usable model across providers
   if (!isModelUsable(selectedModel)) {
-    const firstUsable = ['gpt-5.6-terra', 'claude-sonnet-5', 'gpt-5.6-sol', 'claude-opus-5'].find((m) => isModelUsable(m));
+    const firstUsable = ['gpt-5.6-terra', 'claude-sonnet-5', 'gpt-5.6-sol', 'claude-opus-5', 'claude-haiku-4.5', 'gpt-6-astra'].find((m) => isModelUsable(m));
     if (firstUsable) {
       selectedModel = firstUsable;
     }
@@ -1374,17 +1116,16 @@ export function determineModelRouting(context?: {
     routingReason = `Default Primary Routing: ${defaultGemini} for standard ICAI evaluation`;
   }
 
-  // 2. Build deterministic multi-provider fallback hierarchy:
+  // 2. Build deterministic multi-provider fallback hierarchy across approved 9 models:
   const canonicalFallbackOrder = [
     'gemini-3.8-flash',
+    'gemini-3.6-flash',
     'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.1-pro-preview',
     'claude-opus-5',
     'gpt-5.6-sol',
     'claude-sonnet-5',
     'gpt-5.6-terra',
-    'gemini-3.7-flash',
+    'claude-haiku-4.5',
     'gpt-6-astra',
   ];
 
@@ -1407,8 +1148,8 @@ export function determineModelRouting(context?: {
       crossCheckModel = 'gpt-5.6-sol';
     } else if (selectedModel !== 'claude-opus-5' && isModelUsable('claude-opus-5')) {
       crossCheckModel = 'claude-opus-5';
-    } else if (selectedModel !== 'gemini-flash-latest' && isModelUsable('gemini-flash-latest')) {
-      crossCheckModel = 'gemini-flash-latest';
+    } else if (selectedModel !== 'gemini-3.6-flash' && isModelUsable('gemini-3.6-flash')) {
+      crossCheckModel = 'gemini-3.6-flash';
     }
   }
 
@@ -1532,7 +1273,8 @@ export async function executeModelWithFallback(
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
       candidateModel === 'claude-sonnet-5' ||
-      candidateModel === 'gemini-flash-latest' ||
+      candidateModel === 'claude-haiku-4.5' ||
+      candidateModel === 'gemini-3.6-flash' ||
       candidateModel === 'gemini-3.1-flash-lite'
     ) {
       effectiveThinking = 'LOW';

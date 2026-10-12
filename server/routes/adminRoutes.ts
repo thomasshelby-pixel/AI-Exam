@@ -1638,12 +1638,12 @@ router.put('/institutes/:id/classification', (req: AuthRequest, res: Response) =
 });
 
 // Delete Institute Account (SUPER ADMIN ONLY)
-router.delete('/institutes/:id', (req: AuthRequest, res: Response) => {
+router.delete('/institutes/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = deleteInstituteAccount(req.params.id, req.user!, ipAddress, userAgent);
+    const result = await deleteInstituteAccount(req.params.id, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete institute error:', error);
@@ -5112,13 +5112,14 @@ router.get('/models', (req: AuthRequest, res: Response) => {
 
     const fallbackHierarchy = [
       { order: 0, modelId: 'gemini-3.8-flash', provider: 'gemini', role: 'Primary CA Evaluation' },
-      { order: 1, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Fast Multimodal & High-Volume Fallback' },
-      { order: 2, modelId: 'gemini-flash-latest', provider: 'gemini', role: 'Production Flash Fallback' },
-      { order: 3, modelId: 'gemini-3.1-pro-preview', provider: 'gemini', role: 'Deep Reasoning Preview' },
-      { order: 4, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Reasoning (Legal/Tax/Audit)' },
-      { order: 5, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
-      { order: 6, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
-      { order: 7, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
+      { order: 1, modelId: 'gemini-3.6-flash', provider: 'gemini', role: 'Primary Fallback Model' },
+      { order: 2, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Fast Multimodal & High-Volume Fallback' },
+      { order: 3, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
+      { order: 4, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
+      { order: 5, modelId: 'gpt-6-astra', provider: 'openai', role: 'Deep Reasoning / Cross-Check' },
+      { order: 6, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Legal / Accounting / Audit Evaluation' },
+      { order: 7, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
+      { order: 8, modelId: 'claude-haiku-4.5', provider: 'anthropic', role: 'Fast Multimodal Fallback' },
     ];
 
     return res.json({
@@ -5135,6 +5136,10 @@ router.get('/models', (req: AuthRequest, res: Response) => {
 router.put('/models/:id', (req: AuthRequest, res: Response) => {
   try {
     const modelId = req.params.id;
+    const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4.5'];
+    if (!allowed.includes(modelId)) {
+      return res.status(400).json({ error: `Model '${modelId}' is not in the approved runtime model whitelist.` });
+    }
     const { is_primary, fallback_order, is_enabled, role, thinking_level, temperature, top_p, max_tokens, custom_endpoint } = req.body;
 
     const existing = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId) as any;

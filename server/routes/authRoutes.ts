@@ -1132,7 +1132,7 @@ router.post('/google/complete-profile', (req: Request, res: Response) => {
 
 
 // SEPARATE INSTITUTE REGISTRATION FLOW
-router.post('/institute/register', authRegisterRateLimiter, (req: Request, res: Response) => {
+router.post('/institute/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
     const { instituteName, contactPerson, email, password, phone, address, website } = req.body;
 
@@ -1197,6 +1197,18 @@ router.post('/institute/register', authRegisterRateLimiter, (req: Request, res: 
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'INSTITUTE_SIGNUP', 'INSTITUTE', ?, ?)
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, instituteId, `Registered institute ${instituteName}`);
+
+    // Mirror newly registered institute, batch, and user to Cloud Firestore
+    try {
+      const createdInst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId);
+      if (createdInst) await syncRecordToFirestore('institutes', instituteId, createdInst as any);
+      const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+      if (createdUser) await syncRecordToFirestore('users', userId, createdUser as any);
+      const createdBatch = db.prepare('SELECT * FROM batches WHERE id = ?').get(batchId);
+      if (createdBatch) await syncRecordToFirestore('batches', batchId, createdBatch as any);
+    } catch (syncErr) {
+      console.warn('[InstituteRegister] Cloud sync warning:', syncErr);
+    }
 
     const token = generateToken({
       id: userId,

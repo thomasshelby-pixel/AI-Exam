@@ -70,12 +70,12 @@ export function getAISettings() {
       primaryModel = 'gemini-3.1-flash-lite';
     }
     if (isModelCoolingDown(primaryModel)) {
-      primaryModel = 'gemini-flash-latest';
+      primaryModel = 'gemini-3.6-flash';
     }
 
     return {
       primaryModel,
-      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-flash-latest',
+      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-3.6-flash',
       maxRetries: parseInt(map.EVAL_MAX_RETRIES || '3', 10),
       timeoutSeconds: parseInt(map.EVAL_TIMEOUT_SECONDS || '90', 10),
       confidenceThreshold: parseFloat(map.EVAL_CONFIDENCE_THRESHOLD || '75'),
@@ -86,11 +86,11 @@ export function getAISettings() {
     };
   } catch {
     let primaryModel = 'gemini-3.8-flash';
+    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.6-flash';
     if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.1-flash-lite';
-    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-flash-latest';
     return {
       primaryModel,
-      fallbackModel: 'gemini-flash-latest',
+      fallbackModel: 'gemini-3.6-flash',
       maxRetries: 3,
       timeoutSeconds: 90,
       confidenceThreshold: 75,
@@ -104,7 +104,7 @@ export function getAISettings() {
 
 /**
  * Robust Gemini generation with dynamic database-configured primary model,
- * automatic fallback model (e.g. gemini-3.7-flash) on transient errors (503 / 429),
+ * automatic fallback model (gemini-3.6-flash) on transient errors (503 / 429),
  * and exponential backoff with random jitter.
  */
 export async function generateContentWithResilience(
@@ -121,33 +121,24 @@ export async function generateContentWithResilience(
 ) {
   const settings = getAISettings();
   let primaryModel = options?.primaryModel || settings.primaryModel || 'gemini-3.8-flash';
-  let fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-3.7-flash';
+  let fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-3.6-flash';
   const maxRetries = options?.maxRetriesPerModel ?? settings.maxRetries ?? 2;
 
   // If primary model is cooling down, immediately pick the next healthy model
   if (isModelCoolingDown(primaryModel)) {
-    if (!isModelCoolingDown('gemini-3.7-flash')) {
-      primaryModel = 'gemini-3.7-flash';
-    } else if (!isModelCoolingDown('gemini-3.6-flash')) {
+    if (!isModelCoolingDown('gemini-3.6-flash')) {
       primaryModel = 'gemini-3.6-flash';
     } else if (!isModelCoolingDown('gemini-3.1-flash-lite')) {
       primaryModel = 'gemini-3.1-flash-lite';
-    } else if (!isModelCoolingDown('gemini-flash-latest')) {
-      primaryModel = 'gemini-flash-latest';
-    } else if (!isModelCoolingDown('gemini-3.5-flash')) {
-      primaryModel = 'gemini-3.5-flash';
     }
   }
 
   // Build unique sequence of candidate models prioritizing healthy Gemini Flash hierarchy
   const rawCandidates = [primaryModel];
   const preferredSisterModels = [
-    'gemini-3.7-flash',
+    'gemini-3.8-flash',
     'gemini-3.6-flash',
     'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.5-flash',
-    'gemini-3.8-flash',
   ];
   if (fallbackModel && !rawCandidates.includes(fallbackModel)) {
     rawCandidates.push(fallbackModel);

@@ -45,8 +45,8 @@ export function encryptMfaSecret(plainSecret: string | null | undefined): string
     return `enc:gcm:${ivHex}:${authTag}:${encrypted}`;
   } catch (err) {
     console.error('[MfaCrypto] Failed to encrypt MFA secret:', err);
-    // Fail safe: return plain if encryption error occurs
-    return trimmed;
+    // Fail safe: return null if encryption error occurs so unencrypted secret is never stored
+    return null;
   }
 }
 

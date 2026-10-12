@@ -7,6 +7,7 @@ import {
   testModelConnection,
   APPROVED_MODELS,
   executeModelWithFallback,
+  clearModelCooldown,
 } from '../models/modelRegistry.js';
 
 console.log('================================================================');
@@ -167,6 +168,9 @@ if (geminiKey && geminiKey.length > 5) {
 }
 
 console.log(`✓ TEST 4 PASSED: Provider test executed safely (success=${testConn.success}, latency=${testConn.latencyMs}ms).`);
+// Reset test model status so downstream tests operate on clean baseline
+db.prepare("UPDATE model_configs SET status = 'AVAILABLE' WHERE id = ?").run(geminiModel.id);
+clearModelCooldown(geminiModel.id);
 
 // ==============================================================================
 // TEST 5: Model Fallback Hierarchy & Evaluation Readiness Preservation

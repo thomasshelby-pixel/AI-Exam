@@ -176,6 +176,16 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(tid);
           } else if (col === 'referral_redemptions') {
             db.prepare('DELETE FROM referral_redemptions WHERE id = ?').run(tid);
+          } else if (col === 'institutes') {
+            db.prepare('DELETE FROM institutes WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM batches WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_assignments WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_tests WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_materials WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_usage_ledger WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(tid);
+            db.prepare('UPDATE student_profiles SET institute_id = NULL, batch_id = NULL WHERE institute_id = ?').run(tid);
           }
         } catch {}
       }
@@ -201,12 +211,39 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(lu.id);
           db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(lu.id);
           db.prepare('DELETE FROM assignment_submissions WHERE student_id = ?').run(lu.id);
-          db.prepare('DELETE FROM exam_attempts WHERE student_id = ?').run(lu.id);
           db.prepare('DELETE FROM institute_memberships WHERE student_id = ?').run(lu.id);
         }
       }
     } catch (purgeErr) {
       console.warn('[FirestoreSync] Failed to purge tombstoned users from SQLite:', purgeErr);
+    }
+
+    // Purge any local SQLite institutes that are tombstoned in authoritative tombstone set
+    try {
+      const allLocalInstitutes = db.prepare('SELECT id, code, email FROM institutes').all() as Array<{ id: string; code: string; email: string }>;
+      for (const li of allLocalInstitutes) {
+        const liEmail = String(li.email || '').trim().toLowerCase();
+        const liCode = String(li.code || '').trim();
+        const isTomb = tombstoneSet.has(`institutes_${li.id}`) ||
+                       tombstoneSet.has(`institutes:${li.id}`) ||
+                       tombstoneSet.has(li.id) ||
+                       (liCode && (tombstoneSet.has(`institutes_${liCode}`) || tombstoneSet.has(`institutes:${liCode}`) || tombstoneSet.has(liCode))) ||
+                       (liEmail && (tombstoneSet.has(`institutes_${liEmail}`) || tombstoneSet.has(liEmail)));
+        if (isTomb) {
+          console.log(`[FirestoreSync] Purging tombstoned institute from local SQLite during hydration: ${li.id} (${liCode})`);
+          db.prepare('DELETE FROM institutes WHERE id = ?').run(li.id);
+          db.prepare('DELETE FROM batches WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_assignments WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_tests WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_materials WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_usage_ledger WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(li.id);
+          db.prepare('UPDATE student_profiles SET institute_id = NULL, batch_id = NULL WHERE institute_id = ?').run(li.id);
+        }
+      }
+    } catch (instPurgeErr) {
+      console.warn('[FirestoreSync] Failed to purge tombstoned institutes from SQLite:', instPurgeErr);
     }
 
     // 2. Hydrate Users
@@ -430,7 +467,17 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     // 4. Hydrate Institutes
     const institutes = await readDocs<any>('institutes');
     for (const inst of institutes) {
-      if (tombstoneSet.has(`institutes_${inst.id}`)) continue;
+      const instCode = String(inst.code || '').trim();
+      const instEmail = String(inst.email || '').trim().toLowerCase();
+      const isTomb = tombstoneSet.has(`institutes_${inst.id}`) ||
+                     tombstoneSet.has(`institutes:${inst.id}`) ||
+                     tombstoneSet.has(inst.id) ||
+                     (instCode && (tombstoneSet.has(`institutes_${instCode}`) || tombstoneSet.has(`institutes:${instCode}`) || tombstoneSet.has(instCode))) ||
+                     (instEmail && (tombstoneSet.has(`institutes_${instEmail}`) || tombstoneSet.has(instEmail)));
+      if (isTomb) {
+        console.log(`[FirestoreSync] Skipping tombstoned institute during hydration: ${inst.id}`);
+        continue;
+      }
       try {
         db.prepare(`
           INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at, updated_at)

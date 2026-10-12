@@ -2066,7 +2066,7 @@ function seedInitialData() {
     { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'PAPER_SPECIFIC_CONFIGURED', description: 'Paper-specific MCQ negative marking rules configured in mcq_scoring_rules table' },
     { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
     { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
-    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-flash-latest', description: 'Secondary fallback AI model for high-demand 503 conditions' },
+    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-3.6-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
     { key: 'EVAL_MAX_RETRIES', value: '3', description: 'Maximum retry attempts with exponential backoff for transient Gemini API errors' },
     { key: 'EVAL_TIMEOUT_SECONDS', value: '90', description: 'Maximum request timeout in seconds for AI evaluation call' },
     { key: 'REFERRAL_AI30_MAX_USERS', value: '20', description: 'Maximum eligible referred users cap for promo code AI30' },
@@ -2977,26 +2977,18 @@ export function seedPricingPlans() {
 function seedModelConfigs() {
   const approvedIds = [
     'gemini-3.8-flash',
-    'gemini-3.7-flash',
     'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-pro-preview',
     'gemini-3.1-flash-lite',
-    'gemini-3.5-flash-lite',
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
-    'gemini-pro-latest',
-    'gemini-3-flash-preview',
-    'gemini-3.1-flash-lite-preview',
-    'claude-opus-5',
     'gpt-5.6-sol',
-    'claude-sonnet-5',
     'gpt-5.6-terra',
     'gpt-6-astra',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-4.5',
   ];
   const placeholders = approvedIds.map(() => '?').join(',');
 
-  // 1. Purge all invalid, non-approved, or legacy models
+  // 1. Purge all invalid, non-approved, unwhitelisted, or legacy models
   db.prepare(`
     DELETE FROM model_configs
     WHERE id NOT IN (${placeholders})
@@ -3011,7 +3003,7 @@ function seedModelConfigs() {
 
   db.prepare(`
     UPDATE pricing_settings
-    SET value = 'gemini-flash-latest'
+    SET value = 'gemini-3.6-flash'
     WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}) OR value = 'claude-opus-5')
   `).run(...approvedIds);
 
@@ -3032,8 +3024,9 @@ function seedModelConfigs() {
   const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 5);
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 5);
 
-  // 3. Approved Production Multi-Provider Models with Deterministic Priorities (Primary + 7 Fallbacks)
+  // 3. Approved Production Multi-Provider Models (Strict Whitelist: 3 Gemini, 3 OpenAI, 3 Claude)
   const models = [
+    // Gemini — Exactly three approved models
     {
       id: 'gemini-3.8-flash',
       provider: 'gemini',
@@ -3048,25 +3041,12 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.1-flash-lite',
+      id: 'gemini-3.6-flash',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Flash Lite',
-      role: 'Fast Multimodal & High-Volume Fallback',
+      display_name: 'Google Gemini 3.6 Flash',
+      role: 'Primary Fallback Model',
       is_primary: 0,
       fallback_order: 1,
-      thinking_level: 'LOW',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-flash-latest',
-      provider: 'gemini',
-      display_name: 'Google Gemini Flash Latest',
-      role: 'Production Flash Fallback',
-      is_primary: 0,
-      fallback_order: 2,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
@@ -3074,36 +3054,51 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.1-pro-preview',
+      id: 'gemini-3.1-flash-lite',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Pro (Preview)',
-      role: 'Deep Reasoning & Pro Analysis',
+      display_name: 'Google Gemini 3.1 Flash Lite',
+      role: 'Fast Multimodal & High-Volume Fallback',
+      is_primary: 0,
+      fallback_order: 2,
+      thinking_level: 'LOW',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+
+    // OpenAI — Preserved configured entries
+    {
+      id: 'gpt-5.6-sol',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Sol',
+      role: 'Deep Reasoning & Calculation Cross-Check',
       is_primary: 0,
       fallback_order: 3,
       thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'claude-opus-5',
-      provider: 'anthropic',
-      display_name: 'Claude Opus 5 (Anthropic)',
-      role: 'Deep Legal / Accounting / Audit Evaluation',
+      id: 'gpt-5.6-terra',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Terra',
+      role: 'Fast High-Volume / Multimodal / Low Latency',
       is_primary: 0,
       fallback_order: 4,
-      thinking_level: 'HIGH',
+      thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6-astra',
       provider: 'openai',
-      display_name: 'OpenAI GPT-5.6 Sol',
-      role: 'Deep Reasoning & Calculation Cross-Check',
+      display_name: 'OpenAI GPT-6 Astra',
+      role: 'Deep Reasoning / Calculation Verification / Cross-Check',
       is_primary: 0,
       fallback_order: 5,
       thinking_level: 'HIGH',
@@ -3112,13 +3107,28 @@ function seedModelConfigs() {
       max_tokens: 8192,
       status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
+
+    // Anthropic Claude — Preserved configured entries
+    {
+      id: 'claude-opus-5',
+      provider: 'anthropic',
+      display_name: 'Claude Opus 5 (Anthropic)',
+      role: 'Deep Legal / Accounting / Audit Evaluation',
+      is_primary: 0,
+      fallback_order: 6,
+      thinking_level: 'HIGH',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
     {
       id: 'claude-sonnet-5',
       provider: 'anthropic',
       display_name: 'Claude Sonnet 5 (Anthropic)',
       role: 'Balanced CA Evaluation / Fallback',
       is_primary: 0,
-      fallback_order: 6,
+      fallback_order: 7,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
@@ -3126,139 +3136,23 @@ function seedModelConfigs() {
       status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gpt-5.6-terra',
-      provider: 'openai',
-      display_name: 'OpenAI GPT-5.6 Terra',
-      role: 'Fast High-Volume / Multimodal / Low Latency',
-      is_primary: 0,
-      fallback_order: 7,
-      thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.7-flash',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.7 Flash',
-      role: 'Advanced CA Evaluation / Multimodal / High-Volume',
+      id: 'claude-haiku-4.5',
+      provider: 'anthropic',
+      display_name: 'Claude Haiku 4.5 (Anthropic)',
+      role: 'Fast Multimodal & High-Speed Fallback',
       is_primary: 0,
       fallback_order: 8,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.6-flash',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.6 Flash',
-      role: 'Primary Fallback Model',
-      is_primary: 0,
-      fallback_order: 10,
-      thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.5-flash',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.5 Flash',
-      role: 'Secondary Fallback Model',
-      is_primary: 0,
-      fallback_order: 11,
-      thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.5-flash-lite',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.5 Flash Lite',
-      role: 'Cost-Efficient Flash-Lite Evaluation',
-      is_primary: 0,
-      fallback_order: 12,
       thinking_level: 'LOW',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-flash-lite-latest',
-      provider: 'gemini',
-      display_name: 'Google Gemini Flash-Lite Latest',
-      role: 'Canonical Flash-Lite Alias',
-      is_primary: 0,
-      fallback_order: 13,
-      thinking_level: 'LOW',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-pro-latest',
-      provider: 'gemini',
-      display_name: 'Google Gemini Pro Latest',
-      role: 'Canonical Pro Alias',
-      is_primary: 0,
-      fallback_order: 14,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3-flash-preview',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3 Flash Preview',
-      role: 'Preview Flash Evaluation',
-      is_primary: 0,
-      fallback_order: 15,
-      thinking_level: 'MEDIUM',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.1-flash-lite-preview',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Flash Lite Preview',
-      role: 'Preview Flash-Lite Evaluation',
-      is_primary: 0,
-      fallback_order: 16,
-      thinking_level: 'LOW',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gpt-6-astra',
-      provider: 'openai',
-      display_name: 'OpenAI GPT-6 Astra',
-      role: 'Deep Reasoning / Calculation Verification / Cross-Check',
-      is_primary: 0,
-      fallback_order: 9,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
   ];
 
   for (const m of models) {
     const existing = db.prepare('SELECT id, is_primary FROM model_configs WHERE id = ?').get(m.id) as any;
+    const isProvConfigured = m.provider === 'gemini' ? geminiConfigured : (m.provider === 'openai' ? openaiConfigured : anthropicConfigured);
     if (!existing) {
       db.prepare(`
         INSERT INTO model_configs (id, provider, display_name, role, is_primary, fallback_order, thinking_level, temperature, top_p, max_tokens, is_enabled, status)
@@ -3274,7 +3168,7 @@ function seedModelConfigs() {
             ELSE status
           END
         WHERE id = ?
-      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, geminiConfigured ? 1 : 0, m.id);
+      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, isProvConfigured ? 1 : 0, m.id);
     }
   }
 }
@@ -3522,9 +3416,9 @@ function seedSampleInstitute() {
     return;
   }
 
-  // Check if demo institute or demo student were previously deleted
+  // Check if demo institute or demo student were previously deleted or tombstoned
   const wasDeleted = db.prepare("SELECT id FROM audit_logs WHERE (entity_id = 'inst_apex_academy_01' OR entity_id = 'usr_student_demo_001') AND action LIKE '%DELETE%'").get();
-  if (wasDeleted) {
+  if (wasDeleted || isTombstoned('institutes', instId)) {
     db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
     return;
   }

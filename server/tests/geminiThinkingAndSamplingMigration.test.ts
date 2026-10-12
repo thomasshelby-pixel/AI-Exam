@@ -6,7 +6,8 @@ import {
   sanitizeGeminiConfig,
 } from '../models/geminiThinkingHelper.js';
 import { generateContentWithResilience, getGemini } from '../gemini.js';
-import { executeModelWithFallback } from '../models/modelRegistry.js';
+import { executeModelWithFallback, clearModelCooldown } from '../models/modelRegistry.js';
+import { db } from '../db.js';
 
 console.log('--- STARTING GEMINI THINKING & SAMPLING MIGRATION REGRESSION TESTS ---');
 
