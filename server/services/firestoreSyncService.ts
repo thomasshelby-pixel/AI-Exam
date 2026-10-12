@@ -341,10 +341,24 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
-            mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
-            mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
-            totp_secret = CASE WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret ELSE users.totp_secret END,
-            mfa_reset_required = excluded.mfa_reset_required,
+            mfa_enabled = CASE
+              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN 0
+              WHEN users.mfa_enabled = 1 THEN 1
+              ELSE excluded.mfa_enabled
+            END,
+            mfa_enrolled_at = CASE
+              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN NULL
+              ELSE COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at)
+            END,
+            totp_secret = CASE
+              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN NULL
+              WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret
+              ELSE users.totp_secret
+            END,
+            mfa_reset_required = CASE
+              WHEN users.mfa_reset_required = 1 OR excluded.mfa_reset_required = 1 THEN 1
+              ELSE 0
+            END,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',

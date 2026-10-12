@@ -217,7 +217,7 @@ export async function fixInconsistentAdminMfaStates(): Promise<void> {
     const adminUsers = db.prepare(`
       SELECT id, email, role, mfa_enabled, totp_secret, mfa_reset_required
       FROM users
-      WHERE role IN ('MCQ_ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN')
+      WHERE role IN ('MCQ_ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN') AND mfa_reset_required != 1
     `).all() as Array<{
       id: string;
       email: string;
@@ -502,16 +502,17 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       FROM users WHERE id = ?
     `).get(userId) as any;
 
-    // 3. Fallback & Cross-check with Cloud Firestore if user is missing, lacking secret, or flagged for reset
+    // 3. Fallback & Cross-check with Cloud Firestore ONLY if user record is missing in SQLite or lacks secret while NOT flagged for reset
     const localSecretDec = decryptMfaSecret(userRow?.totp_secret);
     const hasLocalValidSecret = Boolean(localSecretDec && localSecretDec.length >= 16);
 
     const isMandatoryAdminRole = userRow && ['SUPER_ADMIN', 'MCQ_ADMIN', 'INSTITUTE_ADMIN'].includes(userRow.role);
 
-    if (!userRow || !hasLocalValidSecret || userRow.mfa_reset_required === 1 || (isMandatoryAdminRole && userRow.mfa_enabled === 0)) {
+    // If account has been intentionally reset (mfa_reset_required === 1), never resurrect obsolete Firestore credentials!
+    if (userRow?.mfa_reset_required !== 1 && (!userRow || !hasLocalValidSecret || (isMandatoryAdminRole && userRow.mfa_enabled === 0))) {
       try {
         const fsDoc = await getFirestoreDoc<any>('users', userId);
-        if (fsDoc) {
+        if (fsDoc && fsDoc.mfa_reset_required !== 1) {
           const fsSecretDec = decryptMfaSecret(fsDoc.totp_secret);
           const fsHasValidSecret = Boolean(fsSecretDec && fsSecretDec.length >= 16);
 
