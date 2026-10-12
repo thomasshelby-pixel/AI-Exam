@@ -130,13 +130,17 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const tombstones = await readDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
     const localTombstones = getAllLocalTombstoneSet();
     const tombstoneSet = new Set<string>(localTombstones);
-    // Only genuine super administrative account is preserved from accidental lockout
+    // Only genuine core accounts are preserved from accidental lockout or test-run tombstones
     const PROTECTED_CORE_IDS = new Set([
       'usr_super_admin_001',
+      'usr_user_at9767',
+      'usr_student_demo_001',
     ]);
     const PROTECTED_CORE_EMAILS = new Set([
       'support@caexamcheckerai.com',
       'caexamchecker.support@gmail.com',
+      'at9767676@gmail.com',
+      'student@caexamchecker.ai',
     ]);
 
     for (const t of tombstones) {

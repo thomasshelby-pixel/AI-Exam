@@ -242,6 +242,27 @@ export async function fixInconsistentAdminMfaStates(): Promise<void> {
         (decLocalAuthSec && decLocalAuthSec.length >= 16)
       );
 
+      // Re-synchronize local records if one has a valid secret while the other is missing or corrupt
+      if (decLocalUserSec && decLocalUserSec.length >= 16 && (!decLocalAuthSec || decLocalAuthSec.length < 16)) {
+        try {
+          db.prepare(`
+            INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+            VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+              totp_secret = excluded.totp_secret,
+              last_used_at = CURRENT_TIMESTAMP
+          `).run(`auth_prim_${admin.id}`, admin.id, admin.totp_secret);
+        } catch {}
+      } else if (decLocalAuthSec && decLocalAuthSec.length >= 16 && (!decLocalUserSec || decLocalUserSec.length < 16)) {
+        try {
+          db.prepare(`
+            UPDATE users
+            SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(authWithSecret!.totp_secret, admin.id);
+        } catch {}
+      }
+
       // If local secret is missing but user is marked enrolled, inspect Cloud Firestore before taking any destructive action
       if (admin.mfa_enabled === 1 && !hasValidSecret) {
         try {

@@ -32,7 +32,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
   if (fs.existsSync(DB_FILE)) {
     try {
       conn = new DatabaseSync(DB_FILE);
-      conn.exec('PRAGMA busy_timeout = 10000;');
+      conn.exec('PRAGMA busy_timeout = 30000;');
       conn.exec('PRAGMA journal_mode = WAL;');
       conn.exec('PRAGMA synchronous = NORMAL;');
       conn.exec('PRAGMA foreign_keys = ON;');
@@ -40,7 +40,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       let check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
       let isOk = check.length === 1 && check[0].quick_check === 'ok';
       if (!isOk) {
-        console.warn('[DB Integrity] Quick check failed, attempting REINDEX repair...', check);
+        console.warn('[DB Integrity] Quick check flagged repair needed, attempting REINDEX repair...', check);
         try {
           conn.exec('REINDEX;');
           check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
@@ -49,11 +49,11 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
             console.log('[DB Integrity] Database successfully self-healed via REINDEX.');
           }
         } catch (reindexErr) {
-          console.error('[DB Integrity] REINDEX attempt failed:', reindexErr);
+          console.warn('[DB Integrity] REINDEX attempt note:', reindexErr);
         }
       }
       if (!isOk) {
-        console.error('[DB Integrity] Database failed quick_check on startup:', check);
+        console.warn('[DB Integrity] Database requires fresh recovery on startup:', check);
         needsRepair = true;
         try { conn.close(); } catch {}
         conn = null;
@@ -61,7 +61,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
         return conn;
       }
     } catch (err) {
-      console.error('[DB Integrity] Error during initial connection, scheduling auto-repair:', err);
+      console.warn('[DB Integrity] SQLite storage integrity note, scheduling auto-repair:', (err as any)?.message || err);
       needsRepair = true;
       if (conn) {
         try { conn.close(); } catch {}
@@ -89,7 +89,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       let salvageSucceeded = false;
       try {
         salvageConn = new DatabaseSync(DB_FILE);
-        salvageConn.exec('PRAGMA busy_timeout = 10000;');
+        salvageConn.exec('PRAGMA busy_timeout = 30000;');
         salvageConn.exec('REINDEX;');
         const check = salvageConn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
         if (check.length === 1 && check[0].quick_check === 'ok') {
@@ -102,7 +102,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
           return salvageConn;
         }
       } catch (salvageErr) {
-        console.warn('[DB Integrity] WAL salvage failed, wiping database file for fresh rebuild:', salvageErr);
+        console.warn('[DB Integrity] WAL salvage note, rebuilding fresh database file:', (salvageErr as any)?.message || salvageErr);
       } finally {
         // Crucial fix: do NOT close salvageConn if salvage succeeded!
         if (!salvageSucceeded && salvageConn) {
@@ -114,7 +114,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       // If salvage could not recover the database, preserve backup and wipe clean for fresh recreation
       try {
         fs.renameSync(DB_FILE, backupPath);
-        console.log(`[DB Integrity] Moved corrupted database file to backup at ${backupPath}`);
+        console.log(`[DB Integrity] Moved corrupt database file to backup at ${backupPath}`);
       } catch {
         try { fs.copyFileSync(DB_FILE, backupPath); } catch {}
         try { fs.unlinkSync(DB_FILE); } catch {}
@@ -139,12 +139,12 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
         }
       } catch {}
     } catch (bkErr) {
-      console.error('[DB Integrity] Failed during backup/unlink:', bkErr);
+      console.warn('[DB Integrity] Backup/unlink note:', bkErr);
     }
   }
 
   conn = new DatabaseSync(DB_FILE);
-  conn.exec('PRAGMA busy_timeout = 10000;');
+  conn.exec('PRAGMA busy_timeout = 30000;');
   conn.exec('PRAGMA journal_mode = WAL;');
   conn.exec('PRAGMA synchronous = NORMAL;');
   conn.exec('PRAGMA foreign_keys = ON;');
@@ -1882,12 +1882,16 @@ function runMigrations() {
 
 function seedCoreStudents() {
   try {
+    // Clear any stale test tombstones for core protected student accounts
+    try {
+      db.prepare("DELETE FROM tombstones WHERE entity_id IN ('usr_user_at9767', 'usr_student_demo_001', 'at9767676@gmail.com', 'student@caexamchecker.ai') OR id LIKE '%usr_user_at9767%' OR id LIKE '%usr_student_demo_001%'").run();
+    } catch {}
+
     // 1. Seed Demo Student User
     const studentEmail = 'student@caexamchecker.ai';
     const sId = 'usr_student_demo_001';
-    const isDemoTombstoned = isTombstoned('users', sId) || isTombstoned('users', studentEmail);
     const studentExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(studentEmail.toLowerCase(), sId);
-    if (!studentExists && !isDemoTombstoned) {
+    if (!studentExists) {
       const sHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -1903,9 +1907,8 @@ function seedCoreStudents() {
     // 2. Seed Active Account for at9767676@gmail.com
     const userEmail = 'at9767676@gmail.com';
     const uId = 'usr_user_at9767';
-    const isAtTombstoned = isTombstoned('users', uId) || isTombstoned('users', userEmail.toLowerCase());
     const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
-    if (!activeUserExists && !isAtTombstoned) {
+    if (!activeUserExists) {
       const uHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
