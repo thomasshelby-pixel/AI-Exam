@@ -241,26 +241,38 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
 
         {/* Feature Capabilities Highlight Checklist */}
-        <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-7">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-4 text-center sm:text-left">
+        <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 lg:p-7 shadow-xs">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-5 text-center sm:text-left">
             Platform Capabilities Included With Every Evaluation
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs text-slate-700 dark:text-slate-300">
-            <div className="flex items-start gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 lg:gap-6 text-xs text-slate-700 dark:text-slate-300">
+            <div className="flex items-start gap-2.5 min-w-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <span><strong>Under 60s Turnaround:</strong> No 2-week delays; immediate step feedback.</span>
+              <div className="leading-relaxed break-words">
+                <strong className="font-semibold text-slate-900 dark:text-slate-100">Evaluation Processing Time:</strong>{' '}
+                Processing time varies depending on answer-sheet length and complexity.
+              </div>
             </div>
-            <div className="flex items-start gap-2.5">
+            <div className="flex items-start gap-2.5 min-w-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <span><strong>2 Free Checks / Mo:</strong> Full 100-mark mock evaluations at zero cost on registration.</span>
+              <div className="leading-relaxed break-words">
+                <strong className="font-semibold text-slate-900 dark:text-slate-100">2 Free Evaluations / Month:</strong>{' '}
+                Eligible students receive up to two free evaluations each month, subject to the platform's existing entitlement rules.
+              </div>
             </div>
-            <div className="flex items-start gap-2.5">
+            <div className="flex items-start gap-2.5 min-w-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <span><strong>Zero Score Drift:</strong> Single authoritative ledger ensures 100% score parity.</span>
+              <div className="leading-relaxed break-words">
+                <strong className="font-semibold text-slate-900 dark:text-slate-100">Consistent, Traceable Scoring:</strong>{' '}
+                Evaluation records and awarded marks are tracked through the platform's authoritative scoring and recordkeeping system.
+              </div>
             </div>
-            <div className="flex items-start gap-2.5">
+            <div className="flex items-start gap-2.5 min-w-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-              <span><strong>All 3 CA Tiers:</strong> Calibrated for CA Foundation, Intermediate, and Final.</span>
+              <div className="leading-relaxed break-words">
+                <strong className="font-semibold text-slate-900 dark:text-slate-100">CA Course Levels:</strong>{' '}
+                Calibrated across CA Foundation, CA Intermediate, and CA Final.
+              </div>
             </div>
           </div>
         </div>
