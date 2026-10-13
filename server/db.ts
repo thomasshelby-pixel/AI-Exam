@@ -3150,14 +3150,14 @@ function seedModelConfigs() {
     } else {
       db.prepare(`
         UPDATE model_configs SET
-          provider = ?, display_name = ?, role = ?, fallback_order = ?, thinking_level = ?, max_tokens = ?,
+          provider = ?, display_name = ?, role = ?, thinking_level = ?, max_tokens = ?,
           status = CASE
             WHEN status IN ('RETIRED', 'RATE_LIMITED', 'INSUFFICIENT_CREDITS', 'AUTH_ERROR', 'TEMPORARILY_UNAVAILABLE', 'EVALUATION_READY', 'INFERENCE_READY') THEN status
             WHEN ? = 0 THEN 'NOT_CONFIGURED'
             ELSE status
           END
         WHERE id = ?
-      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, isProvConfigured ? 1 : 0, m.id);
+      `).run(m.provider, m.display_name, m.role, m.thinking_level, m.max_tokens, isProvConfigured ? 1 : 0, m.id);
     }
   }
 }

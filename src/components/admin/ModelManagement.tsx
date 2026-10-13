@@ -19,6 +19,12 @@ import {
   Scale,
   Calculator,
   FileCheck2,
+  ArrowUp,
+  ArrowDown,
+  Plus,
+  Trash2,
+  RotateCcw,
+  Check,
 } from 'lucide-react';
 
 interface ModelConfig {
@@ -99,12 +105,18 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
 
+  const [fallbackChain, setFallbackChain] = useState<string[]>([]);
+  const [savingFallback, setSavingFallback] = useState<boolean>(false);
+  const [fallbackDirty, setFallbackDirty] = useState<boolean>(false);
+  const [selectedNewFallback, setSelectedNewFallback] = useState<string>('');
+
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [modelsRes, telemetryRes] = await Promise.all([
+      const [modelsRes, telemetryRes, fallbackRes] = await Promise.all([
         apiRequest<{ models: ModelConfig[]; providerStatus: Record<string, ProviderStatus>; fallbackHierarchy?: FallbackHierarchyItem[] }>('/api/admin/models'),
         apiRequest<TelemetryData>('/api/admin/models/telemetry'),
+        apiRequest<{ primaryModel: string; fallbackChain: string[] }>('/api/admin/models/fallback-order').catch(() => null),
       ]);
 
       setModels(modelsRes.models || []);
@@ -112,12 +124,91 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
       if (modelsRes.fallbackHierarchy) {
         setFallbackHierarchy(modelsRes.fallbackHierarchy);
       }
+      if (fallbackRes?.fallbackChain && !fallbackDirty) {
+        setFallbackChain(fallbackRes.fallbackChain);
+      } else if (modelsRes.fallbackHierarchy && !fallbackDirty) {
+        const chain = modelsRes.fallbackHierarchy.filter((h) => h.order > 0).map((h) => h.modelId);
+        setFallbackChain(chain);
+      }
       setTelemetry(telemetryRes || null);
     } catch (err: any) {
       const msg = err?.message || 'Failed to load model registry';
       onNotify?.(msg, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const moveFallbackUp = (index: number) => {
+    if (index <= 0) return;
+    const newChain = [...fallbackChain];
+    const temp = newChain[index];
+    newChain[index] = newChain[index - 1];
+    newChain[index - 1] = temp;
+    setFallbackChain(newChain);
+    setFallbackDirty(true);
+  };
+
+  const moveFallbackDown = (index: number) => {
+    if (index >= fallbackChain.length - 1) return;
+    const newChain = [...fallbackChain];
+    const temp = newChain[index];
+    newChain[index] = newChain[index + 1];
+    newChain[index + 1] = temp;
+    setFallbackChain(newChain);
+    setFallbackDirty(true);
+  };
+
+  const removeFallback = (modelId: string) => {
+    const newChain = fallbackChain.filter((id) => id !== modelId);
+    setFallbackChain(newChain);
+    setFallbackDirty(true);
+  };
+
+  const addFallback = () => {
+    if (!selectedNewFallback || fallbackChain.includes(selectedNewFallback)) return;
+    const primaryId = models.find((m) => m.is_primary === 1)?.id;
+    if (selectedNewFallback === primaryId) {
+      onNotify?.('Primary model cannot be added as a fallback', 'error');
+      return;
+    }
+    const newChain = [...fallbackChain, selectedNewFallback];
+    setFallbackChain(newChain);
+    setSelectedNewFallback('');
+    setFallbackDirty(true);
+  };
+
+  const handleSaveFallbackOrder = async () => {
+    try {
+      setSavingFallback(true);
+      const res = await apiRequest<{ success: boolean; message: string; primaryModel: string; fallbackChain: string[] }>('/api/admin/models/fallback-order', {
+        method: 'PUT',
+        body: JSON.stringify({ fallbackChain }),
+      });
+      onNotify?.(res.message || 'Fallback order saved successfully', 'success');
+      setFallbackDirty(false);
+      await fetchData();
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Failed to save fallback order', 'error');
+    } finally {
+      setSavingFallback(false);
+    }
+  };
+
+  const handleResetDefaultFallbackOrder = async () => {
+    try {
+      setSavingFallback(true);
+      const res = await apiRequest<{ success: boolean; message: string; primaryModel: string; fallbackChain: string[] }>('/api/admin/models/fallback-order/reset-default', {
+        method: 'POST',
+      });
+      setFallbackChain(res.fallbackChain || []);
+      setFallbackDirty(false);
+      onNotify?.(res.message || 'Default fallback order restored successfully', 'success');
+      await fetchData();
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Failed to reset default fallback order', 'error');
+    } finally {
+      setSavingFallback(false);
     }
   };
 
@@ -447,129 +538,237 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
         </div>
       </div>
 
-      {/* Fallback Cascade Flow Visualizer */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      {/* Interactive Fallback Hierarchy Configuration */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-indigo-600" />
+              <h4 className="text-sm font-bold text-slate-900">
+                Administrator-Controlled Fallback Hierarchy & Orchestration
+              </h4>
+              {fallbackDirty && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  Unsaved Changes
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Configure the exact sequential fallback order used by the examination evaluation engine. If a provider encounters rate limits or temporary downtime, execution automatically advances down this chain.
+            </p>
+          </div>
+
           <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-indigo-600" />
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Deterministic Multi-Provider Fallback Hierarchy
-            </h4>
+            <button
+              onClick={handleResetDefaultFallbackOrder}
+              disabled={savingFallback}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+              title="Restore documented default order"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+              <span>Restore Default</span>
+            </button>
+
+            <button
+              onClick={handleSaveFallbackOrder}
+              disabled={savingFallback || !fallbackDirty}
+              className="px-4 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingFallback ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
+              <span>Save Fallback Order</span>
+            </button>
           </div>
-          <span className="text-[11px] text-slate-500">
-            Zero-downtime automated cascading across 9 production models
+        </div>
+
+        {/* Primary Model Showcase (Separated) */}
+        {(() => {
+          const primaryModel = models.find((m) => m.is_primary === 1);
+          return (
+            <div className="p-4 rounded-xl border-2 border-blue-500 bg-blue-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                  <Zap className="w-5 h-5 fill-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white">
+                      Authoritative Primary Model
+                    </span>
+                    <span className="text-[11px] font-bold text-blue-900 uppercase">
+                      {primaryModel?.provider}
+                    </span>
+                  </div>
+                  <h5 className="text-sm font-bold text-slate-900 mt-0.5">
+                    {primaryModel?.display_name || 'No Primary Selected'}
+                  </h5>
+                  <p className="text-xs text-slate-600">
+                    {primaryModel?.role || 'Primary CA Answer Sheet Evaluation'} • Thinking Level: {primaryModel?.thinking_level || 'HIGH'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right shrink-0">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> First Responder
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Resulting Execution Flow Visual Breadcrumb */}
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+            Resulting Runtime Execution Flow:
           </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-9 gap-2 pt-2">
-          {/* Primary Model */}
-          <div className="p-2.5 rounded-lg border-2 border-blue-500 bg-blue-50/40 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-blue-600 text-white">
-              Primary
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+            <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white flex items-center gap-1 shadow-2xs">
+              <Zap className="w-3 h-3 fill-white" />
+              Primary: {models.find((m) => m.is_primary === 1)?.display_name.split(' (')[0] || 'Primary'}
             </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-blue-700">Google Gemini</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.8-flash</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Standard ICAI Evaluation</div>
-          </div>
-
-          {/* Fallback 1: Claude Opus 5 */}
-          <div className="p-2.5 rounded-lg border border-amber-300 bg-amber-50/30 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-600 text-white">
-              Fallback 1
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-amber-700">Anthropic</div>
-              <div className="font-bold text-xs text-slate-900 truncate">claude-opus-5</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Deep Legal & Audit</div>
-          </div>
-
-          {/* Fallback 2: GPT-5.6 Sol */}
-          <div className="p-2.5 rounded-lg border border-emerald-300 bg-emerald-50/30 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-600 text-white">
-              Fallback 2
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-emerald-700">OpenAI</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gpt-5.6-sol</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Calculation Cross-Check</div>
-          </div>
-
-          {/* Fallback 3: Claude Sonnet 5 */}
-          <div className="p-2.5 rounded-lg border border-amber-200 bg-amber-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-700 text-white">
-              Fallback 3
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-amber-700">Anthropic</div>
-              <div className="font-bold text-xs text-slate-900 truncate">claude-sonnet-5</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Balanced High-Quality</div>
-          </div>
-
-          {/* Fallback 4: GPT-5.6 Terra */}
-          <div className="p-2.5 rounded-lg border border-emerald-200 bg-emerald-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-700 text-white">
-              Fallback 4
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-emerald-700">OpenAI</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gpt-5.6-terra</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal OCR</div>
-          </div>
-
-          {/* Fallback 5: Gemini 3.6 Flash */}
-          <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
-              Fallback 5
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-blue-700">Google Gemini</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.6-flash</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Standard Fallback</div>
-          </div>
-
-          {/* Fallback 6: Gemini 3.1 Flash Lite */}
-          <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-600 text-white">
-              Fallback 6
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-blue-700">Google Gemini</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gemini-3.1-flash-lite</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal</div>
-          </div>
-
-          {/* Fallback 7: Claude Haiku 4.5 */}
-          <div className="p-2.5 rounded-lg border border-amber-200 bg-amber-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-600 text-white">
-              Fallback 7
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-amber-700">Anthropic</div>
-              <div className="font-bold text-xs text-slate-900 truncate">claude-haiku-4.5</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Fast Multimodal</div>
-          </div>
-
-          {/* Fallback 8: GPT-6 Astra */}
-          <div className="p-2.5 rounded-lg border border-emerald-200 bg-emerald-50/20 flex flex-col justify-between relative">
-            <span className="absolute -top-2.5 right-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-700 text-white">
-              Fallback 8
-            </span>
-            <div>
-              <div className="text-[10px] font-black uppercase text-emerald-700">OpenAI</div>
-              <div className="font-bold text-xs text-slate-900 truncate">gpt-6-astra</div>
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2 font-medium">Deep Reasoning / Cross-Check</div>
+            {fallbackChain.map((mId, idx) => {
+              const mDesc = models.find((m) => m.id === mId);
+              return (
+                <React.Fragment key={mId}>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-800 flex items-center gap-1 shadow-2xs">
+                    <span className="text-[10px] text-slate-400 font-mono">#{idx + 1}</span>
+                    {mDesc?.display_name.split(' (')[0] || mId}
+                  </span>
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
+
+        {/* Reorderable Fallback Chain List */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+            <span>Ordered Fallback Hierarchy ({fallbackChain.length} Levels)</span>
+            <span className="text-slate-400 text-[11px]">Use arrows to adjust priority</span>
+          </div>
+
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
+            {fallbackChain.map((mId, index) => {
+              const model = models.find((m) => m.id === mId);
+              const provider = model?.provider || 'gemini';
+              return (
+                <div
+                  key={mId}
+                  className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 transition"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-600 shrink-0">
+                      #{index + 1}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-slate-900">
+                          {model?.display_name || mId}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                            provider === 'gemini'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : provider === 'openai'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-800 border border-amber-200'
+                          }`}
+                        >
+                          {provider}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        {model?.role || `Fallback Tier ${index + 1}`} • Thinking: {model?.thinking_level || 'HIGH'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                    <button
+                      onClick={() => moveFallbackUp(index)}
+                      disabled={index === 0}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer text-slate-700"
+                      title="Move up"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => moveFallbackDown(index)}
+                      disabled={index === fallbackChain.length - 1}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer text-slate-700"
+                      title="Move down"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => removeFallback(mId)}
+                      className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 transition cursor-pointer ml-1"
+                      title="Remove from fallback chain"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {fallbackChain.length === 0 && (
+              <div className="p-6 text-center text-xs text-slate-500">
+                No fallback models configured. Add eligible models below to ensure zero-downtime evaluation resilience.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Add Eligible Model to Fallback Chain */}
+        {(() => {
+          const primaryId = models.find((m) => m.is_primary === 1)?.id;
+          const availableToAdd = models.filter(
+            (m) => m.id !== primaryId && !fallbackChain.includes(m.id)
+          );
+
+          if (availableToAdd.length === 0) return null;
+
+          return (
+            <div className="p-3 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Plus className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-semibold text-slate-700">Add Model to Fallback Hierarchy:</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedNewFallback}
+                  onChange={(e) => setSelectedNewFallback(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">Select an approved model...</option>
+                  {availableToAdd.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.display_name} ({m.provider.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={addFallback}
+                  disabled={!selectedNewFallback}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                >
+                  Add to Chain
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Model Orchestration Table */}

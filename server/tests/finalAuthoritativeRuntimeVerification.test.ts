@@ -23,7 +23,7 @@ import {
 } from '../services/firestoreDbService.js';
 import { EvaluationResult, MarkingComponent, QuestionEvaluation } from '../../src/types/index.js';
 
-const PORT = process.env.PORT || '8080';
+const PORT = process.env.TEST_SERVER_PORT || '3000';
 const BASE_URL = `http://localhost:${PORT}`;
 
 async function runFinalVerification() {

@@ -14,6 +14,7 @@ import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
 import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
+import { decryptMfaSecret } from './mfaCryptoService.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -1361,31 +1362,49 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     // 17. Reconcile and permanently heal MFA status for all enrolled accounts across SQLite and Firestore
     try {
-      const healResult = db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 1,
-            mfa_reset_required = 0,
-            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE (
-          id IN (SELECT DISTINCT user_id FROM mfa_authenticators WHERE totp_secret IS NOT NULL)
-          OR (totp_secret IS NOT NULL AND length(totp_secret) >= 16)
-        ) AND (mfa_enabled != 1 OR mfa_reset_required = 1)
-      `).run();
-      if (healResult.changes > 0) {
-        console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${healResult.changes} user account(s).`);
+      // Never overwrite an account that is flagged for reset (mfa_reset_required === 1)
+      const candidateMfaUsers = db.prepare(`
+        SELECT id, totp_secret FROM users
+        WHERE mfa_reset_required != 1 AND (mfa_enabled != 1)
+      `).all() as Array<{ id: string; totp_secret: string | null }>;
+
+      let restoredCount = 0;
+      for (const u of candidateMfaUsers) {
+        const hasValidAuth = db.prepare(`
+          SELECT 1 FROM mfa_authenticators WHERE user_id = ? AND totp_secret IS NOT NULL LIMIT 1
+        `).get(u.id);
+        const userSecDec = decryptMfaSecret(u.totp_secret);
+        const isValid = (userSecDec && userSecDec.length >= 16) || Boolean(hasValidAuth);
+
+        if (isValid) {
+          db.prepare(`
+            UPDATE users
+            SET mfa_enabled = 1,
+                mfa_reset_required = 0,
+                mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND mfa_reset_required != 1
+          `).run(u.id);
+          restoredCount++;
+        }
+      }
+      if (restoredCount > 0) {
+        console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${restoredCount} user account(s).`);
       }
 
       // Ensure Firestore users collection has mfa_enabled = 1, mfa_reset_required = 0 for all locally enrolled accounts
-      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1 AND totp_secret IS NOT NULL').all() as any[];
+      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1 AND mfa_reset_required != 1 AND totp_secret IS NOT NULL').all() as any[];
       for (const mfu of allMfaUsers) {
-        setFirestoreDoc('users', mfu.id, {
-          mfa_enabled: 1,
-          mfa_reset_required: 0,
-          mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
-          totp_secret: mfu.totp_secret,
-          updated_at: new Date().toISOString(),
-        }).catch(() => {});
+        const dec = decryptMfaSecret(mfu.totp_secret);
+        if (dec && dec.length >= 16) {
+          setFirestoreDoc('users', mfu.id, {
+            mfa_enabled: 1,
+            mfa_reset_required: 0,
+            mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
+            totp_secret: mfu.totp_secret,
+            updated_at: new Date().toISOString(),
+          }).catch(() => {});
+        }
       }
 
       // Safe, post-hydration admin consistency check with Firestore grounding
@@ -1400,6 +1419,38 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       console.log(`[FirestoreSync] Post-hydration: Reconciled credits for ${creditRecon.reconciledStudents} student(s) (${creditRecon.totalActiveCredits} total active credits).`);
     } catch (credReconErr) {
       console.warn('[FirestoreSync] Post-hydration credit reconciliation notice:', credReconErr);
+    }
+
+    // 19. Reconcile and synchronize AI evaluation model configuration from Firestore
+    try {
+      const fsModelConfig = await getFirestoreDoc<any>('system_settings', 'ai_model_config');
+      if (fsModelConfig && fsModelConfig.primary_model) {
+        const approvedIds = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
+        if (approvedIds.includes(fsModelConfig.primary_model)) {
+          db.prepare(`
+            INSERT INTO pricing_settings (key, value, updated_at)
+            VALUES ('EVAL_MODEL_PROVIDER', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+          `).run(fsModelConfig.primary_model);
+          db.prepare('UPDATE model_configs SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END').run(fsModelConfig.primary_model);
+
+          if (Array.isArray(fsModelConfig.fallback_chain)) {
+            const validChain = fsModelConfig.fallback_chain.filter((m: string) => approvedIds.includes(m) && m !== fsModelConfig.primary_model);
+            db.prepare(`
+              INSERT INTO pricing_settings (key, value, updated_at)
+              VALUES ('EVAL_FALLBACK_ORDER', ?, CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            `).run(JSON.stringify(validChain));
+
+            validChain.forEach((mId: string, idx: number) => {
+              db.prepare('UPDATE model_configs SET fallback_order = ?, is_enabled = 1 WHERE id = ?').run(idx + 1, mId);
+            });
+          }
+          console.log(`[FirestoreSync] Post-hydration: Reconciled AI model config from Firestore (Primary: ${fsModelConfig.primary_model}).`);
+        }
+      }
+    } catch (modelReconErr) {
+      console.warn('[FirestoreSync] Post-hydration model configuration notice:', modelReconErr);
     }
 
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);

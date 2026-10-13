@@ -74,6 +74,11 @@ import {
   getEvaluationModelRegistry,
   validateEvaluationModelId,
   EVALUATION_MODEL_REGISTRY,
+  APPROVED_MODELS,
+  getAuthoritativePrimaryModel,
+  getAuthoritativeFallbackChain,
+  saveAuthoritativeFallbackChain,
+  DEFAULT_FALLBACK_CHAIN,
 } from '../models/modelRegistry.js';
 
 const router = Router();
@@ -5110,15 +5115,21 @@ router.get('/models', (req: AuthRequest, res: Response) => {
       },
     };
 
+    const currentPrimary = getAuthoritativePrimaryModel();
+    const currentFallbackChain = getAuthoritativeFallbackChain(currentPrimary);
+    const primaryDesc = APPROVED_MODELS.find((m) => m.id === currentPrimary);
+
     const fallbackHierarchy = [
-      { order: 0, modelId: 'gemini-3.8-flash', provider: 'gemini', role: 'Primary CA Evaluation' },
-      { order: 1, modelId: 'gemini-3.6-flash', provider: 'gemini', role: 'Primary Fallback Model' },
-      { order: 2, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Fast Multimodal & High-Volume Fallback' },
-      { order: 3, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
-      { order: 4, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
-      { order: 5, modelId: 'gpt-6-astra', provider: 'openai', role: 'Deep Reasoning / Cross-Check' },
-      { order: 6, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Legal / Accounting / Audit Evaluation' },
-      { order: 7, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
+      { order: 0, modelId: currentPrimary, provider: primaryDesc?.provider || 'gemini', role: primaryDesc?.role || 'Primary CA Evaluation' },
+      ...currentFallbackChain.map((mId, idx) => {
+        const desc = APPROVED_MODELS.find((m) => m.id === mId);
+        return {
+          order: idx + 1,
+          modelId: mId,
+          provider: desc?.provider || 'gemini',
+          role: desc?.role || `Fallback Tier ${idx + 1}`,
+        };
+      }),
     ];
 
     return res.json({
@@ -5132,7 +5143,91 @@ router.get('/models', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/models/:id', (req: AuthRequest, res: Response) => {
+router.get('/models/fallback-order', (req: AuthRequest, res: Response) => {
+  try {
+    const primaryModel = getAuthoritativePrimaryModel();
+    const fallbackChain = getAuthoritativeFallbackChain(primaryModel);
+    const availableModels = APPROVED_MODELS
+      .filter((m) => m.id !== primaryModel && !fallbackChain.includes(m.id))
+      .map((m) => ({ id: m.id, displayName: m.displayName, provider: m.provider, role: m.role }));
+
+    return res.json({
+      primaryModel,
+      fallbackChain,
+      availableModels,
+      defaultFallbackChain: DEFAULT_FALLBACK_CHAIN.filter((m) => m !== primaryModel),
+      approvedModels: APPROVED_MODELS.map((m) => ({ id: m.id, displayName: m.displayName, provider: m.provider, role: m.role })),
+    });
+  } catch (error: any) {
+    console.error('Get fallback order error:', error);
+    return res.status(500).json({ error: 'Failed to load fallback order configuration' });
+  }
+});
+
+router.put('/models/fallback-order', async (req: AuthRequest, res: Response) => {
+  try {
+    const { fallbackChain } = req.body;
+    if (!Array.isArray(fallbackChain)) {
+      return res.status(400).json({ error: 'fallbackChain must be an array of model identifiers.' });
+    }
+
+    const result = saveAuthoritativeFallbackChain(fallbackChain, req.user!.id);
+
+    try {
+      const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
+      await setFirestoreDoc('system_settings', 'ai_model_config', {
+        primary_model: result.primaryModel,
+        fallback_chain: result.fallbackChain,
+        updated_at: new Date().toISOString(),
+        updated_by: req.user!.id,
+      });
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Fallback order updated and persisted successfully',
+      primaryModel: result.primaryModel,
+      fallbackChain: result.fallbackChain,
+    });
+  } catch (error: any) {
+    console.error('Update fallback order error:', error);
+    return res.status(400).json({ error: error?.message || 'Failed to update fallback order' });
+  }
+});
+
+router.post('/models/fallback-order/reset-default', async (req: AuthRequest, res: Response) => {
+  try {
+    const primaryModel = getAuthoritativePrimaryModel();
+    const defaultChain = DEFAULT_FALLBACK_CHAIN.filter((m) => m !== primaryModel);
+    const result = saveAuthoritativeFallbackChain(defaultChain, req.user!.id);
+
+    try {
+      const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
+      await setFirestoreDoc('system_settings', 'ai_model_config', {
+        primary_model: result.primaryModel,
+        fallback_chain: result.fallbackChain,
+        updated_at: new Date().toISOString(),
+        updated_by: req.user!.id,
+      });
+    } catch (fsErr) {
+      console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Default fallback order restored successfully',
+      primaryModel: result.primaryModel,
+      fallbackChain: result.fallbackChain,
+    });
+  } catch (error: any) {
+    console.error('Reset default fallback order error:', error);
+    return res.status(500).json({ error: error?.message || 'Failed to reset default fallback order' });
+  }
+});
+
+router.put('/models/:id', async (req: AuthRequest, res: Response) => {
   try {
     const modelId = req.params.id;
     const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
@@ -5147,15 +5242,30 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
     }
 
     if (is_primary === 1 || is_primary === true) {
-      // Clear other primaries
       db.prepare('UPDATE model_configs SET is_primary = 0').run();
       db.prepare('UPDATE model_configs SET is_primary = 1, is_enabled = 1 WHERE id = ?').run(modelId);
-      // Sync with pricing_settings EVAL_MODEL_PROVIDER
       db.prepare(`
         INSERT INTO pricing_settings (key, value, updated_at)
         VALUES ('EVAL_MODEL_PROVIDER', ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
       `).run(modelId);
+
+      // Remove new primary from fallback chain if present
+      const currentFallbacks = getAuthoritativeFallbackChain(modelId);
+      const cleanedFallbacks = currentFallbacks.filter((m) => m !== modelId);
+      saveAuthoritativeFallbackChain(cleanedFallbacks, req.user!.id);
+
+      try {
+        const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
+        await setFirestoreDoc('system_settings', 'ai_model_config', {
+          primary_model: modelId,
+          fallback_chain: cleanedFallbacks,
+          updated_at: new Date().toISOString(),
+          updated_by: req.user!.id,
+        });
+      } catch (fsErr) {
+        console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
+      }
     }
 
     if (role !== undefined) {
@@ -5190,7 +5300,6 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
       db.prepare('UPDATE model_configs SET custom_endpoint = ? WHERE id = ?').run(custom_endpoint || null, modelId);
     }
 
-    // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'UPDATE_MODEL_CONFIG', 'AI_MODEL', ?, ?)

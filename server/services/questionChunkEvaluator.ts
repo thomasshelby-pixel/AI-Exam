@@ -1,6 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { getGemini, generateContentWithResilience } from '../gemini.js';
+import { executeModelWithFallback } from '../models/modelRegistry.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { AttemptedQuestionMapping } from './answerSheetCoverageService.js';
@@ -248,22 +249,45 @@ Return strictly valid JSON with this schema:
 }
 `;
 
-  const ai = getGemini();
-
   try {
-    const res = await generateContentWithResilience(ai, {
-      contents: [
-        { inlineData: { mimeType: 'application/pdf', data: chunkBase64 } },
-        { text: prompt },
-      ],
-      config: {
+    let cleanText = '';
+    let executedModel = 'gemini-3.8-flash';
+    let executedProvider = 'gemini';
+
+    try {
+      const modelExec = await executeModelWithFallback({
+        systemPrompt: 'You are an examiner-style evaluator, not a binary answer matcher.',
+        userPrompt: prompt,
+        pdfBase64: chunkBase64,
+        mimeType: 'application/pdf',
         responseMimeType: 'application/json',
-      },
-    });
+        context: {
+          level,
+          subjectName,
+          checkingMode,
+        },
+      });
+      cleanText = modelExec.rawText?.trim() || '{}';
+      executedModel = modelExec.modelUsed;
+      executedProvider = modelExec.provider;
+    } catch (fallbackErr: any) {
+      console.warn(`[QuestionChunkEvaluator] executeModelWithFallback error, trying resilient direct invocation:`, fallbackErr?.message || fallbackErr);
+      const ai = getGemini();
+      const res = await generateContentWithResilience(ai, {
+        contents: [
+          { inlineData: { mimeType: 'application/pdf', data: chunkBase64 } },
+          { text: prompt },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+      cleanText = res.text?.trim() || '{}';
+    }
 
     let raw: any = {};
     try {
-      let clean = res.text?.trim() || '{}';
+      let clean = cleanText;
       if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       raw = JSON.parse(clean);
     } catch {

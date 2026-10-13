@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { getGemini } from '../gemini.js';
 import { db } from '../db.js';
 import OpenAI from 'openai';
@@ -484,6 +485,118 @@ export function getEvaluationModelRegistry(): {
   return {
     models: dynamicModels,
     defaultModelId: 'gemini-3.8-flash',
+  };
+}
+
+export const DEFAULT_FALLBACK_CHAIN: string[] = [
+  'gemini-3.6-flash',
+  'gemini-3.1-flash-lite',
+  'claude-opus-5',
+  'gpt-5.6-sol',
+  'claude-sonnet-5',
+  'gpt-5.6-terra',
+  'gpt-6-astra',
+];
+
+export function getAuthoritativePrimaryModel(): string {
+  try {
+    const primaryRow = db.prepare('SELECT id FROM model_configs WHERE is_primary = 1').get() as { id: string } | undefined;
+    if (primaryRow?.id && APPROVED_MODELS.some((m) => m.id === primaryRow.id)) {
+      return primaryRow.id;
+    }
+    const settingRow = db.prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_MODEL_PROVIDER'").get() as { value: string } | undefined;
+    if (settingRow?.value && APPROVED_MODELS.some((m) => m.id === settingRow.value)) {
+      return settingRow.value;
+    }
+  } catch (err) {
+    console.warn('[ModelRegistry] Error reading primary model, defaulting to gemini-3.8-flash:', err);
+  }
+  return 'gemini-3.8-flash';
+}
+
+export function getAuthoritativeFallbackChain(primaryModel?: string): string[] {
+  const currentPrimary = primaryModel || getAuthoritativePrimaryModel();
+  try {
+    const row = db.prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_FALLBACK_ORDER'").get() as { value: string } | undefined;
+    if (row?.value) {
+      const parsed = JSON.parse(row.value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const approvedIds = new Set(APPROVED_MODELS.map((m) => m.id));
+        const validChain = parsed.filter((id) => typeof id === 'string' && approvedIds.has(id) && id !== currentPrimary);
+        const dedupedChain = Array.from(new Set(validChain));
+        if (dedupedChain.length > 0) {
+          return dedupedChain;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[ModelRegistry] Could not read EVAL_FALLBACK_ORDER from pricing_settings, using defaults:', err);
+  }
+
+  return DEFAULT_FALLBACK_CHAIN.filter((m) => m !== currentPrimary);
+}
+
+export function saveAuthoritativeFallbackChain(chain: string[], adminUserId?: string): { success: boolean; fallbackChain: string[]; primaryModel: string } {
+  const primaryModel = getAuthoritativePrimaryModel();
+  const approvedIds = new Set(APPROVED_MODELS.map((m) => m.id));
+
+  if (!Array.isArray(chain)) {
+    throw new Error('Fallback chain must be an array of model identifiers.');
+  }
+
+  const seen = new Set<string>();
+  for (const mId of chain) {
+    if (!approvedIds.has(mId)) {
+      throw new Error(`Model '${mId}' is not in the approved runtime model whitelist.`);
+    }
+    if (mId === primaryModel) {
+      throw new Error(`Primary model '${mId}' cannot be included in its own fallback chain.`);
+    }
+    if (seen.has(mId)) {
+      throw new Error(`Duplicate model '${mId}' detected in fallback chain.`);
+    }
+    seen.add(mId);
+  }
+
+  // Atomically update pricing_settings and model_configs
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO pricing_settings (key, value, updated_at)
+      VALUES ('EVAL_FALLBACK_ORDER', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(JSON.stringify(chain));
+
+    chain.forEach((mId, index) => {
+      db.prepare('UPDATE model_configs SET fallback_order = ?, is_enabled = 1 WHERE id = ?').run(index + 1, mId);
+    });
+
+    APPROVED_MODELS.forEach((m) => {
+      if (m.id !== primaryModel && !seen.has(m.id)) {
+        db.prepare('UPDATE model_configs SET fallback_order = 99 WHERE id = ?').run(m.id);
+      }
+    });
+
+    if (adminUserId) {
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'UPDATE_FALLBACK_ORDER', 'AI_MODEL', 'EVAL_FALLBACK_ORDER', ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        adminUserId,
+        `Admin configured custom fallback chain: [${chain.join(' -> ')}]`
+      );
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  return {
+    success: true,
+    primaryModel,
+    fallbackChain: chain,
   };
 }
 
@@ -1201,19 +1314,9 @@ export function determineModelRouting(context?: {
     routingReason = `Default Primary Routing: ${defaultGemini} for standard ICAI evaluation`;
   }
 
-  // 2. Build deterministic multi-provider fallback hierarchy across approved 8 models:
-  const canonicalFallbackOrder = [
-    'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-3.1-flash-lite',
-    'claude-opus-5',
-    'gpt-5.6-sol',
-    'claude-sonnet-5',
-    'gpt-5.6-terra',
-    'gpt-6-astra',
-  ];
-
-  const remaining = canonicalFallbackOrder.filter((m) => m !== selectedModel);
+  // 2. Build deterministic multi-provider fallback hierarchy across configured models:
+  const configuredFallbackOrder = getAuthoritativeFallbackChain(selectedModel);
+  const remaining = configuredFallbackOrder.filter((m) => m !== selectedModel);
   // Sort remaining so that healthy (non-cooling) models are evaluated first
   remaining.sort((a, b) => {
     const aCool = isModelCoolingDown(a) ? 1 : 0;

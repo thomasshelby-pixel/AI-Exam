@@ -1,20 +1,53 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * MFA Secret Encryption Service
  * Encrypts stored TOTP secrets at rest using AES-256-GCM.
  * Backward compatible: Automatically decrypts legacy plaintext Base32 secrets.
+ * Persistent: Stores and preserves a stable 256-bit encryption master key on disk (data/mfa_master.key)
+ * to guarantee that encryption/decryption keys never shift across server reboots, container restarts, or deployments.
  */
 
-// Derive a 256-bit primary key from server environment secrets
-function getEncryptionKey(): Buffer {
+const KEY_FILE = path.join(process.cwd(), 'data', 'mfa_master.key');
+
+/**
+ * Retrieves or initializes the persistent master encryption key.
+ */
+function getOrInitPersistentKey(): Buffer {
+  try {
+    if (fs.existsSync(KEY_FILE)) {
+      const stored = fs.readFileSync(KEY_FILE, 'utf8').trim();
+      if (stored && stored.length === 64) {
+        return Buffer.from(stored, 'hex');
+      }
+    }
+  } catch {}
+
   const masterSecret =
-    process.env.SESSION_SECRET ||
     process.env.ENCRYPTION_KEY ||
+    process.env.MFA_SECRET_KEY ||
+    process.env.SESSION_SECRET ||
     process.env.JWT_SECRET ||
     'ca-exam-checker-production-mfa-security-key-2026';
-  
-  return crypto.createHash('sha256').update(`mfa-secret-encryption:${masterSecret}`).digest();
+
+  const derivedKey = crypto.createHash('sha256').update(`mfa-secret-encryption:${masterSecret}`).digest();
+
+  try {
+    const dataDir = path.dirname(KEY_FILE);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    fs.writeFileSync(KEY_FILE, derivedKey.toString('hex'), { encoding: 'utf8', mode: 0o600 });
+  } catch {}
+
+  return derivedKey;
+}
+
+// Derive a 256-bit primary key from persistent key storage and environment secrets
+function getEncryptionKey(): Buffer {
+  return getOrInitPersistentKey();
 }
 
 /**
@@ -23,8 +56,9 @@ function getEncryptionKey(): Buffer {
  */
 function getCandidateDecryptionKeys(): Buffer[] {
   const candidateMasters = [
-    process.env.SESSION_SECRET,
     process.env.ENCRYPTION_KEY,
+    process.env.MFA_SECRET_KEY,
+    process.env.SESSION_SECRET,
     process.env.JWT_SECRET,
     'ca-exam-checker-production-mfa-security-key-2026',
     'ca-exam-checker-super-secure-jwt-secret-2026-production',
@@ -42,7 +76,7 @@ function getCandidateDecryptionKeys(): Buffer[] {
     }
   };
 
-  // Add primary key first
+  // Add primary persistent key first
   addKey(getEncryptionKey());
 
   for (const master of candidateMasters) {

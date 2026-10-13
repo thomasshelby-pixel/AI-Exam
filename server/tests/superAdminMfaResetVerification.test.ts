@@ -215,10 +215,27 @@ async function runSuperAdminMfaResetVerification() {
   assert.strictEqual(mfaAuditLog.status, 'SUCCESS');
   console.log('[PASS] Security audit trail entry verified.');
 
-  // 11. Complete re-enrollment to leave Super Admin authoritatively enrolled
-  console.log('\n[STEP 11] Completing fresh enrollment for Super Admin to restore enrolled state...');
-  const freshSetup = await getOrCreatePendingMfaSetup('usr_super_admin_001', 'support@caexamcheckerai.com', 'SUPER_ADMIN');
-  const encSec = encryptMfaSecret(freshSetup.secretKey);
+  // 11. Test Full Enrollment & Subsequent Login Challenge Lifecycle on Dedicated Test Admin
+  console.log('\n[STEP 11] Testing full enrollment & subsequent login verification on dedicated test admin...');
+  const testAdminId = `usr_test_mfa_lifecycle_${Date.now()}`;
+  const testAdminEmail = `test.mfa.lifecycle.${Date.now()}@testexam.ai`;
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status, mfa_enabled, mfa_reset_required)
+    VALUES (?, ?, 'hash', 'Test Lifecycle Admin', 'SUPER_ADMIN', 'ACTIVE', 0, 1)
+  `).run(testAdminId, testAdminEmail);
+
+  // Generate fresh setup for test admin
+  const testSetup = await getOrCreatePendingMfaSetup(testAdminId, testAdminEmail, 'SUPER_ADMIN');
+  assert.ok(testSetup.qrDataUrl.startsWith('data:image/png;base64,'), 'QR data URL must be generated');
+  assert.ok(testSetup.secretKey.length >= 16, 'Secret key must be valid');
+
+  // Verify test admin can enroll with valid TOTP code
+  const testTotpCode = generateTotpCodeForSecret(testSetup.secretKey);
+  const testDiag = evaluateRfc6238TotpDiagnostics(testSetup.secretKey, testTotpCode, 1, 10);
+  assert.strictEqual(testDiag.valid, true, 'Test admin code validates against secret');
+
+  // Activate test admin enrollment
+  const encTestSec = encryptMfaSecret(testSetup.secretKey);
   db.prepare(`
     UPDATE users
     SET mfa_enabled = 1,
@@ -227,23 +244,42 @@ async function runSuperAdminMfaResetVerification() {
         pending_totp_secret = NULL,
         mfa_reset_required = 0,
         updated_at = CURRENT_TIMESTAMP
-    WHERE id = 'usr_super_admin_001'
-  `).run(encSec);
+    WHERE id = ?
+  `).run(encTestSec, testAdminId);
   db.prepare(`
     INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
-    VALUES ('auth_prim_usr_super_admin_001', 'usr_super_admin_001', 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret
-  `).run(encSec);
-  await syncRecordToFirestore('users', 'usr_super_admin_001', {
-    id: 'usr_super_admin_001',
-    mfa_enabled: 1,
-    mfa_reset_required: 0,
-    totp_secret: encSec,
-    updated_at: new Date().toISOString(),
-  });
-  const restoredState = await getAuthoritativeUserMfaState('usr_super_admin_001');
-  assert.strictEqual(restoredState.state, 'MFA_ENROLLED');
-  console.log('[PASS] Super Admin restored to authoritative MFA_ENROLLED state.');
+    VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `).run(`auth_prim_${testAdminId}`, testAdminId, encTestSec);
+
+  // Verify subsequent login for enrolled admin presents CHALLENGE mode (NO QR code)
+  const subsequentUser = db.prepare('SELECT id, email, role, full_name, mfa_enabled, mfa_reset_required FROM users WHERE id = ?').get(testAdminId) as any;
+  const subsequentLogin = await evaluateMfaRequirementForLogin(subsequentUser, { deviceId: 'untrusted_device_999' });
+  assert.strictEqual(subsequentLogin.requireMfa, true, 'Subsequent login requires MFA');
+  assert.strictEqual(subsequentLogin.mfaEnrolled, true, 'mfaEnrolled must be TRUE on subsequent login (CHALLENGE mode)');
+  assert.strictEqual(subsequentLogin.totpSetup, undefined, 'totpSetup must NOT be returned on normal challenge');
+  console.log('[PASS] Full enrollment and subsequent login challenge lifecycle verified 100%.');
+
+  // Cleanup test admin
+  db.prepare('DELETE FROM mfa_authenticators WHERE user_id = ?').run(testAdminId);
+  db.prepare('DELETE FROM users WHERE id = ?').run(testAdminId);
+
+  // 12. Ensure Production Super Admin (usr_super_admin_001) is in verified MFA_RESET_REQUIRED state with fresh QR setup
+  console.log('\n[STEP 12] Confirming production Super Admin is ready for fresh authenticator QR enrollment...');
+  const prodFreshSetup = await getOrCreatePendingMfaSetup('usr_super_admin_001', 'support@caexamcheckerai.com', 'SUPER_ADMIN');
+  assert.ok(prodFreshSetup.qrDataUrl.startsWith('data:image/png;base64,'), 'Fresh QR code URL ready for Super Admin');
+  assert.ok(prodFreshSetup.secretKey.length >= 16, 'Fresh secret key ready for Super Admin');
+
+  const prodAdminFinal = db.prepare('SELECT id, email, role, full_name, mfa_enabled, mfa_reset_required FROM users WHERE id = ?').get('usr_super_admin_001') as any;
+  assert.strictEqual(prodAdminFinal.mfa_enabled, 0, 'Production Super Admin mfa_enabled must be 0');
+  assert.strictEqual(prodAdminFinal.mfa_reset_required, 1, 'Production Super Admin mfa_reset_required must be 1');
+
+  const prodLoginEval = await evaluateMfaRequirementForLogin(prodAdminFinal);
+  assert.strictEqual(prodLoginEval.requireMfa, true, 'Production Super Admin requires MFA');
+  assert.strictEqual(prodLoginEval.mfaEnrolled, false, 'Production Super Admin mfaEnrolled must be FALSE (ENROLL mode)');
+  assert.strictEqual(prodLoginEval.mfaState, 'MFA_RESET_REQUIRED');
+  assert.ok(prodLoginEval.totpSetup, 'Production Super Admin login MUST provide totpSetup with fresh QR code');
+  assert.ok(prodLoginEval.totpSetup.qrDataUrl, 'totpSetup includes fresh QR image');
+  console.log('[PASS] Production Super Admin is cleanly positioned for fresh QR scan and enrollment upon login.');
 
   console.log('================================================================');
   console.log('✅ ALL SUPER ADMIN MFA RESET VERIFICATION CHECKS PASSED CLEANLY');
