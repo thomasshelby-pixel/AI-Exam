@@ -141,6 +141,15 @@ export async function verifySmtpTransporter(): Promise<boolean> {
 }
 
 export async function sendEmail(options: EmailOptions): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string }> {
+  // Strict Test and Development Policy Gate: Never dispatch external emails during automated testing or sandbox mode
+  if (process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST) || process.env.NOTIFICATION_DEV_SAFE_MODE === 'true') {
+    return {
+      success: true,
+      status: 'SANDBOX_RECORDED',
+      message: `Sandbox recorded: email to ${options.to} safely captured without external network dispatch`,
+    };
+  }
+
   const mailer = getTransporter();
   const from = getSenderAddress();
 
@@ -535,3 +544,138 @@ export async function sendCheckedCopyEmail(
 
   return res;
 }
+
+export interface BroadcastNotificationEmailParams {
+  recipient: string;
+  recipientName?: string;
+  title: string;
+  message: string;
+  category?: string;
+  priority?: string;
+  actionUrl?: string;
+  actionLabel?: string;
+  campaignId?: string;
+  adminId?: string;
+}
+
+export async function sendBroadcastNotificationEmail(
+  params: BroadcastNotificationEmailParams
+): Promise<{ success: boolean; status: 'SENT' | 'FAILED' | 'SANDBOX_RECORDED'; message?: string }> {
+  const appUrl = getAppBaseUrl();
+  const displayName = params.recipientName || 'Student';
+  const category = (params.category || 'ANNOUNCEMENT').toUpperCase();
+  const priority = (params.priority || 'NORMAL').toUpperCase();
+
+  let badgeColor = '#2563eb';
+  let badgeLabel = 'ANNOUNCEMENT';
+  if (priority === 'URGENT') {
+    badgeColor = '#dc2626';
+    badgeLabel = 'URGENT ALERT';
+  } else if (category === 'EXAM_ALERT') {
+    badgeColor = '#d97706';
+    badgeLabel = 'EXAM NOTICE';
+  } else if (category === 'FEATURE_UPDATE') {
+    badgeColor = '#059669';
+    badgeLabel = 'NEW FEATURE';
+  } else if (category === 'MAINTENANCE') {
+    badgeColor = '#7c3aed';
+    badgeLabel = 'SYSTEM UPDATE';
+  } else if (category === 'PROMOTIONAL') {
+    badgeColor = '#db2777';
+    badgeLabel = 'SPECIAL OFFER';
+  }
+
+  const subject = priority === 'URGENT'
+    ? `[URGENT] ${params.title} - CA Exam Checker AI`
+    : `${params.title} - CA Exam Checker AI`;
+
+  // Format message paragraphs
+  const paragraphs = params.message
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((p) => `<p style="font-size: 14px; line-height: 1.6; margin: 0 0 14px 0; color: #334155;">${escapeHtml(p)}</p>`)
+    .join('');
+
+  const fullActionUrl = params.actionUrl
+    ? (params.actionUrl.startsWith('http') ? params.actionUrl : `${appUrl}${params.actionUrl}`)
+    : null;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px 16px; background-color: #f8fafc; color: #0f172a;">
+      <div style="background-color: #0f172a; padding: 24px; text-align: center; border-radius: 12px 12px 0 0; border-bottom: 3px solid ${badgeColor};">
+        <h2 style="color: #ffffff; margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.025em;">CA Exam Checker AI</h2>
+        <p style="color: #94a3b8; margin: 6px 0 0 0; font-size: 12px; font-weight: 500;">Official Student & Institute Notification</p>
+      </div>
+      <div style="background-color: #ffffff; padding: 32px 28px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+        <div style="margin-bottom: 20px;">
+          <span style="display: inline-block; background-color: ${badgeColor}15; color: ${badgeColor}; border: 1px solid ${badgeColor}30; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.05em;">
+            ${badgeLabel}
+          </span>
+          ${priority === 'URGENT' ? `
+            <span style="display: inline-block; background-color: #fef2f2; color: #991b1b; border: 1px solid #fecaca; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 9999px; text-transform: uppercase; margin-left: 6px;">
+              HIGH PRIORITY
+            </span>
+          ` : ''}
+        </div>
+
+        <h1 style="font-size: 20px; font-weight: 700; color: #0f172a; margin: 0 0 16px 0; line-height: 1.3;">
+          ${escapeHtml(params.title)}
+        </h1>
+
+        <p style="font-size: 14px; font-weight: 600; color: #1e293b; margin: 0 0 16px 0;">
+          Dear ${escapeHtml(displayName)},
+        </p>
+
+        <div style="margin-bottom: 24px;">
+          ${paragraphs}
+        </div>
+
+        ${fullActionUrl ? `
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="${fullActionUrl}" style="background-color: #2563eb; color: #ffffff; padding: 13px 32px; font-size: 14px; font-weight: 700; text-decoration: none; border-radius: 8px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);">
+              ${escapeHtml(params.actionLabel || 'View Details in Portal')}
+            </a>
+          </div>
+          <p style="font-size: 12px; color: #94a3b8; text-align: center; margin: -16px 0 24px 0;">
+            Or navigate to: <a href="${fullActionUrl}" style="color: #2563eb; word-break: break-all;">${fullActionUrl}</a>
+          </p>
+        ` : ''}
+
+        <div style="margin-top: 32px; padding: 14px 18px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9; font-size: 12px; color: #64748b;">
+          <strong>Security Notice:</strong> This notification was generated authoritatively by the CA Exam Checker AI platform team. We will never ask for your password or OTP via email.
+        </div>
+
+        <div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #f1f5f9; font-size: 11px; color: #94a3b8; line-height: 1.6;">
+          <p style="margin: 0 0 6px 0;">Sent to <strong style="color: #64748b;">${escapeHtml(params.recipient)}</strong></p>
+          <p style="margin: 0;">CA Exam Checker AI • Leading Automated Evaluation & Practice Platform for Chartered Accountancy Candidates</p>
+          <p style="margin: 6px 0 0 0;">
+            Manage preferences: <a href="${appUrl}/profile" style="color: #2563eb;">Notification Preferences</a> • Support: <a href="mailto:support@caexamcheckerai.com" style="color: #2563eb;">support@caexamcheckerai.com</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const text = `${badgeLabel}: ${params.title}\n\nDear ${displayName},\n\n${params.message}\n\n${
+    fullActionUrl ? `Action Link: ${fullActionUrl}\n\n` : ''
+  }Support: support@caexamcheckerai.com\nCA Exam Checker AI`;
+
+  const res = await sendEmail({
+    to: params.recipient,
+    subject,
+    text,
+    html,
+  });
+
+  return res;
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+

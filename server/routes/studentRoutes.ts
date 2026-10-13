@@ -41,6 +41,10 @@ import {
   getOrAssignStudentCode,
   generateCanonicalEvaluationId,
 } from '../services/studentIdentityService.js';
+import {
+  getUserNotificationPreferences,
+  updateUserNotificationPreferences,
+} from '../services/notificationService.js';
 
 const router = Router();
 
@@ -3225,7 +3229,10 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
     const notifications = db.prepare(`
       SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
     `).all(userId);
-    return res.json({ notifications });
+    const unreadCountRow = db.prepare(`
+      SELECT COUNT(*) as unreadCount FROM notifications WHERE user_id = ? AND (read = 0 OR is_read = 0)
+    `).get(userId) as { unreadCount: number };
+    return res.json({ notifications, unreadCount: unreadCountRow?.unreadCount || 0 });
   } catch (error: unknown) {
     console.error('Notifications error:', error);
     return res.status(500).json({ error: 'Failed to load notifications' });
@@ -3235,7 +3242,7 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
 router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    db.prepare('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
+    db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Notification read error:', error);
@@ -3246,11 +3253,38 @@ router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
 router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(userId);
+    db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE user_id = ?').run(userId);
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Mark all read error:', error);
     return res.status(500).json({ error: 'Failed to mark all notifications read' });
+  }
+});
+
+router.get('/notification-preferences', (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const preferences = getUserNotificationPreferences(userId);
+    return res.json({ preferences });
+  } catch (error: unknown) {
+    console.error('Get notification preferences error:', error);
+    return res.status(500).json({ error: 'Failed to load notification preferences' });
+  }
+});
+
+router.put('/notification-preferences', (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { emailNotificationsEnabled, marketingEmailsEnabled, inAppNotificationsEnabled } = req.body;
+    const preferences = updateUserNotificationPreferences(userId, {
+      emailNotificationsEnabled,
+      marketingEmailsEnabled,
+      inAppNotificationsEnabled,
+    });
+    return res.json({ success: true, preferences });
+  } catch (error: unknown) {
+    console.error('Update notification preferences error:', error);
+    return res.status(500).json({ error: 'Failed to update notification preferences' });
   }
 });
 

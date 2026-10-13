@@ -1925,23 +1925,91 @@ export const InstitutePortal: React.FC = () => {
 
               {/* 11. NOTIFICATIONS */}
               {activeSection === 'notifications' && (
-                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Institute Notifications</h3>
-                  <p className="text-xs text-slate-500 mb-4">Official platform announcements and system alerts</p>
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 mb-0.5">Institute Notifications</h3>
+                      <p className="text-xs text-slate-500">Official platform announcements, evaluation updates, and alerts</p>
+                    </div>
+                    {notificationsList.some((n) => !n.read && !n.is_read) && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await apiRequest('/api/institute/notifications/read-all', { method: 'PUT' });
+                            setNotificationsList((prev) => prev.map((n) => ({ ...n, read: 1, is_read: 1 })));
+                          } catch {}
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-bold transition cursor-pointer"
+                      >
+                        Mark all as read
+                      </button>
+                    )}
+                  </div>
 
                   <div className="space-y-3">
                     {notificationsList.length === 0 && (
-                      <p className="text-xs text-slate-400 italic py-4">No notifications yet.</p>
+                      <p className="text-xs text-slate-400 italic py-6 text-center">No notifications yet.</p>
                     )}
-                    {notificationsList.map((n) => (
-                      <div key={n.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-slate-800">{n.title}</span>
-                          <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
+                    {notificationsList.map((n) => {
+                      const isUnread = !n.read && !n.is_read;
+                      return (
+                        <div
+                          key={n.id}
+                          className={`p-4 rounded-xl border transition ${
+                            isUnread
+                              ? 'bg-blue-50/40 border-blue-200'
+                              : 'bg-slate-50/70 border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {n.category && (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                  {n.category}
+                                </span>
+                              )}
+                              {n.priority === 'URGENT' && (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                  URGENT
+                                </span>
+                              )}
+                              <span className="font-bold text-slate-900">{n.title}</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
+                          </div>
+                          <p className="text-slate-600 text-xs whitespace-pre-wrap mt-1 leading-relaxed">{n.message}</p>
+                          <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-200/60 text-[11px]">
+                            {n.action_url ? (
+                              <a
+                                href={n.action_url}
+                                className="font-bold text-blue-600 hover:underline"
+                              >
+                                {n.action_label || 'View Details'} →
+                              </a>
+                            ) : (
+                              <span />
+                            )}
+                            {isUnread && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await apiRequest(`/api/institute/notifications/${n.id}/read`, { method: 'PUT' });
+                                    setNotificationsList((prev) =>
+                                      prev.map((item) => (item.id === n.id ? { ...item, read: 1, is_read: 1 } : item))
+                                    );
+                                  } catch {}
+                                }}
+                                className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                              >
+                                Mark as read
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-slate-600 mt-1">{n.message}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

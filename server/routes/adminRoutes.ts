@@ -80,6 +80,13 @@ import {
   saveAuthoritativeFallbackChain,
   DEFAULT_FALLBACK_CHAIN,
 } from '../models/modelRegistry.js';
+import {
+  estimateRecipients,
+  sendTestNotification,
+  createAndDispatchBroadcast,
+  getBroadcastCampaigns,
+  getCampaignDetails,
+} from '../services/notificationService.js';
 
 const router = Router();
 
@@ -3790,7 +3797,146 @@ router.get('/analytics', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 19. System Notifications
+// 19. Admin Notification Centre Endpoints
+
+// 19.1 List Broadcast Campaigns with Metrics & Pagination
+router.get('/notifications/campaigns', (req: AuthRequest, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string, 10) || 1;
+    const limit = parseInt(req.query.limit as string, 10) || 20;
+    const search = (req.query.search as string) || '';
+    const category = (req.query.category as string) || 'ALL';
+
+    const result = getBroadcastCampaigns({ page, limit, search, category });
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('Get notification campaigns error:', error);
+    return res.status(500).json({ error: 'Failed to load broadcast campaigns' });
+  }
+});
+
+// 19.2 Get Single Campaign Details with Delivery Logs
+router.get('/notifications/campaigns/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const campaignId = req.params.id;
+    const details = getCampaignDetails(campaignId);
+    if (!details) {
+      return res.status(404).json({ error: 'Broadcast campaign not found' });
+    }
+    return res.json(details);
+  } catch (error: unknown) {
+    console.error('Get campaign details error:', error);
+    return res.status(500).json({ error: 'Failed to load campaign details' });
+  }
+});
+
+// 19.3 Recipient Count & Demographic Estimation
+router.post('/notifications/estimate', (req: AuthRequest, res: Response) => {
+  try {
+    const { targetAudience } = req.body;
+    const estimate = estimateRecipients(targetAudience || 'ALL');
+    return res.json({ estimate });
+  } catch (error: unknown) {
+    console.error('Estimate recipients error:', error);
+    return res.status(500).json({ error: 'Failed to estimate recipients' });
+  }
+});
+
+// 19.4 Send Test Notification Preview (Safe Admin Preview)
+router.post('/notifications/send-test', async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, message, category, priority, channels, actionUrl, actionLabel, testEmail } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message are required for test preview' });
+    }
+
+    const adminUserId = req.user!.id;
+    const targetEmail = (testEmail && testEmail.trim()) || req.user!.email || 'support@caexamcheckerai.com';
+
+    const result = await sendTestNotification({
+      adminUserId,
+      targetEmail,
+      title,
+      message,
+      category: category || 'ANNOUNCEMENT',
+      priority: priority || 'NORMAL',
+      channels: channels || 'IN_APP_AND_EMAIL',
+      actionUrl,
+      actionLabel,
+    });
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('Send test notification error:', error);
+    return res.status(500).json({ error: 'Failed to dispatch test notification' });
+  }
+});
+
+// 19.5 Production Broadcast Dispatcher
+router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      title,
+      message,
+      targetAudience = 'ALL',
+      channels = 'IN_APP_AND_EMAIL',
+      priority = 'NORMAL',
+      category = 'ANNOUNCEMENT',
+      actionUrl,
+      actionLabel,
+    } = req.body;
+
+    if (!title || typeof title !== 'string' || title.trim().length < 3) {
+      return res.status(400).json({ error: 'Title must be at least 3 characters long' });
+    }
+
+    if (!message || typeof message !== 'string' || message.trim().length < 5) {
+      return res.status(400).json({ error: 'Message content must be at least 5 characters long' });
+    }
+
+    const validAudiences = ['ALL', 'STUDENT', 'INSTITUTE_ADMIN', 'STUDENTS_FOUNDATION', 'STUDENTS_INTERMEDIATE', 'STUDENTS_FINAL'];
+    if (!validAudiences.includes(targetAudience)) {
+      return res.status(400).json({ error: `Invalid target audience. Allowed: ${validAudiences.join(', ')}` });
+    }
+
+    const validChannels = ['IN_APP', 'EMAIL', 'IN_APP_AND_EMAIL'];
+    if (!validChannels.includes(channels)) {
+      return res.status(400).json({ error: `Invalid channel. Allowed: ${validChannels.join(', ')}` });
+    }
+
+    const validPriorities = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
+    if (!validPriorities.includes(priority)) {
+      return res.status(400).json({ error: `Invalid priority. Allowed: ${validPriorities.join(', ')}` });
+    }
+
+    const adminUserId = req.user!.id;
+    const adminEmail = req.user!.email;
+
+    const result = await createAndDispatchBroadcast({
+      adminUserId,
+      adminEmail,
+      title: title.trim(),
+      message: message.trim(),
+      targetAudience,
+      channels,
+      priority,
+      category,
+      actionUrl: actionUrl?.trim() || undefined,
+      actionLabel: actionLabel?.trim() || undefined,
+    });
+
+    return res.json({
+      success: true,
+      message: `Broadcast successfully dispatched to ${result.totalTargeted} recipients (In-App: ${result.inAppSent}, Email: ${result.emailSent})`,
+      ...result,
+    });
+  } catch (error: unknown) {
+    console.error('Broadcast notification error:', error);
+    return res.status(500).json({ error: 'Failed to broadcast notification' });
+  }
+});
+
+// 19.6 System Notifications Audit Feed (Backwards Compatible)
 router.get('/notifications', (req: AuthRequest, res: Response) => {
   try {
     const notifications = db.prepare(`
@@ -3804,36 +3950,6 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get notifications error:', error);
     return res.status(500).json({ error: 'Failed to load notifications' });
-  }
-});
-
-router.post('/notifications/broadcast', (req: AuthRequest, res: Response) => {
-  try {
-    const { title, message, targetRole } = req.body;
-    if (!title || !message) {
-      return res.status(400).json({ error: 'Title and message are required' });
-    }
-
-    let targetUsers: Array<{ id: string }>;
-    if (targetRole && targetRole !== 'ALL') {
-      targetUsers = db.prepare('SELECT id FROM users WHERE role = ?').all(targetRole) as Array<{ id: string }>;
-    } else {
-      targetUsers = db.prepare('SELECT id FROM users').all() as Array<{ id: string }>;
-    }
-
-    const insertStmt = db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, ?, ?, 'SYSTEM')
-    `);
-
-    for (const u of targetUsers) {
-      insertStmt.run(`notif_${crypto.randomBytes(8).toString('hex')}`, u.id, title, message);
-    }
-
-    return res.json({ success: true, message: `Broadcast sent to ${targetUsers.length} users` });
-  } catch (error: unknown) {
-    console.error('Broadcast notification error:', error);
-    return res.status(500).json({ error: 'Failed to broadcast notification' });
   }
 });
 

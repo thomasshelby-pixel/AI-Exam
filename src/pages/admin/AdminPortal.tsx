@@ -16,6 +16,7 @@ import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
+import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -3471,72 +3472,7 @@ export const AdminPortal: React.FC = () => {
 
               {/* 15. NOTIFICATIONS */}
               {activeSection === 'notifications' && (
-                <div className="space-y-6">
-                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl">
-                    <h3 className="text-sm font-bold text-slate-900 mb-1">Broadcast System Notification</h3>
-                    <p className="text-xs text-slate-500 mb-4">Send in-app notification alerts to students or institutes</p>
-
-                    <div className="space-y-3 text-xs">
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Target Audience</label>
-                        <select
-                          value={broadcastForm.targetRole}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, targetRole: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50"
-                        >
-                          <option value="ALL">All Users</option>
-                          <option value="STUDENT">Students Only</option>
-                          <option value="INSTITUTE_ADMIN">Institutes Only</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Notification Title</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. ICAI May 2026 MTP Series I Released"
-                          value={broadcastForm.title}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, title: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Message Content</label>
-                        <textarea
-                          rows={3}
-                          placeholder="Enter broadcast message details..."
-                          value={broadcastForm.message}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, message: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none"
-                        />
-                      </div>
-
-                      <button
-                        onClick={handleSendBroadcast}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold transition"
-                      >
-                        Send Broadcast
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Recent Notifications Sent</h4>
-                    <div className="space-y-2">
-                      {notificationsList.map((n) => (
-                        <div key={n.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-800">{n.title}</span>
-                            <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
-                          </div>
-                          <p className="text-slate-600 mt-1">{n.message}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">Recipient: {n.user_email || 'Broadcast'}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <AdminNotificationCentre />
               )}
 
               {/* 16. SUPPORT TICKETS */}

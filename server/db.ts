@@ -1878,6 +1878,62 @@ function runMigrations() {
   } catch (bfErr) {
     console.warn('[DB Migration] Error during student code and evaluation ID backfill:', bfErr);
   }
+
+  // --- Admin Notification Centre System Migrations ---
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'ANNOUNCEMENT',
+        priority TEXT NOT NULL DEFAULT 'NORMAL',
+        target_audience TEXT NOT NULL DEFAULT 'ALL',
+        channels TEXT NOT NULL DEFAULT 'IN_APP_AND_EMAIL',
+        action_url TEXT,
+        action_label TEXT,
+        status TEXT NOT NULL DEFAULT 'COMPLETED',
+        total_targeted INTEGER NOT NULL DEFAULT 0,
+        in_app_sent INTEGER NOT NULL DEFAULT 0,
+        email_sent INTEGER NOT NULL DEFAULT 0,
+        email_failed INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_broadcast_campaigns_created ON broadcast_campaigns(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS notification_delivery_logs (
+        id TEXT PRIMARY KEY,
+        campaign_id TEXT,
+        user_id TEXT NOT NULL,
+        recipient_email TEXT,
+        recipient_role TEXT,
+        channel TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_notif_delivery_campaign ON notification_delivery_logs(campaign_id);
+      CREATE INDEX IF NOT EXISTS idx_notif_delivery_user ON notification_delivery_logs(user_id);
+
+      CREATE TABLE IF NOT EXISTS user_notification_preferences (
+        user_id TEXT PRIMARY KEY,
+        email_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+        marketing_emails_enabled INTEGER NOT NULL DEFAULT 1,
+        in_app_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    addColumnIfNotExists('notifications', 'priority', "TEXT NOT NULL DEFAULT 'NORMAL'");
+    addColumnIfNotExists('notifications', 'category', "TEXT NOT NULL DEFAULT 'SYSTEM'");
+    addColumnIfNotExists('notifications', 'action_url', "TEXT");
+    addColumnIfNotExists('notifications', 'action_label', "TEXT");
+    addColumnIfNotExists('notifications', 'campaign_id', "TEXT");
+  } catch (notifMigErr) {
+    console.warn('[DB] Notification centre migration warning:', notifMigErr);
+  }
 }
 
 function seedCoreStudents() {
