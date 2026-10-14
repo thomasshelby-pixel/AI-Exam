@@ -592,11 +592,18 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
     const authenticatorsCount = validSecret ? Math.max(1, authRecords.length) : authRecords.length;
 
     // 7. Enrolled state verification
-    if (userRow.mfa_enabled === 1 && validSecret) {
-      // If user is authoritatively enrolled with a valid secret, clear any stale reset flag
-      if (userRow.mfa_reset_required === 1) {
-        db.prepare('UPDATE users SET mfa_reset_required = 0 WHERE id = ?').run(userId);
-        syncRecordToFirestore('users', userId, { mfa_reset_required: 0 }).catch(() => {});
+    if (validSecret) {
+      // If user has a verified secret, they are authoritatively enrolled!
+      if (userRow.mfa_enabled !== 1 || userRow.mfa_reset_required === 1) {
+        db.prepare(`
+          UPDATE users
+          SET mfa_enabled = 1,
+              mfa_reset_required = 0,
+              mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(userId);
+        syncRecordToFirestore('users', userId, { mfa_enabled: 1, mfa_reset_required: 0 }).catch(() => {});
       }
 
       return {
@@ -608,7 +615,7 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       };
     }
 
-    // 8. Explicit Reset Required: user lacks active enrollment after reset
+    // 8. Explicit Reset Required: user lacks active enrollment after authorized reset
     if (userRow.mfa_reset_required === 1) {
       return {
         state: 'MFA_RESET_REQUIRED',
@@ -619,38 +626,14 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       };
     }
 
-    // 9. Inconsistent state detection: mfa_enabled = 1 but NO valid secret in SQLite or Firestore
-    if (userRow.mfa_enabled === 1 && !validSecret) {
-      console.warn(`[MFA Architecture] Inconsistent MFA enrollment detected for user ${userRow.email} (${userId}). Transitioning safely to MFA_RESET_REQUIRED.`);
-      db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 0,
-            mfa_reset_required = 1,
-            totp_secret = NULL,
-            pending_totp_secret = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(userId);
-
-      db.prepare(`
-        DELETE FROM mfa_authenticators
-        WHERE user_id = ?
-      `).run(userId);
-
-      revokeAllDeviceTrust(userId);
-
-      syncRecordToFirestore('users', userId, {
-        id: userId,
-        mfa_enabled: 0,
-        mfa_reset_required: 1,
-        totp_secret: null,
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
-
+    // 9. Enrolled state with unreadable secret:
+    // Never silently wipe credentials, reset accounts, or treat as unenrolled!
+    if (userRow.mfa_enabled === 1) {
+      console.warn(`[MFA Architecture] Enrolled account ${userRow.email} (${userId}) has an unreadable secret. Preserving credentials; requiring authorized verification or recovery.`);
       return {
-        state: 'MFA_RESET_REQUIRED',
+        state: 'MFA_ENROLLED',
         hasValidSecret: false,
-        authenticatorsCount: 0,
+        authenticatorsCount,
         recoveryCodesRemaining,
       };
     }

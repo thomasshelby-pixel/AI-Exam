@@ -397,7 +397,8 @@ router.get('/examiner-profile', (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Unauthorized: Examiner profile is accessible only by the student.' });
     }
 
-    const profile = getStudentExaminerProfile(studentId);
+    const requestedSubject = typeof req.query.subject === 'string' ? req.query.subject.trim() : undefined;
+    const profile = getStudentExaminerProfile(studentId, requestedSubject);
     return res.json({ profile });
   } catch (error: unknown) {
     console.error('Student examiner profile error:', error);
@@ -2643,10 +2644,17 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
         preferredSubjectsJson || '[]',
         avatarUrl !== undefined ? 1 : 0,
         avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
-        studentId
       );
     }
 
+    // Authoritative Sync: refresh personal examiner profile cache if CA level was updated
+    if (caLevel !== undefined) {
+      try {
+        updateStudentExaminerProfile(studentId);
+      } catch (err) {
+        console.warn('Error refreshing examiner profile on caLevel change:', err);
+      }
+    }
 
     const updatedUser = db.prepare('SELECT id, full_name, email, phone, role FROM users WHERE id = ?').get(studentId) as any;
     const updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;

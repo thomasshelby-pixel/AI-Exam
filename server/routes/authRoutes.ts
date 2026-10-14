@@ -1046,15 +1046,15 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
     const resolvedTrustToken = mfaCheck.trustToken || trustToken;
 
-    const isProduction = process.env.NODE_ENV === 'production';
-    const secureFlag = isProduction ? '; Secure' : '';
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+    const cookieSuffix = isHttps ? '; Secure; SameSite=None' : '; SameSite=Lax';
 
     const cookieHeaders: string[] = [
-      `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`,
-      `ca_device_id=${encodeURIComponent(deviceId)}; Path=/; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`,
+      `ca_token=${token}; Path=/; HttpOnly; Max-Age=604800${cookieSuffix}`,
+      `ca_device_id=${encodeURIComponent(deviceId)}; Path=/; Max-Age=${365 * 24 * 3600}${cookieSuffix}`,
     ];
     if (resolvedTrustToken) {
-      cookieHeaders.push(`ca_trust_token=${encodeURIComponent(resolvedTrustToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${365 * 24 * 3600}${secureFlag}`);
+      cookieHeaders.push(`ca_trust_token=${encodeURIComponent(resolvedTrustToken)}; Path=/; HttpOnly; Max-Age=${365 * 24 * 3600}${cookieSuffix}`);
     }
     res.setHeader('Set-Cookie', cookieHeaders);
 

@@ -343,20 +343,22 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
             mfa_enabled = CASE
+              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN 1
               WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN 0
-              WHEN users.mfa_enabled = 1 THEN 1
               ELSE excluded.mfa_enabled
             END,
             mfa_enrolled_at = CASE
+              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at, CURRENT_TIMESTAMP)
               WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN NULL
               ELSE COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at)
             END,
             totp_secret = CASE
-              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN NULL
+              WHEN users.totp_secret IS NOT NULL THEN users.totp_secret
               WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret
               ELSE users.totp_secret
             END,
             mfa_reset_required = CASE
+              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN 0
               WHEN users.mfa_reset_required = 1 OR excluded.mfa_reset_required = 1 THEN 1
               ELSE 0
             END,
@@ -1360,51 +1362,91 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       } catch {}
     }
 
+    // 16.5 Hydrate 365-Day Trusted Devices from Cloud Firestore
+    try {
+      const { ensureTrustedDevicesTable } = await import('./trustService.js');
+      ensureTrustedDevicesTable();
+      const trustedDevicesDocs = await readDocs<any>('trusted_devices');
+      for (const td of trustedDevicesDocs) {
+        try {
+          db.prepare(`
+            INSERT INTO trusted_devices (
+              id, user_id, device_id, trust_token_hash, device_name, user_agent, ip_address, status, trusted_at, expires_at, last_used_at, revoked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, COALESCE(?, CURRENT_TIMESTAMP), ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+              trust_token_hash = excluded.trust_token_hash,
+              device_name = COALESCE(excluded.device_name, trusted_devices.device_name),
+              user_agent = COALESCE(excluded.user_agent, trusted_devices.user_agent),
+              ip_address = COALESCE(excluded.ip_address, trusted_devices.ip_address),
+              status = excluded.status,
+              expires_at = excluded.expires_at,
+              last_used_at = excluded.last_used_at,
+              revoked_at = excluded.revoked_at
+          `).run(
+            td.id,
+            td.user_id,
+            td.device_id,
+            td.trust_token_hash,
+            td.device_name || null,
+            td.user_agent || null,
+            td.ip_address || null,
+            td.status || 'ACTIVE',
+            td.trusted_at || null,
+            td.expires_at || null,
+            td.last_used_at || null,
+            td.revoked_at || null
+          );
+        } catch {}
+      }
+    } catch (tdErr) {
+      console.warn('[FirestoreSync] Failed to hydrate trusted_devices:', tdErr);
+    }
+
     // 17. Reconcile and permanently heal MFA status for all enrolled accounts across SQLite and Firestore
     try {
-      // Never overwrite an account that is flagged for reset (mfa_reset_required === 1)
+      // Find candidate users with either a stored secret or an authenticator record
       const candidateMfaUsers = db.prepare(`
-        SELECT id, totp_secret FROM users
-        WHERE mfa_reset_required != 1 AND (mfa_enabled != 1)
-      `).all() as Array<{ id: string; totp_secret: string | null }>;
+        SELECT DISTINCT id, email, totp_secret, mfa_enabled, mfa_reset_required FROM users
+        WHERE totp_secret IS NOT NULL
+           OR id IN (SELECT DISTINCT user_id FROM mfa_authenticators WHERE totp_secret IS NOT NULL)
+      `).all() as Array<{ id: string; email: string; totp_secret: string | null; mfa_enabled: number; mfa_reset_required: number }>;
 
       let restoredCount = 0;
       for (const u of candidateMfaUsers) {
-        const hasValidAuth = db.prepare(`
-          SELECT 1 FROM mfa_authenticators WHERE user_id = ? AND totp_secret IS NOT NULL LIMIT 1
-        `).get(u.id);
-        const userSecDec = decryptMfaSecret(u.totp_secret);
-        const isValid = (userSecDec && userSecDec.length >= 16) || Boolean(hasValidAuth);
+        const authRow = db.prepare(`
+          SELECT totp_secret FROM mfa_authenticators WHERE user_id = ? AND totp_secret IS NOT NULL LIMIT 1
+        `).get(u.id) as { totp_secret: string } | undefined;
 
-        if (isValid) {
-          db.prepare(`
-            UPDATE users
-            SET mfa_enabled = 1,
-                mfa_reset_required = 0,
-                mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND mfa_reset_required != 1
-          `).run(u.id);
-          restoredCount++;
+        const effectiveEncrypted = u.totp_secret || authRow?.totp_secret || null;
+        const userSecDec = decryptMfaSecret(effectiveEncrypted);
+        const hasValidSecret = Boolean(userSecDec && userSecDec.length >= 16);
+
+        if (hasValidSecret) {
+          // If a valid authenticator secret exists, the user is authoritatively enrolled!
+          if (u.mfa_enabled !== 1 || u.mfa_reset_required === 1) {
+            db.prepare(`
+              UPDATE users
+              SET mfa_enabled = 1,
+                  mfa_reset_required = 0,
+                  totp_secret = COALESCE(totp_secret, ?),
+                  mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(effectiveEncrypted, u.id);
+            restoredCount++;
+          }
+
+          // Ensure Cloud Firestore document reflects verified enrollment
+          setFirestoreDoc('users', u.id, {
+            mfa_enabled: 1,
+            mfa_reset_required: 0,
+            totp_secret: effectiveEncrypted,
+            updated_at: new Date().toISOString(),
+          }).catch(() => {});
         }
       }
       if (restoredCount > 0) {
         console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${restoredCount} user account(s).`);
-      }
-
-      // Ensure Firestore users collection has mfa_enabled = 1, mfa_reset_required = 0 for all locally enrolled accounts
-      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1 AND mfa_reset_required != 1 AND totp_secret IS NOT NULL').all() as any[];
-      for (const mfu of allMfaUsers) {
-        const dec = decryptMfaSecret(mfu.totp_secret);
-        if (dec && dec.length >= 16) {
-          setFirestoreDoc('users', mfu.id, {
-            mfa_enabled: 1,
-            mfa_reset_required: 0,
-            mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
-            totp_secret: mfu.totp_secret,
-            updated_at: new Date().toISOString(),
-          }).catch(() => {});
-        }
       }
 
       // Safe, post-hydration admin consistency check with Firestore grounding

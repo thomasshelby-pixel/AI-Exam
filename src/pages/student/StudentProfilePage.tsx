@@ -414,6 +414,13 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         refreshUser().catch(() => {});
       }
 
+      // Notify examiner profile and any active student views of level update
+      window.dispatchEvent(
+        new CustomEvent('student_profile_updated', {
+          detail: { caLevel, preferredSubjects },
+        })
+      );
+
       // Refresh data
       fetchProfileAndReferrals();
     } catch (err: any) {

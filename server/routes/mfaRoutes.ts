@@ -133,7 +133,8 @@ function resolveMfaContext(req: Request): {
 function issueAuthenticatedSession(
   req: Request,
   res: Response,
-  user: { id: string; email: string; role: UserRole; full_name: string }
+  user: { id: string; email: string; role: UserRole; full_name: string },
+  options?: { rememberDevice?: boolean }
 ) {
   const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const token = generateToken(
@@ -161,12 +162,13 @@ function issueAuthenticatedSession(
     // Non-blocking if table not present
   }
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+  const cookieSameSite = isHttps ? 'none' : 'lax';
 
   res.cookie('ca_token', token, {
     httpOnly: false,
-    secure: isProduction,
-    sameSite: 'lax',
+    secure: isHttps,
+    sameSite: cookieSameSite,
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
   });
@@ -178,33 +180,42 @@ function issueAuthenticatedSession(
     `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
   const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
 
-  const trust = markDeviceAsTrusted({
-    userId: user.id,
-    deviceId,
-    deviceName,
-    userAgent: req.headers['user-agent'] as string,
-    ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
-  });
+  const shouldRememberDevice = options?.rememberDevice !== false && req.body?.trustDevice !== false && req.body?.rememberDevice !== false;
 
-  // Secure HttpOnly + SameSite cookie for the 365-day trusted-device token
-  res.cookie('ca_trust_token', trust.trustToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: 'lax',
-    maxAge: 365 * 24 * 60 * 60 * 1000,
-    path: '/',
-  });
+  let trustToken: string | undefined = undefined;
+  let expiresAt: string | undefined = undefined;
+
+  if (shouldRememberDevice) {
+    const trust = markDeviceAsTrusted({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      userAgent: req.headers['user-agent'] as string,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
+    });
+    trustToken = trust.trustToken;
+    expiresAt = trust.expiresAt;
+
+    // Secure HttpOnly + SameSite cookie for the 365-day trusted-device token
+    res.cookie('ca_trust_token', trust.trustToken, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: cookieSameSite,
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+  }
 
   // Also persist device ID cookie for cross-session continuity
   res.cookie('ca_device_id', deviceId, {
     httpOnly: false,
-    secure: isProduction,
-    sameSite: 'lax',
+    secure: isHttps,
+    sameSite: cookieSameSite,
     maxAge: 365 * 24 * 60 * 60 * 1000,
     path: '/',
   });
 
-  return { token, trustToken: trust.trustToken, deviceId, expiresAt: trust.expiresAt };
+  return { token, trustToken, deviceId, expiresAt, deviceTrusted: Boolean(trustToken) };
 }
 
 /**
@@ -411,14 +422,15 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
       details: 'Two-Factor Authentication verified successfully via Authenticator App.',
     });
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
       token: session.token,
       trustToken: session.trustToken,
       deviceId: session.deviceId,
-      deviceTrusted: true,
+      deviceTrusted: session.deviceTrusted,
       user: {
         id: user.id,
         email: user.email,
@@ -598,14 +610,15 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       details: 'Two-Factor Authentication successfully enrolled. Initial authenticator active.',
     });
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
       token: session.token,
       trustToken: session.trustToken,
       deviceId: session.deviceId,
-      deviceTrusted: true,
+      deviceTrusted: session.deviceTrusted,
       mfaState: 'MFA_ENROLLED',
       message: 'Two-Factor Authentication enabled successfully.',
       recoveryCodes,
@@ -1542,8 +1555,9 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       // Non-blocking
     }
 
-    // Mark device as trusted for 365 days and issue the secure HttpOnly cookie
-    const session = issueAuthenticatedSession(req, res, user);
+    // Issue authenticated session and conditionally mark device as trusted
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     // Atomically ensure mfa_enabled is 1 and mfa_reset_required is cleared in database
     try {
@@ -1568,15 +1582,19 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       status: 'SUCCESS',
-      details: 'TOTP verified successfully on untrusted browser. Device is now trusted for 365 days.',
+      details: session.deviceTrusted
+        ? 'TOTP verified successfully on untrusted browser. Device is now trusted for 365 days.'
+        : 'TOTP verified successfully on untrusted browser (one-time session; trust not requested).',
     });
 
     return res.json({
       success: true,
-      isTrusted: true,
-      deviceTrusted: true,
+      isTrusted: session.deviceTrusted,
+      deviceTrusted: session.deviceTrusted,
       bypassed: false,
-      message: 'TOTP validated successfully. This browser is now trusted for 365 days.',
+      message: session.deviceTrusted
+        ? 'TOTP validated successfully. This browser is now trusted for 365 days.'
+        : 'TOTP validated successfully.',
       token: session.token,
       trustToken: session.trustToken,
       trustExpiresAt: session.expiresAt,
