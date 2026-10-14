@@ -1,7 +1,8 @@
 import assert from 'node:assert';
-import { db, initDatabase, isTombstoned, getAllLocalTombstoneSet } from '../db.js';
+import { db, initDatabase, isTombstoned, getAllLocalTombstoneSet, removeLocalTombstone } from '../db.js';
 import { deleteInstituteAccount } from '../services/instituteDeleteService.js';
 import { hydrateFromFirestore, permanentlyDeleteFromFirestore } from '../services/firestoreSyncService.js';
+import { deleteFirestoreDoc } from '../services/firestoreDbService.js';
 
 console.log('========================================================================');
 console.log('--- PRODUCTION INTEGRITY AUDIT: INSTITUTE DELETION FULL LIFECYCLE ---');
@@ -25,6 +26,23 @@ async function runTests() {
 
   // Setup an unrelated institute and student to verify non-interference (Requirement 9)
   const unrelatedInstituteId = 'inst_unrelated_active_001';
+
+  // Clean any old leftover tombstones for this test run
+  removeLocalTombstone('institutes', unrelatedInstituteId);
+  removeLocalTombstone('institutes', stableTestInstituteId);
+  removeLocalTombstone('institutes', stableTestCode);
+  removeLocalTombstone('institutes', stableTestEmail);
+  removeLocalTombstone('users', testStudentId);
+  removeLocalTombstone('student_profiles', testStudentId);
+  removeLocalTombstone('student_examiner_profiles', testStudentId);
+  try {
+    await deleteFirestoreDoc('tombstones', `institutes_${unrelatedInstituteId}`);
+    await deleteFirestoreDoc('tombstones', `institutes_${stableTestInstituteId}`);
+    await deleteFirestoreDoc('tombstones', `users_${testStudentId}`);
+    await deleteFirestoreDoc('tombstones', `student_profiles_${testStudentId}`);
+    await deleteFirestoreDoc('tombstones', `student_examiner_profiles_${testStudentId}`);
+  } catch {}
+
   db.prepare(`
     INSERT OR REPLACE INTO institutes (id, name, code, email, phone, contact_person, status, subscription_plan, max_students)
     VALUES (?, 'Unrelated Preserved Institute', 'UNREL-2026', 'unrelated@apexca.edu', '+919811223344', 'Director Unrelated', 'ACTIVE', 'INSTITUTIONAL_PRO', 200)

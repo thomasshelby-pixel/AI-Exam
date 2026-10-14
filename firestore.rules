@@ -29,6 +29,12 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Student Examiner Profiles
+    match /student_examiner_profiles/{profileId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Student Disclaimers & Mandatory Acknowledgments
     match /student_disclaimers/{studentId} {
       allow read: if true;
@@ -87,8 +93,13 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Payment Orders
+    // Payment Orders & Transactions
     match /payment_orders/{orderId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /payment_transactions/{transactionId} {
       allow read: if true;
       allow write: if true;
     }
@@ -148,8 +159,18 @@ service cloud.firestore {
       allow write: if true;
     }
 
-    // Institute Tests
+    // Institute Tests, Attempts & Plans
     match /institute_tests/{testId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /exam_attempts/{attemptId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /institute_plans/{planId} {
       allow read: if true;
       allow write: if true;
     }
@@ -171,8 +192,13 @@ service cloud.firestore {
       allow write: if true;
     }
 
-    // Pricing Settings
+    // Pricing & System Settings (AI Model Configuration, Fallback Chain, etc.)
     match /pricing_settings/{settingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /system_settings/{settingId} {
       allow read: if true;
       allow write: if true;
     }
@@ -226,6 +252,11 @@ service cloud.firestore {
     }
 
     match /mcq_wrong_vault/{vaultId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /mcq_scoring_rules/{ruleId} {
       allow read: if true;
       allow write: if true;
     }

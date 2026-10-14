@@ -394,6 +394,31 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "referral_code", "user_id", "status", "max_evaluations", "evaluations_remaining"]
+    },
+    "StudentExaminerProfile": {
+      "title": "StudentExaminerProfile",
+      "description": "Customized examiner preferences and grading rubrics for student answer evaluations.",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "profile_data_json": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["student_id"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Authoritative system-wide settings including default evaluation AI model and fallback order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "primary_model": { "type": "string" },
+        "fallback_chain": { "type": "array" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "updated_by": { "type": "string" }
+      },
+      "required": ["id"]
     }
   },
   "firestore": {
@@ -404,6 +429,14 @@
     "/student_profiles/{userId}": {
       "schema": { "$ref": "#/entities/StudentProfile" },
       "description": "Student profile metadata and personal evaluation credits."
+    },
+    "/student_examiner_profiles/{profileId}": {
+      "schema": { "$ref": "#/entities/StudentExaminerProfile" },
+      "description": "Examiner evaluation profiles and rubric preferences associated with students."
+    },
+    "/system_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSetting" },
+      "description": "Authoritative persistent system configuration parameters like AI models and fallback order."
     },
     "/student_disclaimers/{studentId}": {
       "schema": { "$ref": "#/entities/StudentDisclaimer" },
