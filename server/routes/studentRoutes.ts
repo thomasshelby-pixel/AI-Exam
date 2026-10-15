@@ -23,7 +23,7 @@ import {
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
-import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
@@ -2549,7 +2549,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
 });
 
 // Update Student Profile (Strict authorization: updates only allowed editable fields for authenticated student)
-router.put('/profile', (req: AuthRequest, res: Response) => {
+router.put('/profile', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl, icaiRegistrationNumber } = req.body;
@@ -2582,70 +2582,82 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid CA Level. Must be FOUNDATION, INTERMEDIATE, or FINAL.' });
     }
 
-    // Update users table (ONLY full_name and phone - never email, role, status, etc.)
-    if (fullName !== undefined || phone !== undefined) {
-      db.prepare(`
-        UPDATE users
-        SET full_name = CASE WHEN ? = 1 THEN ? ELSE full_name END,
-            phone = CASE WHEN ? = 1 THEN ? ELSE phone END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(
-        fullName !== undefined ? 1 : 0,
-        fullName !== undefined ? fullName.trim() : null,
-        phone !== undefined ? 1 : 0,
-        phone !== undefined ? (phone && phone.trim() ? phone.trim() : null) : null,
-        studentId
-      );
-    }
-
-    // Update or insert student_profiles table
     const preferredSubjectsJson = preferredSubjects !== undefined
       ? JSON.stringify(Array.isArray(preferredSubjects) ? preferredSubjects : [preferredSubjects])
       : null;
+    const profileEditTimestamp = new Date().toISOString();
+    let previousProfile: any;
 
-    const existingProfile = db.prepare('SELECT user_id, student_code FROM student_profiles WHERE user_id = ?').get(studentId) as { user_id: string; student_code?: string } | undefined;
-    if (!existingProfile) {
-      const newStudentCode = getOrAssignStudentCode(studentId);
-      db.prepare(`
-        INSERT INTO student_profiles (
-          user_id, student_code, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
-          free_evaluations_used, purchased_credits, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(
-        studentId,
-        newStudentCode,
-        normalizedSrn || 'REG-PENDING',
-        caLevel || 'INTERMEDIATE',
-        city !== undefined ? (city ? city.trim() : '') : '',
-        preferredSubjectsJson || '[]',
-        avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : ''
-      );
-    } else {
-      if (!existingProfile.student_code) {
-        getOrAssignStudentCode(studentId);
+    // Keep the editable user and profile rows in one local transaction.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      // Update users table (ONLY full_name and phone - never email, role, status, etc.)
+      if (fullName !== undefined || phone !== undefined) {
+        db.prepare(`
+          UPDATE users
+          SET full_name = CASE WHEN ? = 1 THEN ? ELSE full_name END,
+              phone = CASE WHEN ? = 1 THEN ? ELSE phone END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          fullName !== undefined ? 1 : 0,
+          fullName !== undefined ? fullName.trim() : null,
+          phone !== undefined ? 1 : 0,
+          phone !== undefined ? (phone && phone.trim() ? phone.trim() : null) : null,
+          studentId
+        );
       }
-      db.prepare(`
-        UPDATE student_profiles
-        SET icai_registration_number = CASE WHEN ? = 1 THEN ? ELSE icai_registration_number END,
-            city = CASE WHEN ? = 1 THEN ? ELSE city END,
-            ca_level = COALESCE(?, ca_level),
-            preferred_subjects = CASE WHEN ? = 1 THEN ? ELSE preferred_subjects END,
-            avatar_url = CASE WHEN ? = 1 THEN ? ELSE avatar_url END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-      `).run(
-        normalizedSrn !== null ? 1 : 0,
-        normalizedSrn,
-        city !== undefined ? 1 : 0,
-        city !== undefined ? (city ? city.trim() : '') : '',
-        caLevel || null,
-        preferredSubjects !== undefined ? 1 : 0,
-        preferredSubjectsJson || '[]',
-        avatarUrl !== undefined ? 1 : 0,
-        avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
-      );
-    }
+
+      // Update or insert student_profiles table while preserving the established student-code assignment.
+      previousProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+      if (!previousProfile) {
+        const newStudentCode = getOrAssignStudentCode(studentId);
+        db.prepare(`
+          INSERT INTO student_profiles (
+            user_id, student_code, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
+            free_evaluations_used, purchased_credits, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, ?)
+        `).run(
+          studentId,
+          newStudentCode,
+          normalizedSrn || 'REG-PENDING',
+          caLevel || 'INTERMEDIATE',
+          city !== undefined ? (city ? city.trim() : '') : '',
+          preferredSubjectsJson || '[]',
+          avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
+          profileEditTimestamp
+        );
+      } else {
+        if (!previousProfile.student_code) {
+          getOrAssignStudentCode(studentId);
+        }
+        db.prepare(`
+          UPDATE student_profiles
+          SET icai_registration_number = CASE WHEN ? = 1 THEN ? ELSE icai_registration_number END,
+              city = CASE WHEN ? = 1 THEN ? ELSE city END,
+              ca_level = COALESCE(?, ca_level),
+              preferred_subjects = CASE WHEN ? = 1 THEN ? ELSE preferred_subjects END,
+              avatar_url = CASE WHEN ? = 1 THEN ? ELSE avatar_url END,
+              updated_at = ?
+          WHERE user_id = ?
+        `).run(
+          normalizedSrn !== null ? 1 : 0,
+          normalizedSrn,
+          city !== undefined ? 1 : 0,
+          city !== undefined ? (city ? city.trim() : '') : '',
+          caLevel || null,
+          preferredSubjects !== undefined ? 1 : 0,
+          preferredSubjectsJson || '[]',
+          avatarUrl !== undefined ? 1 : 0,
+          avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
+          profileEditTimestamp,
+          studentId
+        );
+      }
+      db.exec('COMMIT');
+    } catch (localSaveError) {
+      db.exec('ROLLBACK');
+      throw localSaveError;    }
 
     // Authoritative Sync: refresh personal examiner profile cache if CA level was updated
     if (caLevel !== undefined) {
@@ -2658,6 +2670,42 @@ router.put('/profile', (req: AuthRequest, res: Response) => {
 
     const updatedUser = db.prepare('SELECT id, full_name, email, phone, role FROM users WHERE id = ?').get(studentId) as any;
     const updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+
+    if (caLevel !== undefined && updatedProfile?.ca_level !== caLevel) {
+      return res.status(500).json({ error: 'The saved CA course could not be verified. Please retry.' });
+    }
+
+    if (updatedProfile) {
+      const syncResult = await persistStudentProfileEditToFirestore(studentId, {
+        icai_registration_number: updatedProfile.icai_registration_number,
+        ca_level: updatedProfile.ca_level,
+        city: updatedProfile.city || '',
+        preferred_subjects: updatedProfile.preferred_subjects || '[]',
+        avatar_url: updatedProfile.avatar_url || '',
+        updated_at: updatedProfile.updated_at,
+      });
+      if (syncResult === 'failed') {
+        if (previousProfile) {
+          // Restore the last confirmed course and its course-specific subject
+          // filter only if no newer profile save has replaced this write.
+          db.prepare(`
+            UPDATE student_profiles
+            SET ca_level = ?, preferred_subjects = ?, updated_at = ?
+            WHERE user_id = ? AND updated_at = ?
+          `).run(
+            previousProfile.ca_level,
+            previousProfile.preferred_subjects,
+            previousProfile.updated_at,
+            studentId,
+            profileEditTimestamp
+          );
+        } else {
+          db.prepare('DELETE FROM student_profiles WHERE user_id = ? AND updated_at = ?')
+            .run(studentId, profileEditTimestamp);
+        }
+        return res.status(503).json({ error: 'Your profile could not be durably saved. Please retry.' });
+      }
+    }
 
     let parsedSubjects: string[] = [];
     if (updatedProfile?.preferred_subjects) {
