@@ -35,7 +35,7 @@ async function run(): Promise<void> {
   // Model configuration: routine initialization must preserve an admin choice and exact order.
   const approvedIds = APPROVED_MODELS.map((model) => model.id);
   const primaryModel = 'gpt-5.6-sol';
-  const fallbackOrder = ['claude-sonnet-5', 'gemini-flash-latest', 'gpt-5.6-terra'];
+  const fallbackOrder = ['claude-sonnet-5', 'gemini-3.6-flash', 'gpt-5.6-terra'];
   db.prepare('UPDATE model_configs SET is_primary = 0').run();
   db.prepare('UPDATE model_configs SET is_primary = 1, is_enabled = 1 WHERE id = ?').run(primaryModel);
   fallbackOrder.forEach((id, index) => {

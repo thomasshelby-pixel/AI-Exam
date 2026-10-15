@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dna,
   ArrowLeft,
@@ -16,11 +16,16 @@ import {
   ArrowRight,
   Clock,
   HelpCircle,
+  Filter,
+  ChevronLeft,
+  Calendar,
+  ExternalLink,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
 
 export interface EvidenceItem {
+  id: string;
   evaluationId: string;
   evaluationVersionId: string;
   date: string;
@@ -35,6 +40,7 @@ export interface EvidenceItem {
   observedIssue: string;
   evidenceReference: string;
   deductionReason: string;
+  isEstimate?: boolean;
 }
 
 export interface RecurringPattern {
@@ -44,7 +50,9 @@ export interface RecurringPattern {
   description: string;
   detectionCount: number;
   evaluationsCount: number;
+  affectedComponentsCount: number;
   typicalLoss: string;
+  isLossEstimated: boolean;
   examples: string[];
   nextTimeRule: string;
   subjectArea: string;
@@ -55,6 +63,8 @@ export interface RecurringPattern {
 export interface ImprovedPattern {
   id: string;
   title: string;
+  category: string;
+  subjectName: string;
   previousOccurrenceCount: number;
   previousEvaluationsCount: number;
   recentStatus: string;
@@ -67,6 +77,7 @@ export interface ImprovedPattern {
     recentEvaluationId: string;
     recentQuestion: string;
     recentLoss: number;
+    marksRecovered: number;
   };
 }
 
@@ -77,18 +88,36 @@ export interface RecoveredMarkItem {
   detail: string;
   earlierEvaluationId: string;
   recentEvaluationId: string;
+  isEstimate: boolean;
 }
 
 export interface SubjectExaminerPatternFlow {
-  subjectCategory: 'LAW' | 'TAX' | 'ACCOUNTS' | 'AUDIT' | 'GENERAL';
+  subjectKey: string;
+  subjectName: string;
+  subjectCategory: string;
   title: string;
   stepFlow: string[];
+  evaluationsCount: number;
+  hasEvaluations: boolean;
   observedCompliance: string;
   keyObservation: string;
 }
 
+export interface SubjectOption {
+  key: string;
+  name: string;
+  paperNumber?: number;
+  group?: string;
+  evaluationsCount: number;
+  hasData: boolean;
+}
+
 export interface StudentExaminerProfile {
   studentId: string;
+  selectedSubject: string;
+  selectedSubjectName: string;
+  caLevel: string;
+  availableSubjects: SubjectOption[];
   evaluationsAnalysed: number;
   insufficientHistory: boolean;
   message?: string;
@@ -96,6 +125,7 @@ export interface StudentExaminerProfile {
   improvedPatternsCount: number;
   attentionNeededCount: number;
   marksRecoveredTotal: number;
+  marksRecoveredStatus: 'AVAILABLE' | 'INSUFFICIENT_DATA';
   recurringPatterns: RecurringPattern[];
   improvedPatterns: ImprovedPattern[];
   marksRecovered: RecoveredMarkItem[];
@@ -111,6 +141,8 @@ interface PersonalExaminerProfilePageProps {
   onViewReport: (evaluationId: string) => void;
 }
 
+const EVIDENCE_PAGE_SIZE = 5;
+
 export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePageProps> = ({
   onNavigateUpload,
   onNavigateDashboard,
@@ -119,31 +151,77 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
   const [profile, setProfile] = useState<StudentExaminerProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
   const [expandedPatternId, setExpandedPatternId] = useState<string | null>(null);
-  const [activeSubjectTab, setActiveSubjectTab] = useState<'LAW' | 'TAX' | 'ACCOUNTS' | 'AUDIT'>('LAW');
+  const [evidencePages, setEvidencePages] = useState<Record<string, number>>({});
+  const [activeStepFlowTab, setActiveStepFlowTab] = useState<string>('ALL');
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        setLoading(true);
-        const res = await apiRequest<{ profile: StudentExaminerProfile }>('/api/student/examiner-profile');
-        if (res?.profile) {
-          setProfile(res.profile);
-        } else {
-          setError('Could not retrieve profile data.');
+  const fetchProfile = useCallback(async (subjectKey: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const url =
+        subjectKey && subjectKey !== 'all'
+          ? `/api/student/examiner-profile?subject=${encodeURIComponent(subjectKey)}`
+          : '/api/student/examiner-profile';
+
+      const res = await apiRequest<{ profile: StudentExaminerProfile }>(url);
+      if (res?.profile) {
+        setProfile(res.profile);
+        // If current subject filter does not belong to the newly returned CA level's subjects, reset to 'all'
+        if (
+          subjectKey !== 'all' &&
+          !res.profile.availableSubjects.some((s) => s.key === subjectKey || s.name === subjectKey)
+        ) {
+          setSelectedSubjectFilter('all');
         }
-      } catch (err: any) {
-        console.error('Failed to load examiner profile:', err);
-        setError(err.message || 'Unable to connect to evaluation analytics.');
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchProfile();
+        // Sync active step flow tab with subject or first available
+        if (subjectKey !== 'all') {
+          setActiveStepFlowTab(subjectKey);
+        } else if (res.profile.subjectPatterns.length > 0) {
+          setActiveStepFlowTab(res.profile.subjectPatterns[0].subjectKey);
+        }
+      } else {
+        setError('Could not retrieve examiner profile data.');
+      }
+    } catch (err: any) {
+      console.error('Failed to load examiner profile:', err);
+      setError(err.message || 'Unable to connect to evaluation analytics.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    fetchProfile(selectedSubjectFilter);
+  }, [fetchProfile, selectedSubjectFilter]);
+
+  // Refetch when tab regains focus or when student profile/level updates
+  useEffect(() => {
+    const handleRefresh = () => {
+      fetchProfile(selectedSubjectFilter);
+    };
+    window.addEventListener('focus', handleRefresh);
+    window.addEventListener('student_profile_updated', handleRefresh);
+    return () => {
+      window.removeEventListener('focus', handleRefresh);
+      window.removeEventListener('student_profile_updated', handleRefresh);
+    };
+  }, [fetchProfile, selectedSubjectFilter]);
+
+  const handleSubjectChange = (subjectKey: string) => {
+    setSelectedSubjectFilter(subjectKey);
+    setExpandedPatternId(null);
+    setEvidencePages({});
+  };
+
+  const getEvidencePage = (patternId: string) => evidencePages[patternId] || 1;
+  const setEvidencePage = (patternId: string, page: number) => {
+    setEvidencePages((prev) => ({ ...prev, [patternId]: page }));
+  };
+
+  if (loading && !profile) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-6">
         <div className="animate-pulse space-y-4">
@@ -159,25 +237,37 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
     );
   }
 
-  if (error || !profile) {
+  if (error && !profile) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-12 text-center space-y-4">
         <div className="p-6 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl text-red-700 dark:text-red-300">
           <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-red-600" />
           <h2 className="text-base font-bold">Failed to load Personal Examiner Profile</h2>
           <p className="text-xs mt-1">{error || 'An unexpected error occurred.'}</p>
-          <button
-            onClick={onNavigateDashboard}
-            className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
-          >
-            Back to Dashboard
-          </button>
+          <div className="flex justify-center gap-3 mt-4">
+            <button
+              onClick={() => fetchProfile(selectedSubjectFilter)}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={onNavigateDashboard}
+              className="px-4 py-2 bg-slate-900 dark:bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer"
+            >
+              Back to Dashboard
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   const {
+    selectedSubject,
+    selectedSubjectName,
+    caLevel,
+    availableSubjects = [],
     evaluationsAnalysed,
     insufficientHistory,
     message,
@@ -185,12 +275,15 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
     improvedPatternsCount,
     attentionNeededCount,
     marksRecoveredTotal,
+    marksRecoveredStatus,
     recurringPatterns,
     improvedPatterns,
     marksRecovered,
     subjectPatterns,
-    currentFocusAreas,
-  } = profile;
+  } = profile!;
+
+  const isAllSubjects = selectedSubject === 'all';
+  const totalCourseEvals = availableSubjects.reduce((sum, s) => sum + s.evaluationsCount, 0);
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-8">
@@ -208,13 +301,13 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-bold mb-2">
               <Dna className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Mark-Loss DNA & Longitudinal Learning</span>
+              <span>Mark-Loss DNA & Longitudinal Learning ({caLevel.replace('_', ' ')})</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-              Your Personal Examiner Profile
+              Personal Examiner Profile
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-2xl mt-1 leading-relaxed">
-              Learns from your evaluated answer sheets to uncover recurring step-marking slipups, track verified improvements, and show you exactly where marks were lost and recovered.
+              Audits your verified handwritten answer copies across step-marking rubrics to identify recurring deductions, celebrate confirmed score improvements, and guide exam discipline.
             </p>
           </div>
 
@@ -230,6 +323,78 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
         </div>
       </div>
 
+      {/* STRICT SUBJECT-WISE FILTER BAR */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-2xs space-y-2">
+        <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 px-1">
+          <div className="flex items-center gap-1.5">
+            <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Filter by Subject:</span>
+            {!isAllSubjects && (
+              <span className="text-blue-600 dark:text-blue-400 font-extrabold ml-1">
+                • {selectedSubjectName}
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] text-slate-400 font-normal">
+            {isAllSubjects
+              ? `Showing all ${totalCourseEvals} evaluations`
+              : `${evaluationsAnalysed} evaluation${evaluationsAnalysed === 1 ? '' : 's'} in ${selectedSubjectName}`}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar">
+          {/* All Subjects Tab */}
+          <button
+            type="button"
+            onClick={() => handleSubjectChange('all')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 cursor-pointer ${
+              isAllSubjects
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <span>All Subjects</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                isAllSubjects ? 'bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {totalCourseEvals}
+            </span>
+          </button>
+
+          {/* Individual Subject Tabs */}
+          {availableSubjects.map((sub) => {
+            const isSelected = selectedSubject === sub.key || selectedSubject === sub.name;
+            return (
+              <button
+                key={sub.key}
+                type="button"
+                onClick={() => handleSubjectChange(sub.key)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 cursor-pointer ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                <span>{sub.name}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    isSelected
+                      ? 'bg-blue-700 text-white'
+                      : sub.hasData
+                      ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold'
+                      : 'bg-slate-200/70 dark:bg-slate-800 text-slate-400 dark:text-slate-500'
+                  }`}
+                >
+                  {sub.evaluationsCount}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-1">
@@ -240,8 +405,8 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
           <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
             {evaluationsAnalysed}
           </div>
-          <div className="text-[10px] text-slate-400 dark:text-slate-500">
-            {insufficientHistory ? 'Building baseline' : 'Authoritative answer history'}
+          <div className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
+            {isAllSubjects ? 'Across all papers' : selectedSubjectName}
           </div>
         </div>
 
@@ -267,7 +432,7 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
             {improvedPatternsCount}
           </div>
           <div className="text-[10px] text-slate-400 dark:text-slate-500">
-            Absent in recent evaluation
+            Verified resolution in recent paper
           </div>
         </div>
 
@@ -277,15 +442,15 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
             Marks Recovered
           </div>
           <div className="text-2xl sm:text-3xl font-black text-indigo-600 dark:text-indigo-400 font-mono">
-            +{marksRecoveredTotal}
+            {marksRecoveredStatus === 'AVAILABLE' ? `+${marksRecoveredTotal}` : '—'}
           </div>
           <div className="text-[10px] text-slate-400 dark:text-slate-500">
-            Factual step comparison
+            {marksRecoveredStatus === 'AVAILABLE' ? 'Factual step comparison' : 'Awaiting comparable re-test'}
           </div>
         </div>
       </div>
 
-      {/* Insufficient History State */}
+      {/* Empty State / Insufficient History State */}
       {insufficientHistory && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 space-y-5 shadow-sm text-left">
           <div className="flex items-start gap-4">
@@ -294,11 +459,15 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
             </div>
             <div className="space-y-1.5">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                Your Personal Examiner Profile is building
+                {evaluationsAnalysed === 0
+                  ? `No evaluation data available for ${selectedSubjectName} yet`
+                  : `Examiner Profile baseline established for ${selectedSubjectName}`}
               </h3>
               <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed max-w-2xl">
                 {message ||
-                  'Complete at least 2 evaluations to identify recurring mark-loss patterns. A pattern is labeled "recurring" only when supported by multiple pieces of evidence across distinct evaluations to prevent false conclusions.'}
+                  (evaluationsAnalysed === 0
+                    ? `Upload and evaluate an answer copy for ${selectedSubjectName} to establish your baseline and uncover step-marking tendencies.`
+                    : 'A pattern is labeled "recurring" only when supported by verifiable deduction evidence across at least 2 distinct evaluations to prevent false assumptions.')}
               </p>
             </div>
           </div>
@@ -306,28 +475,38 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
           <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300 space-y-2">
             <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              Examiner Profile Guarantees
+              Examiner Profile Integrity Guarantees
             </div>
             <ul className="list-disc pl-5 space-y-1 text-slate-500 dark:text-slate-400">
               <li>
-                <strong>No fake analytics:</strong> We never generate simulated trends or invent weaknesses without evaluated proof.
+                <strong>No simulated analytics:</strong> We never generate fabricated trends or invent weaknesses without evaluated proof.
               </li>
               <li>
-                <strong>Single evaluations are isolated:</strong> One low mark in an answer will never be labeled a "habit" or "recurring issue".
+                <strong>Strict subject isolation:</strong> Deductions from other subjects never leak into {selectedSubjectName}.
               </li>
               <li>
-                <strong>Evidence-linked:</strong> Every detected pattern links directly to question numbers, deduction reasons, and step marks.
+                <strong>Evidence-linked:</strong> Every detected pattern links directly to question numbers, deduction reasons, and actual step marks.
               </li>
             </ul>
           </div>
 
-          <button
-            onClick={onNavigateUpload}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition cursor-pointer inline-flex items-center gap-2"
-          >
-            <span>Upload Your Next Answer Sheet</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={onNavigateUpload}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition cursor-pointer inline-flex items-center gap-2"
+            >
+              <span>Evaluate {selectedSubjectName === 'All Subjects' ? 'A Paper' : selectedSubjectName}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+            {!isAllSubjects && (
+              <button
+                onClick={() => handleSubjectChange('all')}
+                className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                View All Subjects
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -343,7 +522,7 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                   Recurring Mark-Loss Patterns
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Observed across ≥2 distinct evaluations. Verified with step-marking deduction evidence.
+                  Verified across ≥2 distinct evaluations in {selectedSubjectName}. Grounded in audited deduction evidence.
                 </p>
               </div>
               <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
@@ -355,16 +534,23 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
               <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-center space-y-2">
                 <CheckCircle2 className="w-8 h-8 mx-auto text-emerald-500" />
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                  No Chronic Mark-Loss Patterns Detected!
+                  No Chronic Mark-Loss Patterns in {selectedSubjectName}!
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                  Your answers demonstrate solid step consistency. No repetitive mistakes have spanned across multiple evaluations.
+                  Your submitted answer copies demonstrate solid step consistency. No repetitive mistakes have recurred across multiple evaluations.
                 </p>
               </div>
             ) : (
               <div className="space-y-3.5">
                 {recurringPatterns.map((pattern) => {
                   const isExpanded = expandedPatternId === pattern.id;
+                  const currentPage = getEvidencePage(pattern.id);
+                  const totalPages = Math.ceil(pattern.evidence.length / EVIDENCE_PAGE_SIZE) || 1;
+                  const paginatedEvidence = pattern.evidence.slice(
+                    (currentPage - 1) * EVIDENCE_PAGE_SIZE,
+                    currentPage * EVIDENCE_PAGE_SIZE
+                  );
+
                   return (
                     <div
                       key={pattern.id}
@@ -391,6 +577,9 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                             <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
                               • Typical loss: {pattern.typicalLoss}
                             </span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">
+                              {pattern.isLossEstimated ? 'Estimated Range' : 'Audited Fact'}
+                            </span>
                           </div>
 
                           <h3 className="text-base font-bold text-slate-900 dark:text-white">
@@ -403,8 +592,8 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
 
                           <div className="flex flex-wrap items-center gap-1.5 pt-1">
                             <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                              Detected in {pattern.detectionCount} answer components across{' '}
-                              {pattern.evaluationsCount} evaluations:
+                              Found in {pattern.affectedComponentsCount} deduction records across{' '}
+                              {pattern.detectionCount} of {pattern.evaluationsCount} evaluations:
                             </span>
                             {pattern.examples.map((ex, idx) => (
                               <span
@@ -420,9 +609,13 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                         <div className="flex items-center gap-3 shrink-0">
                           <button
                             type="button"
-                            className="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1 hover:underline"
+                            className="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1 hover:underline cursor-pointer"
                           >
-                            <span>{isExpanded ? 'Hide Evidence' : 'Inspect Evidence'}</span>
+                            <span>
+                              {isExpanded
+                                ? 'Hide Evidence'
+                                : `Inspect Evidence (${pattern.affectedComponentsCount})`}
+                            </span>
                             {isExpanded ? (
                               <ChevronUp className="w-4 h-4" />
                             ) : (
@@ -444,32 +637,69 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                       {/* Expanded Evidence Drawer */}
                       {isExpanded && (
                         <div className="p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                              Audited Deduction Evidence ({pattern.evidence.length} Records)
-                            </h4>
-                            <span className="text-[10px] text-slate-400">
-                              Linked directly to original evaluation IDs
-                            </span>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                Audited Deduction Evidence ({pattern.evidence.length} Records)
+                              </h4>
+                              <span className="text-[10px] text-slate-400">
+                                Showing {(currentPage - 1) * EVIDENCE_PAGE_SIZE + 1}–
+                                {Math.min(currentPage * EVIDENCE_PAGE_SIZE, pattern.evidence.length)} of{' '}
+                                {pattern.evidence.length}
+                              </span>
+                            </div>
+
+                            {/* Pagination Controls */}
+                            {totalPages > 1 && (
+                              <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                <button
+                                  type="button"
+                                  disabled={currentPage === 1}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEvidencePage(pattern.id, Math.max(1, currentPage - 1));
+                                  }}
+                                  className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 cursor-pointer"
+                                  title="Previous Page"
+                                >
+                                  <ChevronLeft className="w-3.5 h-3.5" />
+                                </button>
+                                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 px-1">
+                                  Page {currentPage} of {totalPages}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={currentPage === totalPages}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEvidencePage(pattern.id, Math.min(totalPages, currentPage + 1));
+                                  }}
+                                  className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 cursor-pointer"
+                                  title="Next Page"
+                                >
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           <div className="space-y-2">
-                            {pattern.evidence.map((ev, eIdx) => (
+                            {paginatedEvidence.map((ev) => (
                               <div
-                                key={eIdx}
+                                key={ev.id}
                                 className="p-3.5 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 text-xs space-y-1.5 shadow-2xs"
                               >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div className="flex items-center gap-2">
                                     <span className="font-bold text-slate-900 dark:text-white font-mono">
-                                      {ev.questionNumber}
+                                      Q{ev.questionNumber}
                                     </span>
                                     {ev.subQuestion && (
-                                      <span className="text-slate-500 dark:text-slate-400">
-                                        ({ev.subQuestion})
+                                      <span className="text-slate-500 dark:text-slate-400 font-medium">
+                                        • {ev.subQuestion}
                                       </span>
                                     )}
-                                    <span className="text-slate-400">•</span>
+                                    <span className="text-slate-300 dark:text-slate-700">•</span>
                                     <span className="font-medium text-slate-600 dark:text-slate-300">
                                       {ev.subjectName}
                                     </span>
@@ -479,21 +709,28 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                                       -{ev.marksLost} marks
                                     </span>
                                     <button
-                                      onClick={() => onViewReport(ev.evaluationId)}
-                                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onViewReport(ev.evaluationId);
+                                      }}
+                                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold inline-flex items-center gap-1 cursor-pointer"
                                     >
-                                      View Report →
+                                      <span>View Report</span>
+                                      <ExternalLink className="w-3 h-3" />
                                     </button>
                                   </div>
                                 </div>
 
-                                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-                                  <strong className="text-slate-700 dark:text-slate-200">Issue: </strong>
+                                <p className="text-slate-700 dark:text-slate-200 leading-relaxed">
+                                  <strong className="text-slate-900 dark:text-white font-semibold">
+                                    Deduction Detail:{' '}
+                                  </strong>
                                   {ev.observedIssue}
                                 </p>
 
-                                <div className="text-[11px] text-slate-400 dark:text-slate-500 flex flex-wrap gap-4 pt-1">
-                                  <span>Eval ID: <code className="font-mono">{ev.evaluationId}</code> ({ev.evaluationVersionId})</span>
+                                <div className="text-[11px] text-slate-400 dark:text-slate-500 flex flex-wrap gap-4 pt-1 font-mono">
+                                  <span>Eval ID: {ev.evaluationId}</span>
                                   <span>Date: {formatDateIST(ev.date)}</span>
                                   <span>Ref: {ev.evidenceReference}</span>
                                 </div>
@@ -525,7 +762,7 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
 
               {improvedPatterns.length === 0 ? (
                 <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg text-xs text-slate-500 dark:text-slate-400 text-center">
-                  Continue evaluating your papers to record verified pattern resolutions and track improvement.
+                  Continue evaluating submissions in {selectedSubjectName} to establish verifiable step improvements across sequential papers.
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -543,9 +780,9 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                       <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
                         {imp.improvementSummary}
                       </p>
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                        Previous penalty: -{imp.evidenceComparison.earlierLoss} marks in{' '}
-                        {imp.evidenceComparison.earlierQuestion} → 0 penalty in recent evaluation.
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono flex flex-wrap gap-2 pt-0.5">
+                        <span>Baseline: -{imp.evidenceComparison.earlierLoss} marks ({imp.evidenceComparison.earlierEvaluationId})</span>
+                        <span>→ Recent: 0 penalty ({imp.evidenceComparison.recentEvaluationId})</span>
                       </div>
                     </div>
                   ))}
@@ -558,16 +795,21 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
               <div className="flex items-center justify-between">
                 <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  Marks Recovered Across Previous Evaluations
+                  Marks Recovered Across Comparable Evaluations
                 </h3>
                 <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                  +{marksRecoveredTotal} Marks
+                  {marksRecoveredStatus === 'AVAILABLE' ? `+${marksRecoveredTotal} Marks` : 'Pending Data'}
                 </span>
               </div>
 
               {marksRecovered.length === 0 ? (
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg text-xs text-slate-500 dark:text-slate-400 text-center">
-                  Factual comparisons will appear once step-marking deficiencies are resolved in subsequent evaluated submissions.
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg text-xs text-slate-500 dark:text-slate-400 text-center space-y-1">
+                  <p className="font-semibold text-slate-600 dark:text-slate-300">
+                    Not enough comparable data yet
+                  </p>
+                  <p className="text-[11px]">
+                    Factual step-by-step recovery metrics are computed only when comparable questions in {selectedSubjectName} demonstrate resolved deductions in subsequent evaluated answer copies.
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -585,8 +827,8 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
                       <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
                         {rec.detail}
                       </p>
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        Strictly factual comparison derived from your earlier and recent answer sheets.
+                      <p className="text-[10px] text-slate-400 font-mono">
+                        Derived from baseline ({rec.earlierEvaluationId}) vs subsequent paper ({rec.recentEvaluationId}).
                       </p>
                     </div>
                   ))}
@@ -595,68 +837,64 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
             </div>
           </div>
 
-          {/* Section 3: Subject-Specific Examiner Patterns (CA-Specific Flow) */}
+          {/* Section 3: Course-Aware Subject-Specific Step Flows */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  Subject-Specific Examiner Step Flows
+                  Subject-Specific Examiner Step Flows ({caLevel.replace('_', ' ')})
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  ICAI examiners look for discipline across specific answer components for each subject archetype.
+                  ICAI examiners look for discipline across specific answer steps tailored to each course discipline.
                 </p>
               </div>
 
-              {/* Subject Tabs */}
-              <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                {(['LAW', 'TAX', 'ACCOUNTS', 'AUDIT'] as const).map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setActiveSubjectTab(cat)}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
-                      activeSubjectTab === cat
-                        ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-2xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
+              {/* Subject Tabs for Step Flows */}
+              {isAllSubjects && subjectPatterns.length > 1 && (
+                <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg overflow-x-auto">
+                  {subjectPatterns.map((sp) => (
+                    <button
+                      key={sp.subjectKey}
+                      type="button"
+                      onClick={() => setActiveStepFlowTab(sp.subjectKey)}
+                      className={`px-2.5 py-1 text-xs font-bold rounded-md transition cursor-pointer whitespace-nowrap ${
+                        activeStepFlowTab === sp.subjectKey
+                          ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-2xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                      }`}
+                    >
+                      {sp.title.split(' ')[0]}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Active Subject Flow Card */}
+            {/* Active Step Flow Visualizer */}
             {(() => {
-              const curPattern = subjectPatterns.find((p) => p.subjectCategory === activeSubjectTab) || {
-                subjectCategory: activeSubjectTab,
-                title:
-                  activeSubjectTab === 'LAW'
-                    ? 'Corporate & Economic Laws'
-                    : activeSubjectTab === 'TAX'
-                    ? 'Direct & Indirect Taxation'
-                    : activeSubjectTab === 'ACCOUNTS'
-                    ? 'Financial Reporting & Accounting'
-                    : 'Auditing & Professional Ethics',
-                stepFlow:
-                  activeSubjectTab === 'LAW'
-                    ? ['Provision', 'Application', 'Conclusion']
-                    : activeSubjectTab === 'TAX'
-                    ? ['Provision', 'Computation', 'Treatment', 'Conclusion']
-                    : activeSubjectTab === 'ACCOUNTS'
-                    ? ['Working', 'Adjustment', 'Calculation', 'Final Answer']
-                    : ['Standard/Provision', 'Explanation', 'Application', 'Conclusion'],
-                observedCompliance: 'No completed evaluations in this category yet',
-                keyObservation:
-                  'Upload a paper for this subject to audit your step compliance against official ICAI suggested answer patterns.',
-              };
+              const curPattern =
+                subjectPatterns.find((p) => p.subjectKey === activeStepFlowTab) ||
+                subjectPatterns[0] || {
+                  subjectKey: selectedSubject,
+                  subjectName: selectedSubjectName,
+                  subjectCategory: 'GENERAL',
+                  title: selectedSubjectName,
+                  stepFlow: ['Concept / Rule', 'Detailed Workings', 'Application', 'Final Result'],
+                  evaluationsCount: evaluationsAnalysed,
+                  hasEvaluations: evaluationsAnalysed > 0,
+                  observedCompliance: 'No completed evaluations in this subject yet',
+                  keyObservation: `Upload a paper for ${selectedSubjectName} to audit your step compliance against official ICAI suggested answer patterns.`,
+                };
 
               return (
                 <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="font-bold text-sm text-slate-900 dark:text-white">
-                      {curPattern.title}
+                    <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>{curPattern.title}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                        {curPattern.evaluationsCount} Evaluation{curPattern.evaluationsCount === 1 ? '' : 's'}
+                      </span>
                     </div>
                     <div className="text-xs font-bold text-blue-700 dark:text-blue-300 bg-blue-100/70 dark:bg-blue-900/40 px-2.5 py-0.5 rounded-full">
                       {curPattern.observedCompliance}
@@ -693,3 +931,19 @@ export const PersonalExaminerProfilePage: React.FC<PersonalExaminerProfilePagePr
     </div>
   );
 };
+
+// Helper for ChevronRight icon in pagination
+const ChevronRight: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+);

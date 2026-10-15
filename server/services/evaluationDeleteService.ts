@@ -70,16 +70,16 @@ export function getEvaluationDetails(
   const evaluation = db.prepare(`
     SELECT e.*, COALESCE(e.account_classification, 'NORMAL') as account_classification
     FROM evaluations e
-    WHERE e.id = ?
-  `).get(evaluationId) as any;
+    WHERE e.id = ? OR e.display_id = ?
+  `).get(evaluationId, evaluationId) as any;
 
   if (!evaluation) {
     // Check if was previously deleted
     const wasDeleted = db.prepare(`
       SELECT details, created_at FROM audit_logs
-      WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+      WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
       ORDER BY created_at DESC LIMIT 1
-    `).get(evaluationId) as any;
+    `).get(evaluationId, `%"${evaluationId}"%`) as any;
 
     if (wasDeleted) {
       const error: any = new Error('Evaluation no longer exists. It was previously deleted by Super Admin.');
@@ -198,15 +198,15 @@ export function deleteEvaluation(
   const evaluation = db.prepare(`
     SELECT e.*, COALESCE(e.account_classification, 'NORMAL') as account_classification
     FROM evaluations e
-    WHERE e.id = ?
-  `).get(evaluationId) as any;
+    WHERE e.id = ? OR e.display_id = ?
+  `).get(evaluationId, evaluationId) as any;
 
   if (!evaluation) {
     const wasDeleted = db.prepare(`
       SELECT details, created_at FROM audit_logs
-      WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+      WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
       ORDER BY created_at DESC LIMIT 1
-    `).get(evaluationId) as any;
+    `).get(evaluationId, `%"${evaluationId}"%`) as any;
 
     if (wasDeleted) {
       const error: any = new Error('Evaluation no longer exists. It was previously deleted by Super Admin.');
@@ -219,6 +219,9 @@ export function deleteEvaluation(
     error.statusCode = 404;
     throw error;
   }
+
+  const realEvaluationId = evaluation.id;
+  const evalDisplayId = evaluation.display_id || realEvaluationId;
 
   // Fetch student info
   const student = db.prepare('SELECT full_name, email, account_classification FROM users WHERE id = ?').get(evaluation.student_id) as any;
@@ -245,8 +248,8 @@ export function deleteEvaluation(
       if (fs.existsSync(dir)) {
         const files = fs.readdirSync(dir);
         for (const file of files) {
-          // Match files starting with this specific evaluationId
-          if (file.startsWith(evaluationId)) {
+          // Match files starting with this specific evaluationId or displayId
+          if (file.startsWith(realEvaluationId) || file.startsWith(evaluationId) || (evaluation.display_id && file.startsWith(evaluation.display_id))) {
             try {
               const fullPath = path.join(dir, file);
               fs.unlinkSync(fullPath);
@@ -266,26 +269,27 @@ export function deleteEvaluation(
   db.exec('BEGIN IMMEDIATE');
   try {
     // 4A. Clean up dependent assignment submissions (if any)
-    db.prepare('DELETE FROM assignment_submissions WHERE evaluation_id = ?').run(evaluationId);
+    db.prepare('DELETE FROM assignment_submissions WHERE evaluation_id = ?').run(realEvaluationId);
 
     // 4B. Nullify evaluation reference in support tickets so student support history is preserved
-    db.prepare('UPDATE support_tickets SET evaluation_id = NULL WHERE evaluation_id = ?').run(evaluationId);
+    db.prepare('UPDATE support_tickets SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
 
     // 4C. Nullify evaluation reference in credit ledger to keep credit accounting clean
-    db.prepare('UPDATE credit_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(evaluationId);
+    db.prepare('UPDATE credit_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
 
     // 4D. Nullify evaluation reference in institute usage ledger
-    db.prepare('UPDATE institute_usage_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(evaluationId);
+    db.prepare('UPDATE institute_usage_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
 
     // 4E. Remove evaluation record from evaluations table
-    db.prepare('DELETE FROM evaluations WHERE id = ?').run(evaluationId);
+    db.prepare('DELETE FROM evaluations WHERE id = ?').run(realEvaluationId);
 
     // 4F. Create immutable Audit Log
     const auditLogId = `aud_${crypto.randomBytes(8).toString('hex')}`;
     const auditDetails = {
       superAdminId: actor.id,
       superAdminEmail: actor.email,
-      evaluationId,
+      evaluationId: realEvaluationId,
+      displayId: evalDisplayId,
       studentId: evaluation.student_id,
       studentName,
       studentEmail,

@@ -187,10 +187,10 @@ export const LegalDocumentView: React.FC<LegalDocumentViewProps> = ({ activeDocT
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider">Email</p>
                     <a
-                      href={`mailto:${settings?.support_email || 'caexamchecker.support@gmail.com'}`}
+                      href={`mailto:${settings?.support_email || 'support@caexamcheckerai.com'}`}
                       className="text-xs sm:text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline truncate block"
                     >
-                      {settings?.support_email || 'caexamchecker.support@gmail.com'}
+                      {settings?.support_email || 'support@caexamcheckerai.com'}
                     </a>
                   </div>
                 </div>
@@ -317,15 +317,15 @@ function renderParagraphOrList(text: string) {
         }
 
         // Email line
-        if (lTrimmed.toLowerCase().includes('caexamchecker.support@gmail.com')) {
+        if (lTrimmed.toLowerCase().includes('support@caexamcheckerai.com') || lTrimmed.toLowerCase().includes('caexamchecker.support@gmail.com')) {
           return (
             <p key={lIdx} className="text-blue-900 dark:text-slate-200 text-xs sm:text-sm leading-relaxed flex items-center gap-1.5 flex-wrap">
               <span className="font-bold text-blue-950 dark:text-white">Email:</span>
               <a
-                href="mailto:caexamchecker.support@gmail.com"
+                href="mailto:support@caexamcheckerai.com"
                 className="text-blue-700 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 font-semibold underline"
               >
-                caexamchecker.support@gmail.com
+                support@caexamcheckerai.com
               </a>
             </p>
           );

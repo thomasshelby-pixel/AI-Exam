@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import { ExtractedQuestionDraft } from './mcqDeterministicParser.js';
+import { sanitizeGeminiConfig } from '../models/geminiThinkingHelper.js';
 
 /**
  * ============================================================================
@@ -147,9 +148,11 @@ async function callMcqGeminiWithRetry(
   while (attempt <= maxRetries) {
     try {
       auditMetrics.totalRequests++;
+      const sanitizedConfig = sanitizeGeminiConfig(params?.config, model);
       const response = await ai.models.generateContent({
         model,
-        ...params,
+        contents: params.contents,
+        config: sanitizedConfig,
       });
       auditMetrics.successfulRequests++;
       return response;
@@ -246,7 +249,6 @@ ${JSON.stringify(unCachedItems, null, 2)}`;
   const response = await callMcqGeminiWithRetry(ai, model, {
     contents: prompt,
     config: {
-      temperature: 0.1,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -376,7 +378,6 @@ ${JSON.stringify(unCachedItems, null, 2)}`;
   const response = await callMcqGeminiWithRetry(ai, model, {
     contents: prompt,
     config: {
-      temperature: 0.0,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -496,7 +497,6 @@ ${JSON.stringify(unCachedItems, null, 2)}`;
   const response = await callMcqGeminiWithRetry(ai, model, {
     contents: prompt,
     config: {
-      temperature: 0.2,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,

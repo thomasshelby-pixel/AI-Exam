@@ -26,6 +26,10 @@
         "icai_registration_number": { "type": "string" },
         "ca_level": { "type": "string", "enum": ["FOUNDATION", "INTERMEDIATE", "FINAL"] },
         "free_evaluations_used": { "type": "number" },
+        "monthly_free_evaluations_used": { "type": "number" },
+        "monthly_free_evaluations_limit": { "type": "number" },
+        "free_evaluation_reset_month": { "type": "string" },
+        "paid_credits": { "type": "number" },
         "purchased_credits": { "type": "number" },
         "institute_id": { "type": "string" },
         "batch_id": { "type": "string" },
@@ -33,6 +37,26 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["user_id"]
+    },
+    "StudentCreditPurchase": {
+      "title": "StudentCreditPurchase",
+      "description": "Individual credit purchase lots with 3-month expiry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "order_id": { "type": "string" },
+        "payment_id": { "type": "string" },
+        "credits_purchased": { "type": "number" },
+        "credits_remaining": { "type": "number" },
+        "valid_from": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "purchase_date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ACTIVE", "CONSUMED", "EXPIRED"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "user_id", "credits_purchased", "credits_remaining", "status"]
     },
     "Institute": {
       "title": "Institute",
@@ -321,6 +345,80 @@
         "user_agent": { "type": "string" }
       },
       "required": ["student_id", "disclaimer_version"]
+    },
+    "ReferralCampaign": {
+      "title": "ReferralCampaign",
+      "description": "Configured promotional code campaigns and access quotas.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "campaign_name": { "type": "string" },
+        "description": { "type": "string" },
+        "benefit_type": { "type": "string" },
+        "benefit_duration_days": { "type": "number" },
+        "max_redemptions": { "type": "number" },
+        "max_evaluations": { "type": "number" },
+        "is_active": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "DISABLED", "ARCHIVED", "EXHAUSTED"] },
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "user_type": { "type": "string" },
+        "terms_notes": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "campaign_name", "max_redemptions", "max_evaluations", "status"]
+    },
+    "ReferralRedemption": {
+      "title": "ReferralRedemption",
+      "description": "Authoritative promotional redemption records linking students to campaigns.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "referral_code": { "type": "string" },
+        "user_id": { "type": "string" },
+        "user_email": { "type": "string" },
+        "benefit_type": { "type": "string" },
+        "redemption_number": { "type": "number" },
+        "redeemed_at": { "type": "string", "format": "date-time" },
+        "expiry_date": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ACTIVE", "EXPIRED", "EXHAUSTED", "REVOKED"] },
+        "max_evaluations": { "type": "number" },
+        "evaluations_used": { "type": "number" },
+        "evaluations_remaining": { "type": "number" },
+        "audit_note": { "type": "string" },
+        "revoked_at": { "type": "string" },
+        "revoked_by": { "type": "string" },
+        "revocation_reason": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referral_code", "user_id", "status", "max_evaluations", "evaluations_remaining"]
+    },
+    "StudentExaminerProfile": {
+      "title": "StudentExaminerProfile",
+      "description": "Customized examiner preferences and grading rubrics for student answer evaluations.",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "profile_data_json": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["student_id"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Authoritative system-wide settings including default evaluation AI model and fallback order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "primary_model": { "type": "string" },
+        "fallback_chain": { "type": "array" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "updated_by": { "type": "string" }
+      },
+      "required": ["id"]
     }
   },
   "firestore": {
@@ -331,6 +429,14 @@
     "/student_profiles/{userId}": {
       "schema": { "$ref": "#/entities/StudentProfile" },
       "description": "Student profile metadata and personal evaluation credits."
+    },
+    "/student_examiner_profiles/{profileId}": {
+      "schema": { "$ref": "#/entities/StudentExaminerProfile" },
+      "description": "Examiner evaluation profiles and rubric preferences associated with students."
+    },
+    "/system_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSetting" },
+      "description": "Authoritative persistent system configuration parameters like AI models and fallback order."
     },
     "/student_disclaimers/{studentId}": {
       "schema": { "$ref": "#/entities/StudentDisclaimer" },
@@ -368,6 +474,10 @@
       "schema": { "$ref": "#/entities/EvaluationVersion" },
       "description": "Immutable evaluation versions and recheck audit snapshots."
     },
+    "/student_credit_purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/StudentCreditPurchase" },
+      "description": "Individual credit purchase lots with 3-month expiry."
+    },
     "/credit_ledger/{ledgerId}": {
       "schema": { "$ref": "#/entities/CreditLedger" },
       "description": "Immutable ledger of credit transactions."
@@ -387,6 +497,14 @@
     "/reviews/{reviewId}": {
       "schema": { "$ref": "#/entities/Review" },
       "description": "Student ratings and feedback with server-governed moderation status."
+    },
+    "/referral_campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/ReferralCampaign" },
+      "description": "Configured promotional code campaigns and access quotas."
+    },
+    "/referral_redemptions/{redemptionId}": {
+      "schema": { "$ref": "#/entities/ReferralRedemption" },
+      "description": "Authoritative student promotional code redemptions and evaluation quotas."
     }
   }
 }

@@ -132,6 +132,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Amendment Draft State
@@ -330,7 +331,29 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
       await fetchReviewDetails();
     } catch (err: any) {
       console.error('Finalize error:', err);
-      setError(err.message || 'Failed to finalize review.');
+      setActionError(err.message || 'Failed to finalize review.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleVerifyConsistency = async () => {
+    try {
+      setSaving(true);
+      setActionError(null);
+      setSuccessMessage(null);
+      const res = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/verify-consistency`, {
+        method: 'POST',
+        body: JSON.stringify({
+          adminOverride: false,
+          notes: overallReason.trim() || 'Admin verified consistency',
+        }),
+      });
+      setSuccessMessage(res.message || 'Evaluation consistency verified successfully!');
+      await fetchReviewDetails();
+    } catch (err: any) {
+      console.error('Verify consistency error:', err);
+      setActionError(err.message || 'Failed to verify evaluation consistency.');
     } finally {
       setSaving(false);
     }
@@ -349,8 +372,16 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-base font-bold text-slate-900">Admin Evaluation Review & Amendment</h2>
+              {(evaluation as any).display_id && (
+                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                  {(evaluation as any).display_id}
+                </span>
+              )}
+              <span className="font-mono text-[10px] text-slate-400">
+                Ref: {evaluation.id}
+              </span>
               <span
                 className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                   evaluation.status === 'NEEDS_REVIEW'
@@ -389,6 +420,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           </button>
         </div>
       </div>
+
+      {/* Action Error Banner */}
+      {actionError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-rose-800 text-xs flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="font-semibold">{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-rose-600 hover:text-rose-800 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Success Banner */}
       {successMessage && (
@@ -490,6 +534,11 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <User className="w-3.5 h-3.5" /> Student Profile
           </div>
           <p className="font-bold text-slate-800 text-sm">{evaluation.student_name || 'CA Student'}</p>
+          {(evaluation as any).student_code && (
+            <p className="text-[11px] font-mono font-bold text-indigo-600">
+              {(evaluation as any).student_code}
+            </p>
+          )}
           <p className="text-slate-500 font-mono text-[11px]">{evaluation.student_email}</p>
           {evaluation.icai_registration_number && (
             <p className="text-[11px] text-slate-600 font-medium">
@@ -912,6 +961,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           </button>
 
           <div className="flex items-center gap-3">
+            {/* Auto-Verify Consistency Option for NEEDS_REVIEW */}
+            {evaluation.status === 'NEEDS_REVIEW' && (
+              <button
+                onClick={handleVerifyConsistency}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                title="Run automatic consistency verification and authoritative reconciliation"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                Auto-Verify Consistency
+              </button>
+            )}
+
             {/* Affirm As-Is Option */}
             <button
               onClick={() => handleFinalize(true)}

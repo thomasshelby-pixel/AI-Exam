@@ -49,6 +49,7 @@ import {
   recordMfaFailedAttempt,
   clearMfaRateLimit,
 } from '../services/mfaRecoveryService.js';
+import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
 import { mfaRecoveryRateLimiter } from '../utils/rateLimiter.js';
 
@@ -133,7 +134,8 @@ function resolveMfaContext(req: Request): {
 function issueAuthenticatedSession(
   req: Request,
   res: Response,
-  user: { id: string; email: string; role: UserRole; full_name: string }
+  user: { id: string; email: string; role: UserRole; full_name: string },
+  options?: { rememberDevice?: boolean }
 ) {
   const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const token = generateToken(
@@ -161,12 +163,13 @@ function issueAuthenticatedSession(
     // Non-blocking if table not present
   }
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+  const cookieSameSite = isHttps ? 'none' : 'lax';
 
   res.cookie('ca_token', token, {
     httpOnly: false,
-    secure: isProduction,
-    sameSite: 'lax',
+    secure: isHttps,
+    sameSite: cookieSameSite,
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
   });
@@ -178,33 +181,42 @@ function issueAuthenticatedSession(
     `dev_${crypto.createHash('md5').update((req.headers['user-agent'] || '') + (req.ip || '')).digest('hex')}`;
   const deviceName = req.body?.deviceName || (req.headers['user-agent'] as string);
 
-  const trust = markDeviceAsTrusted({
-    userId: user.id,
-    deviceId,
-    deviceName,
-    userAgent: req.headers['user-agent'] as string,
-    ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
-  });
+  const shouldRememberDevice = options?.rememberDevice !== false && req.body?.trustDevice !== false && req.body?.rememberDevice !== false;
 
-  // Secure HttpOnly + SameSite cookie for the 365-day trusted-device token
-  res.cookie('ca_trust_token', trust.trustToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: 'lax',
-    maxAge: 365 * 24 * 60 * 60 * 1000,
-    path: '/',
-  });
+  let trustToken: string | undefined = undefined;
+  let expiresAt: string | undefined = undefined;
+
+  if (shouldRememberDevice) {
+    const trust = markDeviceAsTrusted({
+      userId: user.id,
+      deviceId,
+      deviceName,
+      userAgent: req.headers['user-agent'] as string,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip,
+    });
+    trustToken = trust.trustToken;
+    expiresAt = trust.expiresAt;
+
+    // Secure HttpOnly + SameSite cookie for the 365-day trusted-device token
+    res.cookie('ca_trust_token', trust.trustToken, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: cookieSameSite,
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+  }
 
   // Also persist device ID cookie for cross-session continuity
   res.cookie('ca_device_id', deviceId, {
     httpOnly: false,
-    secure: isProduction,
-    sameSite: 'lax',
+    secure: isHttps,
+    sameSite: cookieSameSite,
     maxAge: 365 * 24 * 60 * 60 * 1000,
     path: '/',
   });
 
-  return { token, trustToken: trust.trustToken, deviceId, expiresAt: trust.expiresAt };
+  return { token, trustToken, deviceId, expiresAt, deviceTrusted: Boolean(trustToken) };
 }
 
 /**
@@ -296,17 +308,23 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
 
     const candidateSecrets: Array<{ secret: string; createdAt: string | null }> = [];
     if (dbUser?.totp_secret) {
-      candidateSecrets.push({
-        secret: dbUser.totp_secret,
-        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
-      });
+      const dec = decryptMfaSecret(dbUser.totp_secret);
+      if (dec && dec.length >= 16) {
+        candidateSecrets.push({
+          secret: dec,
+          createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+        });
+      }
     }
     authenticators.forEach((a) => {
-      if (a.totp_secret && !candidateSecrets.some((s) => s.secret === a.totp_secret)) {
-        candidateSecrets.push({
-          secret: a.totp_secret,
-          createdAt: a.created_at || null,
-        });
+      if (a.totp_secret) {
+        const dec = decryptMfaSecret(a.totp_secret);
+        if (dec && dec.length >= 16 && !candidateSecrets.some((s) => s.secret === dec)) {
+          candidateSecrets.push({
+            secret: dec,
+            createdAt: a.created_at || null,
+          });
+        }
       }
     });
 
@@ -405,14 +423,15 @@ router.post('/verify-challenge', async (req: Request, res: Response) => {
       details: 'Two-Factor Authentication verified successfully via Authenticator App.',
     });
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
       token: session.token,
       trustToken: session.trustToken,
       deviceId: session.deviceId,
-      deviceTrusted: true,
+      deviceTrusted: session.deviceTrusted,
       user: {
         id: user.id,
         email: user.email,
@@ -463,7 +482,8 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     }
 
     const userRow = db.prepare('SELECT pending_totp_secret, totp_secret FROM users WHERE id = ?').get(user.id) as any;
-    const candidateSecret = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || userRow?.pending_totp_secret || userRow?.totp_secret || null;
+    const rawCandidate = (req.body?.secretKey as string)?.trim() || (req.body?.totpSecret as string)?.trim() || userRow?.pending_totp_secret || userRow?.totp_secret || null;
+    const candidateSecret = decryptMfaSecret(rawCandidate);
     const otpCode = (req.body?.otpCode as string || req.body?.code as string || '').trim().replace(/\D/g, '');
 
     if (!candidateSecret) {
@@ -519,6 +539,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       });
     }
 
+    const encryptedSecret = encryptMfaSecret(candidateSecret);
     const primaryId = `auth_prim_${user.id}`;
     const enrolledAt = new Date().toISOString();
     const cloudPersisted = await setFirestoreDocsAtomically([
@@ -529,7 +550,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
           id: user.id,
           mfa_enabled: 1,
           mfa_enrolled_at: enrolledAt,
-          totp_secret: candidateSecret,
+          totp_secret: encryptedSecret,
           pending_totp_secret: null,
           mfa_reset_required: 0,
           updated_at: enrolledAt,
@@ -543,7 +564,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
           user_id: user.id,
           factor_type: 'PRIMARY_TOTP',
           label: 'Primary Authenticator App',
-          totp_secret: candidateSecret,
+          totp_secret: encryptedSecret,
           created_at: enrolledAt,
           last_used_at: enrolledAt,
         },
@@ -568,7 +589,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
             mfa_reset_required = 0,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(enrolledAt, candidateSecret, user.id);
+      `).run(enrolledAt, encryptedSecret, user.id);
 
       db.prepare(`
         INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
@@ -576,7 +597,7 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
         ON CONFLICT(id) DO UPDATE SET
           totp_secret = excluded.totp_secret,
           last_used_at = excluded.last_used_at
-      `).run(primaryId, user.id, candidateSecret, enrolledAt, enrolledAt);
+      `).run(primaryId, user.id, encryptedSecret, enrolledAt, enrolledAt);
       db.exec('COMMIT');
     } catch (dbError) {
       db.exec('ROLLBACK');
@@ -608,14 +629,15 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       details: 'Two-Factor Authentication successfully enrolled. Initial authenticator active.',
     });
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
       token: session.token,
       trustToken: session.trustToken,
       deviceId: session.deviceId,
-      deviceTrusted: true,
+      deviceTrusted: session.deviceTrusted,
       mfaState: 'MFA_ENROLLED',
       message: 'Two-Factor Authentication enabled successfully.',
       recoveryCodes,
@@ -1446,17 +1468,23 @@ const handleValidateTotp = async (req: Request, res: Response) => {
 
     const possibleSecrets: Array<{ secret: string; createdAt: string | null }> = [];
     if (dbUser?.totp_secret) {
-      possibleSecrets.push({
-        secret: dbUser.totp_secret,
-        createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
-      });
+      const dec = decryptMfaSecret(dbUser.totp_secret);
+      if (dec && dec.length >= 16) {
+        possibleSecrets.push({
+          secret: dec,
+          createdAt: dbUser.mfa_enrolled_at || dbUser.updated_at || null,
+        });
+      }
     }
     authenticators.forEach((a) => {
-      if (a.totp_secret && !possibleSecrets.some((s) => s.secret === a.totp_secret)) {
-        possibleSecrets.push({
-          secret: a.totp_secret,
-          createdAt: a.created_at || null,
-        });
+      if (a.totp_secret) {
+        const dec = decryptMfaSecret(a.totp_secret);
+        if (dec && dec.length >= 16 && !possibleSecrets.some((s) => s.secret === dec)) {
+          possibleSecrets.push({
+            secret: dec,
+            createdAt: a.created_at || null,
+          });
+        }
       }
     });
 
@@ -1546,8 +1574,9 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       // Non-blocking
     }
 
-    // Mark device as trusted for 365 days and issue the secure HttpOnly cookie
-    const session = issueAuthenticatedSession(req, res, user);
+    // Issue authenticated session and conditionally mark device as trusted
+    const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
+    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     // Atomically ensure mfa_enabled is 1 and mfa_reset_required is cleared in database
     try {
@@ -1572,15 +1601,19 @@ const handleValidateTotp = async (req: Request, res: Response) => {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       status: 'SUCCESS',
-      details: 'TOTP verified successfully on untrusted browser. Device is now trusted for 365 days.',
+      details: session.deviceTrusted
+        ? 'TOTP verified successfully on untrusted browser. Device is now trusted for 365 days.'
+        : 'TOTP verified successfully on untrusted browser (one-time session; trust not requested).',
     });
 
     return res.json({
       success: true,
-      isTrusted: true,
-      deviceTrusted: true,
+      isTrusted: session.deviceTrusted,
+      deviceTrusted: session.deviceTrusted,
       bypassed: false,
-      message: 'TOTP validated successfully. This browser is now trusted for 365 days.',
+      message: session.deviceTrusted
+        ? 'TOTP validated successfully. This browser is now trusted for 365 days.'
+        : 'TOTP validated successfully.',
       token: session.token,
       trustToken: session.trustToken,
       trustExpiresAt: session.expiresAt,

@@ -233,13 +233,13 @@ async function runAllTests() {
   // =========================================================================
   console.log('\n>>> SECTION 3: SUPER ADMIN MIGRATION TESTS (26 - 40)');
 
-  // 26. caexamchecker.support@gmail.com is SUPER_ADMIN
-  const adminAccount = db.prepare("SELECT id, email, role, status, password_hash FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as any;
-  assert(adminAccount, 'Test 26: caexamchecker.support@gmail.com must exist');
+  // 26. support@caexamcheckerai.com is SUPER_ADMIN
+  const adminAccount = db.prepare("SELECT id, email, role, status, password_hash FROM users WHERE lower(email) = 'support@caexamcheckerai.com'").get() as any;
+  assert(adminAccount, 'Test 26: support@caexamcheckerai.com must exist');
   assert.strictEqual(adminAccount.role, 'SUPER_ADMIN', 'Test 26: Role must be SUPER_ADMIN');
   assert.strictEqual(adminAccount.status, 'ACTIVE', 'Test 26: Status must be ACTIVE');
   assert.strictEqual(adminAccount.id, 'usr_super_admin_001', 'Test 26: Must be authoritative primary super admin ID');
-  console.log('[PASS] Test 26: caexamchecker.support@gmail.com is authoritative ACTIVE SUPER_ADMIN.');
+  console.log('[PASS] Test 26: support@caexamcheckerai.com is authoritative ACTIVE SUPER_ADMIN.');
 
   // 27. Old admin email cannot log in as active Super Admin
   const oldAdmin1 = db.prepare("SELECT email, role, status FROM users WHERE lower(email) = 'admin@caexamchecker.ai'").get() as any;

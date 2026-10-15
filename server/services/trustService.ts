@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export interface TrustedDeviceRecord {
   id: string;
@@ -47,6 +48,7 @@ export function ensureTrustedDevicesTable(): void {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_user_device ON trusted_devices(user_id, device_id);
     CREATE INDEX IF NOT EXISTS idx_trusted_devices_lookup ON trusted_devices(user_id, device_id, status);
+    CREATE INDEX IF NOT EXISTS idx_trusted_devices_token ON trusted_devices(user_id, trust_token_hash);
   `);
 
   // Migrate existing schema if expires_at column is missing
@@ -109,22 +111,28 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
   ensureTrustedDevicesTable();
 
   const tokenHash = hashTrustToken(trustToken);
-  const cleanDeviceId = deviceId.trim();
+  const cleanDeviceId = deviceId ? deviceId.trim() : '';
 
   try {
-    const record = db.prepare(`
-      SELECT id, status, revoked_at, expires_at
-      FROM trusted_devices
-      WHERE user_id = ?
-        AND device_id = ?
-        AND trust_token_hash = ?
-      LIMIT 1
-    `).get(userId, cleanDeviceId, tokenHash) as {
+    // 1. Primary lookup by exact user_id, device_id, and trust_token_hash
+    let record: {
       id: string;
+      device_id: string;
       status: string;
       revoked_at: string | null;
       expires_at: string | null;
     } | undefined;
+
+    if (cleanDeviceId) {
+      record = db.prepare(`
+        SELECT id, device_id, status, revoked_at, expires_at
+        FROM trusted_devices
+        WHERE user_id = ?
+          AND device_id = ?
+          AND trust_token_hash = ?
+        LIMIT 1
+      `).get(userId, cleanDeviceId, tokenHash) as any;
+    }
 
     if (!record) {
       return false;
@@ -145,6 +153,7 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
           SET status = 'EXPIRED'
           WHERE id = ?
         `).run(record.id);
+        syncRecordToFirestore('trusted_devices', record.id, { status: 'EXPIRED' }).catch(() => {});
         return false;
       }
     }
@@ -177,7 +186,7 @@ export function verifyUserDeviceTrust(
     return { isTrusted: false };
   }
 
-  const cleanDeviceId = deviceId.trim();
+  const cleanDeviceId = deviceId ? deviceId.trim() : '';
   const validTokens = candidateTokens.filter((t): t is string => Boolean(t && typeof t === 'string' && t.trim().length > 0));
 
   for (const token of validTokens) {
@@ -604,7 +613,9 @@ export function markDeviceAsTrusted(params: {
   const rawSecret = crypto.randomBytes(32).toString('hex');
   const trustToken = `trust_${rawSecret}`;
   const trustTokenHash = hashTrustToken(trustToken);
-  const recordId = `trd_${crypto.randomBytes(8).toString('hex')}`;
+  const existingRow = db.prepare('SELECT id FROM trusted_devices WHERE user_id = ? AND device_id = ?').get(userId, cleanDeviceId) as { id: string } | undefined;
+  const safeIdHash = crypto.createHash('md5').update(`${userId}:${cleanDeviceId}`).digest('hex').substring(0, 16);
+  const recordId = existingRow?.id || `trd_${safeIdHash}`;
 
   const expiresAt = new Date(Date.now() + TRUST_DURATION_MS).toISOString();
 
@@ -632,6 +643,22 @@ export function markDeviceAsTrusted(params: {
     expiresAt
   );
 
+  // Sync trusted device record to Cloud Firestore for durable multi-instance persistence
+  syncRecordToFirestore('trusted_devices', recordId, {
+    id: recordId,
+    user_id: userId,
+    device_id: cleanDeviceId,
+    trust_token_hash: trustTokenHash,
+    device_name: deviceName || null,
+    user_agent: userAgent || null,
+    ip_address: ipAddress || null,
+    status: 'ACTIVE',
+    trusted_at: new Date().toISOString(),
+    expires_at: expiresAt,
+    last_used_at: new Date().toISOString(),
+    revoked_at: null,
+  }).catch(() => {});
+
   return {
     trustToken,
     expiresAt,
@@ -645,11 +672,20 @@ export function markDeviceAsTrusted(params: {
 export function revokeDeviceTrust(userId: string, deviceId: string): boolean {
   ensureTrustedDevicesTable();
   try {
+    const cleanDeviceId = deviceId.trim();
+    const existing = db.prepare('SELECT id FROM trusted_devices WHERE user_id = ? AND device_id = ?').get(userId, cleanDeviceId) as { id: string } | undefined;
     const res = db.prepare(`
       UPDATE trusted_devices
       SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND device_id = ?
-    `).run(userId, deviceId.trim());
+    `).run(userId, cleanDeviceId);
+
+    if (existing?.id) {
+      syncRecordToFirestore('trusted_devices', existing.id, {
+        status: 'REVOKED',
+        revoked_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
     return res.changes > 0;
   } catch (err) {
     console.error('[TrustService] Error revoking device trust:', err);
@@ -664,20 +700,30 @@ export function revokeDeviceTrust(userId: string, deviceId: string): boolean {
 export function revokeAllDeviceTrust(userId: string, exceptDeviceId?: string): number {
   ensureTrustedDevicesTable();
   try {
+    const nowIso = new Date().toISOString();
     if (exceptDeviceId) {
+      const cleanExcept = exceptDeviceId.trim();
+      const recordsToRevoke = db.prepare("SELECT id FROM trusted_devices WHERE user_id = ? AND device_id != ? AND status = 'ACTIVE'").all(userId, cleanExcept) as Array<{ id: string }>;
       const res = db.prepare(`
         UPDATE trusted_devices
         SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP
         WHERE user_id = ? AND device_id != ? AND status = 'ACTIVE'
-      `).run(userId, exceptDeviceId.trim());
+      `).run(userId, cleanExcept);
+      for (const rec of recordsToRevoke) {
+        syncRecordToFirestore('trusted_devices', rec.id, { status: 'REVOKED', revoked_at: nowIso }).catch(() => {});
+      }
       return Number(res.changes);
     }
 
+    const recordsToRevoke = db.prepare("SELECT id FROM trusted_devices WHERE user_id = ? AND status = 'ACTIVE'").all(userId) as Array<{ id: string }>;
     const res = db.prepare(`
       UPDATE trusted_devices
       SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND status = 'ACTIVE'
     `).run(userId);
+    for (const rec of recordsToRevoke) {
+      syncRecordToFirestore('trusted_devices', rec.id, { status: 'REVOKED', revoked_at: nowIso }).catch(() => {});
+    }
     return Number(res.changes);
   } catch (err) {
     console.error('[TrustService] Error revoking all device trust for user:', err);

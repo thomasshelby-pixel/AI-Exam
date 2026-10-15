@@ -482,7 +482,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
         <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mb-4 px-1">
           <span className="flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            Razorpay 256-bit Encrypted
+            Secure, encrypted payment
           </span>
           <span className="flex items-center gap-1">
             <Zap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -502,7 +502,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
           ) : (
             <>
               <CreditCard className="w-4 h-4" />
-              Pay ₹{currentTotalAmount} with Razorpay Standard
+              Pay ₹{currentTotalAmount}
             </>
           )}
         </button>

@@ -200,7 +200,7 @@ async function runRegressionTests() {
   // B. Super Admin token generation
   const superAdminToken = generateToken({
     id: 'usr_super_admin_001',
-    email: 'caexamchecker.support@gmail.com',
+    email: 'support@caexamcheckerai.com',
     role: 'SUPER_ADMIN',
     fullName: 'Super Administrator',
   });

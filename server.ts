@@ -18,16 +18,21 @@ import mcqRoutes from './server/routes/mcqRoutes.js';
 import featureRoutes from './server/routes/featureRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
+import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
 
 async function startServer() {
+  const PORT = getServerPort();
+
   // Safe startup logging for Cloud Run / Firebase App Hosting
   console.log({
     nodeEnv: process.env.NODE_ENV,
-    port: process.env.PORT,
+    port: PORT,
+    host: SERVER_HOST,
     startup: 'server-start',
   });
 
@@ -36,9 +41,6 @@ async function startServer() {
   initMfaRecoveryTables();
 
   const app = express();
-  // Cloud Run and App Hosting automatically supply PORT (typically 8080).
-  // Strictly consumes process.env.PORT per Firebase App Hosting specification.
-  const PORT = Number(process.env.PORT) || 8080;
 
   // Lightweight health check endpoint for platform probes
   app.get('/healthz', (_req, res) => {
@@ -67,7 +69,15 @@ async function startServer() {
   });
 
   // Body parsers with 50MB payload limit for PDF/image answer sheet uploads
-  app.use(express.json({ limit: '50mb' }));
+  // Preserves original raw request-body buffer via verify callback for cryptographic webhook signature verification
+  app.use(
+    express.json({
+      limit: '50mb',
+      verify: (req: any, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // API Routes
@@ -257,15 +267,17 @@ export default {};
 
   const handleShutdown = (signal: string) => {
     console.log(`[Server] Graceful shutdown initiated (${signal}).`);
-    server.close(() => {
+    server.close(async () => {
       console.log('[Server] HTTP connections closed. Closing database cleanly...');
       closeDatabaseCleanly();
+      await closeFirestoreCleanly().catch(() => {});
       process.exit(0);
     });
     // Force exit if connections take too long to close
-    setTimeout(() => {
+    setTimeout(async () => {
       console.warn('[Server] Force shutdown after timeout.');
       closeDatabaseCleanly();
+      await closeFirestoreCleanly().catch(() => {});
       process.exit(0);
     }, 5000).unref();
   };

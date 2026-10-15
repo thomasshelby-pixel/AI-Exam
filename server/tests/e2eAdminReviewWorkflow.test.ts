@@ -29,7 +29,8 @@ function recordResult(item: number, description: string, condition: boolean, det
 }
 
 async function runVerification() {
-  const BASE_URL = 'http://localhost:3000';
+  const PORT = process.env.PORT || '8080';
+  const BASE_URL = `http://localhost:${PORT}`;
   const timestamp = Date.now();
   const evalId = `eval_verify_${timestamp}`;
   const v1Id = `${evalId}_v1`;
@@ -78,10 +79,29 @@ async function runVerification() {
     VALUES (?, 'WRO0789456', 'INTERMEDIATE')
   `).run(studentUser.id);
 
+  // Acknowledge student disclaimer
+  try {
+    db.prepare(`
+      INSERT INTO student_disclaimer_acknowledgements (id, student_id, version, acknowledged_at, ip_address, user_agent)
+      VALUES (?, ?, 'v1.0', CURRENT_TIMESTAMP, '127.0.0.1', 'test_runner')
+    `).run(`ack_${studentUser.id}`, studentUser.id);
+  } catch {}
+
   // Generate real JWT tokens
   const adminToken = generateToken(adminUser);
   const studentToken = generateToken(studentUser);
   const otherStudentToken = generateToken(otherStudentUser);
+
+  try {
+    await fetch(`${BASE_URL}/api/student/disclaimer/acknowledge`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({ version: 'v1.0' }),
+    });
+  } catch {}
 
   // 2. Create a realistic 2-page original PDF for the candidate
   const samplePdf = await PDFDocument.create();

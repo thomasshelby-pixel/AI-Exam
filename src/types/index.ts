@@ -35,6 +35,7 @@ export interface User {
   status: UserStatus;
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
+  emailVerified?: boolean;
   mfaEnabled?: boolean;
   mfaPhone?: string | null;
   mfaVerified?: boolean;
@@ -84,6 +85,8 @@ export interface MfaRecoveryRequest {
 
 export interface StudentProfile {
   userId: string;
+  studentCode?: string;
+  student_code?: string;
   icaiRegistrationNumber: string;
   caLevel: CALevel;
   freeEvaluationsUsed: number;
@@ -158,6 +161,9 @@ export interface MarkingComponent {
   marksAwarded: number;
   marksDeducted: number;
   deductionReason?: string;
+  reason?: string;
+  whatWasMissing?: string;
+  idealAnswer?: string;
   supportingProvision?: string;
   confidence: number;
   pageNumber?: number;
@@ -188,6 +194,9 @@ export interface ReferenceTrace {
   materialId?: string;
   materialTitle?: string;
   materialVersion?: string;
+  source?: string;
+  paperId?: string;
+  modelAnswerAvailable?: boolean;
   contentHash?: string;
   retrievedCharacterCount?: number;
   markingSchemeSection?: string;
@@ -656,6 +665,17 @@ export interface EvaluationResult {
   canonicalLedger?: CanonicalEvaluationLedger;
   reconciliationSection?: EvaluationReconciliationSection;
   evaluationRunPackage?: EvaluationRunPackage;
+
+  // Explicit State Separation (Section 2)
+  attemptedCount?: number;
+  evaluatedCount?: number;
+  academicScore?: number;
+  certificationStatus?: 'CERTIFIED' | 'VERIFICATION_REQUIRED' | 'PENDING' | 'RECHECK_REQUIRED' | 'REVIEW_REQUIRED';
+  downloadsUnlocked?: boolean;
+  referenceMaterialIds?: string[];
+  technicalFailureCount?: number;
+  unresolvedQuestions?: string[];
+  isTechnicalReviewState?: boolean;
 }
 
 export type CanonicalQuestionType = 'DESCRIPTIVE' | 'MCQ' | 'CASE_SCENARIO' | 'PRACTICAL';
@@ -744,6 +764,17 @@ export type EvaluationFinalizationStatus =
   | 'PERSISTENCE_FAILED'
   | 'INTEGRITY_FAILED';
 
+export interface EvaluationIntegrityFailureDiagnostic {
+  readonly failureCode: 'EVALUATION_INTEGRITY_FAILURE';
+  readonly questionId: string;
+  readonly stageOfFailure: 'AI_EVALUATION' | 'PERSISTENCE' | 'RENDERING' | 'COUNTING' | 'RECONCILIATION';
+  readonly studentPages: number[];
+  readonly detectedEvidence?: string;
+  readonly expectedState: string;
+  readonly actualState: string;
+  readonly reason: string;
+}
+
 export interface EvaluationRunPackage {
   readonly runId: string;
   readonly evaluationId: string;
@@ -757,6 +788,7 @@ export interface EvaluationRunPackage {
   readonly finalizationStatus: EvaluationFinalizationStatus;
   readonly durablePersistenceConfirmed: boolean;
   readonly renderManifest?: RenderManifest;
+  readonly integrityDiagnostics?: EvaluationIntegrityFailureDiagnostic[];
   readonly persistedAt?: string;
   readonly finalizedAt?: string;
   readonly auditTrail: string[];
@@ -807,6 +839,8 @@ export interface CanonicalEvaluationRecord {
   readonly stepMarkingBreakdown?: any[];
   readonly markingComponents?: MarkingComponent[];
   readonly reconciliationNotes?: string[];
+  readonly isTechnicalFailure?: boolean;
+  readonly technicalFailureReason?: string;
 }
 
 export interface RenderManifestItem {
@@ -842,6 +876,7 @@ export interface CanonicalEvaluationLedger {
   readonly totalRendered: number;
   readonly totalCounted: number;
   readonly totalMaxMarks: number;
+  readonly officialPaperMaxMarks?: number;
   readonly totalAwardedMarks: number;
   readonly isReconciled: boolean;
   readonly reconciliationErrors: string[];
@@ -962,6 +997,12 @@ export interface SupportTicketItem {
 
 export interface EvaluationRecord {
   id: string;
+  displayId?: string;
+  display_id?: string;
+  evaluationSequence?: number;
+  evaluation_sequence?: number;
+  studentCode?: string;
+  student_code?: string;
   studentId: string;
   studentName: string;
   icaiRegistrationNumber: string;

@@ -8,7 +8,8 @@ async function runVerification() {
   console.log('--- STARTING RUNTIME DISCLAIMER VERIFICATION (TESTS A - G) ---');
   console.log('========================================================================');
 
-  const BASE_URL = 'http://localhost:3000';
+  const PORT = process.env.PORT || '8080';
+  const BASE_URL = `http://localhost:${PORT}`;
 
   // Dedicated test student to protect real student data
   const testStudentId = `usr_test_std_${Date.now()}`;

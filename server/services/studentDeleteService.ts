@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { db, verifyPassword } from '../db.js';
+import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
@@ -10,6 +10,7 @@ import { requireConfirmedDeletions, type DurableDeletionTarget } from './deletio
 export interface DeleteStudentResult {
   success: boolean;
   message: string;
+  alreadyDeleted?: boolean;
   deletedStudent: {
     id: string;
     email: string;
@@ -52,6 +53,37 @@ export async function deleteStudentAccount(
   } | undefined;
 
   if (!targetUser) {
+    const wasTombstoned = isTombstoned('users', studentId) ||
+      Boolean(db.prepare("SELECT id FROM tombstones WHERE collection_name = 'users' AND entity_id = ?").get(studentId)) ||
+      Boolean(db.prepare("SELECT id FROM audit_logs WHERE action IN ('SUPER_ADMIN_PERMANENT_DELETE_STUDENT', 'STUDENT_SELF_DELETE_ACCOUNT') AND entity_id = ?").get(studentId));
+
+    if (wasTombstoned) {
+      await Promise.allSettled([
+        permanentlyDeleteFromFirestore('users', studentId, 'Idempotent deletion verification for already-deleted student'),
+        permanentlyDeleteFromFirestore('student_profiles', studentId, 'Idempotent deletion verification for student_profiles'),
+      ]);
+
+      return {
+        success: true,
+        message: 'Student account has already been permanently deleted.',
+        alreadyDeleted: true,
+        deletedStudent: {
+          id: studentId,
+          email: '',
+          fullName: 'Deleted Student',
+          accountClassification: 'NORMAL',
+        },
+        cleanupSummary: {
+          evaluationsRemoved: 0,
+          filesRemoved: 0,
+          membershipsRemoved: 0,
+          redemptionsCleaned: 0,
+          sessionsRevoked: 0,
+          financialRecordsRetained: 0,
+        },
+      };
+    }
+
     const error: any = new Error('Student account not found or has already been deleted.');
     error.statusCode = 404;
     throw error;
@@ -72,6 +104,7 @@ export async function deleteStudentAccount(
   const durableDeleteTargets = [
     ['users', studentId, `Super admin permanently deleted student ${targetUser.email}`],
     ['student_profiles', studentId, `Deleted student profile for ${studentId}`],
+    ['student_examiner_profiles', studentId, `Deleted examiner profile for ${studentId}`],
     ...studentEvaluations.map((ev) => ['evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`] as [string, string, string]),
   ] as DurableDeletionTarget[];
   db.prepare("UPDATE users SET status = 'DELETING', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(studentId);
@@ -249,7 +282,9 @@ export async function deleteStudentAccount(
       },
     };
   } catch (txErr) {
-    db.exec('ROLLBACK');
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
     console.error('[StudentDeleteService] Transaction error:', txErr);
     throw txErr;
   }
@@ -689,7 +724,9 @@ export async function selfDeleteStudentAccount(
       },
     };
   } catch (txErr: any) {
-    db.exec('ROLLBACK');
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
     console.error('[StudentDeleteService] Self-deletion transaction failed:', {
       studentId,
       errorName: txErr?.name,

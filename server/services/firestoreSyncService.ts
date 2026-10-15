@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, recordLocalTombstone, getAllLocalTombstoneSet } from '../db.js';
+import { db, recordLocalTombstone, getAllLocalTombstoneSet, isTombstoned as isLocalTombstoned } from '../db.js';
 import {
   getFirestoreDb,
   setFirestoreDoc,
@@ -11,10 +11,12 @@ import {
   isTombstoned,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
-import { getValidStudentCreditBalance } from './studentCreditService.js';
+import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
-import { initMfaRecoveryTables } from './mfaRecoveryService.js';
 import { isEntityTombstoned } from './deletionPersistence.js';
+
+import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
+import { decryptMfaSecret } from './mfaCryptoService.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -43,8 +45,36 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
       const fsTime = new Date(existingDoc._updatedAt || existingDoc.updated_at || existingDoc.completed_at || existingDoc.created_at || 0).getTime();
       const localTime = new Date(data.updated_at || data._updatedAt || data.completed_at || data.created_at || 0).getTime();
       if (fsTime > localTime && fsTime > 0) {
-        console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
-        return;
+        // Exception: For credit collections, if local data has consumed credits (lower balance or more used),
+        // local consumption must always be allowed to propagate to Firestore!
+        if (collectionName === 'student_credit_purchases' && typeof data.credits_remaining === 'number' && typeof existingDoc.credits_remaining === 'number') {
+          if (data.credits_remaining < existingDoc.credits_remaining) {
+            // Local consumption detected; allow sync to persist decrement
+          } else {
+            console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
+            return;
+          }
+        } else if (collectionName === 'student_profiles') {
+          const localPurchased = typeof data.purchased_credits === 'number' ? data.purchased_credits : 999999;
+          const fsPurchased = typeof existingDoc.purchased_credits === 'number' ? existingDoc.purchased_credits : 999999;
+          const localUsed = typeof data.free_evaluations_used === 'number' ? data.free_evaluations_used : 0;
+          const fsUsed = typeof existingDoc.free_evaluations_used === 'number' ? existingDoc.free_evaluations_used : 0;
+          if (localPurchased < fsPurchased || localUsed > fsUsed) {
+            // Local credit consumption detected; allow sync
+          } else {
+            console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
+            return;
+          }
+        } else if (
+          collectionName.startsWith('mfa_') ||
+          collectionName === 'trusted_devices' ||
+          (collectionName === 'users' && (data.mfa_enabled !== undefined || data.mfa_reset_required !== undefined || data.totp_secret !== undefined))
+        ) {
+          // Authoritative MFA & Device Trust lifecycle event (enrollment, reset, validation): local security update must propagate to Firestore
+        } else {
+          console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
+          return;
+        }
       }
     }
     await setFirestoreDoc(collectionName, id, data);
@@ -57,27 +87,36 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
  * Permanently removes a record from Cloud Firestore and marks a tombstone
  * so it will NEVER be re-seeded or resurrected on server restarts.
  */
-export async function permanentlyDeleteFromFirestore(collectionName: string, id: string, reason?: string) {
+export async function permanentlyDeleteFromFirestore(
+  collectionName: string,
+  id: string,
+  reason?: string,
+  options: { failOnError?: boolean } = {}
+): Promise<boolean> {
   try {
     recordLocalTombstone(collectionName, id, reason);
-    const tombstonePersisted = await recordTombstone(collectionName, id, reason);
+    const tombstonePersisted = await recordTombstone(collectionName, id, reason, { failOnError: options.failOnError });
     if (!tombstonePersisted) {
-      console.error(`[FirestoreSync] Durable tombstone was not confirmed for ${collectionName}/${id}.`);
+      const error = new Error(`Durable tombstone was not confirmed for ${collectionName}/${id}.`);
+      console.error(`[FirestoreSync] ${error.message}`);
+      if (options.failOnError) throw error;
       return false;
     }
     const documentDeleted = await deleteFirestoreDoc(collectionName, id);
     if (!documentDeleted) {
-      console.error(`[FirestoreSync] Cloud deletion was not confirmed for ${collectionName}/${id}; durable tombstone is retained.`);
+      const error = new Error(`Cloud deletion was not confirmed for ${collectionName}/${id}; durable tombstone is retained.`);
+      console.error(`[FirestoreSync] ${error.message}`);
+      if (options.failOnError) throw error;
       return false;
     }
     console.log(`[FirestoreSync] Permanently deleted and tombstoned ${collectionName}/${id}`);
     return true;
   } catch (err) {
     console.warn(`[FirestoreSync] Failed to permanently delete ${collectionName}/${id}:`, err);
+    if (options.failOnError) throw err;
     return false;
   }
 }
-
 /**
  * Hydrates all Firestore data into local SQLite upon server startup.
  * Ensures:
@@ -106,31 +145,124 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const tombstones = await readDocs<{ id: string; targetId: string; collectionName: string }>('tombstones');
     const localTombstones = getAllLocalTombstoneSet();
     const tombstoneSet = new Set<string>(localTombstones);
+    // Only genuine core accounts are preserved from accidental lockout or test-run tombstones
     const PROTECTED_CORE_IDS = new Set([
       'usr_super_admin_001',
       'usr_user_at9767',
       'usr_student_demo_001',
-      'usr_bf97ebeeae7273b7',
-      'usr_mcq_admin_priyatca15',
     ]);
     const PROTECTED_CORE_EMAILS = new Set([
+      'support@caexamcheckerai.com',
       'caexamchecker.support@gmail.com',
       'at9767676@gmail.com',
       'student@caexamchecker.ai',
-      'adityakumart484@gmail.com',
-      'priyatca15@gmail.com',
     ]);
 
     for (const t of tombstones) {
       const col = t.collectionName || '';
-      const tid = t.targetId || t.id;
+      const rawTid = t.targetId || t.id;
+      const tid = rawTid ? rawTid.replace(new RegExp(`^${col}_`), '') : '';
       if (col && tid) {
         if (tid === 'usr_super_admin_001' || tid === 'usr_mcq_admin_priyatca15') continue;
         tombstoneSet.add(`${col}_${tid}`);
         tombstoneSet.add(`${col}:${tid}`);
         tombstoneSet.add(tid);
         recordLocalTombstone(col, tid, 'HYDRATED_TOMBSTONE');
+
+        // Clean up tombstoned records from local SQLite to prevent resurrection
+        try {
+          if (col === 'users') {
+            db.prepare('DELETE FROM users WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM evaluations WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(tid);
+            db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM assignment_submissions WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM exam_attempts WHERE student_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_memberships WHERE student_id = ?').run(tid);
+          } else if (col === 'student_profiles') {
+            db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(tid);
+          } else if (col === 'student_examiner_profiles') {
+            db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(tid);
+          } else if (col === 'reviews') {
+            db.prepare('DELETE FROM reviews WHERE id = ?').run(tid);
+          } else if (col === 'evaluations') {
+            db.prepare('DELETE FROM evaluations WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(tid);
+          } else if (col === 'evaluation_materials' || col === 'materials') {
+            db.prepare('DELETE FROM evaluation_materials WHERE id = ?').run(tid);
+          } else if (col === 'referral_redemptions') {
+            db.prepare('DELETE FROM referral_redemptions WHERE id = ?').run(tid);
+          } else if (col === 'institutes') {
+            db.prepare('DELETE FROM institutes WHERE id = ?').run(tid);
+            db.prepare('DELETE FROM batches WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_assignments WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_tests WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_materials WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_usage_ledger WHERE institute_id = ?').run(tid);
+            db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(tid);
+            db.prepare('UPDATE student_profiles SET institute_id = NULL, batch_id = NULL WHERE institute_id = ?').run(tid);
+          }
+        } catch {}
       }
+    }
+
+    // Purge any local SQLite users that are tombstoned in authoritative tombstone set
+    try {
+      const allLocalUsers = db.prepare('SELECT id, email FROM users').all() as Array<{ id: string; email: string }>;
+      for (const lu of allLocalUsers) {
+        const luEmail = String(lu.email || '').trim().toLowerCase();
+        const isTomb = tombstoneSet.has(`users_${lu.id}`) ||
+                       tombstoneSet.has(`users:${lu.id}`) ||
+                       tombstoneSet.has(lu.id) ||
+                       tombstoneSet.has(`users_${luEmail}`) ||
+                       tombstoneSet.has(luEmail);
+        if (isTomb) {
+          console.log(`[FirestoreSync] Purging tombstoned user from local SQLite during hydration: ${lu.id} (${luEmail})`);
+          db.prepare('DELETE FROM users WHERE id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_examiner_profiles WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM user_sessions WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM evaluations WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(lu.id);
+          db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM assignment_submissions WHERE student_id = ?').run(lu.id);
+          db.prepare('DELETE FROM institute_memberships WHERE student_id = ?').run(lu.id);
+        }
+      }
+    } catch (purgeErr) {
+      console.warn('[FirestoreSync] Failed to purge tombstoned users from SQLite:', purgeErr);
+    }
+
+    // Purge any local SQLite institutes that are tombstoned in authoritative tombstone set
+    try {
+      const allLocalInstitutes = db.prepare('SELECT id, code, email FROM institutes').all() as Array<{ id: string; code: string; email: string }>;
+      for (const li of allLocalInstitutes) {
+        const liEmail = String(li.email || '').trim().toLowerCase();
+        const liCode = String(li.code || '').trim();
+        const isTomb = tombstoneSet.has(`institutes_${li.id}`) ||
+                       tombstoneSet.has(`institutes:${li.id}`) ||
+                       tombstoneSet.has(li.id) ||
+                       (liCode && (tombstoneSet.has(`institutes_${liCode}`) || tombstoneSet.has(`institutes:${liCode}`) || tombstoneSet.has(liCode))) ||
+                       (liEmail && (tombstoneSet.has(`institutes_${liEmail}`) || tombstoneSet.has(liEmail)));
+        if (isTomb) {
+          console.log(`[FirestoreSync] Purging tombstoned institute from local SQLite during hydration: ${li.id} (${liCode})`);
+          db.prepare('DELETE FROM institutes WHERE id = ?').run(li.id);
+          db.prepare('DELETE FROM batches WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_assignments WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_tests WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_materials WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_usage_ledger WHERE institute_id = ?').run(li.id);
+          db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(li.id);
+          db.prepare('UPDATE student_profiles SET institute_id = NULL, batch_id = NULL WHERE institute_id = ?').run(li.id);
+        }
+      }
+    } catch (instPurgeErr) {
+      console.warn('[FirestoreSync] Failed to purge tombstoned institutes from SQLite:', instPurgeErr);
     }
 
     // 2. Hydrate Users
@@ -145,17 +277,29 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
 
       const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
-      const isDeletedStudent = (u.role || 'STUDENT') === 'STUDENT' && isEntityTombstoned(tombstoneSet, 'users', u.id);
-      if (isEntityTombstoned(tombstoneSet, 'users', u.id) && (!isProtected || isDeletedStudent)) continue;
+      const isDeletedStudent = (u.role || 'STUDENT') === 'STUDENT' && (
+        isEntityTombstoned(tombstoneSet, 'users', u.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', u.id) ||
+        isLocalTombstoned('users', normEmail)
+      );
+      const isUserTombstoned = isEntityTombstoned(tombstoneSet, 'users', u.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', u.id) ||
+        isLocalTombstoned('users', normEmail);
+      if (isUserTombstoned && (!isProtected || isDeletedStudent)) {
+        console.log(`[FirestoreSync] Skipping tombstoned user ${u.id} (${normEmail}) during hydration.`);
+        continue;
+      }
       try {
         let targetId = u.id;
         let targetRole = u.role || 'STUDENT';
         let targetStatus = u.status || 'ACTIVE';
 
         // Super Admin migration enforcement:
-        if (normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
+        if (normEmail === 'support@caexamcheckerai.com' || normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
           targetId = 'usr_super_admin_001';
-          normEmail = 'caexamchecker.support@gmail.com';
+          normEmail = 'support@caexamcheckerai.com';
           targetRole = 'SUPER_ADMIN';
           targetStatus = 'ACTIVE';
 
@@ -180,7 +324,18 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         }
 
         // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
-        const existingLocalUser = db.prepare('SELECT id, password_hash FROM users WHERE id = ? OR lower(email) = ?').get(targetId, normEmail) as { id: string; password_hash: string } | undefined;
+        const existingLocalUser = db.prepare(`
+          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, updated_at
+          FROM users WHERE id = ? OR lower(email) = ?
+        `).get(targetId, normEmail) as {
+          id: string;
+          password_hash: string;
+          mfa_enabled: number | null;
+          mfa_enrolled_at: string | null;
+          totp_secret: string | null;
+          mfa_reset_required: number | null;
+          updated_at: string | null;
+        } | undefined;
         const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
         const userClassification = u.account_classification || 'NORMAL';
 
@@ -190,13 +345,23 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           db.prepare('DELETE FROM users WHERE id = ?').run(collidingUser.id);
         }
 
-        const uMfaEnabled = u.mfa_enabled ? 1 : 0;
-        const uMfaEnrolledAt = u.mfa_enrolled_at || null;
-        const uTotpSecret = u.totp_secret || null;
+        const cloudMfaTimestamp = new Date(u._updatedAt || u.updated_at || u.mfa_enrolled_at || 0).getTime();
+        const localMfaTimestamp = new Date(existingLocalUser?.updated_at || existingLocalUser?.mfa_enrolled_at || 0).getTime();
+        const preserveNewerLocalMfa = Boolean(existingLocalUser && localMfaTimestamp > cloudMfaTimestamp);
+        const uMfaEnabled = preserveNewerLocalMfa || u.mfa_enabled === undefined || u.mfa_enabled === null
+          ? null
+          : u.mfa_enabled ? 1 : 0;
+        const uMfaEnrolledAt = preserveNewerLocalMfa || u.mfa_enrolled_at === undefined ? null : u.mfa_enrolled_at || null;
+        const uTotpSecret = preserveNewerLocalMfa || u.totp_secret === undefined ? null : u.totp_secret || null;
+        const uMfaResetRequired = preserveNewerLocalMfa || u.mfa_reset_required === undefined || u.mfa_reset_required === null
+          ? null
+          : u.mfa_reset_required === 1 ? 1 : 0;
+        const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
+        const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -211,14 +376,40 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             role = excluded.role,
             status = excluded.status,
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
-            mfa_enabled = CASE WHEN users.mfa_enabled = 1 THEN 1 ELSE excluded.mfa_enabled END,
-            mfa_enrolled_at = COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at),
-            totp_secret = COALESCE(users.totp_secret, excluded.totp_secret),
+            email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
+            email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
+            mfa_enabled = CASE
+              WHEN excluded.mfa_reset_required = 1 THEN 0
+              WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
+              WHEN excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL THEN 1
+              WHEN users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL THEN 1
+              WHEN users.mfa_reset_required = 1 AND excluded.mfa_enabled != 1 THEN users.mfa_enabled
+              ELSE COALESCE(excluded.mfa_enabled, users.mfa_enabled)
+            END,
+            mfa_enrolled_at = CASE
+              WHEN excluded.mfa_reset_required = 1 THEN NULL
+              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at, CURRENT_TIMESTAMP)
+              WHEN excluded.mfa_enabled IS NULL AND excluded.mfa_enrolled_at IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enrolled_at
+              WHEN users.mfa_reset_required = 1 AND excluded.mfa_enabled != 1 THEN users.mfa_enrolled_at
+              ELSE COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at)
+            END,
+            totp_secret = CASE
+              WHEN excluded.mfa_reset_required = 1 THEN NULL
+              WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret
+              ELSE users.totp_secret
+            END,
+            mfa_reset_required = CASE
+              WHEN excluded.mfa_reset_required IS NULL THEN users.mfa_reset_required
+              WHEN excluded.mfa_reset_required = 1 THEN 1
+              WHEN excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL THEN 0
+              ELSE excluded.mfa_reset_required
+            END,
             updated_at = CURRENT_TIMESTAMP
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
-          uMfaEnabled, uMfaEnrolledAt, uTotpSecret,
+          uEmailVerified, uEmailVerifiedAt,
+          uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
         );
         uHydrated++;
@@ -227,40 +418,129 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
     }
 
+    // 2.5 Hydrate Student Credit Purchases (Must precede student_profiles so lots are present)
+    const creditPurchasesEarly = await readDocs<any>('student_credit_purchases');
+    for (const cp of creditPurchasesEarly) {
+      const userActive = db.prepare('SELECT id FROM users WHERE id = ?').get(cp.user_id);
+      if (!userActive && (tombstoneSet.has(`student_credit_purchases_${cp.id}`) || tombstoneSet.has(cp.id))) continue;
+      try {
+        db.prepare(`
+          INSERT INTO student_credit_purchases (id, user_id, order_id, payment_id, credits_purchased, credits_remaining, valid_from, expires_at, purchase_date, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            credits_remaining = CASE
+              WHEN student_credit_purchases.credits_remaining < excluded.credits_remaining THEN student_credit_purchases.credits_remaining
+              ELSE excluded.credits_remaining
+            END,
+            status = CASE
+              WHEN student_credit_purchases.credits_remaining < excluded.credits_remaining THEN student_credit_purchases.status
+              ELSE excluded.status
+            END,
+            expires_at = excluded.expires_at,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          cp.id, cp.user_id, cp.order_id || null, cp.payment_id || null,
+          cp.credits_purchased || 0, cp.credits_remaining !== undefined ? cp.credits_remaining : (cp.credits_purchased || 0),
+          cp.valid_from || new Date().toISOString(), cp.expires_at || new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString(),
+          cp.purchase_date || new Date().toISOString(), cp.status || 'ACTIVE', cp.created_at || null
+        );
+      } catch (cpErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate credit purchase ${cp.id}:`, cpErr);
+      }
+    }
+
+    // 2.6 Hydrate Credit Ledger
+    const earlyLedger = await readDocs<any>('credit_ledger');
+    for (const c of earlyLedger) {
+      try {
+        db.prepare(`
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, payment_order_id, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO NOTHING
+        `).run(c.id, c.student_id, c.amount, c.source, c.balance_after || 0, c.evaluation_id || null, c.payment_order_id || null, c.note || '', c.created_at || null);
+      } catch {}
+    }
+
     // 3. Hydrate Student Profiles
     const profiles = await readDocs<any>('student_profiles');
     for (const p of profiles) {
       const uId = p.user_id || p.id;
-      if (isEntityTombstoned(tombstoneSet, 'student_profiles', uId)) continue;
+      const isProfileTombstoned = tombstoneSet.has(`student_profiles_${uId}`) ||
+                                  tombstoneSet.has(`student_profiles:${uId}`) ||
+                                  tombstoneSet.has(`users_${uId}`) ||
+                                  tombstoneSet.has(`users:${uId}`) ||
+                                  tombstoneSet.has(uId) ||
+                                  isLocalTombstoned('users', uId) ||
+                                  isLocalTombstoned('student_profiles', uId);
+      if (isProfileTombstoned) continue;
+      const userActive = db.prepare('SELECT id FROM users WHERE id = ?').get(uId);
+      if (!userActive) continue;
       try {
-        const authoritativeCredits = getValidStudentCreditBalance(uId);
-        const finalCredits = authoritativeCredits > 0 ? authoritativeCredits : (p.purchased_credits || 0);
+        const lotCount = db.prepare('SELECT COUNT(*) as count FROM student_credit_purchases WHERE user_id = ?').get(uId) as { count: number };
+        let finalCredits: number;
+        if (lotCount && lotCount.count > 0) {
+          finalCredits = getValidStudentCreditBalance(uId);
+        } else {
+          const dedCount = db.prepare('SELECT COUNT(*) as count FROM credit_ledger WHERE student_id = ? AND amount < 0').get(uId) as { count: number };
+          if (dedCount && dedCount.count > 0) {
+            finalCredits = 0;
+          } else {
+            finalCredits = p.purchased_credits || p.paid_credits || 0;
+          }
+        }
+
         db.prepare(`
-          INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO student_profiles (
+            user_id, student_code, icai_registration_number, ca_level,
+            free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+            purchased_credits, paid_credits, institute_id, batch_id, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(user_id) DO UPDATE SET
+            student_code = COALESCE(excluded.student_code, student_profiles.student_code),
             icai_registration_number = excluded.icai_registration_number,
             ca_level = excluded.ca_level,
-            free_evaluations_used = excluded.free_evaluations_used,
-            purchased_credits = ?,
+            free_evaluations_used = MAX(COALESCE(student_profiles.free_evaluations_used, 0), excluded.free_evaluations_used),
+            monthly_free_evaluations_used = CASE
+              WHEN COALESCE(student_profiles.free_evaluation_reset_month, '') = excluded.free_evaluation_reset_month
+              THEN MAX(COALESCE(student_profiles.monthly_free_evaluations_used, 0), excluded.monthly_free_evaluations_used)
+              ELSE excluded.monthly_free_evaluations_used
+            END,
+            monthly_free_evaluations_limit = COALESCE(excluded.monthly_free_evaluations_limit, student_profiles.monthly_free_evaluations_limit, 2),
+            free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
+            purchased_credits = excluded.purchased_credits,
+            paid_credits = excluded.paid_credits,
             institute_id = excluded.institute_id,
             batch_id = excluded.batch_id,
             updated_at = CURRENT_TIMESTAMP
         `).run(
-          uId, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
-          p.free_evaluations_used || 0, finalCredits,
-          p.institute_id || null, p.batch_id || null, p.created_at || null,
-          finalCredits
+          uId, p.student_code || p.studentCode || null, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
+          p.free_evaluations_used || 0,
+          p.monthly_free_evaluations_used || 0,
+          p.monthly_free_evaluations_limit || 2,
+          p.free_evaluation_reset_month || '2026-09',
+          finalCredits, finalCredits,
+          p.institute_id || null, p.batch_id || null, p.created_at || null
         );
-      } catch {
-        // ignore
+      } catch (spErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate student profile ${uId}:`, spErr);
       }
     }
 
     // 4. Hydrate Institutes
     const institutes = await readDocs<any>('institutes');
     for (const inst of institutes) {
-      if (tombstoneSet.has(`institutes_${inst.id}`)) continue;
+      const instCode = String(inst.code || '').trim();
+      const instEmail = String(inst.email || '').trim().toLowerCase();
+      const isTomb = tombstoneSet.has(`institutes_${inst.id}`) ||
+                     tombstoneSet.has(`institutes:${inst.id}`) ||
+                     tombstoneSet.has(inst.id) ||
+                     (instCode && (tombstoneSet.has(`institutes_${instCode}`) || tombstoneSet.has(`institutes:${instCode}`) || tombstoneSet.has(instCode))) ||
+                     (instEmail && (tombstoneSet.has(`institutes_${instEmail}`) || tombstoneSet.has(instEmail)));
+      if (isTomb) {
+        console.log(`[FirestoreSync] Skipping tombstoned institute during hydration: ${inst.id}`);
+        continue;
+      }
       try {
         db.prepare(`
           INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at, updated_at)
@@ -424,19 +704,28 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     for (const ev of evaluations) {
       fsEvalMap.add(ev.id);
-      // Tombstoned evaluations must always be deleted and skipped, with NO protected account bypass
-      if (tombstoneSet.has(`evaluations_${ev.id}`) || tombstoneSet.has(ev.id)) {
+      // Tombstoned evaluations or evaluations belonging to tombstoned students must always be deleted and skipped
+      const isStudentTombstoned = ev.student_id && (
+        tombstoneSet.has(`users_${ev.student_id}`) ||
+        tombstoneSet.has(`users:${ev.student_id}`) ||
+        tombstoneSet.has(ev.student_id) ||
+        isLocalTombstoned('users', ev.student_id)
+      );
+      if (tombstoneSet.has(`evaluations_${ev.id}`) || tombstoneSet.has(ev.id) || isLocalTombstoned('evaluations', ev.id) || isStudentTombstoned) {
         try {
           db.prepare('DELETE FROM evaluations WHERE id = ?').run(ev.id);
           db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(ev.id);
           db.prepare('DELETE FROM recheck_requests WHERE evaluation_id = ?').run(ev.id);
+          if (isStudentTombstoned) {
+            permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded cleanup of evaluation for tombstoned student ${ev.student_id}`).catch(() => {});
+          }
         } catch {}
         continue;
       }
       try {
         db.prepare(`
           INSERT INTO evaluations (
-            id, student_id, institute_id, sponsoring_institute_id, batch_id,
+            id, display_id, evaluation_sequence, student_id, institute_id, sponsoring_institute_id, batch_id,
             level, material_type, subject_key, subject_name, paper, attempt,
             checking_mode, evaluation_source, material_source, entitlement_source,
             consumed_from_institute_allocation, consumed_from_personal_credits,
@@ -445,8 +734,10 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             original_filename, current_evaluation_version_id, evaluation_version,
             admin_review_status, admin_reviewed_at, admin_reviewer_id, admin_reviewer_email, admin_review_notes,
             account_classification, created_at, completed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
+            display_id = COALESCE(excluded.display_id, evaluations.display_id),
+            evaluation_sequence = COALESCE(excluded.evaluation_sequence, evaluations.evaluation_sequence),
             student_id = excluded.student_id,
             status = excluded.status,
             total_marks = excluded.total_marks,
@@ -468,7 +759,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, evaluations.account_classification, 'NORMAL'),
             completed_at = excluded.completed_at
         `).run(
-          ev.id, ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
+          ev.id, ev.display_id || ev.displayId || null, ev.evaluation_sequence || ev.evaluationSequence || null,
+          ev.student_id, ev.institute_id || null, ev.sponsoring_institute_id || null, ev.batch_id || null,
           ev.level, ev.material_type || 'EXAM', ev.subject_key, ev.subject_name, ev.paper || 'Paper 1', ev.attempt || 'Current',
           ev.checking_mode || 'STANDARD', ev.evaluation_source || 'PUBLIC', ev.material_source || 'GLOBAL',
           ev.entitlement_source || 'PERSONAL_FREE', ev.consumed_from_institute_allocation || 0, ev.consumed_from_personal_credits || 0,
@@ -796,7 +1088,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             id, institute_id, title, level, subject_key, subject_name, paper, material_type,
             question_paper_text, question_paper_pdf_base64, suggested_answers_text, suggested_answers_pdf_base64,
             marking_scheme_text, marking_scheme_pdf_base64, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             question_paper_text = excluded.question_paper_text,
@@ -837,23 +1129,157 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       } catch {}
     }
 
-    // 14. Hydrate Student Reviews & Star Ratings
+    // 13B. Hydrate Referral Campaigns & Redemptions
+    const referralCampaigns = await readDocs<any>('referral_campaigns');
+    for (const c of referralCampaigns) {
+      if (tombstoneSet.has(`referral_campaigns_${c.code}`) || tombstoneSet.has(c.code)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO referral_campaigns (
+            code, campaign_name, description, benefit_type, benefit_duration_days,
+            max_redemptions, max_evaluations, is_active, status, start_date, end_date,
+            user_type, terms_notes, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(code) DO UPDATE SET
+            campaign_name = excluded.campaign_name,
+            description = excluded.description,
+            benefit_type = excluded.benefit_type,
+            benefit_duration_days = excluded.benefit_duration_days,
+            max_redemptions = excluded.max_redemptions,
+            max_evaluations = excluded.max_evaluations,
+            is_active = excluded.is_active,
+            status = excluded.status,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date,
+            user_type = excluded.user_type,
+            terms_notes = excluded.terms_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          c.code, c.campaign_name || c.campaignName || `${c.code} Promo`,
+          c.description || null, c.benefit_type || '1_MONTH_FREE_ACCESS',
+          c.benefit_duration_days || c.benefitDurationDays || 30,
+          c.max_redemptions ?? c.maxRedemptions ?? 20,
+          c.max_evaluations ?? c.maxEvaluations ?? 15,
+          c.is_active !== undefined ? (c.is_active ? 1 : 0) : (c.isActive !== undefined ? (c.isActive ? 1 : 0) : 1),
+          c.status || 'ACTIVE',
+          c.start_date || c.startDate || null,
+          c.end_date || c.endDate || null,
+          c.user_type || c.userType || 'ALL',
+          c.terms_notes || c.termsNotes || null,
+          c.created_at || c.createdAt || null
+        );
+      } catch (cErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate referral campaign ${c.code}:`, cErr);
+      }
+    }
+
+    const referralRedemptions = await readDocs<any>('referral_redemptions');
+    for (const r of referralRedemptions) {
+      if (tombstoneSet.has(`referral_redemptions_${r.id}`) || tombstoneSet.has(r.id)) continue;
+      const targetUserId = r.user_id || r.userId;
+      if (!targetUserId) continue;
+
+      if (
+        tombstoneSet.has(`users_${targetUserId}`) ||
+        tombstoneSet.has(`users:${targetUserId}`) ||
+        tombstoneSet.has(targetUserId)
+      ) {
+        continue;
+      }
+
+      // Verify user exists to satisfy SQLite foreign key
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+      if (!userExists) {
+        continue;
+      }
+
+      try {
+        db.prepare(`
+          INSERT INTO referral_redemptions (
+            id, referral_code, user_id, user_email, benefit_type,
+            redemption_number, redeemed_at, expiry_date, status,
+            max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            referral_code = excluded.referral_code,
+            user_id = excluded.user_id,
+            user_email = excluded.user_email,
+            benefit_type = excluded.benefit_type,
+            redemption_number = excluded.redemption_number,
+            expiry_date = excluded.expiry_date,
+            status = excluded.status,
+            max_evaluations = excluded.max_evaluations,
+            evaluations_used = excluded.evaluations_used,
+            evaluations_remaining = excluded.evaluations_remaining,
+            audit_note = excluded.audit_note,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          r.id, r.referral_code || r.referralCode,
+          targetUserId, r.user_email || r.userEmail || '',
+          r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
+          r.redemption_number ?? r.redemptionNumber ?? 1,
+          r.redeemed_at || r.redeemedAt || new Date().toISOString(),
+          r.expiry_date || r.expiryDate || new Date().toISOString(),
+          r.status || 'ACTIVE',
+          r.max_evaluations ?? r.maxEvaluations ?? 15,
+          r.evaluations_used ?? r.evaluationsUsed ?? 0,
+          r.evaluations_remaining ?? r.evaluationsRemaining ?? 15,
+          r.audit_note || r.auditNote || null,
+          r.created_at || r.createdAt || null
+        );
+      } catch (rErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate referral redemption ${r.id}:`, rErr);
+      }
+    }
+
+    // 14. Hydrate Student Reviews & Star Ratings with complete metadata
     const reviews = await readDocs<any>('reviews');
     for (const rev of reviews) {
       if (tombstoneSet.has(`reviews_${rev.id}`)) continue;
       try {
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) {
+          tags = JSON.stringify(tags);
+        } else if (typeof tags !== 'string') {
+          tags = null;
+        }
+
         db.prepare(`
           INSERT INTO reviews (
             id, user_id, student_name, student_email, display_name, ca_level,
-            rating, review_text, status, moderation_note, approved_at, approved_by,
-            rejected_at, rejected_by, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP
+          )
           ON CONFLICT(id) DO UPDATE SET
+            student_name = COALESCE(excluded.student_name, reviews.student_name),
+            student_email = COALESCE(excluded.student_email, reviews.student_email),
             display_name = excluded.display_name,
             ca_level = excluded.ca_level,
             rating = excluded.rating,
             review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
             status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
             moderation_note = excluded.moderation_note,
             approved_at = excluded.approved_at,
             approved_by = excluded.approved_by,
@@ -863,9 +1289,20 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
           rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
-          rev.review_text || '', rev.status || 'PENDING', rev.moderation_note || null,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? (rev.isVerifiedEvaluation ? 1 : 0) ?? 1,
+          rev.moderation_note || null,
           rev.approved_at || null, rev.approved_by || null, rev.rejected_at || null,
-          rev.rejected_by || null, rev.created_at || null
+          rev.rejected_by || null, rev.created_at || rev.createdAt || null
         );
       } catch (rErr) {
         console.warn(`[FirestoreSync] Failed to hydrate review ${rev.id}:`, rErr);
@@ -881,29 +1318,52 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     for (const orphan of orphanStudents) {
       if (!orphan.student_id) continue;
+      const sid = orphan.student_id;
+      const isStudentTombstoned = tombstoneSet.has(`users_${sid}`) ||
+                                  tombstoneSet.has(`users:${sid}`) ||
+                                  tombstoneSet.has(sid) ||
+                                  tombstoneSet.has(`student_profiles_${sid}`) ||
+                                  isLocalTombstoned('users', sid);
+
+      if (isStudentTombstoned) {
+        console.log(`[FirestoreSync] Step 15: Skipping recreation of tombstoned student ${sid}. Resolving dangling evaluations.`);
+        try {
+          const danglingEvals = db.prepare('SELECT id FROM evaluations WHERE student_id = ?').all(sid) as Array<{ id: string }>;
+          for (const dev of danglingEvals) {
+            db.prepare('DELETE FROM evaluations WHERE id = ?').run(dev.id);
+            db.prepare('DELETE FROM evaluation_materials WHERE evaluation_id = ?').run(dev.id);
+            db.prepare('DELETE FROM evaluation_versions WHERE evaluation_id = ?').run(dev.id);
+            permanentlyDeleteFromFirestore('evaluations', dev.id, `Cascaded cleanup of dangling evaluation for tombstoned student ${sid}`).catch(() => {});
+          }
+        } catch (cleanErr) {
+          console.warn(`[FirestoreSync] Failed to clean dangling evaluations for tombstoned student ${sid}:`, cleanErr);
+        }
+        continue;
+      }
+
       try {
         db.prepare(`
           INSERT INTO users (id, email, password_hash, full_name, phone, role, status, created_at, updated_at)
           VALUES (?, ?, ?, 'CA Student', '+919876543210', 'STUDENT', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO NOTHING
-        `).run(orphan.student_id, `student_${orphan.student_id}@caexamchecker.ai`, 'PERSISTED_HASH');
+        `).run(sid, `student_${sid}@caexamchecker.ai`, 'PERSISTED_HASH');
 
         db.prepare(`
           INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
           VALUES (?, 'WRO123456', 'INTERMEDIATE', 0, 0)
           ON CONFLICT(user_id) DO NOTHING
-        `).run(orphan.student_id);
+        `).run(sid);
 
-        syncRecordToFirestore('users', orphan.student_id, {
-          id: orphan.student_id,
-          email: `student_${orphan.student_id}@caexamchecker.ai`,
+        syncRecordToFirestore('users', sid, {
+          id: sid,
+          email: `student_${sid}@caexamchecker.ai`,
           full_name: 'CA Student',
           role: 'STUDENT',
           status: 'ACTIVE',
           created_at: new Date().toISOString()
         }).catch(() => {});
       } catch (err) {
-        console.warn(`[FirestoreSync] Auto-heal notice for student ${orphan.student_id}:`, err);
+        console.warn(`[FirestoreSync] Auto-heal notice for student ${sid}:`, err);
       }
     }
 
@@ -944,22 +1404,97 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       } catch {}
     }
 
+    // 16.5 Hydrate 365-Day Trusted Devices from Cloud Firestore
+    try {
+      const { ensureTrustedDevicesTable } = await import('./trustService.js');
+      ensureTrustedDevicesTable();
+      const trustedDevicesDocs = await readDocs<any>('trusted_devices');
+      // Sort ascending by last_used_at/trusted_at so the latest state for any (user_id, device_id) wins on insert conflict
+      trustedDevicesDocs.sort((a: any, b: any) => {
+        const timeA = new Date(a.last_used_at || a.trusted_at || 0).getTime();
+        const timeB = new Date(b.last_used_at || b.trusted_at || 0).getTime();
+        return timeA - timeB;
+      });
+      for (const td of trustedDevicesDocs) {
+        try {
+          db.prepare(`
+            INSERT INTO trusted_devices (
+              id, user_id, device_id, trust_token_hash, device_name, user_agent, ip_address, status, trusted_at, expires_at, last_used_at, revoked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, COALESCE(?, CURRENT_TIMESTAMP), ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+              trust_token_hash = excluded.trust_token_hash,
+              device_name = COALESCE(excluded.device_name, trusted_devices.device_name),
+              user_agent = COALESCE(excluded.user_agent, trusted_devices.user_agent),
+              ip_address = COALESCE(excluded.ip_address, trusted_devices.ip_address),
+              status = excluded.status,
+              expires_at = excluded.expires_at,
+              last_used_at = excluded.last_used_at,
+              revoked_at = excluded.revoked_at
+          `).run(
+            td.id,
+            td.user_id,
+            td.device_id,
+            td.trust_token_hash,
+            td.device_name || null,
+            td.user_agent || null,
+            td.ip_address || null,
+            td.status || 'ACTIVE',
+            td.trusted_at || null,
+            td.expires_at || null,
+            td.last_used_at || null,
+            td.revoked_at || null
+          );
+        } catch {}
+      }
+    } catch (tdErr) {
+      console.warn('[FirestoreSync] Failed to hydrate trusted_devices:', tdErr);
+    }
+
     // 17. Reconcile and permanently heal MFA status for all enrolled accounts across SQLite and Firestore
     try {
-      const healResult = db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 1,
-            mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE mfa_enabled != 1 AND (
-          id IN (SELECT DISTINCT user_id FROM mfa_authenticators)
-          OR id IN (SELECT DISTINCT user_id FROM mfa_recovery_codes)
-          OR mfa_enrolled_at IS NOT NULL
-          OR totp_secret IS NOT NULL
-        )
-      `).run();
-      if (healResult.changes > 0) {
-        console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${healResult.changes} user account(s).`);
+      // Find candidate users with either a stored secret or an authenticator record
+      const candidateMfaUsers = db.prepare(`
+        SELECT DISTINCT id, email, totp_secret, mfa_enabled, mfa_reset_required FROM users
+        WHERE totp_secret IS NOT NULL
+           OR id IN (SELECT DISTINCT user_id FROM mfa_authenticators WHERE totp_secret IS NOT NULL)
+      `).all() as Array<{ id: string; email: string; totp_secret: string | null; mfa_enabled: number; mfa_reset_required: number }>;
+
+      let restoredCount = 0;
+      for (const u of candidateMfaUsers) {
+        const authRow = db.prepare(`
+          SELECT totp_secret FROM mfa_authenticators WHERE user_id = ? AND totp_secret IS NOT NULL LIMIT 1
+        `).get(u.id) as { totp_secret: string } | undefined;
+
+        const effectiveEncrypted = u.totp_secret || authRow?.totp_secret || null;
+        const userSecDec = decryptMfaSecret(effectiveEncrypted);
+        const hasValidSecret = Boolean(userSecDec && userSecDec.length >= 16);
+
+        if (hasValidSecret) {
+          // If a valid authenticator secret exists, the user is authoritatively enrolled!
+          if (u.mfa_enabled !== 1 || u.mfa_reset_required === 1) {
+            db.prepare(`
+              UPDATE users
+              SET mfa_enabled = 1,
+                  mfa_reset_required = 0,
+                  totp_secret = COALESCE(totp_secret, ?),
+                  mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(effectiveEncrypted, u.id);
+            restoredCount++;
+          }
+
+          // Ensure Cloud Firestore document reflects verified enrollment
+          setFirestoreDoc('users', u.id, {
+            mfa_enabled: 1,
+            mfa_reset_required: 0,
+            totp_secret: effectiveEncrypted,
+            updated_at: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }
+      if (restoredCount > 0) {
+        console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${restoredCount} user account(s).`);
       }
 
       // Firestore is hydrated into SQLite; startup must not push this local
@@ -969,6 +1504,36 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
     }
 
+    // 18. Reconcile and synchronize all student credit balances across SQLite and Cloud Firestore
+    try {
+      const creditRecon = await reconcileAllStudentCredits();
+      console.log(`[FirestoreSync] Post-hydration: Reconciled credits for ${creditRecon.reconciledStudents} student(s) (${creditRecon.totalActiveCredits} total active credits).`);
+    } catch (credReconErr) {
+      console.warn('[FirestoreSync] Post-hydration credit reconciliation notice:', credReconErr);
+    }
+
+    // The administrator-approved routing document is the sole model-routing source of truth.
+    try {
+      const fsModelConfig = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: requireComplete });
+      if (fsModelConfig) {
+        const { APPROVED_MODELS } = await import('../models/modelRegistry.js');
+        const { validateModelRoutingConfiguration, applyModelRoutingConfiguration } = await import('./modelRoutingConfig.js');
+        const validation = validateModelRoutingConfiguration(fsModelConfig, APPROVED_MODELS.map((model) => model.id));
+        if ('error' in validation) throw new Error(`Persisted model routing configuration is invalid: ${validation.error}`);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          applyModelRoutingConfiguration(db, validation.config, APPROVED_MODELS.map((model) => model.id));
+          db.exec('COMMIT');
+        } catch (applyError) {
+          db.exec('ROLLBACK');
+          throw applyError;
+        }
+        console.log(`[FirestoreSync] Applied authoritative evaluation routing config (${validation.config.primaryModel}).`);
+      }
+    } catch (modelReconErr) {
+      console.warn('[FirestoreSync] Post-hydration model configuration notice:', modelReconErr);
+      if (requireComplete) throw modelReconErr;
+    }
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
@@ -1029,7 +1594,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUserQuery = `
       SELECT * FROM users 
       WHERE email IN (
-        'caexamchecker.support@gmail.com',
+        'support@caexamcheckerai.com',
         'institute@apexca.edu',
         'student@caexamchecker.ai',
         'at9767676@gmail.com'
@@ -1038,7 +1603,11 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUsers = db.prepare(baselineUserQuery).all() as any[];
     for (const bu of baselineUsers) {
       const normEmail = String(bu.email || '').toLowerCase().trim();
-      if (isEntityTombstoned(tombstoneSet, 'users', bu.id)) {
+      const isBaselineUserTombstoned = isEntityTombstoned(tombstoneSet, 'users', bu.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', bu.id) ||
+        isLocalTombstoned('users', normEmail);
+      if (isBaselineUserTombstoned) {
         console.info(`[FirestoreSync] Skipping tombstoned baseline user ${bu.id}; account seeding cannot restore deleted users.`);
         continue;
       }
@@ -1047,8 +1616,27 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
         const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
         if (profile) {
           await setFirestoreDoc('student_profiles', bu.id, profile);
+          const lots = db.prepare('SELECT * FROM student_credit_purchases WHERE user_id = ?').all(bu.id) as any[];
+          for (const lot of lots) {
+            await setFirestoreDoc('student_credit_purchases', lot.id, lot);
+          }
         }
         console.log(`[FirestoreSync] Seeded baseline user ${bu.email} (${bu.id}) to Cloud Firestore.`);
+      } else if (bu.role === 'STUDENT') {
+        const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
+        if (profile) {
+          const fsProfile = await getFirestoreDoc<any>('student_profiles', bu.id);
+          if (!fsProfile) {
+            await setFirestoreDoc('student_profiles', bu.id, profile);
+          }
+          const lots = db.prepare('SELECT * FROM student_credit_purchases WHERE user_id = ?').all(bu.id) as any[];
+          for (const lot of lots) {
+            const fsLot = await getFirestoreDoc<any>('student_credit_purchases', lot.id);
+            if (!fsLot) {
+              await setFirestoreDoc('student_credit_purchases', lot.id, lot);
+            }
+          }
+        }
       } else if (bu.role === 'SUPER_ADMIN') {
         // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
         // while preserving existing MFA enrollment state
@@ -1081,7 +1669,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     }
 
     // Clean up old support admin document in Firestore if it had a different id
-    const oldSupportDoc = existingUsers.find((u) => u.email === 'caexamchecker.support@gmail.com' && u.id !== 'usr_super_admin_001');
+    const oldSupportDoc = existingUsers.find((u) => (u.email === 'caexamchecker.support@gmail.com' || u.email === 'support@caexamcheckerai.com') && u.id !== 'usr_super_admin_001');
     if (oldSupportDoc) {
       await deleteFirestoreDoc('users', oldSupportDoc.id).catch(() => {});
       console.log(`[FirestoreSync] Cleaned up legacy support admin doc ${oldSupportDoc.id} in Firestore.`);
@@ -1119,6 +1707,51 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       }
     } else {
       console.log('[FirestoreSync] Authoritative evaluations exist in Cloud Firestore; skipping baseline evaluation re-seeding to prevent reintroducing stale or deleted records.');
+    }
+
+    // Seed Referral Campaigns to Cloud Firestore if empty
+    const existingFsCampaigns = await getAllFirestoreDocs<any>('referral_campaigns');
+    if (existingFsCampaigns.length === 0) {
+      console.log('[FirestoreSync] Seeding baseline referral campaigns to Cloud Firestore...');
+      const localCampaigns = db.prepare('SELECT * FROM referral_campaigns').all() as any[];
+      for (const lc of localCampaigns) {
+        if (!tombstoneSet.has(`referral_campaigns_${lc.code}`) && !tombstoneSet.has(lc.code)) {
+          await setFirestoreDoc('referral_campaigns', lc.code, lc);
+        }
+      }
+    }
+
+    // Seed Referral Redemptions to Cloud Firestore if empty
+    const existingFsRedemptions = await getAllFirestoreDocs<any>('referral_redemptions');
+    if (existingFsRedemptions.length === 0) {
+      const localRedemptions = db.prepare('SELECT * FROM referral_redemptions').all() as any[];
+      if (localRedemptions.length > 0) {
+        console.log(`[FirestoreSync] Seeding ${localRedemptions.length} referral redemption(s) to Cloud Firestore...`);
+        for (const lr of localRedemptions) {
+          if (!tombstoneSet.has(`referral_redemptions_${lr.id}`) && !tombstoneSet.has(lr.id)) {
+            await setFirestoreDoc('referral_redemptions', lr.id, lr);
+          }
+        }
+      }
+    }
+
+    // Seed Student Reviews to Cloud Firestore if empty
+    const existingFsReviews = await getAllFirestoreDocs<any>('reviews');
+    if (existingFsReviews.length === 0) {
+      console.log('[FirestoreSync] Seeding baseline reviews to Cloud Firestore...');
+      const localReviews = db.prepare('SELECT * FROM reviews').all() as any[];
+      for (const lr of localReviews) {
+        if (!tombstoneSet.has(`reviews_${lr.id}`) && !tombstoneSet.has(lr.id)) {
+          let tags = lr.experience_tags;
+          if (typeof tags === 'string') {
+            try { tags = JSON.parse(tags); } catch { tags = []; }
+          }
+          await setFirestoreDoc('reviews', lr.id, {
+            ...lr,
+            experience_tags: tags || [],
+          });
+        }
+      }
     }
   } catch (err) {
     console.warn('[FirestoreSync] Baseline seeding warning:', err);

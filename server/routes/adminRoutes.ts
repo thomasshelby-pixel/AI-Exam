@@ -1,5 +1,6 @@
 import { Router, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
+import { getServerPort } from '../config/serverPort.js';
 import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
 import {
   getAllFeatures,
@@ -10,9 +11,9 @@ import {
   removeTesterFromFeature,
   FeatureApplication,
 } from '../services/featureControlService.js';
-import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -34,7 +35,6 @@ import {
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
 import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
-import { APPROVED_MODELS } from '../models/modelRegistry.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -64,6 +64,7 @@ import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
+import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
@@ -75,6 +76,21 @@ import {
   computeContentHash,
   normalizeExtractedContent,
 } from '../services/materialDuplicateProtectionService.js';
+import {
+  sanitizeSecretStrings,
+  getEvaluationModelRegistry,
+  validateEvaluationModelId,
+  EVALUATION_MODEL_REGISTRY,
+  APPROVED_MODELS,
+  DEFAULT_FALLBACK_CHAIN,
+} from '../models/modelRegistry.js';
+import {
+  estimateRecipients,
+  sendTestNotification,
+  createAndDispatchBroadcast,
+  getBroadcastCampaigns,
+  getCampaignDetails,
+} from '../services/notificationService.js';
 
 const router = Router();
 
@@ -354,7 +370,7 @@ router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response)
 });
 
 // Adjust student credits manually
-router.post('/students/:id/adjust-credits', (req: AuthRequest, res: Response) => {
+router.post('/students/:id/adjust-credits', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     const { creditsDelta, reason } = req.body;
@@ -381,9 +397,19 @@ router.post('/students/:id/adjust-credits', (req: AuthRequest, res: Response) =>
       });
       newBalance = lotRes.totalValidCredits;
     } else {
-      newBalance = Math.max(0, getValidStudentCreditBalance(studentId) + delta);
-      db.prepare('UPDATE student_profiles SET purchased_credits = ? WHERE user_id = ?').run(newBalance, studentId);
+      let toDeduct = Math.abs(delta);
+      while (toDeduct > 0) {
+        try {
+          consumeCreditFEFO(studentId, `admin_adj_${Date.now()}_${toDeduct}`);
+          toDeduct--;
+        } catch {
+          break;
+        }
+      }
+      newBalance = getValidStudentCreditBalance(studentId);
     }
+
+    await syncStudentCreditsToFirestore(studentId);
 
     // Ledger record
     db.prepare(`
@@ -1491,13 +1517,36 @@ router.get('/evaluation-controls', (req: AuthRequest, res: Response) => {
       settingsMap[r.key] = r.value;
     }
 
+    const { models, defaultModelId } = getEvaluationModelRegistry();
+    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
+
     return res.json({
       settings: settingsMap,
       definitions: rows,
+      modelRegistry: models,
+      defaultModelId,
+      geminiConfigured: isGeminiConfigured,
     });
   } catch (error: unknown) {
     console.error('Get evaluation controls error:', error);
     return res.status(500).json({ error: 'Failed to load evaluation controls' });
+  }
+});
+
+router.get('/evaluation-controls/model-registry', (req: AuthRequest, res: Response) => {
+  try {
+    const { models, defaultModelId } = getEvaluationModelRegistry();
+    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 5);
+
+    return res.json({
+      models,
+      defaultModelId,
+      geminiConfigured: isGeminiConfigured,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: unknown) {
+    console.error('Get evaluation model registry error:', error);
+    return res.status(500).json({ error: 'Failed to load evaluation model registry' });
   }
 });
 
@@ -1506,6 +1555,18 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
     const settings = req.body;
     if (!settings || typeof settings !== 'object') {
       return res.status(400).json({ error: 'Invalid settings object' });
+    }
+
+    // SERVER-SIDE MODEL VALIDATION: Ensure selected model is an approved, non-deprecated evaluation model
+    if (settings.EVAL_MODEL_PROVIDER !== undefined) {
+      const modelId = String(settings.EVAL_MODEL_PROVIDER).trim();
+      const validation = validateEvaluationModelId(modelId);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: validation.error || `Invalid model identifier: '${modelId}'`,
+          modelId,
+        });
+      }
     }
 
     const updateStmt = db.prepare(`
@@ -1520,6 +1581,12 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Synchronize model_configs is_primary state with EVAL_MODEL_PROVIDER
+    if (settings.EVAL_MODEL_PROVIDER) {
+      const selectedModelId = String(settings.EVAL_MODEL_PROVIDER).trim();
+      db.prepare('UPDATE model_configs SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END').run(selectedModelId);
+    }
+
     // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, details)
@@ -1527,7 +1594,7 @@ router.put('/evaluation-controls', (req: AuthRequest, res: Response) => {
     `).run(
       `log_${crypto.randomBytes(8).toString('hex')}`,
       req.user!.id,
-      `Admin updated evaluation rules: ${Object.keys(settings).join(', ')}`
+      `Admin updated evaluation rules: ${Object.keys(settings).join(', ')}${settings.EVAL_MODEL_PROVIDER ? ` (Model: ${settings.EVAL_MODEL_PROVIDER})` : ''}`
     );
 
     return res.json({ success: true, message: 'Evaluation controls updated successfully' });
@@ -1587,12 +1654,12 @@ router.put('/institutes/:id/classification', (req: AuthRequest, res: Response) =
 });
 
 // Delete Institute Account (SUPER ADMIN ONLY)
-router.delete('/institutes/:id', (req: AuthRequest, res: Response) => {
+router.delete('/institutes/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = deleteInstituteAccount(req.params.id, req.user!, ipAddress, userAgent);
+    const result = await deleteInstituteAccount(req.params.id, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete institute error:', error);
@@ -1867,12 +1934,41 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const { search, caLevel, classification } = req.query;
     let query = `
       SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at,
+             p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
              p.city,
              i.name as institute_name,
              pfe.is_active as permanent_free_active,
              COUNT(e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage
+             AVG(e.percentage) as average_percentage,
+             COALESCE((
+               SELECT SUM(r.max_evaluations)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_granted,
+             COALESCE((
+               SELECT SUM(r.evaluations_used)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_consumed,
+             COALESCE((
+               SELECT SUM(r.evaluations_remaining)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_remaining,
+             (
+               SELECT r.referral_code
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_code,
+             (
+               SELECT r.expiry_date
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_expiry
       FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
@@ -1883,8 +1979,8 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const params: any[] = [];
 
     if (search) {
-      query += ' AND (u.email LIKE ? OR u.full_name LIKE ? OR p.icai_registration_number LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.email LIKE ? OR u.full_name LIKE ? OR p.icai_registration_number LIKE ? OR p.student_code LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (caLevel && caLevel !== 'ALL') {
       query += ' AND p.ca_level = ?';
@@ -1896,7 +1992,39 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     }
 
     query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
-    const students = db.prepare(query).all(...params);
+    const rawStudents = db.prepare(query).all(...params) as any[];
+
+    // Authoritative enrichment using existing student evaluation entitlement and credit status systems
+    const students = rawStudents.map((st) => {
+      const entitlement = getStudentEntitlement(st.id, 'PUBLIC');
+      const monthlyStatus = ensureMonthlyFreeEvaluationsReset(st.id);
+      const creditStatus = getStudentCreditStatus(st.id);
+      const isPermanentFree = Boolean(st.permanent_free_active || entitlement.hasPermanentFreeAccess);
+      const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
+      const validPaidCredits = creditStatus.totalValidCredits ?? 0;
+      const promoRemaining = Number(st.promo_evaluations_remaining || 0);
+
+      // Total usable available evaluations based on authoritative calculation:
+      // If student has permanent free access: unlimited (-1 sentinel or handled via isPermanentFree)
+      // Otherwise: sum of usable entitlements (monthly free remaining + promo remaining + valid paid credits)
+      const totalAvailableEvaluations = isPermanentFree
+        ? 9999
+        : (monthlyFreeRemaining + promoRemaining + validPaidCredits);
+
+      return {
+        ...st,
+        permanent_free_active: isPermanentFree ? 1 : 0,
+        has_permanent_free_access: isPermanentFree,
+        monthly_free_evaluations_remaining: monthlyFreeRemaining,
+        monthly_free_evaluations_used: monthlyStatus.monthlyFreeEvaluationsUsed ?? 0,
+        monthly_free_evaluations_limit: monthlyStatus.monthlyFreeEvaluationsLimit ?? 2,
+        purchased_credits: validPaidCredits,
+        paid_credits: validPaidCredits,
+        total_available_evaluations: totalAvailableEvaluations,
+        entitlement_tier: entitlement.tier,
+      };
+    });
+
     return res.json({ students });
   } catch (error: unknown) {
     console.error('Get students error:', error);
@@ -1908,15 +2036,44 @@ router.get('/students', (req: AuthRequest, res: Response) => {
 router.get('/students/:id', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
-    const student = db.prepare(`
+    const studentRaw = db.prepare(`
       SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at, u.updated_at,
+             p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
              p.city, p.preferred_subjects,
              i.id as institute_id, i.name as institute_name,
              b.id as batch_id, b.name as batch_name,
              pfe.is_active as permanent_free_active,
              COUNT(DISTINCT e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage
+             AVG(e.percentage) as average_percentage,
+             COALESCE((
+               SELECT SUM(r.max_evaluations)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_granted,
+             COALESCE((
+               SELECT SUM(r.evaluations_used)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_consumed,
+             COALESCE((
+               SELECT SUM(r.evaluations_remaining)
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+             ), 0) as promo_evaluations_remaining,
+             (
+               SELECT r.referral_code
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_code,
+             (
+               SELECT r.expiry_date
+               FROM referral_redemptions r
+               WHERE r.user_id = u.id AND r.status = 'ACTIVE' AND datetime(r.expiry_date) > datetime('now')
+               ORDER BY r.expiry_date DESC LIMIT 1
+             ) as active_promo_expiry
       FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
@@ -1925,9 +2082,9 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
       WHERE u.id = ? AND u.role = 'STUDENT'
       GROUP BY u.id
-    `).get(studentId);
+    `).get(studentId) as any;
 
-    if (!student) {
+    if (!studentRaw) {
       return res.status(404).json({ error: 'Student not found.' });
     }
 
@@ -1949,10 +2106,46 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LIMIT 10
     `).all(studentId);
 
+    // Promo code redemptions history for this student
+    const promoRedemptions = db.prepare(`
+      SELECT id, referral_code, benefit_type, status, max_evaluations, evaluations_used, evaluations_remaining,
+             redeemed_at, expiry_date, revoked_at, revoked_by, revocation_reason, audit_note, created_at, updated_at
+      FROM referral_redemptions
+      WHERE user_id = ?
+      ORDER BY redeemed_at DESC
+    `).all(studentId);
+
+    // Authoritative enrichment using existing student evaluation entitlement and credit status systems
+    const entitlement = getStudentEntitlement(studentId, 'PUBLIC');
+    const monthlyStatus = ensureMonthlyFreeEvaluationsReset(studentId);
+    const creditStatus = getStudentCreditStatus(studentId);
+    const isPermanentFree = Boolean(studentRaw.permanent_free_active || entitlement.hasPermanentFreeAccess);
+    const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
+    const validPaidCredits = creditStatus.totalValidCredits ?? 0;
+    const promoRemaining = Number(studentRaw.promo_evaluations_remaining || 0);
+
+    const totalAvailableEvaluations = isPermanentFree
+      ? 9999
+      : (monthlyFreeRemaining + promoRemaining + validPaidCredits);
+
+    const student = {
+      ...studentRaw,
+      permanent_free_active: isPermanentFree ? 1 : 0,
+      has_permanent_free_access: isPermanentFree,
+      monthly_free_evaluations_remaining: monthlyFreeRemaining,
+      monthly_free_evaluations_used: monthlyStatus.monthlyFreeEvaluationsUsed ?? 0,
+      monthly_free_evaluations_limit: monthlyStatus.monthlyFreeEvaluationsLimit ?? 2,
+      purchased_credits: validPaidCredits,
+      paid_credits: validPaidCredits,
+      total_available_evaluations: totalAvailableEvaluations,
+      entitlement_tier: entitlement.tier,
+    };
+
     return res.json({
       student,
       recentEvaluations: recentEvals,
       creditLedger,
+      promoRedemptions,
     });
   } catch (error: unknown) {
     console.error('Get student details error:', error);
@@ -2504,7 +2697,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const { status, level, search, classification, source } = req.query;
     let query = `
-      SELECT e.id, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
+      SELECT e.id, e.display_id, e.evaluation_sequence, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
              e.paper, e.attempt, COALESCE(e.evaluation_source, 'PUBLIC') as evaluation_source, e.institute_id, e.sponsoring_institute_id,
              e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
              e.grade, e.confidence_score, e.status, e.document_validation_status,
@@ -2512,6 +2705,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
              e.created_at, e.completed_at,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
              COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
+             p.student_code,
              p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
@@ -2539,8 +2733,8 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(source);
     }
     if (search) {
-      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ? OR e.paper LIKE ? OR i.name LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      query += ' AND (u.full_name LIKE ? OR u.email LIKE ? OR e.subject_name LIKE ? OR e.id LIKE ? OR e.display_id LIKE ? OR p.student_code LIKE ? OR e.paper LIKE ? OR i.name LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     query += ' ORDER BY e.created_at DESC LIMIT 300';
@@ -2558,22 +2752,23 @@ router.get('/evaluations/:id', (req: AuthRequest, res: Response) => {
       SELECT e.*,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
              COALESCE(u.email, 'student@caexamchecker.ai') as student_email,
+             p.student_code,
              p.icai_registration_number,
              i.name as institute_name
       FROM evaluations e
       LEFT JOIN users u ON u.id = e.student_id
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = COALESCE(e.institute_id, e.sponsoring_institute_id)
-      WHERE e.id = ?
-    `).get(req.params.id);
+      WHERE e.id = ? OR e.display_id = ?
+    `).get(req.params.id, req.params.id);
 
     if (!evaluation) {
       // Check if deleted
       const wasDeleted = db.prepare(`
         SELECT details, created_at FROM audit_logs
-        WHERE entity_type = 'evaluations' AND entity_id = ? AND action = 'EVALUATION_DELETED'
+        WHERE entity_type = 'evaluations' AND (entity_id = ? OR details LIKE ?) AND action = 'EVALUATION_DELETED'
         ORDER BY created_at DESC LIMIT 1
-      `).get(req.params.id);
+      `).get(req.params.id, `%"${req.params.id}"%`);
 
       if (wasDeleted) {
         return res.status(404).json({
@@ -2684,7 +2879,7 @@ async function getOriginalPdfBufferForAdmin(evaluationId: string, evalRecord: an
   try {
     rJson = JSON.parse(evalRecord.result_json || '{}');
   } catch {}
-  return await generateOriginalSubmissionPdf({
+  const generated = await generateOriginalSubmissionPdf({
     id: evalRecord.id,
     studentName: evalRecord.student_name || 'CA Student',
     level: evalRecord.level,
@@ -2698,6 +2893,17 @@ async function getOriginalPdfBufferForAdmin(evaluationId: string, evalRecord: an
     grade: evalRecord.grade,
     createdAt: evalRecord.created_at,
   }, rJson);
+
+  try {
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    fs.writeFileSync(origPath, generated);
+    savePersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`, 'application/pdf', generated, 'EVALUATION_ORIGINAL', {
+      ownerUserId: evalRecord.student_id,
+      evaluationId,
+    }).catch(() => {});
+  } catch {}
+
+  return generated;
 }
 
 // 15a. Admin Review & Amendment Workflow: Fetch Evaluation Details for Review
@@ -2747,9 +2953,9 @@ router.get('/evaluations/:id/review', async (req: AuthRequest, res: Response) =>
     const checkedPath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
     const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
 
-    const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`));
-    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`));
-    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`));
+    const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`).catch(() => null));
+    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
+    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
 
     return res.json({
       evaluation,
@@ -2880,6 +3086,18 @@ router.get('/evaluations/:id/artifacts/checked-copy', async (req: AuthRequest, r
           createdAt: evalRecord.created_at,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson, origBuf);
+
+        if (buffer) {
+          const activePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+          try {
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(activePath, buffer);
+            savePersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`, 'application/pdf', buffer, 'EVALUATION_CHECKED_COPY', {
+              ownerUserId: evalRecord.student_id,
+              evaluationId,
+            }).catch(() => {});
+          } catch {}
+        }
       }
     }
 
@@ -2953,6 +3171,18 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
           createdAt: evalRecord.created_at,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson);
+
+        if (buffer) {
+          const activePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+          try {
+            if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(activePath, buffer);
+            savePersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`, 'application/pdf', buffer, 'EVALUATION_REPORT', {
+              ownerUserId: evalRecord.student_id,
+              evaluationId,
+            }).catch(() => {});
+          } catch {}
+        }
       }
     }
 
@@ -2966,6 +3196,38 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
   } catch (error: any) {
     console.error('Stream report artifact error:', error);
     return res.status(500).json({ error: 'Failed to load evaluation report' });
+  }
+});
+
+// 15d. Verify Evaluation Consistency (Admin Quality Control)
+router.post('/evaluations/:id/verify-consistency', async (req: AuthRequest, res: Response) => {
+  try {
+    const evaluationId = req.params.id;
+    const { adminOverride, notes } = req.body || {};
+
+    const evalRecord = db.prepare('SELECT id FROM evaluations WHERE id = ?').get(evaluationId);
+    if (!evalRecord) {
+      return res.status(404).json({ error: 'Evaluation not found' });
+    }
+
+    const verificationResult = await verifyEvaluationConsistency(evaluationId, {
+      adminOverride: Boolean(adminOverride),
+      reviewerEmail: req.user!.email,
+      reviewerId: req.user!.id,
+      notes: notes || 'Admin verified consistency',
+    });
+
+    if (verificationResult.success) {
+      return res.status(200).json(verificationResult);
+    } else {
+      return res.status(409).json({
+        error: verificationResult.error || verificationResult.message || 'Consistency verification flagged issues.',
+        ...verificationResult,
+      });
+    }
+  } catch (error: any) {
+    console.error('Admin verify evaluation consistency error:', error);
+    return res.status(500).json({ error: 'Failed to verify evaluation consistency', message: error?.message });
   }
 });
 
@@ -3436,7 +3698,7 @@ router.put('/pricing', (req: AuthRequest, res: Response) => {
       { key: 'PRICE_PER_CREDIT_INR', value: String(pricePerCredit || '10') },
       { key: 'FREE_TIER_EVALUATIONS', value: String(freeTierEvaluations || '2') },
       { key: 'DEFAULT_INSTITUTE_QUOTA', value: String(defaultInstituteQuota || '500') },
-      { key: 'SUPPORT_EMAIL', value: String(supportEmail || 'caexamchecker.support@gmail.com') },
+      { key: 'SUPPORT_EMAIL', value: String(supportEmail || 'support@caexamcheckerai.com') },
       { key: 'INSTAGRAM_URL', value: String(instagramUrl || 'https://insta.openinapp.co/utw2r') },
     ];
 
@@ -3539,7 +3801,146 @@ router.get('/analytics', (req: AuthRequest, res: Response) => {
   }
 });
 
-// 19. System Notifications
+// 19. Admin Notification Centre Endpoints
+
+// 19.1 List Broadcast Campaigns with Metrics & Pagination
+router.get('/notifications/campaigns', (req: AuthRequest, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string, 10) || 1;
+    const limit = parseInt(req.query.limit as string, 10) || 20;
+    const search = (req.query.search as string) || '';
+    const category = (req.query.category as string) || 'ALL';
+
+    const result = getBroadcastCampaigns({ page, limit, search, category });
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('Get notification campaigns error:', error);
+    return res.status(500).json({ error: 'Failed to load broadcast campaigns' });
+  }
+});
+
+// 19.2 Get Single Campaign Details with Delivery Logs
+router.get('/notifications/campaigns/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const campaignId = req.params.id;
+    const details = getCampaignDetails(campaignId);
+    if (!details) {
+      return res.status(404).json({ error: 'Broadcast campaign not found' });
+    }
+    return res.json(details);
+  } catch (error: unknown) {
+    console.error('Get campaign details error:', error);
+    return res.status(500).json({ error: 'Failed to load campaign details' });
+  }
+});
+
+// 19.3 Recipient Count & Demographic Estimation
+router.post('/notifications/estimate', (req: AuthRequest, res: Response) => {
+  try {
+    const { targetAudience } = req.body;
+    const estimate = estimateRecipients(targetAudience || 'ALL');
+    return res.json({ estimate });
+  } catch (error: unknown) {
+    console.error('Estimate recipients error:', error);
+    return res.status(500).json({ error: 'Failed to estimate recipients' });
+  }
+});
+
+// 19.4 Send Test Notification Preview (Safe Admin Preview)
+router.post('/notifications/send-test', async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, message, category, priority, channels, actionUrl, actionLabel, testEmail } = req.body;
+    if (!title || !message) {
+      return res.status(400).json({ error: 'Title and message are required for test preview' });
+    }
+
+    const adminUserId = req.user!.id;
+    const targetEmail = (testEmail && testEmail.trim()) || req.user!.email || 'support@caexamcheckerai.com';
+
+    const result = await sendTestNotification({
+      adminUserId,
+      targetEmail,
+      title,
+      message,
+      category: category || 'ANNOUNCEMENT',
+      priority: priority || 'NORMAL',
+      channels: channels || 'IN_APP_AND_EMAIL',
+      actionUrl,
+      actionLabel,
+    });
+
+    return res.json(result);
+  } catch (error: unknown) {
+    console.error('Send test notification error:', error);
+    return res.status(500).json({ error: 'Failed to dispatch test notification' });
+  }
+});
+
+// 19.5 Production Broadcast Dispatcher
+router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) => {
+  try {
+    const {
+      title,
+      message,
+      targetAudience = 'ALL',
+      channels = 'IN_APP_AND_EMAIL',
+      priority = 'NORMAL',
+      category = 'ANNOUNCEMENT',
+      actionUrl,
+      actionLabel,
+    } = req.body;
+
+    if (!title || typeof title !== 'string' || title.trim().length < 3) {
+      return res.status(400).json({ error: 'Title must be at least 3 characters long' });
+    }
+
+    if (!message || typeof message !== 'string' || message.trim().length < 5) {
+      return res.status(400).json({ error: 'Message content must be at least 5 characters long' });
+    }
+
+    const validAudiences = ['ALL', 'STUDENT', 'INSTITUTE_ADMIN', 'STUDENTS_FOUNDATION', 'STUDENTS_INTERMEDIATE', 'STUDENTS_FINAL'];
+    if (!validAudiences.includes(targetAudience)) {
+      return res.status(400).json({ error: `Invalid target audience. Allowed: ${validAudiences.join(', ')}` });
+    }
+
+    const validChannels = ['IN_APP', 'EMAIL', 'IN_APP_AND_EMAIL'];
+    if (!validChannels.includes(channels)) {
+      return res.status(400).json({ error: `Invalid channel. Allowed: ${validChannels.join(', ')}` });
+    }
+
+    const validPriorities = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
+    if (!validPriorities.includes(priority)) {
+      return res.status(400).json({ error: `Invalid priority. Allowed: ${validPriorities.join(', ')}` });
+    }
+
+    const adminUserId = req.user!.id;
+    const adminEmail = req.user!.email;
+
+    const result = await createAndDispatchBroadcast({
+      adminUserId,
+      adminEmail,
+      title: title.trim(),
+      message: message.trim(),
+      targetAudience,
+      channels,
+      priority,
+      category,
+      actionUrl: actionUrl?.trim() || undefined,
+      actionLabel: actionLabel?.trim() || undefined,
+    });
+
+    return res.json({
+      success: true,
+      message: `Broadcast successfully dispatched to ${result.totalTargeted} recipients (In-App: ${result.inAppSent}, Email: ${result.emailSent})`,
+      ...result,
+    });
+  } catch (error: unknown) {
+    console.error('Broadcast notification error:', error);
+    return res.status(500).json({ error: 'Failed to broadcast notification' });
+  }
+});
+
+// 19.6 System Notifications Audit Feed (Backwards Compatible)
 router.get('/notifications', (req: AuthRequest, res: Response) => {
   try {
     const notifications = db.prepare(`
@@ -3556,36 +3957,6 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/notifications/broadcast', (req: AuthRequest, res: Response) => {
-  try {
-    const { title, message, targetRole } = req.body;
-    if (!title || !message) {
-      return res.status(400).json({ error: 'Title and message are required' });
-    }
-
-    let targetUsers: Array<{ id: string }>;
-    if (targetRole && targetRole !== 'ALL') {
-      targetUsers = db.prepare('SELECT id FROM users WHERE role = ?').all(targetRole) as Array<{ id: string }>;
-    } else {
-      targetUsers = db.prepare('SELECT id FROM users').all() as Array<{ id: string }>;
-    }
-
-    const insertStmt = db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, ?, ?, 'SYSTEM')
-    `);
-
-    for (const u of targetUsers) {
-      insertStmt.run(`notif_${crypto.randomBytes(8).toString('hex')}`, u.id, title, message);
-    }
-
-    return res.json({ success: true, message: `Broadcast sent to ${targetUsers.length} users` });
-  } catch (error: unknown) {
-    console.error('Broadcast notification error:', error);
-    return res.status(500).json({ error: 'Failed to broadcast notification' });
-  }
-});
-
 // 20. System Settings & Configuration Status
 router.get('/settings', (req: AuthRequest, res: Response) => {
   try {
@@ -3595,7 +3966,7 @@ router.get('/settings', (req: AuthRequest, res: Response) => {
     return res.json({
       environment: {
         nodeEnv: process.env.NODE_ENV || 'development',
-        port: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
+        port: getServerPort(),
         database: 'SQLite (local WAL mode enabled)',
         razorpayConfigured: rzpConfigured,
         razorpayKeyIdSet: !!process.env.RAZORPAY_KEY_ID,
@@ -3734,14 +4105,12 @@ router.get('/ai-settings', (req: AuthRequest, res: Response) => {
         strictnessMode: map.EVAL_STRICTNESS_MODE || 'BALANCED',
         confidenceThreshold: Number(map.CONFIDENCE_THRESHOLD) || 85,
         geminiConfigured: !!process.env.GEMINI_API_KEY,
-        availableModels: [
-          { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Primary CA Evaluation)' },
-          { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash (Fast Review & High-Volume Fallback)' },
-          { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash (Primary Fallback Model)' },
-          { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash (Secondary Fallback Model)' },
-          { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite (Ultra-Fast Fallback Model)' },
-          { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview (Complex & Legal Reasoning)' },
-        ],
+        availableModels: EVALUATION_MODEL_REGISTRY.filter((m) => m.isSelectable).map((m) => ({
+          id: m.id,
+          name: m.displayName,
+          status: m.status,
+          category: m.category,
+        })),
       },
     });
   } catch (error: unknown) {
@@ -3901,8 +4270,121 @@ router.delete('/institute-plans/:id', (req: AuthRequest, res: Response) => {
 });
 
 // 24. Promo Code Management & Redemptions (/admin/promo-codes and /admin/referrals)
-router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => {
+router.get(['/promo-codes', '/referrals'], async (req: AuthRequest, res: Response) => {
   try {
+    // 1. Authoritative multi-instance reconciliation with Cloud Firestore
+    try {
+      const fsCampaigns = await getAllFirestoreDocs<any>('referral_campaigns');
+      for (const c of fsCampaigns) {
+        if (!c.code) continue;
+        db.prepare(`
+          INSERT INTO referral_campaigns (
+            code, campaign_name, description, benefit_type, benefit_duration_days,
+            max_redemptions, max_evaluations, is_active, status, start_date, end_date,
+            user_type, terms_notes, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(code) DO UPDATE SET
+            campaign_name = excluded.campaign_name,
+            description = excluded.description,
+            benefit_type = excluded.benefit_type,
+            benefit_duration_days = excluded.benefit_duration_days,
+            max_redemptions = excluded.max_redemptions,
+            max_evaluations = excluded.max_evaluations,
+            is_active = excluded.is_active,
+            status = excluded.status,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date,
+            user_type = excluded.user_type,
+            terms_notes = excluded.terms_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          c.code, c.campaign_name || c.campaignName || `${c.code} Promo`,
+          c.description || null, c.benefit_type || '1_MONTH_FREE_ACCESS',
+          c.benefit_duration_days || c.benefitDurationDays || 30,
+          c.max_redemptions ?? c.maxRedemptions ?? 20,
+          c.max_evaluations ?? c.maxEvaluations ?? 15,
+          c.is_active !== undefined ? (c.is_active ? 1 : 0) : 1,
+          c.status || 'ACTIVE',
+          c.start_date || c.startDate || null,
+          c.end_date || c.endDate || null,
+          c.user_type || c.userType || 'ALL',
+          c.terms_notes || c.termsNotes || null,
+          c.created_at || c.createdAt || null
+        );
+      }
+
+      const fsRedemptions = await getAllFirestoreDocs<any>('referral_redemptions');
+      const tombstones = await getAllFirestoreDocs<any>('tombstones');
+      const tombstoneSet = new Set(
+        tombstones.flatMap((t: any) => [
+          `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
+          `${t.collectionName || t.entity_type}:${t.targetId || t.entity_id || t.id}`,
+          t.targetId,
+          t.entity_id,
+          t.id,
+        ].filter(Boolean))
+      );
+
+      for (const r of fsRedemptions) {
+        if (!r.id || !r.referral_code) continue;
+        const targetUserId = r.user_id || r.userId;
+        if (!targetUserId) continue;
+
+        // Ensure user is not tombstoned or deleted
+        if (
+          tombstoneSet.has(`referral_redemptions_${r.id}`) ||
+          tombstoneSet.has(r.id) ||
+          tombstoneSet.has(`users_${targetUserId}`) ||
+          tombstoneSet.has(`users:${targetUserId}`) ||
+          tombstoneSet.has(targetUserId)
+        ) {
+          continue;
+        }
+
+        // Validate user exists in local SQLite to satisfy FOREIGN KEY constraint
+        const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+        if (!userExists) {
+          continue;
+        }
+
+        db.prepare(`
+          INSERT INTO referral_redemptions (
+            id, referral_code, user_id, user_email, benefit_type,
+            redemption_number, expiry_date, status,
+            max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            referral_code = excluded.referral_code,
+            user_id = excluded.user_id,
+            user_email = excluded.user_email,
+            benefit_type = excluded.benefit_type,
+            redemption_number = excluded.redemption_number,
+            expiry_date = excluded.expiry_date,
+            status = excluded.status,
+            max_evaluations = excluded.max_evaluations,
+            evaluations_used = excluded.evaluations_used,
+            evaluations_remaining = excluded.evaluations_remaining,
+            audit_note = excluded.audit_note,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          r.id, r.referral_code || r.referralCode,
+          targetUserId, r.user_email || r.userEmail || '',
+          r.benefit_type || r.benefitType || '1_MONTH_FREE_ACCESS',
+          r.redemption_number ?? r.redemptionNumber ?? 1,
+          r.expiry_date || r.expiryDate,
+          r.status || 'ACTIVE',
+          r.max_evaluations ?? r.maxEvaluations ?? 15,
+          r.evaluations_used ?? r.evaluationsUsed ?? 0,
+          r.evaluations_remaining ?? r.evaluationsRemaining ?? 15,
+          r.audit_note || r.auditNote || null,
+          r.created_at || r.createdAt || null
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminPromoCodes] Firestore reconciliation notice:', fsErr);
+    }
+
     const rawCampaigns = db.prepare('SELECT * FROM referral_campaigns ORDER BY created_at DESC').all() as any[];
     const campaigns = rawCampaigns.map(c => {
       const redemptionsCount = (db.prepare(`
@@ -3979,7 +4461,17 @@ router.get(['/promo-codes', '/referrals'], (req: AuthRequest, res: Response) => 
 });
 
 // Create new promo code
-router.post('/promo-codes', (req: AuthRequest, res: Response) => {
+function parseSafeIsoDate(val: any): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed || trimmed === '__CLEAR__' || trimmed === 'null' || trimmed === 'undefined') return null;
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+// Create new promo code
+router.post('/promo-codes', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const {
@@ -4019,6 +4511,8 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
     const numMaxEvaluations = Math.max(1, parseInt(maxEvaluations, 10) || 15);
     const numDurationDays = Math.max(1, parseInt(benefitDurationDays, 10) || 30);
     const isActive = status === 'ACTIVE' ? 1 : 0;
+    const cleanStartDate = parseSafeIsoDate(startDate);
+    const cleanEndDate = parseSafeIsoDate(endDate);
 
     db.prepare(`
       INSERT INTO referral_campaigns (
@@ -4039,8 +4533,8 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
       numMaxEvaluations,
       isActive,
       status,
-      startDate ? new Date(startDate).toISOString() : null,
-      endDate ? new Date(endDate).toISOString() : null,
+      cleanStartDate,
+      cleanEndDate,
       userType || 'ALL',
       termsNotes?.trim() || null
     );
@@ -4064,6 +4558,13 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
       })
     );
 
+    const createdCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(cleanCode) as any;
+    if (createdCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', cleanCode, createdCamp);
+      } catch {}
+    }
+
     return res.status(201).json({
       success: true,
       message: `Promo code ${cleanCode} created successfully.`,
@@ -4076,7 +4577,7 @@ router.post('/promo-codes', (req: AuthRequest, res: Response) => {
 });
 
 // Update promo code parameters
-router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthRequest, res: Response) => {
+router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4102,6 +4603,12 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
     const newStatus = status !== undefined ? status : (isActive !== undefined ? (isActive ? 'ACTIVE' : 'DISABLED') : currentCampaign.status);
     const newIsActive = newStatus === 'ACTIVE' ? 1 : 0;
 
+    const parsedStartDate = parseSafeIsoDate(startDate);
+    const clearStart = startDate === '__CLEAR__' || startDate === '' ? 1 : 0;
+
+    const parsedEndDate = parseSafeIsoDate(endDate);
+    const clearEnd = endDate === '__CLEAR__' || endDate === '' ? 1 : 0;
+
     db.prepare(`
       UPDATE referral_campaigns
       SET campaign_name = COALESCE(?, campaign_name),
@@ -4111,8 +4618,8 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
           benefit_duration_days = COALESCE(?, benefit_duration_days),
           status = COALESCE(?, status),
           is_active = ?,
-          start_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE start_date END,
-          end_date = CASE WHEN ? = '__CLEAR__' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE end_date END,
+          start_date = CASE WHEN ? = 1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE start_date END,
+          end_date = CASE WHEN ? = 1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE end_date END,
           user_type = COALESCE(?, user_type),
           terms_notes = COALESCE(?, terms_notes),
           updated_at = CURRENT_TIMESTAMP
@@ -4125,8 +4632,8 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
       benefitDurationDays !== undefined ? Math.max(1, parseInt(benefitDurationDays, 10)) : null,
       newStatus,
       newIsActive,
-      startDate, startDate, startDate ? new Date(startDate).toISOString() : null,
-      endDate, endDate, endDate ? new Date(endDate).toISOString() : null,
+      clearStart, parsedStartDate, parsedStartDate,
+      clearEnd, parsedEndDate, parsedEndDate,
       userType || null,
       termsNotes !== undefined ? termsNotes?.trim() : null,
       campaignCode
@@ -4152,6 +4659,13 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
       })
     );
 
+    const updatedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (updatedCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', campaignCode, updatedCamp);
+      } catch {}
+    }
+
     return res.json({ success: true, message: `Promo code ${campaignCode} updated successfully.` });
   } catch (error: unknown) {
     console.error('Update promo code error:', error);
@@ -4160,7 +4674,7 @@ router.put(['/promo-codes/:code', '/referrals/campaigns/:code'], (req: AuthReque
 });
 
 // Quick toggle status: ACTIVE / DISABLED / ARCHIVED
-router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
+router.patch('/promo-codes/:code/status', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4193,6 +4707,13 @@ router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
       JSON.stringify({ previousStatus: currentCampaign.status, newStatus: status })
     );
 
+    const toggledCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+    if (toggledCamp) {
+      try {
+        await syncRecordToFirestore('referral_campaigns', campaignCode, toggledCamp);
+      } catch {}
+    }
+
     return res.json({ success: true, message: `Promo code ${campaignCode} status set to ${status}.` });
   } catch (error: unknown) {
     console.error('Toggle promo code status error:', error);
@@ -4201,7 +4722,7 @@ router.patch('/promo-codes/:code/status', (req: AuthRequest, res: Response) => {
 });
 
 // Delete or Archive promo code
-router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
+router.delete('/promo-codes/:code', async (req: AuthRequest, res: Response) => {
   try {
     const adminId = req.user!.id;
     const campaignCode = req.params.code.toUpperCase();
@@ -4223,6 +4744,13 @@ router.delete('/promo-codes/:code', (req: AuthRequest, res: Response) => {
         SET status = 'ARCHIVED', is_active = 0, updated_at = CURRENT_TIMESTAMP
         WHERE UPPER(code) = UPPER(?)
       `).run(campaignCode);
+
+      const archivedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(campaignCode) as any;
+      if (archivedCamp) {
+        try {
+          await syncRecordToFirestore('referral_campaigns', campaignCode, archivedCamp);
+        } catch {}
+      }
 
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -4297,7 +4825,7 @@ router.get('/promo-codes/:code/redemptions', (req: AuthRequest, res: Response) =
 });
 
 // Revoke a specific promo code redemption
-router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Response) => {
+router.post('/promo-codes/redemptions/:id/revoke', async (req: AuthRequest, res: Response) => {
   try {
     const redemptionId = req.params.id;
     const { reason } = req.body || {};
@@ -4405,7 +4933,22 @@ router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Respo
       FROM referral_redemptions r
       LEFT JOIN users u ON u.id = r.user_id
       WHERE r.id = ?
-    `).get(redemptionId);
+    `).get(redemptionId) as any;
+
+    if (updated) {
+      try {
+        await syncRecordToFirestore('referral_redemptions', redemptionId, updated);
+      } catch {}
+    }
+
+    if (campaign) {
+      const updatedCamp = db.prepare('SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)').get(redemption.referral_code) as any;
+      if (updatedCamp) {
+        try {
+          await syncRecordToFirestore('referral_campaigns', redemption.referral_code, updatedCamp);
+        } catch {}
+      }
+    }
 
     return res.json({
       success: true,
@@ -4416,6 +4959,117 @@ router.post('/promo-codes/redemptions/:id/revoke', (req: AuthRequest, res: Respo
     try { db.exec('ROLLBACK'); } catch (_) {}
     console.error('Revoke promo redemption error:', error);
     return res.status(500).json({ error: 'Failed to revoke promo redemption.' });
+  }
+});
+
+// Reinstate / Unrevoke a previously revoked promo code redemption
+router.post('/promo-codes/redemptions/:id/reinstate', async (req: AuthRequest, res: Response) => {
+  try {
+    const redemptionId = req.params.id;
+    const { reason } = req.body || {};
+    const adminEmail = req.user?.email || 'admin';
+    const adminId = req.user?.id || 'admin';
+
+    const redemption = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId) as any;
+
+    if (!redemption) {
+      return res.status(404).json({ error: 'Promo redemption record not found.' });
+    }
+
+    if (redemption.status !== 'REVOKED') {
+      return res.status(400).json({ error: 'This promo redemption is not in REVOKED status.' });
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+
+    // Restore ONLY the legitimate remaining balance: max_evaluations - evaluations_used
+    const maxEvals = redemption.max_evaluations ?? 15;
+    const usedEvals = redemption.evaluations_used ?? 0;
+    const legitimateRemaining = Math.max(0, maxEvals - usedEvals);
+
+    const reinstatedAt = new Date().toISOString();
+    const auditNote = (redemption.audit_note ? redemption.audit_note + ' | ' : '') +
+      `REINSTATED by ${adminEmail} on ${reinstatedAt}${reason ? ': ' + reason : ''}`;
+
+    db.prepare(`
+      UPDATE referral_redemptions
+      SET status = 'ACTIVE',
+          evaluations_remaining = ?,
+          revoked_at = NULL,
+          revoked_by = NULL,
+          revocation_reason = NULL,
+          audit_note = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      legitimateRemaining,
+      auditNote,
+      reinstatedAt,
+      redemptionId
+    );
+
+    // Ledger record
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, note)
+      VALUES (?, ?, ?, 'REINSTATE_PROMO', ?, ?)
+    `).run(
+      `cld_${crypto.randomBytes(8).toString('hex')}`,
+      redemption.user_id,
+      legitimateRemaining,
+      legitimateRemaining,
+      `Restored ${legitimateRemaining} promotional evaluation(s) for promo ${redemption.referral_code} by ${adminEmail}`
+    );
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'PROMO_CODE_REINSTATEMENT', 'PROMO_REDEMPTION', ?, ?)
+    `).run(
+      `aud_${crypto.randomBytes(8).toString('hex')}`,
+      adminId,
+      redemptionId,
+      JSON.stringify({
+        studentId: redemption.user_id,
+        studentEmail: redemption.user_email,
+        promoCode: redemption.referral_code,
+        evaluationsGranted: maxEvals,
+        evaluationsUsed: usedEvals,
+        evaluationsRemainingRestored: legitimateRemaining,
+        reinstatedBy: adminEmail,
+        reinstatedAt,
+        reason: reason || 'Reinstated by administrator',
+      })
+    );
+
+    db.exec('COMMIT');
+
+    const updated = db.prepare(`
+      SELECT r.*, u.full_name as user_name, u.email as user_email
+      FROM referral_redemptions r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.id = ?
+    `).get(redemptionId) as any;
+
+    if (updated) {
+      try {
+        await syncRecordToFirestore('referral_redemptions', redemptionId, updated);
+      } catch {}
+    }
+
+    return res.json({
+      success: true,
+      message: `Promo benefit for ${redemption.user_name || redemption.user_email || 'student'} has been reinstated with ${legitimateRemaining} remaining evaluation(s).`,
+      redemption: updated,
+    });
+  } catch (error: unknown) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    console.error('Reinstate promo redemption error:', error);
+    return res.status(500).json({ error: 'Failed to reinstate promo redemption.' });
   }
 });
 
@@ -4532,7 +5186,7 @@ router.put('/support/:id', (req: AuthRequest, res: Response, next) => {
 // ==========================================
 router.get('/models', async (req: AuthRequest, res: Response) => {
   try {
-    const storedRouting = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing');
+    const storedRouting = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
     let authoritativeRouting: ModelRoutingConfiguration | undefined;
     if (storedRouting) {
       const validation = validateModelRoutingConfiguration(storedRouting, APPROVED_MODELS.map((model) => model.id));
@@ -4554,45 +5208,70 @@ router.get('/models', async (req: AuthRequest, res: Response) => {
       SELECT * FROM model_configs ORDER BY is_primary DESC, fallback_order ASC, display_name ASC
     `).all() as any[];
 
-    // Provider environment availability check
+    // Provider environment availability check (Safe non-sensitive status only)
     const geminiKey = process.env.GEMINI_API_KEY || '';
     const openaiKey = process.env.OPENAI_API_KEY || '';
     const anthropicKey = process.env.ANTHROPIC_API_KEY || '';
+
+    const getLastTested = (providerName: string) => {
+      const providerModels = models.filter((m) => m.provider === providerName && m.last_tested_at);
+      if (providerModels.length === 0) return null;
+      return providerModels.sort((a, b) => new Date(b.last_tested_at).getTime() - new Date(a.last_tested_at).getTime())[0]?.last_tested_at || null;
+    };
+
+    const isGeminiConfigured = Boolean(geminiKey && geminiKey.trim().length > 5);
+    const isOpenaiConfigured = Boolean(openaiKey && openaiKey.trim().length > 5);
+    const isAnthropicConfigured = Boolean(anthropicKey && anthropicKey.trim().length > 5);
 
     const providerStatus = {
       gemini: {
         provider: 'gemini',
         name: 'Google Gemini',
-        configured: Boolean(geminiKey && geminiKey.length > 5),
-        keyMasked: geminiKey ? `${geminiKey.slice(0, 4)}••••${geminiKey.slice(-4)}` : 'Not Configured',
+        configured: isGeminiConfigured,
+        status: isGeminiConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isGeminiConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'gemini').length,
+        lastTestedAt: getLastTested('gemini'),
       },
       openai: {
         provider: 'openai',
         name: 'OpenAI',
-        configured: Boolean(openaiKey && openaiKey.length > 5),
-        keyMasked: openaiKey ? `${openaiKey.slice(0, 3)}••••${openaiKey.slice(-4)}` : 'Not Configured',
+        configured: isOpenaiConfigured,
+        status: isOpenaiConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isOpenaiConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'openai').length,
+        lastTestedAt: getLastTested('openai'),
       },
       anthropic: {
         provider: 'anthropic',
         name: 'Anthropic',
-        configured: Boolean(anthropicKey && anthropicKey.length > 5),
-        keyMasked: anthropicKey ? `${anthropicKey.slice(0, 4)}••••${anthropicKey.slice(-4)}` : 'Not Configured',
+        configured: isAnthropicConfigured,
+        status: isAnthropicConfigured ? 'ACTIVE' : 'INACTIVE',
+        configurationStatus: isAnthropicConfigured ? 'Configured' : 'Not configured',
         modelsCount: models.filter((m) => m.provider === 'anthropic').length,
+        lastTestedAt: getLastTested('anthropic'),
       },
     };
 
-    const fallbackHierarchy = models
+    const currentPrimary = authoritativeRouting?.primaryModel || models.find((model) => model.is_primary)?.id;
+    const currentFallbackChain = authoritativeRouting?.fallbackOrder || models
       .filter((model) => !model.is_primary && model.is_enabled && APPROVED_MODELS.some((approved) => approved.id === model.id))
-      .sort((a, b) => a.fallback_order - b.fallback_order)
-      .map((model) => ({
-        order: model.fallback_order,
-        modelId: model.id,
-        provider: model.provider,
-        role: model.role,
-      }));
+      .sort((a, b) => a.fallback_order - b.fallback_order || a.id.localeCompare(b.id))
+      .map((model) => model.id);
+    const primaryDesc = APPROVED_MODELS.find((m) => m.id === currentPrimary);
 
+    const fallbackHierarchy = [
+      ...(currentPrimary ? [{ order: 0, modelId: currentPrimary, provider: primaryDesc?.provider || 'gemini', role: primaryDesc?.role || 'Primary CA Evaluation' }] : []),
+      ...currentFallbackChain.map((mId, idx) => {
+        const desc = APPROVED_MODELS.find((m) => m.id === mId);
+        return {
+          order: idx + 1,
+          modelId: mId,
+          provider: desc?.provider || 'gemini',
+          role: desc?.role || `Fallback Tier ${idx + 1}`,
+        };
+      }),
+    ];
     return res.json({
       models,
       providerStatus,
@@ -4606,46 +5285,61 @@ router.get('/models', async (req: AuthRequest, res: Response) => {
   }
 });
 
+async function persistAuthoritativeModelRoutingConfiguration(
+  value: unknown,
+  adminUserId: string
+): Promise<ModelRoutingConfiguration> {
+  const validation = validateModelRoutingConfiguration(value, APPROVED_MODELS.map((model) => model.id));
+  if ('error' in validation) {
+    const error: any = new Error(validation.error);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const config: ModelRoutingConfiguration = {
+    ...validation.config,
+    updatedAt: new Date().toISOString(),
+    updatedBy: adminUserId,
+  };
+  const configuredRows = db.prepare('SELECT id FROM model_configs').all() as Array<{ id: string }>;
+  const configuredIds = new Set(configuredRows.map((row) => row.id));
+  const unknownIds = [config.primaryModel, ...config.fallbackOrder].filter((id) => !configuredIds.has(id));
+  if (unknownIds.length > 0) {
+    const error: any = new Error(`Models are not present in the configured registry: ${unknownIds.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const persisted = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
+  if (!persisted) {
+    const error: any = new Error('Could not persist model routing configuration to Firestore; no local routing configuration was changed.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    applyModelRoutingConfiguration(db, config, APPROVED_MODELS.map((model) => model.id));
+    db.exec('COMMIT');
+  } catch (applyError) {
+    db.exec('ROLLBACK');
+    throw applyError;
+  }
+
+  db.prepare(`
+    INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+    VALUES (?, ?, 'UPDATE_MODEL_ROUTING', 'SYSTEM', ?)
+  `).run(
+    `log_${crypto.randomBytes(8).toString('hex')}`,
+    adminUserId,
+    JSON.stringify({ primaryModel: config.primaryModel, fallbackOrder: config.fallbackOrder, updatedAt: config.updatedAt })
+  );
+  return config;
+}
+
 router.put('/models/routing-configuration', async (req: AuthRequest, res: Response) => {
   try {
-    const validation = validateModelRoutingConfiguration(req.body, APPROVED_MODELS.map((model) => model.id));
-    if ('error' in validation) return res.status(400).json({ error: validation.error });
-
-    const config: ModelRoutingConfiguration = {
-      ...validation.config,
-      updatedAt: new Date().toISOString(),
-      updatedBy: req.user!.id,
-    };
-    const rows = db.prepare('SELECT id FROM model_configs').all() as Array<{ id: string }>;
-    const configuredIds = new Set(rows.map((row) => row.id));
-    const unknownIds = [config.primaryModel, ...config.fallbackOrder].filter((id) => !configuredIds.has(id));
-    if (unknownIds.length > 0) {
-      return res.status(400).json({ error: `Models are not present in the configured registry: ${unknownIds.join(', ')}` });
-    }
-
-    const saved = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
-    if (!saved) {
-      return res.status(503).json({ error: 'Could not persist model routing configuration to Firestore; no local configuration was changed.' });
-    }
-
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      applyModelRoutingConfiguration(db, config, APPROVED_MODELS.map((model) => model.id));
-      db.exec('COMMIT');
-    } catch (applyError) {
-      db.exec('ROLLBACK');
-      throw applyError;
-    }
-
-    db.prepare(`
-      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
-      VALUES (?, ?, 'UPDATE_MODEL_ROUTING', 'SYSTEM', ?)
-    `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
-      req.user!.id,
-      JSON.stringify({ primaryModel: config.primaryModel, fallbackOrder: config.fallbackOrder, updatedAt: config.updatedAt })
-    );
-
+    const config = await persistAuthoritativeModelRoutingConfiguration(req.body, req.user!.id);
     return res.json({ success: true, configurationPersisted: true, routingConfiguration: config });
   } catch (error: any) {
     console.error('Update model routing configuration error:', error);
@@ -4653,10 +5347,91 @@ router.put('/models/routing-configuration', async (req: AuthRequest, res: Respon
   }
 });
 
+router.get('/models/fallback-order', async (req: AuthRequest, res: Response) => {
+  try {
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let config: ModelRoutingConfiguration;
+    let configurationPersisted = false;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      config = validation.config;
+      configurationPersisted = true;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      config = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id));
+    }
+
+    const availableModels = APPROVED_MODELS
+      .filter((model) => model.id !== config.primaryModel && !config.fallbackOrder.includes(model.id))
+      .map((model) => ({ id: model.id, displayName: model.displayName, provider: model.provider, role: model.role }));
+    return res.json({
+      primaryModel: config.primaryModel,
+      fallbackChain: config.fallbackOrder,
+      availableModels,
+      defaultFallbackChain: DEFAULT_FALLBACK_CHAIN.filter((model) => model !== config.primaryModel),
+      approvedModels: APPROVED_MODELS.map((model) => ({ id: model.id, displayName: model.displayName, provider: model.provider, role: model.role })),
+      configurationPersisted,
+    });
+  } catch (error: any) {
+    console.error('Get fallback order error:', error);
+    return res.status(503).json({ error: error?.message || 'Failed to load fallback order configuration' });
+  }
+});
+
+router.put('/models/fallback-order', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!Array.isArray(req.body?.fallbackChain)) {
+      return res.status(400).json({ error: 'fallbackChain must be an array of model identifiers.' });
+    }
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let primaryModel: string;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      primaryModel = validation.config.primaryModel;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      primaryModel = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)).primaryModel;
+    }
+    const config = await persistAuthoritativeModelRoutingConfiguration({ primaryModel, fallbackOrder: req.body.fallbackChain }, req.user!.id);
+    return res.json({ success: true, message: 'Fallback order updated and persisted successfully', primaryModel: config.primaryModel, fallbackChain: config.fallbackOrder });
+  } catch (error: any) {
+    console.error('Update fallback order error:', error);
+    return res.status(error.statusCode || 400).json({ error: error?.message || 'Failed to update fallback order' });
+  }
+});
+
+router.post('/models/fallback-order/reset-default', async (req: AuthRequest, res: Response) => {
+  try {
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let primaryModel: string;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      primaryModel = validation.config.primaryModel;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      primaryModel = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)).primaryModel;
+    }
+    const config = await persistAuthoritativeModelRoutingConfiguration({
+      primaryModel,
+      fallbackOrder: DEFAULT_FALLBACK_CHAIN.filter((model) => model !== primaryModel),
+    }, req.user!.id);
+    return res.json({ success: true, message: 'Default fallback order restored successfully', primaryModel: config.primaryModel, fallbackChain: config.fallbackOrder });
+  } catch (error: any) {
+    console.error('Reset default fallback order error:', error);
+    return res.status(error.statusCode || 500).json({ error: error?.message || 'Failed to reset fallback order' });
+  }
+});
 router.put('/models/:id', async (req: AuthRequest, res: Response) => {
   let routingTransactionOpen = false;
   try {
     const modelId = req.params.id;
+    const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
+    if (!allowed.includes(modelId)) {
+      return res.status(400).json({ error: `Model '${modelId}' is not in the approved runtime model whitelist.` });
+    }
     const { is_primary, fallback_order, is_enabled, role, thinking_level, temperature, top_p, max_tokens, custom_endpoint } = req.body;
 
     const existing = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId) as any;
@@ -4680,15 +5455,14 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
     }
 
     if (is_primary === 1 || is_primary === true) {
-      // Clear other primaries
       db.prepare('UPDATE model_configs SET is_primary = 0').run();
       db.prepare('UPDATE model_configs SET is_primary = 1, is_enabled = 1 WHERE id = ?').run(modelId);
-      // Sync with pricing_settings EVAL_MODEL_PROVIDER
       db.prepare(`
         INSERT INTO pricing_settings (key, value, updated_at)
         VALUES ('EVAL_MODEL_PROVIDER', ?, CURRENT_TIMESTAMP)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
       `).run(modelId);
+
     }
 
     if (role !== undefined) {
@@ -4788,12 +5562,15 @@ router.post('/models/test-connection', async (req: AuthRequest, res: Response) =
     const { testModelHealth } = await import('../models/modelRegistry.js');
     const targetStage = stage === 'CONNECTIVITY' || stage === 'INFERENCE' || stage === 'EVALUATION_READINESS' ? stage : 'EVALUATION_READINESS';
     const result = await testModelHealth(modelId, targetStage);
-    return res.json(result);
+    return res.json({
+      ...result,
+      message: sanitizeSecretStrings(result.message || ''),
+    });
   } catch (error: any) {
     console.error('Test model connection error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Connection test failed',
+      message: sanitizeSecretStrings(error?.message || 'Connection test failed'),
     });
   }
 });
@@ -4812,7 +5589,7 @@ router.post('/models/benchmark-test', async (req: AuthRequest, res: Response) =>
     console.error('Run model benchmark error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Model benchmark failed',
+      message: sanitizeSecretStrings(error?.message || 'Model benchmark failed'),
     });
   }
 });
@@ -4832,7 +5609,7 @@ router.post('/models/consistency-test', async (req: AuthRequest, res: Response) 
     console.error('Run model consistency error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Model consistency test failed',
+      message: sanitizeSecretStrings(error?.message || 'Model consistency test failed'),
     });
   }
 });
@@ -4862,7 +5639,10 @@ router.post('/models/test-provider', async (req: AuthRequest, res: Response) => 
         continue;
       }
       const resTest = await testModelConnection(m.id);
-      results.push(resTest);
+      results.push({
+        ...resTest,
+        message: sanitizeSecretStrings(resTest.message || ''),
+      });
       if (i < providerModels.length - 1 && resTest.success) {
         await new Promise((r) => setTimeout(r, 600));
       }
@@ -4877,7 +5657,7 @@ router.post('/models/test-provider', async (req: AuthRequest, res: Response) => 
     console.error('Test provider error:', error);
     return res.status(500).json({
       success: false,
-      message: error?.message || 'Provider connection test failed',
+      message: sanitizeSecretStrings(error?.message || 'Provider connection test failed'),
     });
   }
 });
@@ -5940,8 +6720,76 @@ router.get('/email-audit-logs', (req: AuthRequest, res: Response) => {
 // ============================================================================
 
 // Get counts for badge display
-router.get('/reviews/pending-count', (req: AuthRequest, res: Response) => {
+router.get('/reviews/pending-count', async (req: AuthRequest, res: Response) => {
   try {
+    try {
+      const fsReviews = await getAllFirestoreDocs<any>('reviews');
+      for (const rev of fsReviews) {
+        if (!rev.id || !rev.user_id) continue;
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) tags = JSON.stringify(tags);
+        else if (typeof tags !== 'string') tags = null;
+
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
+            status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? 1,
+          rev.moderation_note || null,
+          rev.approved_at || null,
+          rev.approved_by || null,
+          rev.rejected_at || null,
+          rev.rejected_by || null,
+          rev.created_at || rev.createdAt || new Date().toISOString()
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminReviewsPending] Firestore reconciliation notice:', fsErr);
+    }
+
     const counts = db.prepare(`
       SELECT
         COUNT(*) as total,
@@ -5965,8 +6813,79 @@ router.get('/reviews/pending-count', (req: AuthRequest, res: Response) => {
 });
 
 // List all reviews with filters, pagination, and status breakdown
-router.get('/reviews', (req: AuthRequest, res: Response) => {
+router.get('/reviews', async (req: AuthRequest, res: Response) => {
   try {
+    // 1. Authoritative multi-instance reconciliation with Cloud Firestore
+    try {
+      const fsReviews = await getAllFirestoreDocs<any>('reviews');
+      for (const rev of fsReviews) {
+        if (!rev.id || !rev.user_id) continue;
+        let tags = rev.experience_tags;
+        if (Array.isArray(tags)) tags = JSON.stringify(tags);
+        else if (typeof tags !== 'string') tags = null;
+
+        db.prepare(`
+          INSERT INTO reviews (
+            id, user_id, student_name, student_email, display_name, ca_level,
+            rating, review_text, experience_tags, status, likes_count, dislikes_count,
+            admin_reply, admin_reply_at, admin_reply_by, admin_reply_name,
+            moderation_reason, moderated_at, moderated_by, is_verified_evaluation,
+            moderation_note, approved_at, approved_by, rejected_at, rejected_by,
+            created_at, updated_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, CURRENT_TIMESTAMP
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            student_name = COALESCE(excluded.student_name, reviews.student_name),
+            student_email = COALESCE(excluded.student_email, reviews.student_email),
+            display_name = excluded.display_name,
+            ca_level = excluded.ca_level,
+            rating = excluded.rating,
+            review_text = excluded.review_text,
+            experience_tags = excluded.experience_tags,
+            status = excluded.status,
+            likes_count = excluded.likes_count,
+            dislikes_count = excluded.dislikes_count,
+            admin_reply = excluded.admin_reply,
+            admin_reply_at = excluded.admin_reply_at,
+            admin_reply_by = excluded.admin_reply_by,
+            admin_reply_name = excluded.admin_reply_name,
+            moderation_reason = excluded.moderation_reason,
+            moderated_at = excluded.moderated_at,
+            moderated_by = excluded.moderated_by,
+            is_verified_evaluation = excluded.is_verified_evaluation,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(
+          rev.id, rev.user_id, rev.student_name || '', rev.student_email || '',
+          rev.display_name || '', rev.ca_level || 'INTERMEDIATE', rev.rating || 5,
+          rev.review_text || '', tags, rev.status || 'PUBLISHED',
+          rev.likes_count ?? rev.likesCount ?? 0,
+          rev.dislikes_count ?? rev.dislikesCount ?? 0,
+          rev.admin_reply ?? rev.adminReply ?? null,
+          rev.admin_reply_at ?? rev.adminReplyAt ?? null,
+          rev.admin_reply_by ?? rev.adminReplyBy ?? null,
+          rev.admin_reply_name ?? rev.adminReplyName ?? null,
+          rev.moderation_reason ?? rev.moderationReason ?? null,
+          rev.moderated_at ?? rev.moderatedAt ?? null,
+          rev.moderated_by ?? rev.moderatedBy ?? null,
+          rev.is_verified_evaluation ?? 1,
+          rev.moderation_note || null,
+          rev.approved_at || null,
+          rev.approved_by || null,
+          rev.rejected_at || null,
+          rev.rejected_by || null,
+          rev.created_at || rev.createdAt || new Date().toISOString()
+        );
+      }
+    } catch (fsErr) {
+      console.warn('[AdminReviews] Firestore reconciliation notice:', fsErr);
+    }
+
     const { status = 'ALL', search = '' } = req.query;
 
     let query = `
@@ -6116,21 +7035,20 @@ router.patch('/reviews/:id/status', async (req: AuthRequest, res: Response) => {
     }
 
     // Sync updated review to Firestore
-    syncRecordToFirestore('reviews', id, {
-      id,
-      user_id: review.user_id,
-      student_name: review.student_name,
-      student_email: review.student_email,
-      display_name: review.display_name,
-      ca_level: review.ca_level,
-      rating: review.rating,
-      review_text: review.review_text,
-      status: targetStatus,
-      moderation_reason: modReason,
-      moderated_at: now,
-      moderated_by: adminId,
-      updated_at: now,
-    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing review update to Firestore:', syncErr));
+    const updatedReview = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReview) {
+      let tags = updatedReview.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReview,
+          experience_tags: tags || [],
+          updated_at: now,
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing review update to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6190,15 +7108,21 @@ router.post('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
       VALUES (?, ?, 'Official Response Received', 'CA Exam Checker AI posted an official response to your review.', 'ADMIN_REPLY', 0, CURRENT_TIMESTAMP)
     `).run(notifId, review.user_id);
 
-    // Sync to Firestore
-    syncRecordToFirestore('reviews', id, {
-      id,
-      admin_reply: cleanReply,
-      admin_reply_at: now,
-      admin_reply_by: adminId,
-      admin_reply_name: replyName,
-      updated_at: now,
-    }).catch((syncErr) => console.warn('[ReviewSync] Warning syncing admin reply to Firestore:', syncErr));
+    // Sync full updated review to Firestore
+    const updatedReviewWithReply = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReviewWithReply) {
+      let tags = updatedReviewWithReply.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReviewWithReply,
+          experience_tags: tags || [],
+          updated_at: now,
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing admin reply to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6233,6 +7157,26 @@ router.delete('/reviews/:id/reply', async (req: AuthRequest, res: Response) => {
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(id);
+
+    // Sync updated review with null reply fields to Firestore
+    const updatedReviewNoReply = db.prepare('SELECT * FROM reviews WHERE id = ?').get(id) as any;
+    if (updatedReviewNoReply) {
+      let tags = updatedReviewNoReply.experience_tags;
+      try { if (typeof tags === 'string') tags = JSON.parse(tags); } catch {}
+      try {
+        await syncRecordToFirestore('reviews', id, {
+          ...updatedReviewNoReply,
+          admin_reply: null,
+          admin_reply_at: null,
+          admin_reply_by: null,
+          admin_reply_name: null,
+          experience_tags: tags || [],
+          updated_at: new Date().toISOString(),
+        });
+      } catch (syncErr) {
+        console.warn('[ReviewSync] Warning syncing admin reply removal to Firestore:', syncErr);
+      }
+    }
 
     return res.json({
       success: true,
@@ -6271,9 +7215,11 @@ router.delete('/reviews/:id', async (req: AuthRequest, res: Response) => {
     );
 
     // Tombstone and delete from Firestore
-    permanentlyDeleteFromFirestore('reviews', id).catch((delErr) =>
-      console.warn('[ReviewSync] Warning deleting review from Firestore:', delErr)
-    );
+    try {
+      await permanentlyDeleteFromFirestore('reviews', id);
+    } catch (delErr) {
+      console.warn('[ReviewSync] Warning deleting review from Firestore:', delErr);
+    }
 
     return res.json({ success: true, message: 'Review has been permanently removed.' });
   } catch (error: unknown) {

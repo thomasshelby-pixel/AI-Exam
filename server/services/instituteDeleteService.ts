@@ -1,12 +1,13 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { db } from '../db.js';
+import { db, recordLocalTombstone, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 
 export interface DeleteInstituteResult {
   success: boolean;
   message: string;
+  alreadyDeleted?: boolean;
   deletedInstitute: {
     id: string;
     name: string;
@@ -38,13 +39,14 @@ export interface DeleteInstituteResult {
  * 3. Atomic transaction: all operations succeed or none do.
  * 4. Zero orphaned records left in database.
  * 5. Permanent audit log recorded.
+ * 6. Idempotent: repeated calls on already-deleted/tombstoned institutes succeed safely.
  */
-export function deleteInstituteAccount(
+export async function deleteInstituteAccount(
   instituteId: string,
   actor: { id: string; email: string; role: string },
   ipAddress?: string | null,
   userAgent?: string | null
-): DeleteInstituteResult {
+): Promise<DeleteInstituteResult> {
   // 1. Authorization: Only SUPER_ADMIN can delete an institute
   const actorRole = (actor?.role || '').toUpperCase();
   const actorEmail = (actor?.email || '').toLowerCase().trim();
@@ -54,7 +56,7 @@ export function deleteInstituteAccount(
     throw error;
   }
 
-  // 2. Validate target institute exists
+  // 2. Validate target institute exists (with Idempotent Tombstone check)
   const targetInstitute = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as {
     id: string;
     name: string;
@@ -65,6 +67,34 @@ export function deleteInstituteAccount(
   } | undefined;
 
   if (!targetInstitute) {
+    if (isTombstoned('institutes', instituteId)) {
+      return {
+        success: true,
+        alreadyDeleted: true,
+        message: `Institute ${instituteId} has already been permanently deleted and tombstoned.`,
+        deletedInstitute: {
+          id: instituteId,
+          name: 'Deleted Institute',
+          code: '',
+          email: '',
+          accountClassification: 'NORMAL',
+        },
+        cleanupSummary: {
+          batchesRemoved: 0,
+          membershipsDetached: 0,
+          assignmentsRemoved: 0,
+          submissionsRemoved: 0,
+          testsRemoved: 0,
+          materialsRemoved: 0,
+          evaluationsRemoved: 0,
+          filesRemoved: 0,
+          subscriptionsRemoved: 0,
+          usageLedgerRemoved: 0,
+          adminAccountsRemoved: 0,
+          sessionsRevoked: 0,
+        },
+      };
+    }
     const error: any = new Error('Institute not found or has already been deleted.');
     error.statusCode = 404;
     throw error;
@@ -291,20 +321,32 @@ export function deleteInstituteAccount(
       ipAddress || null
     );
 
+    // 5M. Persist Local SQLite Tombstones Authoritatively (Inside Transaction)
+    recordLocalTombstone('institutes', targetInstitute.id, `Super admin permanently deleted institute ${targetInstitute.name}`);
+    if (targetInstitute.code) {
+      recordLocalTombstone('institutes', targetInstitute.code, `Super admin permanently deleted institute ${targetInstitute.name}`);
+    }
+    if (targetInstitute.email) {
+      recordLocalTombstone('institutes', targetInstitute.email.toLowerCase().trim(), `Super admin permanently deleted institute ${targetInstitute.name}`);
+    }
+    for (const aId of adminUserIds) {
+      recordLocalTombstone('users', aId, `Cascaded deletion of admin user for deleted institute ${targetInstitute.id}`);
+    }
+
     // Commit atomic transaction
     db.exec('COMMIT');
 
-    // Permanently remove from Cloud Firestore and mark local tombstones
+    // Permanently remove from Cloud Firestore and mark cloud tombstones
     try {
-      permanentlyDeleteFromFirestore('institutes', targetInstitute.id, `Super admin permanently deleted institute ${targetInstitute.name}`);
+      await permanentlyDeleteFromFirestore('institutes', targetInstitute.id, `Super admin permanently deleted institute ${targetInstitute.name}`);
       for (const mId of materialIds) {
-        permanentlyDeleteFromFirestore('institute_materials', mId, `Cascaded deletion of institute material for ${targetInstitute.id}`);
+        await permanentlyDeleteFromFirestore('institute_materials', mId, `Cascaded deletion of institute material for ${targetInstitute.id}`);
       }
       for (const eId of evaluationIds) {
-        permanentlyDeleteFromFirestore('evaluations', eId, `Cascaded deletion of evaluation for deleted institute ${targetInstitute.id}`);
+        await permanentlyDeleteFromFirestore('evaluations', eId, `Cascaded deletion of evaluation for deleted institute ${targetInstitute.id}`);
       }
       for (const aId of adminUserIds) {
-        permanentlyDeleteFromFirestore('users', aId, `Cascaded deletion of admin user for deleted institute ${targetInstitute.id}`);
+        await permanentlyDeleteFromFirestore('users', aId, `Cascaded deletion of admin user for deleted institute ${targetInstitute.id}`);
       }
     } catch (fsErr) {
       console.warn('[InstituteDeleteService] Firestore permanent deletion warning:', fsErr);

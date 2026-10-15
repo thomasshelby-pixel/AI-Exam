@@ -25,6 +25,7 @@ import { RefundPolicyPage } from './pages/public/RefundPolicyPage.js';
 import { ContactPage } from './pages/public/ContactPage.js';
 import { ReviewsPage } from './pages/public/ReviewsPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
+import { UnifiedAuthPage } from './pages/auth/UnifiedAuthPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
@@ -45,6 +46,8 @@ import { McqAdminPortal } from './pages/admin/McqAdminPortal.js';
 import { McqAdminLoginPage } from './pages/auth/McqAdminLoginPage.js';
 import { EvaluationResult } from './types/index.js';
 import { apiRequest } from './api/client.js';
+import { featureApi } from './api/featureClient.js';
+import { FeatureUnavailable } from './components/common/FeatureUnavailable.js';
 import { DisclaimerModal } from './components/student/DisclaimerModal.js';
 
 // Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
@@ -103,6 +106,10 @@ const EvaluationReportWrapper: React.FC = () => {
       }>(`/api/student/evaluations/${id}`);
 
       const evalData = res.evaluation;
+      const canonicalDisplayId = (evalData as any)?.display_id || (evalData as any)?.displayId;
+      if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
+        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true, state: location.state });
+      }
       if (evalData?.resultJson) {
         setReport(evalData.resultJson);
         setLoading(false);
@@ -291,6 +298,7 @@ const PublicAndStudentLayout: React.FC<{
   else if (pathname === '/contact') currentView = 'contact';
   else if (pathname === '/login') currentView = 'login';
   else if (pathname === '/register') currentView = 'register';
+  else if (pathname === '/features') currentView = 'features';
   else if (pathname.startsWith('/student/upload')) currentView = 'student-upload';
   else if (pathname.startsWith('/student/evaluations')) currentView = 'student-evaluations';
   else if (pathname.startsWith('/student/examiner-profile')) currentView = 'student-examiner-profile';
@@ -337,6 +345,18 @@ const PublicAndStudentLayout: React.FC<{
         break;
       case 'student-profile':
         navigate('/student/profile');
+        break;
+      case 'features':
+        if (location.pathname === '/' || location.pathname === '') {
+          const el = document.getElementById('features');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth' });
+          } else {
+            navigate('/features');
+          }
+        } else {
+          navigate('/features');
+        }
         break;
       case 'arena':
         navigate('/arena');
@@ -455,7 +475,8 @@ const LoginRoute: React.FC<{ mode: 'login' | 'register' }> = ({ mode }) => {
 
 // Protected Student Route Guard
 const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -465,13 +486,14 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   }
 
-  // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  // Preserve workspace state only if session is genuinely locked with locked user info for QuickResumeModal
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login?redirect=/student/dashboard" replace />;
+    const redirectTarget = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?redirect=${redirectTarget}`} replace />;
   }
 
   return <>{children}</>;
@@ -479,7 +501,7 @@ const ProtectedStudentRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
 // Protected MCQ Admin Route Guard
 const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
 
   if (isLoading) {
     return (
@@ -490,7 +512,7 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
@@ -506,10 +528,85 @@ const ProtectedMcqAdminRoute: React.FC<{ children: React.ReactNode }> = ({ child
   return <>{children}</>;
 };
 
+// Protected MCQ Arena Route Guard — strictly restricts access to Super Admin, MCQ Admin, and allowlisted testers
+const ProtectedArenaRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isAuthenticated, isLoading } = useAuth();
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
+  const [isAllowed, setIsAllowed] = useState(false);
+  const [accessInfo, setAccessInfo] = useState<{
+    featureName?: string;
+    status?: 'TESTING' | 'DISABLED' | 'ENABLED' | 'COMING_SOON';
+    studentMessage?: string;
+  }>({});
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setIsCheckingAccess(false);
+      setIsAllowed(false);
+      return;
+    }
+
+    const roleUpper = (user.role || '').toUpperCase().replace(/\s+/g, '_');
+    if (roleUpper === 'SUPER_ADMIN' || roleUpper === 'ADMIN' || roleUpper === 'MCQ_ADMIN') {
+      setIsAllowed(true);
+      setIsCheckingAccess(false);
+      return;
+    }
+
+    featureApi
+      .checkAccess('mcq_arena')
+      .then((res) => {
+        setIsAllowed(Boolean(res.allowed));
+        setAccessInfo({
+          featureName: res.featureName,
+          status: res.status,
+          studentMessage: res.studentMessage,
+        });
+      })
+      .catch(() => {
+        setIsAllowed(false);
+      })
+      .finally(() => {
+        setIsCheckingAccess(false);
+      });
+  }, [isAuthenticated, user]);
+
+  if (isLoading || isCheckingAccess) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login?redirect=/arena" replace />;
+  }
+
+  if (!isAllowed) {
+    return (
+      <FeatureUnavailable
+        featureKey="mcq_arena"
+        featureName={accessInfo.featureName || 'MCQ Arena'}
+        status={accessInfo.status || 'TESTING'}
+        studentMessage={
+          accessInfo.studentMessage ||
+          "MCQ Arena is currently restricted and undergoing private testing. Public access will be available soon."
+        }
+        onBack={() => {
+          window.location.href = '/student/dashboard';
+        }}
+      />
+    );
+  }
+
+  return <>{children}</>;
+};
+
 // Protected Super Admin Route Guard
 // Automatically routes Institute Admin to Institute Portal rather than hitting 403 Access Denied
 const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, isSessionLocked } = useAuth();
+  const { user, isAuthenticated, isLoading, isSessionLocked, lockedUser } = useAuth();
 
   if (isLoading) {
     return (
@@ -520,7 +617,7 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
   }
 
   // Preserve workspace state when session is locked for quick resume
-  if (isSessionLocked) {
+  if (isSessionLocked && lockedUser) {
     return <>{children}</>;
   }
 
@@ -692,6 +789,22 @@ const AppRoutes: React.FC = () => {
         />
 
         <Route
+          path="/features"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <LandingPage
+                onNavigateRegister={() => navigate('/register')}
+                onNavigateLogin={() => navigate('/login')}
+                onNavigatePricing={() => navigate('/pricing')}
+                onNavigateHowItWorks={() => navigate('/how-it-works')}
+                onNavigateReviews={() => navigate('/reviews')}
+                initialSection="features"
+              />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
           path="/pricing"
           element={
             <PublicAndStudentLayout onOpenCreditsModal={handleOpenCreditsModal}>
@@ -782,7 +895,7 @@ const AppRoutes: React.FC = () => {
           path="/login"
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-              <LoginRoute mode="login" />
+              <UnifiedAuthPage initialMode="login" />
             </PublicAndStudentLayout>
           }
         />
@@ -791,7 +904,7 @@ const AppRoutes: React.FC = () => {
           path="/register"
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-              <LoginRoute mode="register" />
+              <UnifiedAuthPage initialMode="register" defaultType="student" />
             </PublicAndStudentLayout>
           }
         />
@@ -966,54 +1079,54 @@ const AppRoutes: React.FC = () => {
         />
 
         {/* ============================================================ */}
-        {/* MCQ ARENA STUDENT ROUTES — Authenticated CA Student Practice */}
+        {/* MCQ ARENA STUDENT ROUTES — Authenticated & Authorized Practice */}
         {/* ============================================================ */}
         <Route
           path="/arena"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqArenaDashboard />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/mcq-arena"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqArenaDashboard />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/session/:sessionId"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqPracticeSessionPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/wrong-vault"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqWrongVaultPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/bookmarks"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqBookmarksPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
         <Route
           path="/arena/progress"
           element={
-            <ProtectedStudentRoute>
+            <ProtectedArenaRoute>
               <McqProgressPage />
-            </ProtectedStudentRoute>
+            </ProtectedArenaRoute>
           }
         />
 

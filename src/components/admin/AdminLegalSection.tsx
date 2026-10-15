@@ -26,7 +26,7 @@ export const AdminLegalSection: React.FC = () => {
     legal_entity_name: '[LEGAL_ENTITY_NAME]',
     business_address: '[VERIFIED_BUSINESS_ADDRESS]',
     privacy_email: '[PRIVACY_OR_GRIEVANCE_EMAIL]',
-    support_email: 'caexamchecker.support@gmail.com',
+    support_email: 'support@caexamcheckerai.com',
     instagram_url: 'https://insta.openinapp.co/utw2r',
     governing_law: 'Laws of India',
     dispute_jurisdiction: '[CONFIGURABLE_JURISDICTION]',

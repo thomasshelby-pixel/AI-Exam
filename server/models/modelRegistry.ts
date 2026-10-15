@@ -1,9 +1,26 @@
+import crypto from 'node:crypto';
 import { getGemini } from '../gemini.js';
 import { db } from '../db.js';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { getFirestoreDoc } from '../services/firestoreDbService.js';
 import { validateModelRoutingConfiguration } from '../services/modelRoutingConfig.js';
+
+import {
+  getSupportedThinkingLevel,
+  getSupportedThinkingLevels,
+  buildGeminiThinkingConfig,
+  sanitizeGeminiConfig,
+  type GeminiThinkingLevel,
+} from './geminiThinkingHelper.js';
+
+export {
+  getSupportedThinkingLevel,
+  getSupportedThinkingLevels,
+  buildGeminiThinkingConfig,
+  sanitizeGeminiConfig,
+  type GeminiThinkingLevel,
+};
 
 export type ModelProviderType = 'gemini' | 'openai' | 'anthropic';
 
@@ -51,6 +68,7 @@ export interface ModelDescriptor {
  * NOTE: Legacy obsolete models (GPT-4o, Claude 3.5, Gemini 1.5, Gemini 2.5) are permanently excluded.
  */
 export const APPROVED_MODELS: ModelDescriptor[] = [
+  // 1. Google Gemini — Exactly three approved models
   {
     id: 'gemini-3.8-flash',
     provider: 'gemini',
@@ -71,6 +89,23 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     ],
   },
   {
+    id: 'gemini-3.6-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.6 Flash',
+    description: 'Reliable production Flash model for multimodal evaluation, step marking, and resilient fallback.',
+    contextWindow: 1048576,
+    recommended: true,
+    role: 'Primary Fallback Model',
+    defaultThinkingLevel: 'MEDIUM',
+    fallbackOrder: 1,
+    recommendedReasoning: 'MEDIUM',
+    useCases: [
+      'Standard multimodal evaluation',
+      'Step-marking and calculation verification',
+      'Primary production fallback tier',
+    ],
+  },
+  {
     id: 'gemini-3.1-flash-lite',
     provider: 'gemini',
     displayName: 'Google Gemini 3.1 Flash Lite',
@@ -79,7 +114,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Fast Multimodal & High-Volume Fallback',
     defaultThinkingLevel: 'LOW',
-    fallbackOrder: 1,
+    fallbackOrder: 2,
     recommendedReasoning: 'LOW',
     useCases: [
       'Rapid multimodal PDF evaluation',
@@ -87,59 +122,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'High-throughput fallback when other models are saturated',
     ],
   },
-  {
-    id: 'gemini-flash-latest',
-    provider: 'gemini',
-    displayName: 'Google Gemini Flash Latest',
-    description: 'Standard reliable production Flash fallback when primary models encounter transient rate limits or high-demand spikes.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Production Flash Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 2,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Standard reliable fallback tier',
-      'Rate limit recovery',
-      'High-volume routine processing',
-    ],
-  },
-  {
-    id: 'gemini-3.1-pro-preview',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.1 Pro (Preview)',
-    description: 'Difficult and highly ambiguous CA evaluations, complex legal/accounting/tax/audit reasoning, difficult calculations, consequential-error analysis and cases requiring deeper reasoning. (PREVIEW: Not for default production).',
-    contextWindow: 2097152,
-    recommended: false,
-    role: 'Deep Reasoning & Pro Analysis',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 3,
-    isPreview: true,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Difficult calculations & consequential-error analysis',
-      'Extreme context preview cases',
-    ],
-  },
-  {
-    id: 'claude-opus-5',
-    provider: 'anthropic',
-    displayName: 'Claude Opus 5 (Anthropic)',
-    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
-    contextWindow: 200000,
-    recommended: true,
-    role: 'Deep Legal / Accounting / Audit Evaluation',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 4,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Deep legal reasoning & statutory interpretation',
-      'Complex corporate and economic laws',
-      'Ind AS / AS accounting standard application',
-      'Advanced auditing principles and ethics',
-      'High-stakes ambiguous student answer arbitration',
-    ],
-  },
+
+  // 2. OpenAI — Preserved configured entries
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
@@ -149,7 +133,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: true,
     role: 'Deep Reasoning & Calculation Cross-Check',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 5,
+    fallbackOrder: 3,
     recommendedReasoning: 'HIGH or XHIGH',
     useCases: [
       'Difficult CA answer evaluation',
@@ -158,25 +142,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Ambiguous answers & deep marking verification',
       'Score calculation cross-check & annotation instructions',
       'Detailed evaluation report generation',
-      'Difficult quality-review cases',
-    ],
-  },
-  {
-    id: 'claude-sonnet-5',
-    provider: 'anthropic',
-    displayName: 'Claude Sonnet 5 (Anthropic)',
-    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
-    contextWindow: 200000,
-    recommended: true,
-    role: 'Balanced CA Evaluation / Fallback',
-    defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 6,
-    recommendedReasoning: 'MEDIUM',
-    useCases: [
-      'Balanced CA answer evaluation',
-      'Fast high-reliability fallback',
-      'Structured theory and practical question grading',
-      'Intermediate and Foundation level evaluations',
     ],
   },
   {
@@ -188,7 +153,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: false,
     role: 'Fast High-Volume / Multimodal / Low Latency',
     defaultThinkingLevel: 'MEDIUM',
-    fallbackOrder: 7,
+    fallbackOrder: 4,
     recommendedReasoning: 'LOW or MEDIUM',
     useCases: [
       'Fast evaluation & speed-critical fallbacks',
@@ -196,25 +161,6 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'Routine question evaluation',
       'Standard practical/theory evaluation',
       'High-concurrency batch evaluation',
-    ],
-  },
-  {
-    id: 'gemini-3.7-flash',
-    provider: 'gemini',
-    displayName: 'Google Gemini 3.7 Flash',
-    description: 'Advanced CA evaluation, multimodal answer-sheet understanding, long/complex descriptive evaluation, step marking, and high-volume production evaluation.',
-    contextWindow: 1048576,
-    recommended: true,
-    role: 'Advanced CA Evaluation / Multimodal / High-Volume',
-    defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 8,
-    recommendedReasoning: 'HIGH',
-    useCases: [
-      'Advanced CA answer-sheet evaluation',
-      'Multimodal answer-sheet understanding',
-      'Long/complex descriptive evaluation',
-      'Step-marking and sub-part analysis',
-      'High-volume production evaluation',
     ],
   },
   {
@@ -226,7 +172,7 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
     recommended: false,
     role: 'Deep Reasoning / Calculation Verification / Cross-Check',
     defaultThinkingLevel: 'HIGH',
-    fallbackOrder: 9,
+    fallbackOrder: 5,
     recommendedReasoning: 'HIGH',
     useCases: [
       'Deep reasoning and calculation verification',
@@ -235,7 +181,427 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
       'High-precision quality review and arbitration',
     ],
   },
+
+  // 3. Anthropic Claude — Preserved configured entries
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    displayName: 'Claude Opus 5 (Anthropic)',
+    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
+    contextWindow: 200000,
+    recommended: true,
+    role: 'Deep Legal / Accounting / Audit Evaluation',
+    defaultThinkingLevel: 'HIGH',
+    fallbackOrder: 6,
+    recommendedReasoning: 'HIGH',
+    useCases: [
+      'Deep legal reasoning & statutory interpretation',
+      'Complex corporate and economic laws',
+      'Ind AS / AS accounting standard application',
+      'Advanced auditing principles and ethics',
+      'High-stakes ambiguous student answer arbitration',
+    ],
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    displayName: 'Claude Sonnet 5 (Anthropic)',
+    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
+    contextWindow: 200000,
+    recommended: true,
+    role: 'Balanced CA Evaluation / Fallback',
+    defaultThinkingLevel: 'MEDIUM',
+    fallbackOrder: 7,
+    recommendedReasoning: 'MEDIUM',
+    useCases: [
+      'Balanced CA answer evaluation',
+      'Fast high-reliability fallback',
+      'Structured theory and practical question grading',
+      'Intermediate and Foundation level evaluations',
+    ],
+  },
 ];
+
+export interface EvaluationModelRegistryItem {
+  id: string;
+  provider: ModelProviderType;
+  displayName: string;
+  category: 'primary' | 'flash' | 'flash_lite' | 'pro' | 'alias' | 'preview' | 'deprecated';
+  status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE';
+  role: string;
+  description: string;
+  contextWindow: number;
+  supportsMultimodal: boolean;
+  supportsThinking: boolean;
+  defaultThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
+  costTier: 'LOW' | 'STANDARD' | 'PRO';
+  isSelectable: boolean;
+  isPrimaryCandidate: boolean;
+  deprecationReason?: string;
+}
+
+export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
+  // 1. GOOGLE GEMINI — EXACTLY 3 APPROVED MODELS
+  {
+    id: 'gemini-3.8-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.8 Flash (Primary CA Evaluation — Default)',
+    category: 'primary',
+    status: 'STABLE',
+    role: 'Primary CA Evaluation (Recommended)',
+    description: 'Flagship production model for CA handwritten answer-sheet evaluation, OCR, step marking, working notes inspection, and ICAI report generation.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.6-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.6 Flash (Primary Fallback Model)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Primary Production Fallback',
+    description: 'Battle-tested Flash model for evaluation resilience when primary model encounters transient rate limits.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    provider: 'gemini',
+    displayName: 'Google Gemini 3.1 Flash Lite (Cost-Efficient Flash-Lite)',
+    category: 'flash_lite',
+    status: 'STABLE',
+    role: 'Fast Multimodal & High-Volume Fallback',
+    description: 'Ultra-low latency, cost-effective multimodal evaluation model with 1M context window and low thinking latency.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 2. OPENAI — PRESERVED CONFIGURED MODELS (3 MODELS)
+  {
+    id: 'gpt-5.6-sol',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Sol (Deep Reasoning & Calculation Cross-Check)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning & Calculation Cross-Check',
+    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-5.6-terra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-5.6 Terra (Fast Multimodal & OCR)',
+    category: 'flash',
+    status: 'STABLE',
+    role: 'Fast High-Volume / Multimodal / Low Latency',
+    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, and speed-critical fallback processing.',
+    contextWindow: 128000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'gpt-6-astra',
+    provider: 'openai',
+    displayName: 'OpenAI GPT-6 Astra (Deep Reasoning & Verification)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Reasoning / Calculation Verification / Cross-Check',
+    description: 'Deep reasoning, calculation verification, cross-checking, and difficult CA accounting, tax, law, and audit evaluation.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 3. ANTHROPIC CLAUDE — PRESERVED CONFIGURED MODELS (2 MODELS)
+  {
+    id: 'claude-opus-5',
+    provider: 'anthropic',
+    displayName: 'Claude Opus 5 (Anthropic — Deep Legal/Audit Evaluation)',
+    category: 'pro',
+    status: 'STABLE',
+    role: 'Deep Legal / Accounting / Audit Evaluation',
+    description: 'Deep complex evaluation, highest-level legal interpretation, corporate law case studies, ICAI accounting standards (AS/Ind AS), Standards on Auditing (SA), and nuanced subjective answer arbitration.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'HIGH',
+    costTier: 'PRO',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+  {
+    id: 'claude-sonnet-5',
+    provider: 'anthropic',
+    displayName: 'Claude Sonnet 5 (Anthropic — Balanced Evaluation)',
+    category: 'primary',
+    status: 'STABLE',
+    role: 'Balanced CA Evaluation / Fallback',
+    description: 'Balanced high-quality CA evaluation and rapid fallback. Excellent structured reasoning, consistent marking criteria compliance, and fast multimodal synthesis.',
+    contextWindow: 200000,
+    supportsMultimodal: true,
+    supportsThinking: true,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'STANDARD',
+    isSelectable: true,
+    isPrimaryCandidate: true,
+  },
+
+  // 4. DEPRECATED / RETIRED MODELS (CLEARLY LABELED, NOT SELECTABLE FOR PRODUCTION)
+  {
+    id: 'gemini-2.5-flash',
+    provider: 'gemini',
+    displayName: 'Google Gemini 2.5 Flash (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.8-flash.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'STANDARD',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.8-flash.',
+  },
+  {
+    id: 'gemini-2.5-pro',
+    provider: 'gemini',
+    displayName: 'Google Gemini 2.5 Pro (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.8-flash.',
+    contextWindow: 2097152,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'MEDIUM',
+    costTier: 'PRO',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.8-flash.',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    provider: 'gemini',
+    displayName: 'Google Gemini 2.5 Flash Lite (Deprecated — Retired by Google)',
+    category: 'deprecated',
+    status: 'DEPRECATED',
+    role: 'Legacy Retired Model',
+    description: 'Retired by Google API (HTTP 404). Automatically migrated to gemini-3.1-flash-lite.',
+    contextWindow: 1048576,
+    supportsMultimodal: true,
+    supportsThinking: false,
+    defaultThinkingLevel: 'LOW',
+    costTier: 'LOW',
+    isSelectable: false,
+    isPrimaryCandidate: false,
+    deprecationReason: 'Deprecated and retired by Google Gemini API. Replaced by gemini-3.1-flash-lite.',
+  },
+];
+
+/**
+ * Validates whether a model identifier is an approved, active, and selectable evaluation model.
+ */
+export function validateEvaluationModelId(modelId: string): {
+  valid: boolean;
+  model?: EvaluationModelRegistryItem;
+  error?: string;
+} {
+  if (!modelId || typeof modelId !== 'string') {
+    return { valid: false, error: 'Model identifier is required.' };
+  }
+
+  const trimmed = modelId.trim();
+  const entry = EVALUATION_MODEL_REGISTRY.find((m) => m.id === trimmed);
+
+  if (!entry) {
+    return {
+      valid: false,
+      error: `Unsupported AI model '${trimmed}'. Must be an approved Google Gemini, OpenAI, or Anthropic Claude evaluation model.`,
+    };
+  }
+
+  if (entry.status === 'DEPRECATED' || !entry.isSelectable) {
+    return {
+      valid: false,
+      model: entry,
+      error: `Model '${trimmed}' is deprecated or retired: ${entry.deprecationReason || 'Not selectable for evaluation.'}`,
+    };
+  }
+
+  return { valid: true, model: entry };
+}
+
+/**
+ * Retrieves all eligible evaluation models for admin selection and display.
+ */
+export function getEvaluationModelRegistry(): {
+  models: EvaluationModelRegistryItem[];
+  defaultModelId: string;
+} {
+  const dynamicModels = EVALUATION_MODEL_REGISTRY.map((m) => {
+    if (m.status === 'DEPRECATED') return m;
+    const configured = isProviderConfigured(m.provider);
+    const exhausted = isProviderCreditExhausted(m.provider);
+    let status: 'STABLE' | 'PREVIEW' | 'DEPRECATED' | 'UNAVAILABLE' = m.status;
+    if (!configured) {
+      status = 'UNAVAILABLE';
+    } else if (exhausted) {
+      status = 'UNAVAILABLE';
+    }
+    return {
+      ...m,
+      status,
+    };
+  });
+
+  return {
+    models: dynamicModels,
+    defaultModelId: 'gemini-3.8-flash',
+  };
+}
+
+export const DEFAULT_FALLBACK_CHAIN: string[] = [
+  'gemini-3.6-flash',
+  'gemini-3.1-flash-lite',
+  'claude-opus-5',
+  'gpt-5.6-sol',
+  'claude-sonnet-5',
+  'gpt-5.6-terra',
+  'gpt-6-astra',
+];
+
+export function getAuthoritativePrimaryModel(): string {
+  try {
+    const primaryRow = db.prepare('SELECT id FROM model_configs WHERE is_primary = 1').get() as { id: string } | undefined;
+    if (primaryRow?.id && APPROVED_MODELS.some((m) => m.id === primaryRow.id)) {
+      return primaryRow.id;
+    }
+    const settingRow = db.prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_MODEL_PROVIDER'").get() as { value: string } | undefined;
+    if (settingRow?.value && APPROVED_MODELS.some((m) => m.id === settingRow.value)) {
+      return settingRow.value;
+    }
+  } catch (err) {
+    console.warn('[ModelRegistry] Error reading primary model, defaulting to gemini-3.8-flash:', err);
+  }
+  return 'gemini-3.8-flash';
+}
+
+export function getAuthoritativeFallbackChain(primaryModel?: string): string[] {
+  const currentPrimary = primaryModel || getAuthoritativePrimaryModel();
+  try {
+    const row = db.prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_FALLBACK_ORDER'").get() as { value: string } | undefined;
+    if (row?.value) {
+      const parsed = JSON.parse(row.value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const approvedIds = new Set(APPROVED_MODELS.map((m) => m.id));
+        const validChain = parsed.filter((id) => typeof id === 'string' && approvedIds.has(id) && id !== currentPrimary);
+        const dedupedChain = Array.from(new Set(validChain));
+        if (dedupedChain.length > 0) {
+          return dedupedChain;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[ModelRegistry] Could not read EVAL_FALLBACK_ORDER from pricing_settings, using defaults:', err);
+  }
+
+  return DEFAULT_FALLBACK_CHAIN.filter((m) => m !== currentPrimary);
+}
+
+export function saveAuthoritativeFallbackChain(chain: string[], adminUserId?: string): { success: boolean; fallbackChain: string[]; primaryModel: string } {
+  const primaryModel = getAuthoritativePrimaryModel();
+  const approvedIds = new Set(APPROVED_MODELS.map((m) => m.id));
+
+  if (!Array.isArray(chain)) {
+    throw new Error('Fallback chain must be an array of model identifiers.');
+  }
+
+  const seen = new Set<string>();
+  for (const mId of chain) {
+    if (!approvedIds.has(mId)) {
+      throw new Error(`Model '${mId}' is not in the approved runtime model whitelist.`);
+    }
+    if (mId === primaryModel) {
+      throw new Error(`Primary model '${mId}' cannot be included in its own fallback chain.`);
+    }
+    if (seen.has(mId)) {
+      throw new Error(`Duplicate model '${mId}' detected in fallback chain.`);
+    }
+    seen.add(mId);
+  }
+
+  // Atomically update pricing_settings and model_configs
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`
+      INSERT INTO pricing_settings (key, value, updated_at)
+      VALUES ('EVAL_FALLBACK_ORDER', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(JSON.stringify(chain));
+
+    chain.forEach((mId, index) => {
+      db.prepare('UPDATE model_configs SET fallback_order = ?, is_enabled = 1 WHERE id = ?').run(index + 1, mId);
+    });
+
+    APPROVED_MODELS.forEach((m) => {
+      if (m.id !== primaryModel && !seen.has(m.id)) {
+        db.prepare('UPDATE model_configs SET fallback_order = 99 WHERE id = ?').run(m.id);
+      }
+    });
+
+    if (adminUserId) {
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'UPDATE_FALLBACK_ORDER', 'AI_MODEL', 'EVAL_FALLBACK_ORDER', ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        adminUserId,
+        `Admin configured custom fallback chain: [${chain.join(' -> ')}]`
+      );
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  return {
+    success: true,
+    primaryModel,
+    fallbackChain: chain,
+  };
+}
 
 export const REGISTERED_MODELS = APPROVED_MODELS;
 
@@ -334,18 +700,51 @@ export function extractRetryDelayMs(errMsg: string, defaultMs = 30000): number {
   return defaultMs;
 }
 
+/**
+ * Redact secret API keys, tokens, or credential fragments from error strings, logs, and diagnostic payloads.
+ */
+export function sanitizeSecretStrings(input: string): string {
+  if (!input || typeof input !== 'string') return '';
+  let sanitized = input;
+
+  // 1. Redact any known server environment secrets if present
+  const secrets = [
+    process.env.GEMINI_API_KEY,
+    process.env.OPENAI_API_KEY,
+    process.env.ANTHROPIC_API_KEY,
+    process.env.RAZORPAY_KEY_SECRET,
+    process.env.JWT_SECRET,
+  ].filter((s): s is string => Boolean(s && s.length > 5));
+
+  for (const secret of secrets) {
+    if (sanitized.includes(secret)) {
+      sanitized = sanitized.replaceAll(secret, '[REDACTED]');
+    }
+  }
+
+  // 2. Redact common API key patterns (Google API keys, OpenAI keys, Anthropic keys, Bearer tokens, query params)
+  sanitized = sanitized.replace(/AIza[0-9A-Za-z-_]{35}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/sk-[A-Za-z0-9-_]{20,}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/sk-ant-[A-Za-z0-9-_]{20,}/g, '[REDACTED_KEY]');
+  sanitized = sanitized.replace(/(key=|api_key=|apiKey=|token=)[a-zA-Z0-9_\-\.]{10,}/gi, '$1[REDACTED]');
+  sanitized = sanitized.replace(/Bearer\s+[a-zA-Z0-9_\-\.]{15,}/gi, 'Bearer [REDACTED]');
+
+  return sanitized;
+}
+
 export function markProviderCreditExhausted(provider: ModelProviderType, reason?: string, silent = false) {
   const existing = providerCreditExhaustedUntil.get(provider);
   const now = Date.now();
   // Keep provider marked credit-exhausted for 10 minutes so we can periodically retry if balance is restored
   providerCreditExhaustedUntil.set(provider, now + 10 * 60 * 1000);
+  const safeReason = sanitizeSecretStrings(reason || 'credit balance too low');
   if (!silent && (!existing || now > existing)) {
-    console.info(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${reason || 'credit balance too low'}`);
+    console.info(`[Model Registry] Provider ${provider.toUpperCase()} marked INSUFFICIENT_CREDITS: ${safeReason}`);
   }
   try {
     db.prepare(
       "UPDATE model_configs SET status = 'INSUFFICIENT_CREDITS', health_details = ?, last_tested_at = CURRENT_TIMESTAMP WHERE provider = ?"
-    ).run(reason ? reason.slice(0, 250) : 'Credit balance depleted', provider);
+    ).run(safeReason.slice(0, 250), provider);
   } catch {}
 }
 
@@ -400,6 +799,14 @@ export function isModelCoolingDown(modelId: string): boolean {
     return false;
   }
   return true;
+}
+
+export function clearModelCooldown(modelId?: string) {
+  if (modelId) {
+    modelCooldownUntil.delete(modelId);
+  } else {
+    modelCooldownUntil.clear();
+  }
 }
 
 // Check database for any previously rate-limited or credit-exhausted models on startup
@@ -477,26 +884,25 @@ async function callGemini(
 
   contents.push(params.userPrompt);
 
-  const config: any = {};
-  if (modelId === 'gemini-3.1-flash-lite') {
-    config.thinkingConfig = {
-      thinkingLevel: 'LOW',
-    };
-  } else {
-    config.thinkingConfig = {
-      thinkingLevel: effectiveThinkingLevel,
-    };
-  }
+  const supportedLevel = getSupportedThinkingLevel(modelId, effectiveThinkingLevel);
+  const baseConfig: any = {
+    thinkingConfig: {
+      thinkingLevel: supportedLevel,
+    },
+  };
 
   if (params.systemPrompt) {
-    config.systemInstruction = params.systemPrompt;
+    baseConfig.systemInstruction = params.systemPrompt;
   }
   if (params.maxTokens) {
-    config.maxOutputTokens = params.maxTokens;
+    baseConfig.maxOutputTokens = params.maxTokens;
   }
   if (params.responseMimeType) {
-    config.responseMimeType = params.responseMimeType;
+    baseConfig.responseMimeType = params.responseMimeType;
   }
+
+  // Ensure config is completely sanitized of any deprecated parameters (temperature, top_p, top_k, thinking_budget)
+  const config = sanitizeGeminiConfig(baseConfig, modelId);
 
   let response: any;
   let lastErr: any;
@@ -871,7 +1277,7 @@ export function determineModelRouting(context?: {
 
   let defaultGemini = 'gemini-3.8-flash';
   if (isModelCoolingDown(defaultGemini) || !isModelUsable(defaultGemini)) {
-    const usableGemini = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.7-flash'].find((m) => isModelUsable(m));
+    const usableGemini = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'].find((m) => isModelUsable(m));
     if (usableGemini) {
       defaultGemini = usableGemini;
     }
@@ -880,7 +1286,7 @@ export function determineModelRouting(context?: {
   let selectedModel = defaultGemini;
   // If Gemini provider is credit exhausted or unusable, pick first healthy usable model across providers
   if (!isModelUsable(selectedModel)) {
-    const firstUsable = ['gpt-5.6-terra', 'claude-sonnet-5', 'gpt-5.6-sol', 'claude-opus-5'].find((m) => isModelUsable(m));
+    const firstUsable = ['gpt-5.6-terra', 'claude-sonnet-5', 'gpt-5.6-sol', 'claude-opus-5', 'claude-haiku-4.5', 'gpt-6-astra'].find((m) => isModelUsable(m));
     if (firstUsable) {
       selectedModel = firstUsable;
     }
@@ -948,8 +1354,8 @@ export function determineModelRouting(context?: {
       crossCheckModel = 'gpt-5.6-sol';
     } else if (selectedModel !== 'claude-opus-5' && isModelUsable('claude-opus-5')) {
       crossCheckModel = 'claude-opus-5';
-    } else if (selectedModel !== 'gemini-flash-latest' && isModelUsable('gemini-flash-latest')) {
-      crossCheckModel = 'gemini-flash-latest';
+    } else if (selectedModel !== 'gemini-3.6-flash' && isModelUsable('gemini-3.6-flash')) {
+      crossCheckModel = 'gemini-3.6-flash';
     }
   }
 
@@ -1088,7 +1494,8 @@ export async function executeModelWithFallback(
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
       candidateModel === 'claude-sonnet-5' ||
-      candidateModel === 'gemini-flash-latest' ||
+      candidateModel === 'claude-haiku-4.5' ||
+      candidateModel === 'gemini-3.6-flash' ||
       candidateModel === 'gemini-3.1-flash-lite'
     ) {
       effectiveThinking = 'LOW';
@@ -1309,15 +1716,17 @@ export async function testModelHealth(
   try {
     if (provider === 'gemini') {
       const ai = getGemini();
+      const supportedLevel = getSupportedThinkingLevel(modelId, 'low');
+      const testConfig = sanitizeGeminiConfig({
+        maxOutputTokens: 20,
+        thinkingConfig: {
+          thinkingLevel: supportedLevel,
+        },
+      }, modelId);
       const testResponse = await ai.models.generateContent({
         model: modelId,
         contents: 'Ping health check. Respond strictly with: OK',
-        config: {
-          maxOutputTokens: 20,
-          thinkingConfig: {
-            thinkingLevel: 'LOW' as any,
-          },
-        },
+        config: testConfig,
       });
       inferenceOutput = testResponse.text?.trim() || '';
     } else if (provider === 'openai') {
@@ -1352,7 +1761,8 @@ export async function testModelHealth(
     clearProviderCreditExhausted(provider);
   } catch (err: any) {
     const latencyMs = Date.now() - overallStart;
-    const errMsg = err?.message || String(err);
+    const rawErrMsg = err?.message || String(err);
+    const errMsg = sanitizeSecretStrings(rawErrMsg);
     const errMsgLower = errMsg.toLowerCase();
 
     const isTimeout =
@@ -1418,12 +1828,13 @@ export async function testModelHealth(
       status = 'TEMPORARILY_UNAVAILABLE';
     }
 
-    const userFacingMsg =
+    const userFacingMsg = sanitizeSecretStrings(
       status === 'INSUFFICIENT_CREDITS'
         ? `Provider ${provider.toUpperCase()} has insufficient credits/quota: ${errMsg.slice(0, 180)}. Model is registered but billing refill is required.`
         : status === 'INVALID_MODEL'
         ? `Model ID ${modelId} was rejected by ${provider.toUpperCase()} API (invalid or unavailable model).`
-        : errMsg.slice(0, 200);
+        : errMsg.slice(0, 200)
+    );
 
     try {
       db.prepare(
@@ -1599,7 +2010,8 @@ TASK: Return strictly a valid JSON object matching this schema:
     };
   } catch (evalErr: any) {
     const totalLatency = Date.now() - overallStart;
-    const errMsg = evalErr?.message || String(evalErr);
+    const rawErrMsg = evalErr?.message || String(evalErr);
+    const errMsg = sanitizeSecretStrings(rawErrMsg);
     const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('resource_exhausted');
 
     if (isRateLimit) {

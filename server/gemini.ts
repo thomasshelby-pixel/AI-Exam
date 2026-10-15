@@ -20,6 +20,11 @@ import {
   markProviderCreditExhausted,
   extractRetryDelayMs,
 } from './models/modelRegistry.js';
+import {
+  sanitizeGeminiConfig,
+  getSupportedThinkingLevel,
+  buildGeminiThinkingConfig,
+} from './models/geminiThinkingHelper.js';
 import { getActiveMcqScoringRule, getCanonicalPaperName } from './mcqRules.js';
 import { processEvaluationIntegrity } from './services/evaluationIntegrityEngine.js';
 import { getAuthoritativePaperStructure } from './services/paperStructureService.js';
@@ -35,6 +40,9 @@ import {
   detectMtpSeriesFromText,
 } from './services/materialHardGateService.js';
 import { createEvaluationReviewResult } from './services/evaluationReviewResult.js';
+import { calculateDynamicAiConfidence } from './services/dynamicConfidenceEngine.js';
+import { AnswerCoverageMap, AttemptedQuestionMapping } from './services/answerSheetCoverageService.js';
+import { PDFDocument } from 'pdf-lib';
 import { validateBase64Upload } from './utils/fileValidation.js';
 
 let aiClient: GoogleGenAI | null = null;
@@ -62,12 +70,12 @@ export function getAISettings() {
       primaryModel = 'gemini-3.1-flash-lite';
     }
     if (isModelCoolingDown(primaryModel)) {
-      primaryModel = 'gemini-flash-latest';
+      primaryModel = 'gemini-3.6-flash';
     }
 
     return {
       primaryModel,
-      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-flash-latest',
+      fallbackModel: map.EVAL_FALLBACK_MODEL || 'gemini-3.6-flash',
       maxRetries: parseInt(map.EVAL_MAX_RETRIES || '3', 10),
       timeoutSeconds: parseInt(map.EVAL_TIMEOUT_SECONDS || '90', 10),
       confidenceThreshold: parseFloat(map.EVAL_CONFIDENCE_THRESHOLD || '75'),
@@ -78,11 +86,11 @@ export function getAISettings() {
     };
   } catch {
     let primaryModel = 'gemini-3.8-flash';
+    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.6-flash';
     if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-3.1-flash-lite';
-    if (isModelCoolingDown(primaryModel)) primaryModel = 'gemini-flash-latest';
     return {
       primaryModel,
-      fallbackModel: 'gemini-flash-latest',
+      fallbackModel: 'gemini-3.6-flash',
       maxRetries: 3,
       timeoutSeconds: 90,
       confidenceThreshold: 75,
@@ -96,7 +104,7 @@ export function getAISettings() {
 
 /**
  * Robust Gemini generation with dynamic database-configured primary model,
- * automatic fallback model (e.g. gemini-3.7-flash) on transient errors (503 / 429),
+ * automatic fallback model (gemini-3.6-flash) on transient errors (503 / 429),
  * and exponential backoff with random jitter.
  */
 export async function generateContentWithResilience(
@@ -113,33 +121,24 @@ export async function generateContentWithResilience(
 ) {
   const settings = getAISettings();
   let primaryModel = options?.primaryModel || settings.primaryModel || 'gemini-3.8-flash';
-  let fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-3.7-flash';
+  let fallbackModel = options?.fallbackModel || settings.fallbackModel || 'gemini-3.6-flash';
   const maxRetries = options?.maxRetriesPerModel ?? settings.maxRetries ?? 2;
 
   // If primary model is cooling down, immediately pick the next healthy model
   if (isModelCoolingDown(primaryModel)) {
-    if (!isModelCoolingDown('gemini-3.7-flash')) {
-      primaryModel = 'gemini-3.7-flash';
-    } else if (!isModelCoolingDown('gemini-3.6-flash')) {
+    if (!isModelCoolingDown('gemini-3.6-flash')) {
       primaryModel = 'gemini-3.6-flash';
     } else if (!isModelCoolingDown('gemini-3.1-flash-lite')) {
       primaryModel = 'gemini-3.1-flash-lite';
-    } else if (!isModelCoolingDown('gemini-flash-latest')) {
-      primaryModel = 'gemini-flash-latest';
-    } else if (!isModelCoolingDown('gemini-3.5-flash')) {
-      primaryModel = 'gemini-3.5-flash';
     }
   }
 
   // Build unique sequence of candidate models prioritizing healthy Gemini Flash hierarchy
   const rawCandidates = [primaryModel];
   const preferredSisterModels = [
-    'gemini-3.7-flash',
+    'gemini-3.8-flash',
     'gemini-3.6-flash',
     'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.5-flash',
-    'gemini-3.8-flash',
   ];
   if (fallbackModel && !rawCandidates.includes(fallbackModel)) {
     rawCandidates.push(fallbackModel);
@@ -166,10 +165,12 @@ export async function generateContentWithResilience(
 
     for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
       try {
-        const config: any = { ...params.config };
-        // For gemini-3.1-flash-lite or fallbacks, ensure LOW thinking to minimize latency
+        // Sanitize configuration: strips deprecated temperature, top_p, top_k, thinking_budget
+        // and validates model-specific thinking level (e.g. gemini-3.8-flash never receives minimal)
+        const config: any = sanitizeGeminiConfig(params.config, model);
+        // For gemini-3.1-flash-lite or fallbacks, ensure low thinking to minimize latency
         if (model === 'gemini-3.1-flash-lite') {
-          config.thinkingConfig = { thinkingLevel: 'LOW' };
+          config.thinkingConfig = { thinkingLevel: 'low' };
         }
         const response = await ai.models.generateContent({
           model,
@@ -433,7 +434,6 @@ Return JSON in the exact specified schema.
         { text: validationPrompt },
       ],
       config: {
-        temperature: 0.1,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -1030,6 +1030,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 
   // Attempt Authoritative Evaluation Pipeline if input is a PDF
   if (params.mimeType === 'application/pdf' || params.fileBase64) {
+    let coverageMap: any = null;
     try {
       const pdfBuffer = Buffer.from(params.fileBase64, 'base64');
       if (pdfBuffer.length > 50 && pdfBuffer.subarray(0, 5).toString('ascii').startsWith('%PDF')) {
@@ -1043,7 +1044,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
         });
 
-        const coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure);
+        coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure);
 
         const preGate = validatePreEvaluationGate({
           paperStructure,
@@ -1056,7 +1057,27 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           subjectName: params.subjectName,
         });
 
-        if (!preGate.passed) {
+        // Determine if there are critical blockers that prevent any scoring (e.g. wrong course level, paper not parsed, or zero valid attempted questions)
+        const validLeafQuestions = paperStructure.subQuestions.filter((s) => !s.isMcq);
+        const validMcqs = paperStructure.mcqs;
+        const validCanonicalIds = new Set([
+          ...validLeafQuestions.map((s) => toCanonicalQuestionId(s.fullQuestionCode || s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions)),
+          ...validMcqs.map((m) => toCanonicalQuestionId(m.fullQuestionCode || m.questionNumber, 'MCQ'))
+        ]);
+
+        const attemptedScorableQuestions = coverageMap?.attemptedQuestions?.filter((att) => {
+          const canon = toCanonicalQuestionId(att.fullQuestionCode || att.questionNumber, att.subQuestionNumber, paperStructure.subQuestions);
+          return validCanonicalIds.has(canon);
+        }) || [];
+
+        const hasCriticalStructureConflict = (preGate.criticalFailures || preGate.failedInvariants).some((f) =>
+          f.includes('SOURCE_CONFLICT_COURSE_LEVEL_MISMATCH') ||
+          f.includes('QUESTION_PAPER_NOT_PARSED') ||
+          f.includes('MALFORMED_CANONICAL_ID') ||
+          f.includes('MISSING_OFFICIAL_MCQ_KEY')
+        );
+
+        if (!preGate.passed && (hasCriticalStructureConflict || attemptedScorableQuestions.length === 0)) {
           return createEvaluationReviewResult({
             evaluationId: params.evaluationId,
             studentName: params.studentName,
@@ -1139,46 +1160,66 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 if (!subQ) {
-                  subQ = {
-                    section: 'A',
-                    questionNumber: mapping.questionNumber,
-                    subQuestionNumber: mapping.subQuestionNumber,
-                    fullQuestionCode: mapping.fullQuestionCode,
-                    maximumMarks: 0,
-                    topic: 'Descriptive Question',
-                    compulsory: false,
-                    isMcq: false,
-                  };
-                }
-
-                try {
-                  return await evaluateQuestionChunk({
-                    subQuestion: subQ,
-                    mapping,
-                    fullPdfBuffer: pdfBuffer,
-                    questionPaperText: params.referenceQuestionPaperText,
-                    suggestedAnswersText: params.referenceSuggestedAnswersText,
-                    markingSchemeText: params.markingSchemeText,
-                    checkingMode: (params.checkingMode as any) || 'standard',
-                    level: params.level,
-                    subjectName: params.subjectName,
-                  });
-                } catch (chunkErr) {
-                  console.warn(`[EvaluationEngine] Chunk evaluation failed for ${canonId}, generating controlled evaluation failure record:`, chunkErr);
                   return {
-                    questionNumber: subQ.questionNumber,
-                    subQuestion: subQ.subQuestionNumber,
+                    questionNumber: mapping.questionNumber,
+                    subQuestion: mapping.subQuestionNumber,
                     canonicalId: canonId,
-                    maximumMarks: subQ.maximumMarks,
+                    maximumMarks: 0,
                     marksAwarded: 0,
-                    marksLost: subQ.maximumMarks,
+                    marksLost: 0,
                     status: 'unclear',
-                    reasonForDeduction: 'Evaluation integrity protection: Chunk evaluation encountered error. Flagged for review.',
-                    detailedFeedback: `The candidate attempted this question on page(s) ${mapping.pages.join(', ')}. Automatic chunk evaluation encountered an unexpected condition.`,
-                    flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                    reasonForDeduction: 'Authoritative question mapping unresolved: Question detected on answer sheet could not be mapped to official question paper inventory.',
+                    detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. No matching canonical question found in authoritative inventory. Preserved for review.`,
+                    flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
                     pageNumber: mapping.pages[0] || 1,
                   } as QuestionEvaluation;
                 }
+
+                let evalResult: QuestionEvaluation | null = null;
+                let lastErr: any = null;
+                const maxRetries = 2;
+
+                for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
+                  try {
+                    evalResult = await evaluateQuestionChunk({
+                      subQuestion: subQ,
+                      mapping: mapping as AttemptedQuestionMapping,
+                      fullPdfBuffer: pdfBuffer,
+                      questionPaperText: params.referenceQuestionPaperText,
+                      suggestedAnswersText: params.referenceSuggestedAnswersText,
+                      markingSchemeText: params.markingSchemeText,
+                      checkingMode: (params.checkingMode as any) || 'standard',
+                      level: params.level,
+                      subjectName: params.subjectName,
+                    });
+                    break;
+                  } catch (chunkErr: any) {
+                    lastErr = chunkErr;
+                    console.warn(`[EvaluationEngine] Targeted retry ${retryAttempt + 1}/${maxRetries} for ${canonId}: ${chunkErr?.message || chunkErr}`);
+                    if (retryAttempt < maxRetries) {
+                      await new Promise((resolve) => setTimeout(resolve, 500 * (retryAttempt + 1)));
+                    }
+                  }
+                }
+
+                if (evalResult) {
+                  return evalResult;
+                }
+
+                console.warn(`[EvaluationEngine] Chunk evaluation failed for ${canonId} after retries, preserving evidence as process state:`, lastErr);
+                return {
+                  questionNumber: subQ.questionNumber,
+                  subQuestion: subQ.subQuestionNumber,
+                  canonicalId: canonId,
+                  maximumMarks: subQ.maximumMarks,
+                  marksAwarded: 0,
+                  marksLost: 0,
+                  status: 'unclear',
+                  reasonForDeduction: 'Technical evaluation pending review: Model evaluation encountered a transient issue for this question. Not an academic mark loss.',
+                  detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. Automated chunk evaluation encountered a technical condition. Preserved for review; not scored as academic zero.`,
+                  flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED', 'TECHNICAL_FAILURE'],
+                  pageNumber: mapping.pages[0] || 1,
+                } as QuestionEvaluation;
               })
             );
             for (const r of batchResults) {
@@ -1191,24 +1232,46 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           for (const mapping of attemptedDescriptive) {
             const canonId = toCanonicalQuestionId(mapping.questionNumber, mapping.subQuestionNumber, paperStructure.subQuestions);
             if (!evaluatedCanonSet.has(canonId)) {
-              console.warn(`[EvaluationEngine] Attempted question ${canonId} was missing from descriptive evaluations, creating controlled recovery record`);
-              const fallbackSubQ = paperStructure.subQuestions.find(
+              console.warn(`[EvaluationEngine] Attempted question ${canonId} was missing from descriptive evaluations, performing targeted evaluation`);
+              const targetSubQ = paperStructure.subQuestions.find(
                 (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions) === canonId
               );
-              const max = fallbackSubQ?.maximumMarks ?? 0;
+              if (targetSubQ) {
+                try {
+                  const recoveredQ = await evaluateQuestionChunk({
+                    subQuestion: targetSubQ,
+                    mapping: mapping as AttemptedQuestionMapping,
+                    fullPdfBuffer: pdfBuffer,
+                    questionPaperText: params.referenceQuestionPaperText,
+                    suggestedAnswersText: params.referenceSuggestedAnswersText,
+                    markingSchemeText: params.markingSchemeText,
+                    checkingMode: (params.checkingMode as any) || 'standard',
+                    level: params.level,
+                    subjectName: params.subjectName,
+                  });
+                  descriptiveQuestions.push(recoveredQ);
+                  evaluatedCanonSet.add(canonId);
+                  continue;
+                } catch (recErr) {
+                  console.warn(`[EvaluationEngine] Targeted recovery for ${canonId} encountered issue:`, recErr);
+                }
+              }
+
+              const max = targetSubQ?.maximumMarks ?? 0;
               descriptiveQuestions.push({
                 questionNumber: mapping.questionNumber,
                 subQuestion: mapping.subQuestionNumber,
                 canonicalId: canonId,
                 maximumMarks: max,
                 marksAwarded: 0,
-                marksLost: max,
+                marksLost: 0,
                 status: 'unclear',
-                reasonForDeduction: 'Evaluation integrity safety: Attempted question could not be mapped to an authoritative source question.',
-                detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}.`,
+                reasonForDeduction: 'Evaluation integrity safety: Attempted question preserved for reviewer verification.',
+                detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. Preserved for examiner review.`,
                 flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
                 pageNumber: mapping.pages[0] || 1,
               });
+              evaluatedCanonSet.add(canonId);
             }
           }
 
@@ -1267,6 +1330,21 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             consequentialCredited: q.consequentialErrorDetected || false,
           }));
 
+          // Dynamic Confidence Engine
+          const hasHandwritingFlag = activeQuestions.some((q) => q.flags?.includes('HANDWRITING_UNCLEAR') || q.status === 'unclear');
+          const hasWorkingNotes = activeQuestions.some((q) => q.markingComponents?.some((c) => c.componentType === 'WORKING'));
+          const hasProvisions = activeQuestions.some((q) => q.markingComponents?.some((c) => c.componentType === 'PROVISION'));
+          const dynamicConfidence = calculateDynamicAiConfidence({
+            questions: activeQuestions,
+            totalPages: coverageMap?.totalPages || 1,
+            coveredPages: coverageMap?.coveredPages || [],
+            referenceCompletenessRatio: 1.0,
+            hasHandwritingIssues: hasHandwritingFlag,
+            hasUnresolvedConflicts: activeQuestions.some((q) => q.flags?.includes('NEEDS_MAPPING_REVIEW')),
+            checkedCopyConsistent: true,
+            totalPaperMaxMarks: officialMax,
+          });
+
           const initialResult: EvaluationResult = {
             evaluationId: params.evaluationId,
             studentName: params.studentName,
@@ -1292,21 +1370,29 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             percentage,
             attemptedPercentage,
             grade,
-            confidenceScore: 94.5,
+            confidenceScore: dynamicConfidence.compositeScore,
             overallSummary: `Authoritative evaluation completed in ${activeSummary.displayName} mode: ${activeQuestions.length} sub-questions evaluated (${mcqQuestions.length} MCQs, ${descriptiveQuestions.length} descriptive sub-questions) across ${coverageMap.totalPages} pages with verified step marking. Evaluated: ${calculatedTotal} / ${attemptedMax} attempted marks.`,
             strengths: ['Addressed required questions methodically', 'Demonstrated understanding of core statutory provisions and formats'],
             weaknesses: ['Ensure all intermediate calculation workings and statutory references are fully disclosed'],
             topicPerformance: [],
             presentationAnalysis: {
-              score: 8,
-              feedback: 'Structured response meeting professional ICAI examination presentation standards.',
-              workingNotesQuality: 'Clear calculation steps and note references shown',
-              handwritingLegibility: 'Legible scanned candidate manuscript',
+              score: Math.min(10, Math.max(0, Math.round((dynamicConfidence.factors.ocrReadability / 100) * 10))),
+              feedback: hasHandwritingFlag
+                ? 'Handwriting legibility concerns flagged on manuscript; verified conservatively.'
+                : 'Structured response meeting professional ICAI examination presentation standards.',
+              workingNotesQuality: hasWorkingNotes
+                ? 'Step calculation workings and notes evidenced.'
+                : 'Calculation steps evaluated against reference methodology.',
+              handwritingLegibility: hasHandwritingFlag
+                ? 'Portions of the scanned manuscript contain degraded or unclear handwriting.'
+                : 'Legible scanned candidate manuscript verified across pages.',
             },
             accuracyAnalysis: {
-              calculationAccuracy: 'Accurate intermediate computations verified',
-              provisionsAccuracy: 'Statutory sections cited in alignment with ICAI reference answers',
-              methodologyCorrectness: 'Standard accounting / taxation methodology followed',
+              calculationAccuracy: `${Math.round((activeQuestions.filter((q) => q.status === 'correct').length / Math.max(1, activeQuestions.length)) * 100)}% accuracy against authoritative solutions.`,
+              provisionsAccuracy: hasProvisions
+                ? 'Statutory sections cited in alignment with ICAI reference answers.'
+                : 'Conceptual principles evaluated against official benchmark.',
+              methodologyCorrectness: 'Standard accounting / examination methodology followed.',
             },
             recommendations: [
               'Maintain separate working notes with clear cross-referencing to main answers.',
@@ -1322,6 +1408,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             coverageMap,
             modeBreakdown: multiMode.modeBreakdown,
             checkingMode: params.checkingMode,
+            attemptedCount: activeQuestions.length,
+            evaluatedCount: activeQuestions.filter((q) => q.status !== 'unclear' && !q.flags?.includes('FAILED_TO_EVALUATE')).length,
+            academicScore: Math.round(calculatedTotal * 4) / 4,
+            certificationStatus: activeQuestions.some((q) => q.flags?.includes('FAILED_TO_EVALUATE')) ? 'VERIFICATION_REQUIRED' : 'CERTIFIED',
+            technicalFailureCount: activeQuestions.filter((q) => q.flags?.includes('FAILED_TO_EVALUATE') || q.flags?.includes('TECHNICAL_FAILURE')).length,
+            unresolvedQuestions: activeQuestions.filter((q) => q.status === 'unclear' || q.flags?.includes('NEEDS_MAPPING_REVIEW')).map((q) => q.canonicalId || q.questionNumber),
           };
 
           const hardenedResult = processEvaluationIntegrity(initialResult, {
@@ -1342,8 +1434,39 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           return hardenedResult;
         }
       }
-    } catch (pipelineErr) {
-      console.warn('[EvaluationEngine] Authoritative pipeline encountered an error, falling back to full model prompt:', pipelineErr);
+    } catch (pipelineErr: any) {
+      console.warn('[EvaluationEngine] Authoritative pipeline encountered an error:', pipelineErr);
+      return createEvaluationReviewResult({
+        evaluationId: params.evaluationId,
+        studentName: params.studentName,
+        icaiRegistrationNumber: params.icaiRegistrationNumber || 'Not provided',
+        level: params.level,
+        subjectKey: params.subjectKey,
+        subjectName: params.subjectName,
+        materialType: params.materialType,
+        attempt: params.attempt,
+        paper: params.paper,
+        checkingMode: params.checkingMode,
+        officialPaperMaxMarks: params.officialPaperMaxMarks,
+        sourceFormat: params.sourceFormat,
+        sourceMaterialIds: {
+          combinedSourceMaterialId: params.combinedSourceMaterialId,
+          questionMaterialId: params.questionMaterialId,
+          suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
+          markingSchemeMaterialId: params.markingSchemeMaterialId,
+        },
+        coverageMap: coverageMap || {
+          totalPages: 1,
+          pages: [],
+          attemptedQuestions: [],
+          allDetectedCodes: [],
+          unmappedPages: [],
+          unclearPages: [],
+          is100PercentCovered: false,
+          mcqSelections: {},
+        },
+        errors: [`AUTHORITATIVE_PIPELINE_ERROR: ${pipelineErr?.message || String(pipelineErr)}`],
+      });
     }
   }
 

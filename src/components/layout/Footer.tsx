@@ -21,11 +21,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </p>
             <div className="flex flex-wrap items-center gap-4 pt-1">
               <a
-                href="mailto:caexamchecker.support@gmail.com"
+                href="mailto:support@caexamcheckerai.com"
                 className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition"
               >
                 <Mail className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                caexamchecker.support@gmail.com
+                support@caexamcheckerai.com
               </a>
               <a
                 href="https://insta.openinapp.co/utw2r"
@@ -44,6 +44,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           <div className="space-y-2.5">
             <h3 className="text-xs font-bold text-slate-900 dark:text-white">Platform</h3>
             <ul className="space-y-1.5 text-xs">
+              <li>
+                <button onClick={() => onNavigate('features')} className="hover:text-blue-600 dark:text-blue-400 transition cursor-pointer">
+                  Platform Features
+                </button>
+              </li>
               <li>
                 <button onClick={() => onNavigate('how-it-works')} className="hover:text-blue-600 dark:hover:text-blue-400 transition cursor-pointer">
                   How AI Evaluation Works

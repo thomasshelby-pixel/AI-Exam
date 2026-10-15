@@ -1,12 +1,31 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
-import { FileCheck2, Search, Filter, ArrowRight, RefreshCw, Layers, Globe, Building2, RotateCcw } from 'lucide-react';
+import {
+  FileCheck2,
+  Search,
+  Filter,
+  ArrowRight,
+  RefreshCw,
+  Layers,
+  Globe,
+  Building2,
+  RotateCcw,
+  Lock,
+  LogIn,
+  AlertCircle,
+  X,
+} from 'lucide-react';
 import { RecheckRequestModal } from '../../components/student/RecheckRequestModal.js';
 import { EvaluationResult } from '../../types/index.js';
+import { useAuth } from '../../context/AuthContext.js';
 
 interface EvaluationItem {
   id: string;
+  display_id?: string;
+  displayId?: string;
+  evaluation_sequence?: number;
   level: string;
   material_type: string;
   subject_key: string;
@@ -32,8 +51,12 @@ interface MyEvaluationsProps {
 }
 
 export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNavigateUpload }) => {
+  const navigate = useNavigate();
+  const { user, isAuthenticated, isLoading: isAuthLoading, isSessionLocked } = useAuth();
   const [evaluations, setEvaluations] = useState<EvaluationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<boolean>(false);
+  const [noticeMessage, setNoticeMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   const [search, setSearch] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'PUBLIC' | 'INSTITUTE'>('ALL');
@@ -42,19 +65,43 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   const [loadingRecheckId, setLoadingRecheckId] = useState<string | null>(null);
 
   const fetchEvaluations = async () => {
+    if (!isAuthenticated || !user || isSessionLocked) {
+      setIsLoading(false);
+      return;
+    }
     try {
+      setIsLoading(true);
+      setAuthError(false);
       const res = await apiRequest<{ evaluations: EvaluationItem[] }>('/api/student/evaluations');
       setEvaluations(res.evaluations || []);
-    } catch (err) {
-      console.error('Failed to load evaluations:', err);
+    } catch (err: any) {
+      if (
+        err?.status === 401 ||
+        err?.statusCode === 401 ||
+        err?.message?.includes('Authentication required')
+      ) {
+        setAuthError(true);
+        setEvaluations([]);
+      } else {
+        console.warn('Evaluations query notification:', err?.message || err);
+        setNoticeMessage({
+          type: 'error',
+          text: err?.message || 'Failed to load evaluations. Please try again.',
+        });
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated || !user || isSessionLocked) {
+      setIsLoading(false);
+      return;
+    }
     fetchEvaluations();
-  }, []);
+  }, [isAuthLoading, isAuthenticated, user, isSessionLocked]);
 
   const handleOpenRecheck = async (id: string) => {
     try {
@@ -70,11 +117,16 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
         setRecheckEvaluation(evalResult);
         setIsRecheckModalOpen(true);
       } else {
-        alert('Evaluation details could not be loaded for rechecking.');
+        setNoticeMessage({
+          type: 'error',
+          text: 'Evaluation details could not be loaded for rechecking.',
+        });
       }
-    } catch (err) {
-      console.error('Failed to open recheck modal:', err);
-      alert('Failed to load evaluation details for recheck request.');
+    } catch (err: any) {
+      setNoticeMessage({
+        type: 'error',
+        text: err?.message || 'Failed to load evaluation details for recheck request.',
+      });
     } finally {
       setLoadingRecheckId(null);
     }
@@ -91,6 +143,8 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
       return (
         (ev.subject_name || '').toLowerCase().includes(q) ||
         (ev.material_type || '').toLowerCase().includes(q) ||
+        (ev.display_id || ev.displayId || '').toLowerCase().includes(q) ||
+        (ev.id || '').toLowerCase().includes(q) ||
         (ev.institute_name && ev.institute_name.toLowerCase().includes(q))
       );
     }
@@ -213,7 +267,14 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                   return (
                     <tr key={ev.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4">
-                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{ev.subject_name}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{ev.subject_name}</span>
+                          {(ev.display_id || ev.displayId) && (
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                              {ev.display_id || ev.displayId}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">CA {ev.level}</span>
                       </td>
                       <td className="py-3 px-4">
@@ -286,7 +347,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                             </button>
                           )}
                           <button
-                            onClick={() => onViewReport(ev.id)}
+                            onClick={() => onViewReport(ev.display_id || ev.displayId || ev.id)}
                             className="px-2.5 py-1 rounded bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-bold text-xs transition cursor-pointer"
                           >
                             Detailed Report

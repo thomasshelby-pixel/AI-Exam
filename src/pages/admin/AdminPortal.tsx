@@ -16,6 +16,7 @@ import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
+import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -70,6 +71,7 @@ import {
   Target,
   Zap,
   Sliders,
+  Tag,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -277,7 +279,7 @@ export const AdminPortal: React.FC = () => {
     pricePerCredit: '10',
     freeTierEvaluations: '2',
     defaultInstituteQuota: '500',
-    supportEmail: 'caexamchecker.support@gmail.com',
+    supportEmail: 'support@caexamcheckerai.com',
     instagramUrl: 'https://insta.openinapp.co/utw2r',
   });
 
@@ -424,7 +426,7 @@ export const AdminPortal: React.FC = () => {
             pricePerCredit: res.settings?.PRICE_PER_CREDIT_INR || '10',
             freeTierEvaluations: res.settings?.FREE_TIER_EVALUATIONS || '2',
             defaultInstituteQuota: res.settings?.DEFAULT_INSTITUTE_QUOTA || '500',
-            supportEmail: res.settings?.SUPPORT_EMAIL || 'caexamchecker.support@gmail.com',
+            supportEmail: res.settings?.SUPPORT_EMAIL || 'support@caexamcheckerai.com',
             instagramUrl: res.settings?.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
           });
           break;
@@ -2071,7 +2073,7 @@ export const AdminPortal: React.FC = () => {
                           <th className="py-2.5 px-3 font-bold">ICAI Reg</th>
                           <th className="py-2.5 px-3 font-bold">Level</th>
                           <th className="py-2.5 px-3 font-bold">Evaluations</th>
-                          <th className="py-2.5 px-3 font-bold">Credits</th>
+                          <th className="py-2.5 px-3 font-bold">Available Evaluations</th>
                           <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
@@ -2090,6 +2092,11 @@ export const AdminPortal: React.FC = () => {
                                   <div>
                                     <p className="font-bold text-slate-900">{st.full_name}</p>
                                     <p className="text-[11px] text-slate-400">{st.email}</p>
+                                    {st.student_code && (
+                                      <span className="font-mono text-[10px] text-slate-500 font-semibold block mt-0.5">
+                                        ID: {st.student_code}
+                                      </span>
+                                    )}
                                     {st.permanent_free_active && (
                                       <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                                         <Sparkles className="w-2.5 h-2.5" /> Permanent Free Access
@@ -2134,8 +2141,64 @@ export const AdminPortal: React.FC = () => {
                                   </span>
                                 )}
                               </td>
-                              <td className="py-3 px-3 font-mono font-bold text-blue-600">
-                                {st.purchased_credits || 0}
+                              <td className="py-3 px-3">
+                                {st.permanent_free_active ? (
+                                  <div>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      <Sparkles className="w-2.5 h-2.5 text-emerald-600" /> Unlimited
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block mt-0.5">Permanent Free</span>
+                                    {Number(st.purchased_credits || 0) > 0 && (
+                                      <span className="text-[10px] text-blue-600 font-mono block">Paid: {st.purchased_credits}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-bold text-slate-900 text-sm">
+                                        {st.total_available_evaluations !== undefined
+                                          ? st.total_available_evaluations
+                                          : (Number(st.monthly_free_evaluations_remaining !== undefined
+                                              ? st.monthly_free_evaluations_remaining
+                                              : Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))) +
+                                             Number(st.promo_evaluations_remaining || 0) +
+                                             Number(st.purchased_credits || 0))}
+                                      </span>
+                                      <span className="text-[10px] text-slate-500 font-medium">available</span>
+                                    </div>
+
+                                    <div className="flex flex-col gap-0.5 text-[10px]">
+                                      {/* Monthly free evaluations breakdown */}
+                                      <div className="flex items-center gap-1 text-slate-600">
+                                        <span className="text-slate-400">Monthly Free:</span>
+                                        <span className="font-mono font-semibold text-emerald-700">
+                                          {st.monthly_free_evaluations_remaining !== undefined
+                                            ? `${st.monthly_free_evaluations_remaining}/${st.monthly_free_evaluations_limit ?? 2}`
+                                            : `${Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))}/${st.monthly_free_evaluations_limit ?? 2}`}
+                                        </span>
+                                      </div>
+
+                                      {/* Promotional evaluations breakdown */}
+                                      {Number(st.promo_evaluations_granted || 0) > 0 ? (
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-bold text-[10px] inline-flex items-center gap-0.5">
+                                            <span>{st.active_promo_code || 'Promo'}:</span>
+                                            <span>{st.promo_evaluations_remaining ?? 0}</span>
+                                          </span>
+                                          <span className="text-[9px] text-slate-400" title={`Granted: ${st.promo_evaluations_granted}, Consumed: ${st.promo_evaluations_consumed}, Remaining: ${st.promo_evaluations_remaining}`}>
+                                            ({st.promo_evaluations_consumed || 0}/{st.promo_evaluations_granted || 0} used)
+                                          </span>
+                                        </div>
+                                      ) : null}
+
+                                      {/* Paid credits breakdown */}
+                                      <div className="flex items-center gap-1 text-slate-500">
+                                        <span className="text-slate-400">Paid credits:</span>
+                                        <span className="font-mono font-semibold text-blue-600">{st.purchased_credits || 0}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                               <td className="py-3 px-3 text-right">
                                 <div className="flex items-center justify-end gap-1.5 flex-wrap">
@@ -2865,7 +2928,14 @@ export const AdminPortal: React.FC = () => {
                                   {/* Evaluation ID & Badges */}
                                   <td className="py-2.5 px-3">
                                     <div className="space-y-1">
-                                      <p className="font-mono font-medium text-slate-700">{ev.id}</p>
+                                      {ev.display_id ? (
+                                        <>
+                                          <p className="font-mono font-bold text-blue-700 dark:text-blue-400 text-xs tracking-tight">{ev.display_id}</p>
+                                          <p className="font-mono text-[10px] text-slate-400">Ref: {ev.id}</p>
+                                        </>
+                                      ) : (
+                                        <p className="font-mono font-medium text-slate-700">{ev.id}</p>
+                                      )}
                                       <div className="flex flex-wrap items-center gap-1">
                                         {ev.account_classification === 'TEST' && (
                                           <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold">
@@ -2888,6 +2958,11 @@ export const AdminPortal: React.FC = () => {
                                   {/* Student */}
                                   <td className="py-2.5 px-3">
                                     <p className="font-bold text-slate-800">{ev.student_name || '—'}</p>
+                                    {ev.student_code && (
+                                      <p className="text-[10px] font-mono font-bold text-indigo-600">
+                                        {ev.student_code}
+                                      </p>
+                                    )}
                                     <p className="text-[10px] text-slate-400 truncate max-w-[160px]" title={ev.student_email}>
                                       {ev.student_email || '—'}
                                     </p>
@@ -3397,72 +3472,7 @@ export const AdminPortal: React.FC = () => {
 
               {/* 15. NOTIFICATIONS */}
               {activeSection === 'notifications' && (
-                <div className="space-y-6">
-                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs max-w-xl">
-                    <h3 className="text-sm font-bold text-slate-900 mb-1">Broadcast System Notification</h3>
-                    <p className="text-xs text-slate-500 mb-4">Send in-app notification alerts to students or institutes</p>
-
-                    <div className="space-y-3 text-xs">
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Target Audience</label>
-                        <select
-                          value={broadcastForm.targetRole}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, targetRole: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50"
-                        >
-                          <option value="ALL">All Users</option>
-                          <option value="STUDENT">Students Only</option>
-                          <option value="INSTITUTE_ADMIN">Institutes Only</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Notification Title</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. ICAI May 2026 MTP Series I Released"
-                          value={broadcastForm.title}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, title: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1">Message Content</label>
-                        <textarea
-                          rows={3}
-                          placeholder="Enter broadcast message details..."
-                          value={broadcastForm.message}
-                          onChange={(e) => setBroadcastForm({ ...broadcastForm, message: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none"
-                        />
-                      </div>
-
-                      <button
-                        onClick={handleSendBroadcast}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold transition"
-                      >
-                        Send Broadcast
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
-                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Recent Notifications Sent</h4>
-                    <div className="space-y-2">
-                      {notificationsList.map((n) => (
-                        <div key={n.id} className="p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-800">{n.title}</span>
-                            <span className="text-[10px] text-slate-400">{formatDateIST(n.created_at)}</span>
-                          </div>
-                          <p className="text-slate-600 mt-1">{n.message}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">Recipient: {n.user_email || 'Broadcast'}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <AdminNotificationCentre />
               )}
 
               {/* 16. SUPPORT TICKETS */}
@@ -4076,28 +4086,78 @@ export const AdminPortal: React.FC = () => {
             {/* Student Information Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">CA Level</span>
-                <span className="text-xs font-bold text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.ca_level || 'INTERMEDIATE'}
-                </span>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">ICAI Reg Number</span>
+                <span className="text-[11px] text-slate-400 block font-medium">Student Code</span>
                 <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.icai_registration_number || 'N/A'}
+                  {viewStudentModal.student.student_code || '—'}
                 </span>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">Purchased Credits</span>
+                <span className="text-[11px] text-slate-400 block font-medium">ICAI Reg / Level</span>
+                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
+                  {viewStudentModal.student.icai_registration_number || 'N/A'} • {viewStudentModal.student.ca_level || 'INTERMEDIATE'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Total Available</span>
+                <span className="text-xs font-bold font-mono text-emerald-700 mt-0.5 block">
+                  {viewStudentModal.student.permanent_free_active
+                    ? 'Unlimited'
+                    : viewStudentModal.student.total_available_evaluations !== undefined
+                    ? `${viewStudentModal.student.total_available_evaluations} evaluations`
+                    : `${(Number(viewStudentModal.student.monthly_free_evaluations_remaining !== undefined ? viewStudentModal.student.monthly_free_evaluations_remaining : Math.max(0, 2 - (viewStudentModal.student.free_evaluations_used || 0))) + Number(viewStudentModal.student.promo_evaluations_remaining || 0) + Number(viewStudentModal.student.purchased_credits || 0))} evaluations`}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="text-[11px] text-slate-400 block font-medium">Paid Credits</span>
                 <span className="text-xs font-bold font-mono text-blue-600 mt-0.5 block">
-                  {viewStudentModal.student.purchased_credits || 0}
+                  {viewStudentModal.student.purchased_credits || 0} credits
                 </span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <span className="text-[11px] text-slate-400 block font-medium">Free Evals Used</span>
-                <span className="text-xs font-bold font-mono text-slate-900 mt-0.5 block">
-                  {viewStudentModal.student.free_evaluations_used || 0}/2
-                </span>
+            </div>
+
+            {/* Promotional Entitlements Card */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-50/70 to-blue-50/70 border border-emerald-200/80 mb-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <h4 className="text-xs font-bold text-slate-900">Promotional & Evaluation Balance</h4>
+                </div>
+                {Number(viewStudentModal.student.promo_evaluations_granted || 0) > 0 ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Promo: {viewStudentModal.student.active_promo_code || 'AI30'}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                    No Active Promo
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Granted</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm">
+                    {viewStudentModal.student.promo_evaluations_granted || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Consumed</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm">
+                    {viewStudentModal.student.promo_evaluations_consumed || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Promo Remaining</span>
+                  <span className="font-mono font-bold text-emerald-600 text-sm">
+                    {viewStudentModal.student.promo_evaluations_remaining || 0}
+                  </span>
+                </div>
+                <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/60">
+                  <span className="text-[10px] text-slate-400 block">Monthly Free Quota</span>
+                  <span className="font-mono font-bold text-slate-700 text-sm">
+                    {viewStudentModal.student.monthly_free_evaluations_used ?? viewStudentModal.student.free_evaluations_used ?? 0}/{viewStudentModal.student.monthly_free_evaluations_limit ?? 2} used ({viewStudentModal.student.monthly_free_evaluations_remaining ?? Math.max(0, (viewStudentModal.student.monthly_free_evaluations_limit ?? 2) - (viewStudentModal.student.monthly_free_evaluations_used ?? viewStudentModal.student.free_evaluations_used ?? 0))} left)
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -4122,6 +4182,60 @@ export const AdminPortal: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            {/* Promo Redemptions History */}
+            {viewStudentModal.details?.promoRedemptions?.length ? (
+              <div className="mb-5">
+                <h4 className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Promo Code Redemptions ({viewStudentModal.details.promoRedemptions.length})</span>
+                </h4>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                        <th className="py-2 px-3">Promo Code</th>
+                        <th className="py-2 px-3">Status</th>
+                        <th className="py-2 px-3">Evaluations</th>
+                        <th className="py-2 px-3">Redeemed At</th>
+                        <th className="py-2 px-3 text-right">Expiry Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {viewStudentModal.details.promoRedemptions.map((pr: any) => (
+                        <tr key={pr.id} className="hover:bg-slate-50/60">
+                          <td className="py-2 px-3 font-mono font-bold text-slate-900">
+                            {pr.referral_code}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              pr.status === 'ACTIVE'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : pr.status === 'REVOKED'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {pr.status}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 font-mono">
+                            <span className="font-bold text-emerald-600">{pr.evaluations_remaining ?? 0}</span>
+                            <span className="text-slate-400 text-[10px]"> / {pr.max_evaluations ?? 15} left</span>
+                            <span className="text-slate-400 text-[9px] ml-1">({pr.evaluations_used ?? 0} used)</span>
+                          </td>
+                          <td className="py-2 px-3 text-slate-600">
+                            {pr.redeemed_at ? formatDateIST(pr.redeemed_at) : '—'}
+                          </td>
+                          <td className="py-2 px-3 text-right text-slate-600">
+                            {pr.expiry_date ? formatDateIST(pr.expiry_date) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
 
             {/* Recent Evaluations */}
             <div className="mb-5">

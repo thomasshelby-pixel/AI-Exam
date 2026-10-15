@@ -18,16 +18,36 @@ interface PricingPlan {
   benefits: string[];
 }
 
-export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }> = ({ initialMode = 'login' }) => {
+export interface InstituteAuthPageProps {
+  initialMode?: 'login' | 'register';
+  onSuccess?: (user: any) => void;
+  onSwitchToStudent?: () => void;
+  onBackToSelector?: () => void;
+  preservedPlanId?: string;
+}
+
+export const InstituteAuthPage: React.FC<InstituteAuthPageProps> = ({
+  initialMode = 'login',
+  onSuccess,
+  onSwitchToStudent,
+  onBackToSelector,
+  preservedPlanId,
+}) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { instituteLogin, instituteRegister, user, isAuthenticated } = useAuth();
 
+  const searchParams = new URLSearchParams(location.search);
+  const planParam = preservedPlanId || searchParams.get('plan') || searchParams.get('planId') || '';
+  const cycleParam = (searchParams.get('cycle') || '').toUpperCase();
+
   const [mode, setMode] = useState<'login' | 'register' | 'choose_plan'>(initialMode);
-  const [billingPeriod, setBillingPeriod] = useState<'MONTHLY' | 'ANNUAL'>('MONTHLY');
+  const [billingPeriod, setBillingPeriod] = useState<'MONTHLY' | 'ANNUAL'>(
+    cycleParam === 'ANNUAL' || planParam.toLowerCase().includes('annual') ? 'ANNUAL' : 'MONTHLY'
+  );
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [loadingPlans, setLoadingPlans] = useState<boolean>(false);
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+  const [selectedPlanId, setSelectedPlanId] = useState<string>(planParam);
 
   // Login form
   const [loginEmail, setLoginEmail] = useState('');
@@ -53,7 +73,15 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
       const res = await apiRequest<{ plans: PricingPlan[] }>('/api/pricing/plans');
       if (res && res.plans) {
         setPlans(res.plans);
-        if (res.plans.length > 0) {
+        if (planParam) {
+          const matched = res.plans.find((p) => p.id === planParam);
+          if (matched) {
+            setSelectedPlanId(matched.id);
+            setBillingPeriod(matched.billingPeriod);
+          } else {
+            setSelectedPlanId(planParam);
+          }
+        } else if (res.plans.length > 0 && !selectedPlanId) {
           setSelectedPlanId(res.plans[0].id);
         }
       }
@@ -76,6 +104,16 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
     try {
       const loggedIn = await instituteLogin(loginEmail, loginPassword);
       if (loggedIn.role === 'INSTITUTE_ADMIN' || loggedIn.role === 'SUPER_ADMIN') {
+        if (onSuccess) {
+          onSuccess(loggedIn);
+        }
+        // If a plan was preselected from pricing, preserve it and allow immediate checkout/upgrade
+        if (planParam) {
+          setSelectedPlanId(planParam);
+          setMode('choose_plan');
+          setIsLoading(false);
+          return;
+        }
         navigate('/institute/dashboard', { replace: true });
       } else {
         navigate('/student/dashboard', { replace: true });
@@ -245,20 +283,28 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
 
           {/* 3 Plans Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {filteredPlans.map((plan) => (
-              <div
-                key={plan.id}
-                className={`rounded-xl border p-5 flex flex-col justify-between transition relative ${
-                  plan.badge
-                    ? 'bg-slate-800/90 border-blue-500/80 shadow-lg shadow-blue-500/10'
-                    : 'bg-slate-900/60 border-slate-700 hover:border-slate-600'
-                }`}
-              >
-                {plan.badge && (
-                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-extrabold uppercase tracking-wide">
-                    {plan.badge}
-                  </span>
-                )}
+            {filteredPlans.map((plan) => {
+              const isSelected = plan.id === selectedPlanId;
+              return (
+                <div
+                  key={plan.id}
+                  className={`rounded-xl border p-5 flex flex-col justify-between transition relative ${
+                    isSelected
+                      ? 'bg-slate-800/90 border-indigo-400 ring-2 ring-indigo-500/40 shadow-xl shadow-indigo-500/20'
+                      : plan.badge
+                      ? 'bg-slate-800/90 border-blue-500/80 shadow-lg shadow-blue-500/10'
+                      : 'bg-slate-900/60 border-slate-700 hover:border-slate-600'
+                  }`}
+                >
+                  {isSelected ? (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-extrabold uppercase tracking-wide">
+                      Selected Plan
+                    </span>
+                  ) : plan.badge ? (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-extrabold uppercase tracking-wide">
+                      {plan.badge}
+                    </span>
+                  ) : null}
 
                 <div>
                   <h3 className="text-base font-bold text-white">{plan.name}</h3>
@@ -303,7 +349,8 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ))}
+            );
+          })}
           </div>
 
           {/* Option to skip plan and explore dashboard */}
@@ -322,6 +369,34 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
         </div>
       ) : (
         <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-2xl">
+          {/* Preserved Plan Banner when arriving from Pricing Page */}
+          {planParam && (
+            <div
+              id="selected-institute-plan-banner"
+              className="mb-5 p-3.5 rounded-xl bg-indigo-950/90 border border-indigo-600/70 text-indigo-200 text-xs shadow-sm"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">Selected Plan:</span>
+                    <p className="font-bold text-white text-xs">
+                      {plans.find((p) => p.id === planParam)?.name || planParam}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold bg-indigo-800 text-indigo-200 px-2 py-0.5 rounded">
+                  Preserved
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 mt-1.5 border-t border-indigo-800/60 pt-1.5">
+                {mode === 'login'
+                  ? 'Sign in with your existing Institute Admin account to activate or upgrade this plan.'
+                  : 'Complete your institute details to proceed directly to plan checkout.'}
+              </p>
+            </div>
+          )}
+
           {/* Mode Tabs */}
           <div className="flex p-1 rounded-xl bg-slate-900/80 border border-slate-700 mb-6">
             <button
@@ -500,15 +575,32 @@ export const InstituteAuthPage: React.FC<{ initialMode?: 'login' | 'register' }>
           )}
 
           {/* Switch to Student Portal */}
-          <div className="mt-6 pt-4 border-t border-slate-700/60 text-center text-xs text-slate-400">
-            <span>Are you a CA Student? </span>
-            <button
-              type="button"
-              onClick={() => navigate('/login')}
-              className="text-blue-400 hover:text-blue-300 font-bold ml-1 underline cursor-pointer"
-            >
-              Go to Student Login
-            </button>
+          <div className="mt-6 pt-4 border-t border-slate-700/60 text-center text-xs text-slate-400 space-y-2">
+            <div>
+              <span>Are you a CA Student? </span>
+              <button
+                id="btn-goto-student-portal"
+                type="button"
+                onClick={() => {
+                  if (onSwitchToStudent) onSwitchToStudent();
+                  else navigate('/login?type=student');
+                }}
+                className="text-blue-400 hover:text-blue-300 font-bold ml-1 underline cursor-pointer"
+              >
+                Go to Student Login
+              </button>
+            </div>
+            {onBackToSelector && (
+              <div>
+                <button
+                  type="button"
+                  onClick={onBackToSelector}
+                  className="text-slate-400 hover:text-white text-[11px] transition cursor-pointer"
+                >
+                  ← Back to Account Type Selection
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

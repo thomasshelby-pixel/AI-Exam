@@ -53,7 +53,7 @@ interface AuthContextType {
   closeMfaModal: () => void;
   completeMfaChallenge: (verifiedUser: User) => void;
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
-  verifyMfaChallenge: (otpCode: string) => Promise<User>;
+  verifyMfaChallenge: (otpCode: string, trustDevice?: boolean) => Promise<User>;
   verifyMfaRecoveryCode: (recoveryCode: string) => Promise<{ user: User; remainingCodes: number; warning?: string }>;
   generateRecoveryCodes: () => Promise<{ recoveryCodes: string[]; total: number }>;
   getRecoveryCodeStatus: () => Promise<{ total: number; remaining: number; hasCodes: boolean; generatedAt: string | null }>;
@@ -86,6 +86,17 @@ interface AuthContextType {
     caLevel: string;
     referralCode?: string;
   }) => Promise<User>;
+  initiateRegister: (data: {
+    email: string;
+    password: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }) => Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
+  verifyRegisterOtp: (email: string, otp: string) => Promise<User>;
+  resendRegisterOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
   submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -102,9 +113,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallengeState | null>(null);
 
   // Quick Resume State for Auto-Logout Inactivity Locking
-  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => {
-    return typeof window !== 'undefined' && sessionStorage.getItem('ca_session_locked') === 'true';
-  });
   const [lockedUser, setLockedUser] = useState<LockedUserInfo | null>(() => {
     if (typeof window === 'undefined') return null;
     const saved = sessionStorage.getItem('ca_locked_user');
@@ -116,6 +124,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     return null;
+  });
+
+  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const isLocked = sessionStorage.getItem('ca_session_locked') === 'true';
+    const savedUser = sessionStorage.getItem('ca_locked_user');
+    if (isLocked && !savedUser) {
+      sessionStorage.removeItem('ca_session_locked');
+      return false;
+    }
+    return isLocked;
   });
 
   const clearSuspension = () => setSuspendedAccount(null);
@@ -169,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
+  const verifyMfaChallenge = async (otpCode: string, trustDevice: boolean = true): Promise<User> => {
     const deviceId = getOrCreateDeviceId();
     let res: { token: string; user: User; trustToken?: string; trustExpiresAt?: string };
     try {
@@ -181,7 +200,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             mfaSessionToken: mfaChallenge?.mfaSessionToken,
             otpCode,
             deviceId,
-            rememberDevice: true,
+            rememberDevice: trustDevice,
+            trustDevice,
           }),
         }
       );
@@ -193,6 +213,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           mfaSessionToken: mfaChallenge?.mfaSessionToken,
           otpCode,
           deviceId,
+          rememberDevice: trustDevice,
+          trustDevice,
         }),
       });
     }
@@ -203,7 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (res.trustToken) {
-      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
+      saveScopedTrustToken(res.user?.id, res.user?.email || mfaChallenge?.email, res.trustToken);
       logMfaDiagnostic('trusted device state created');
     }
 
@@ -725,6 +747,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.user;
   };
 
+  const initiateRegister = async (data: {
+    email: string;
+    password: string;
+    fullName: string;
+    phone?: string;
+    icaiRegistrationNumber: string;
+    caLevel: string;
+    referralCode?: string;
+  }): Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }> => {
+    return await apiRequest<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>(
+      '/api/auth/register',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  };
+
+  const verifyRegisterOtp = async (email: string, otp: string): Promise<User> => {
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp }),
+    });
+
+    localStorage.setItem('ca_exam_checker_token', res.token);
+    setToken(res.token);
+    setUser(res.user);
+    setSuspendedAccount(null);
+
+    refreshUser().catch(() => {});
+    return res.user;
+  };
+
+  const resendRegisterOtp = async (email: string): Promise<{ success: boolean; message: string; cooldownSeconds: number }> => {
+    return await apiRequest<{ success: boolean; message: string; cooldownSeconds: number }>('/api/auth/resend-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  };
+
   const submitRevocationRequest = async (
     appealReason: string,
     explanation: string,
@@ -863,6 +925,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         instituteLogin,
         instituteRegister,
         register,
+        initiateRegister,
+        verifyRegisterOtp,
+        resendRegisterOtp,
         submitRevocationRequest,
         logout,
         refreshUser,

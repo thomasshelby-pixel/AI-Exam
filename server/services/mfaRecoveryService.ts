@@ -7,6 +7,7 @@ import { revokeAllSessionsForUser } from './sessionService.js';
 import { formatDateTimeIST } from '../utils/timezone.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from './firestoreDbService.js';
+import { encryptMfaSecret, decryptMfaSecret, isValidMfaSecret } from './mfaCryptoService.js';
 
 export interface RecoveryCodeStatus {
   total: number;
@@ -196,16 +197,16 @@ export function initMfaRecoveryTables(force: boolean = false): void {
   // authenticator record; mutating MFA here can permanently clear valid state.
 }
 
-// Auto-run initialization eagerly if database is already opened
+// Auto-run table creation eagerly if database is already opened
 try {
   initMfaRecoveryTables();
 } catch {}
 
 /**
- * Repairs any inconsistent admin accounts where mfa_enabled = 1 but no valid TOTP secret exists.
- * Safely transitions them into MFA_RESET_REQUIRED without deleting the account or changing UID.
+ * Repairs any genuinely inconsistent admin accounts where mfa_enabled = 1 but no valid TOTP secret exists in SQLite OR Firestore.
+ * Prioritizes healing from Firestore before ever transitioning an account into MFA_RESET_REQUIRED.
  */
-export function fixInconsistentAdminMfaStates(): void {
+export async function fixInconsistentAdminMfaStates(): Promise<void> {
   try {
     const hasUsersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
     if (!hasUsersTable) {
@@ -220,7 +221,7 @@ export function fixInconsistentAdminMfaStates(): void {
     const adminUsers = db.prepare(`
       SELECT id, email, role, mfa_enabled, totp_secret, mfa_reset_required
       FROM users
-      WHERE role IN ('MCQ_ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN')
+      WHERE role IN ('MCQ_ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN') AND mfa_reset_required != 1
     `).all() as Array<{
       id: string;
       email: string;
@@ -233,19 +234,81 @@ export function fixInconsistentAdminMfaStates(): void {
     for (const admin of adminUsers) {
       const authWithSecret = db.prepare(`
         SELECT totp_secret FROM mfa_authenticators
-        WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
+        WHERE user_id = ? AND totp_secret IS NOT NULL
         LIMIT 1
       `).get(admin.id) as { totp_secret: string } | undefined;
 
-      const hasValidSecret = Boolean(
-        (admin.totp_secret && admin.totp_secret.trim().length >= 16) ||
-        authWithSecret?.totp_secret
+      const decLocalUserSec = decryptMfaSecret(admin.totp_secret);
+      const decLocalAuthSec = authWithSecret?.totp_secret ? decryptMfaSecret(authWithSecret.totp_secret) : '';
+
+      let hasValidSecret = Boolean(
+        (decLocalUserSec && decLocalUserSec.length >= 16) ||
+        (decLocalAuthSec && decLocalAuthSec.length >= 16)
       );
 
+      // Re-synchronize local records if one has a valid secret while the other is missing or corrupt
+      if (decLocalUserSec && decLocalUserSec.length >= 16 && (!decLocalAuthSec || decLocalAuthSec.length < 16)) {
+        try {
+          db.prepare(`
+            INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+            VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+              totp_secret = excluded.totp_secret,
+              last_used_at = CURRENT_TIMESTAMP
+          `).run(`auth_prim_${admin.id}`, admin.id, admin.totp_secret);
+        } catch {}
+      } else if (decLocalAuthSec && decLocalAuthSec.length >= 16 && (!decLocalUserSec || decLocalUserSec.length < 16)) {
+        try {
+          db.prepare(`
+            UPDATE users
+            SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(authWithSecret!.totp_secret, admin.id);
+        } catch {}
+      }
+
+      // If local secret is missing but user is marked enrolled, inspect Cloud Firestore before taking any destructive action
       if (admin.mfa_enabled === 1 && !hasValidSecret) {
         // Missing secret data is not proof that an administrator reset MFA.
         // Keep the enrolled flag and all related state intact for recovery.
         console.error(`[MFA Architecture] Enrolled administrator ${admin.id} is missing a local TOTP secret; enrollment state was preserved for recovery.`);
+
+        try {
+          const fsUser = await getFirestoreDoc<any>('users', admin.id);
+          if (fsUser && fsUser.totp_secret) {
+            const decFsSec = decryptMfaSecret(fsUser.totp_secret);
+            if (decFsSec && decFsSec.length >= 16) {
+              const encSec = encryptMfaSecret(decFsSec);
+              db.prepare(`
+                UPDATE users
+                SET mfa_enabled = 1,
+                    totp_secret = ?,
+                    mfa_reset_required = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+              `).run(encSec, admin.id);
+
+              db.prepare(`
+                INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+                VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                  totp_secret = excluded.totp_secret,
+                  last_used_at = CURRENT_TIMESTAMP
+              `).run(`auth_prim_${admin.id}`, admin.id, encSec);
+
+              hasValidSecret = true;
+              console.log(`[MFA Architecture] Successfully healed SQLite MFA secret from Firestore for ${admin.email} (${admin.id}).`);
+            }
+          }
+        } catch (healErr) {
+          console.warn(`[MFA Architecture] Firestore check for ${admin.email} warning:`, healErr);
+        }
+      }
+
+      // If secret cannot be decrypted locally yet, log notice and preserve enrolled state.
+      // CRITICAL: NEVER perform destructive automatic MFA wipe or device trust revocation on startup!
+      if (admin.mfa_enabled === 1 && !hasValidSecret) {
+        console.warn(`[MFA Architecture] Notice: Admin account ${admin.email} (${admin.id}) has mfa_enabled=1 but secret is currently undecryptable with candidate keys. Preserving account state without destructive reset.`);
       }
     }
   } catch (err) {
@@ -301,14 +364,15 @@ export async function getOrCreatePendingMfaSetup(
   accountEmail: string;
 }> {
   const userRow = db.prepare('SELECT pending_totp_secret FROM users WHERE id = ?').get(userId) as any;
-  let secret = userRow?.pending_totp_secret?.trim();
+  let secret = decryptMfaSecret(userRow?.pending_totp_secret);
 
   if (!secret || secret.length < 16) {
     secret = generateBase32Secret(20);
-    db.prepare('UPDATE users SET pending_totp_secret = ? WHERE id = ?').run(secret, userId);
+    const encSecret = encryptMfaSecret(secret);
+    db.prepare('UPDATE users SET pending_totp_secret = ? WHERE id = ?').run(encSecret, userId);
   }
 
-  const issuer = 'MCQ Arena';
+  const issuer = role === 'MCQ_ADMIN' ? 'MCQ Arena' : 'CA Exam Checker AI';
   const accountLabel = role === 'MCQ_ADMIN' ? 'MCQ Admin' : role === 'SUPER_ADMIN' ? 'Super Admin' : 'Institute Admin';
   const encodedIssuer = encodeURIComponent(issuer);
   const encodedEmail = encodeURIComponent(accountEmail);
@@ -416,11 +480,60 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       };
     }
 
-    // 2. Fetch user row
-    const userRow = db.prepare(`
+    // 2. Fetch local user row
+    let userRow = db.prepare(`
       SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret, pending_totp_secret, mfa_reset_required
       FROM users WHERE id = ?
     `).get(userId) as any;
+
+    // 3. Fallback & Cross-check with Cloud Firestore ONLY if user record is missing in SQLite or lacks secret while NOT flagged for reset
+    const localSecretDec = decryptMfaSecret(userRow?.totp_secret);
+    const hasLocalValidSecret = Boolean(localSecretDec && localSecretDec.length >= 16);
+
+    const isMandatoryAdminRole = userRow && ['SUPER_ADMIN', 'MCQ_ADMIN', 'INSTITUTE_ADMIN'].includes(userRow.role);
+
+    // If account has been intentionally reset (mfa_reset_required === 1), never resurrect obsolete Firestore credentials!
+    if (userRow?.mfa_reset_required !== 1 && (!userRow || !hasLocalValidSecret || (isMandatoryAdminRole && userRow.mfa_enabled === 0))) {
+      try {
+        const fsDoc = await getFirestoreDoc<any>('users', userId);
+        if (fsDoc && fsDoc.mfa_reset_required !== 1) {
+          const fsSecretDec = decryptMfaSecret(fsDoc.totp_secret);
+          const fsHasValidSecret = Boolean(fsSecretDec && fsSecretDec.length >= 16);
+
+          if (fsDoc.mfa_enabled === 1 && fsHasValidSecret) {
+            const fsResetRequired = fsDoc.mfa_reset_required === 1 ? 1 : 0;
+            const encSec = encryptMfaSecret(fsSecretDec);
+
+            if (userRow) {
+              db.prepare(`
+                UPDATE users
+                SET mfa_enabled = 1,
+                    totp_secret = ?,
+                    mfa_enrolled_at = COALESCE(mfa_enrolled_at, ?),
+                    mfa_reset_required = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+              `).run(encSec, fsDoc.mfa_enrolled_at || new Date().toISOString(), fsResetRequired, userId);
+            }
+
+            db.prepare(`
+              INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+              VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+              ON CONFLICT(id) DO UPDATE SET
+                totp_secret = excluded.totp_secret,
+                last_used_at = CURRENT_TIMESTAMP
+            `).run(`auth_prim_${userId}`, userId, encSec);
+
+            userRow = db.prepare(`
+              SELECT id, email, role, mfa_enabled, mfa_enrolled_at, totp_secret, pending_totp_secret, mfa_reset_required
+              FROM users WHERE id = ?
+            `).get(userId) as any;
+          }
+        }
+      } catch (fsErr) {
+        console.warn(`[MFA getAuthoritativeUserMfaState] Firestore check for ${userId} notice:`, fsErr);
+      }
+    }
 
     if (!userRow) {
       return {
@@ -431,42 +544,63 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       };
     }
 
-    // 3. Count authenticators with valid secrets
+    // 4. Inspect authenticators with valid secrets
     const authRecords = db.prepare(`
       SELECT id, totp_secret FROM mfa_authenticators
       WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
       ORDER BY CASE WHEN factor_type = 'PRIMARY_TOTP' THEN 0 ELSE 1 END, last_used_at DESC, created_at DESC
     `).all(userId) as Array<{ id: string; totp_secret: string }>;
-    const authenticatorsCount = authRecords.length;
 
-    // 4. Count remaining recovery codes
+    // 5. Count remaining recovery codes
     const recoveryCountRow = db.prepare(`
       SELECT COUNT(*) as count FROM mfa_recovery_codes WHERE user_id = ? AND used = 0
     `).get(userId) as { count: number } | undefined;
     const recoveryCodesRemaining = recoveryCountRow?.count || 0;
 
-    // 5. Check if Super Admin reset MFA
+    // 6. Decrypt and validate secret
+    let validSecret: string | undefined = undefined;
+    const userDec = decryptMfaSecret(userRow.totp_secret);
+    if (userDec && userDec.length >= 16) {
+      validSecret = userDec;
+    } else {
+      for (const a of authRecords) {
+        const aDec = decryptMfaSecret(a.totp_secret);
+        if (aDec && aDec.length >= 16) {
+          validSecret = aDec;
+          const encSec = encryptMfaSecret(validSecret);
+          db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(encSec, userId);
+          break;
+        }
+      }
+    }
+
+    const authenticatorsCount = validSecret ? Math.max(1, authRecords.length) : authRecords.length;
+
     if (userRow.mfa_reset_required === 1) {
       return {
         state: 'MFA_RESET_REQUIRED',
         hasValidSecret: false,
-        pendingSecret: userRow.pending_totp_secret || undefined,
+        pendingSecret: userRow.pending_totp_secret ? decryptMfaSecret(userRow.pending_totp_secret) : undefined,
         authenticatorsCount,
         recoveryCodesRemaining,
       };
     }
 
-    // 6. Check for valid secret
-    let validSecret: string | undefined = undefined;
-    if (authRecords.length > 0) {
-      validSecret = authRecords[0].totp_secret.trim();
-      db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(validSecret, userId);
-    } else if (userRow.totp_secret && userRow.totp_secret.trim().length >= 16) {
-      validSecret = userRow.totp_secret.trim();
-    }
-
     // 7. Enrolled state verification
-    if (userRow.mfa_enabled === 1 && validSecret) {
+    if (validSecret) {
+      // If user has a verified secret, they are authoritatively enrolled!
+      if (userRow.mfa_enabled !== 1 || userRow.mfa_reset_required === 1) {
+        db.prepare(`
+          UPDATE users
+          SET mfa_enabled = 1,
+              mfa_reset_required = 0,
+              mfa_enrolled_at = COALESCE(mfa_enrolled_at, CURRENT_TIMESTAMP),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(userId);
+        syncRecordToFirestore('users', userId, { mfa_enabled: 1, mfa_reset_required: 0 }).catch(() => {});
+      }
+
       return {
         state: 'MFA_ENROLLED',
         hasValidSecret: true,
@@ -483,7 +617,20 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       return {
         state: 'MFA_RECOVERY_REQUIRED',
         hasValidSecret: false,
-        authenticatorsCount: 0,
+        pendingSecret: userRow.pending_totp_secret ? decryptMfaSecret(userRow.pending_totp_secret) : undefined,
+        authenticatorsCount,
+        recoveryCodesRemaining,
+      };
+    }
+
+    // 9. Enrolled state with unreadable secret:
+    // Never silently wipe credentials, reset accounts, or treat as unenrolled!
+    if (userRow.mfa_enabled === 1) {
+      console.warn(`[MFA Architecture] Enrolled account ${userRow.email} (${userId}) has an unreadable secret. Preserving credentials; requiring authorized verification or recovery.`);
+      return {
+        state: 'MFA_ENROLLED',
+        hasValidSecret: false,
+        authenticatorsCount,
         recoveryCodesRemaining,
       };
     }
@@ -491,7 +638,7 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
     return {
       state: 'MFA_NOT_ENROLLED',
       hasValidSecret: false,
-      pendingSecret: userRow.pending_totp_secret || undefined,
+      pendingSecret: userRow.pending_totp_secret ? decryptMfaSecret(userRow.pending_totp_secret) : undefined,
       authenticatorsCount,
       recoveryCodesRemaining,
     };

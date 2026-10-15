@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext.js';
 import { CheckCircle2, Zap, ArrowRight, ShieldCheck, CreditCard, Sparkles, Building2, Users, Award, Lock, Layers } from 'lucide-react';
 import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
 
@@ -68,6 +69,19 @@ export const PricingPage: React.FC<PricingPageProps> = ({
       onOpenCreditsModal({ tab: 'COMBO', plan, level: comboLevel });
     } else {
       onNavigateRegister();
+    }
+  };
+
+  const { user } = useAuth();
+
+  const handlePurchaseInstitutePlan = (tier: 'individual' | 'mid' | 'enterprise') => {
+    const cycleSuffix = instituteCycle.toLowerCase();
+    const planId = `inst_${tier}_${cycleSuffix}`;
+    const normRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
+    if (user && (normRole === 'INSTITUTE_ADMIN' || normRole === 'INSTITUTE')) {
+      navigate(`/institute/dashboard?tab=subscription&upgradePlan=${planId}`);
+    } else {
+      navigate(`/institute/register?plan=${planId}&cycle=${instituteCycle}`);
     }
   };
 
@@ -597,10 +611,11 @@ export const PricingPage: React.FC<PricingPageProps> = ({
 
               <div className="pt-6">
                 <button
-                  onClick={() => navigate('/institute/register')}
+                  id="btn-purchase-inst-individual"
+                  onClick={() => handlePurchaseInstitutePlan('individual')}
                   className="w-full py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs transition cursor-pointer text-center"
                 >
-                  Register Individual Institute
+                  Purchase Individual Institute
                 </button>
               </div>
             </div>
@@ -664,10 +679,11 @@ export const PricingPage: React.FC<PricingPageProps> = ({
 
               <div className="pt-6">
                 <button
-                  onClick={() => navigate('/institute/register')}
+                  id="btn-purchase-inst-mid"
+                  onClick={() => handlePurchaseInstitutePlan('mid')}
                   className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-sm cursor-pointer text-center"
                 >
-                  Get Started with Mid Institute
+                  Purchase Mid Institute
                 </button>
               </div>
             </div>
@@ -727,10 +743,11 @@ export const PricingPage: React.FC<PricingPageProps> = ({
 
               <div className="pt-6">
                 <button
-                  onClick={() => navigate('/institute/register')}
+                  id="btn-purchase-inst-enterprise"
+                  onClick={() => handlePurchaseInstitutePlan('enterprise')}
                   className="w-full py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs transition cursor-pointer text-center"
                 >
-                  Register Enterprise Institute
+                  Purchase Enterprise Institute
                 </button>
               </div>
             </div>
@@ -743,7 +760,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
           <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-xs">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <span>Razorpay 256-Bit SSL</span>
+            <span>Secure, encrypted payment</span>
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
             Bank-grade encryption supporting all UPI apps, RuPay, Visa, Mastercard, and Netbanking.

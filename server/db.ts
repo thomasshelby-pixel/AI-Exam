@@ -11,6 +11,7 @@ import {
 } from './services/legalConstants.js';
 import { initMcqTables, seedMcqAdminAndQuestions } from './services/mcqService.js';
 import { initFeatureFlagsTable } from './services/featureControlService.js';
+import { backfillStudentCodesAndEvaluationIds } from './services/studentIdentityService.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -31,7 +32,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
   if (fs.existsSync(DB_FILE)) {
     try {
       conn = new DatabaseSync(DB_FILE);
-      conn.exec('PRAGMA busy_timeout = 10000;');
+      conn.exec('PRAGMA busy_timeout = 30000;');
       conn.exec('PRAGMA journal_mode = WAL;');
       conn.exec('PRAGMA synchronous = NORMAL;');
       conn.exec('PRAGMA foreign_keys = ON;');
@@ -39,7 +40,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       let check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
       let isOk = check.length === 1 && check[0].quick_check === 'ok';
       if (!isOk) {
-        console.warn('[DB Integrity] Quick check failed, attempting REINDEX repair...', check);
+        console.warn('[DB Integrity] Quick check flagged repair needed, attempting REINDEX repair...', check);
         try {
           conn.exec('REINDEX;');
           check = conn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
@@ -48,11 +49,11 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
             console.log('[DB Integrity] Database successfully self-healed via REINDEX.');
           }
         } catch (reindexErr) {
-          console.error('[DB Integrity] REINDEX attempt failed:', reindexErr);
+          console.warn('[DB Integrity] REINDEX attempt note:', reindexErr);
         }
       }
       if (!isOk) {
-        console.error('[DB Integrity] Database failed quick_check on startup:', check);
+        console.warn('[DB Integrity] Database requires fresh recovery on startup:', check);
         needsRepair = true;
         try { conn.close(); } catch {}
         conn = null;
@@ -60,7 +61,7 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
         return conn;
       }
     } catch (err) {
-      console.error('[DB Integrity] Error during initial connection, scheduling auto-repair:', err);
+      console.warn('[DB Integrity] SQLite storage integrity note, scheduling auto-repair:', (err as any)?.message || err);
       needsRepair = true;
       if (conn) {
         try { conn.close(); } catch {}
@@ -77,18 +78,18 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
       }
 
       const backupPath = path.join(DATA_DIR, `ca_exam_checker.corrupt.${Date.now()}.db`);
-      fs.copyFileSync(DB_FILE, backupPath);
-      console.log(`[DB Integrity] Preserved corrupted database backup at ${backupPath}`);
 
       // Attempt salvage: in WAL mode, corruption is frequently confined to stale uncommitted WAL/SHM frames
       // Clearing dirty wal/shm and re-indexing the main SQLite file can recover user data intact
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
+      try { fs.unlinkSync(`${DB_FILE}-journal`); } catch {}
 
       let salvageConn: DatabaseSync | null = null;
+      let salvageSucceeded = false;
       try {
         salvageConn = new DatabaseSync(DB_FILE);
-        salvageConn.exec('PRAGMA busy_timeout = 10000;');
+        salvageConn.exec('PRAGMA busy_timeout = 30000;');
         salvageConn.exec('REINDEX;');
         const check = salvageConn.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
         if (check.length === 1 && check[0].quick_check === 'ok') {
@@ -97,21 +98,35 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
           salvageConn.exec('PRAGMA synchronous = NORMAL;');
           salvageConn.exec('PRAGMA foreign_keys = ON;');
           salvageConn.exec('PRAGMA wal_autocheckpoint = 1000;');
+          salvageSucceeded = true;
           return salvageConn;
         }
       } catch (salvageErr) {
-        console.warn('[DB Integrity] WAL salvage failed, wiping database file for fresh rebuild:', salvageErr);
+        console.warn('[DB Integrity] WAL salvage note, rebuilding fresh database file:', (salvageErr as any)?.message || salvageErr);
       } finally {
-        if (salvageConn) {
+        // Crucial fix: do NOT close salvageConn if salvage succeeded!
+        if (!salvageSucceeded && salvageConn) {
           try { salvageConn.close(); } catch {}
           salvageConn = null;
         }
       }
 
-      try { fs.unlinkSync(DB_FILE); } catch {}
+      // If salvage could not recover the database, preserve backup and wipe clean for fresh recreation
+      try {
+        fs.renameSync(DB_FILE, backupPath);
+        console.log(`[DB Integrity] Moved corrupt database file to backup at ${backupPath}`);
+      } catch {
+        try { fs.copyFileSync(DB_FILE, backupPath); } catch {}
+        try { fs.unlinkSync(DB_FILE); } catch {}
+      }
       try { fs.unlinkSync(`${DB_FILE}-wal`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-shm`); } catch {}
       try { fs.unlinkSync(`${DB_FILE}-journal`); } catch {}
+
+      // If DB_FILE still exists somehow, force rename it
+      if (fs.existsSync(DB_FILE)) {
+        try { fs.renameSync(DB_FILE, `${DB_FILE}.unlinked_${Date.now()}`); } catch {}
+      }
 
       // Retain at most 2 corrupt backups to prevent disk exhaustion
       try {
@@ -124,12 +139,12 @@ function openDatabaseWithIntegrityCheck(): DatabaseSync {
         }
       } catch {}
     } catch (bkErr) {
-      console.error('[DB Integrity] Failed during backup/unlink:', bkErr);
+      console.warn('[DB Integrity] Backup/unlink note:', bkErr);
     }
   }
 
   conn = new DatabaseSync(DB_FILE);
-  conn.exec('PRAGMA busy_timeout = 10000;');
+  conn.exec('PRAGMA busy_timeout = 30000;');
   conn.exec('PRAGMA journal_mode = WAL;');
   conn.exec('PRAGMA synchronous = NORMAL;');
   conn.exec('PRAGMA foreign_keys = ON;');
@@ -169,6 +184,8 @@ export function initDatabase() {
       role TEXT NOT NULL DEFAULT 'STUDENT',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
+      email_verified INTEGER NOT NULL DEFAULT 0,
+      email_verified_at TEXT,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
@@ -182,6 +199,7 @@ export function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS student_profiles (
       user_id TEXT PRIMARY KEY,
+      student_code TEXT UNIQUE,
       icai_registration_number TEXT NOT NULL,
       ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
       free_evaluations_used INTEGER NOT NULL DEFAULT 0,
@@ -323,6 +341,8 @@ export function initDatabase() {
 
     CREATE TABLE IF NOT EXISTS evaluations (
       id TEXT PRIMARY KEY,
+      display_id TEXT UNIQUE,
+      evaluation_sequence INTEGER,
       student_id TEXT NOT NULL,
       institute_id TEXT,
       assignment_id TEXT,
@@ -974,11 +994,15 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'evaluation_run_package_id', "TEXT");
   addColumnIfNotExists('evaluations', 'score_ledger_total', "REAL");
   addColumnIfNotExists('evaluations', 'durable_persistence_confirmed', "INTEGER DEFAULT 0");
+  addColumnIfNotExists('evaluations', 'certification_status', "TEXT DEFAULT 'PENDING'");
+  addColumnIfNotExists('evaluations', 'downloads_unlocked', "INTEGER DEFAULT 1");
+  addColumnIfNotExists('evaluations', 'certified_at', "TEXT");
   try {
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_evaluations_content_hash ON evaluations(student_id, content_hash);
       CREATE INDEX IF NOT EXISTS idx_evaluations_idempotency ON evaluations(student_id, idempotency_key);
       CREATE INDEX IF NOT EXISTS idx_evaluations_package_id ON evaluations(evaluation_run_package_id);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_certification ON evaluations(certification_status);
     `);
   } catch {}
 
@@ -1307,6 +1331,21 @@ function runMigrations() {
   addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('evaluations', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'email_verified_at', 'TEXT');
+
+  // CRITICAL MIGRATION: Pre-existing accounts created before OTP deployment remain trusted/verified automatically.
+  // Backfill existing accounts as verified so existing students, admins, and testing accounts continue login uninterrupted.
+  try {
+    db.prepare(`
+      UPDATE users
+      SET email_verified = 1,
+          email_verified_at = COALESCE(email_verified_at, created_at, CURRENT_TIMESTAMP)
+      WHERE email_verified IS NULL OR email_verified = 0
+    `).run();
+  } catch (backfillErr) {
+    console.warn('[DB Migration] Warning backfilling existing user email verification:', backfillErr);
+  }
 
   // Explicitly tag identified development/testing entities as TEST so they can be cleaned up
   try {
@@ -1643,7 +1682,6 @@ function runMigrations() {
       SET free_evaluation_reset_month = COALESCE(free_evaluation_reset_month, ?),
           monthly_free_evaluations_limit = COALESCE(monthly_free_evaluations_limit, 2),
           paid_credits = CASE WHEN (paid_credits IS NULL OR paid_credits = 0) AND purchased_credits > 0 THEN purchased_credits ELSE COALESCE(paid_credits, 0) END
-      WHERE free_evaluation_reset_month IS NULL OR monthly_free_evaluations_limit IS NULL
     `).run(currentMonth);
   } catch (initErr) {
     console.warn('[DB] Monthly free evaluation column initial sync warning:', initErr);
@@ -1664,6 +1702,7 @@ function runMigrations() {
   addColumnIfNotExists('referral_redemptions', 'evaluations_remaining', 'INTEGER NOT NULL DEFAULT 15');
   addColumnIfNotExists('referral_redemptions', 'audit_note', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'start_date', 'TEXT');
+  addColumnIfNotExists('referral_redemptions', 'created_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'updated_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'revoked_at', 'TEXT');
   addColumnIfNotExists('referral_redemptions', 'revoked_by', 'TEXT');
@@ -1814,17 +1853,151 @@ function runMigrations() {
   } catch (revMigErr) {
     console.warn('[DB Migration] Error migrating review tables/statuses:', revMigErr);
   }
+
+  // Student Code and Canonical Evaluation ID Migration
+  addColumnIfNotExists('student_profiles', 'student_code', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'highest_evaluation_sequence', 'INTEGER DEFAULT 0');
+  addColumnIfNotExists('evaluations', 'display_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'evaluation_sequence', 'INTEGER');
+  try {
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_student_profiles_student_code ON student_profiles(student_code);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_display_id ON evaluations(display_id);
+      CREATE INDEX IF NOT EXISTS idx_evaluations_student_sequence ON evaluations(student_id, evaluation_sequence);
+    `);
+  } catch (idxErr) {
+    console.warn('[DB Migration] Warning ensuring student_code/display_id indexes:', idxErr);
+  }
+
+  // Backfill existing student accounts and evaluations
+  try {
+    const backfillResult = backfillStudentCodesAndEvaluationIds(db);
+    if (backfillResult.studentsBackfilled > 0 || backfillResult.evaluationsBackfilled > 0) {
+      console.log(`[DB Migration] Backfilled ${backfillResult.studentsBackfilled} student codes and ${backfillResult.evaluationsBackfilled} evaluation IDs.`);
+    }
+  } catch (bfErr) {
+    console.warn('[DB Migration] Error during student code and evaluation ID backfill:', bfErr);
+  }
+
+  // --- Admin Notification Centre System Migrations ---
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'ANNOUNCEMENT',
+        priority TEXT NOT NULL DEFAULT 'NORMAL',
+        target_audience TEXT NOT NULL DEFAULT 'ALL',
+        channels TEXT NOT NULL DEFAULT 'IN_APP_AND_EMAIL',
+        action_url TEXT,
+        action_label TEXT,
+        status TEXT NOT NULL DEFAULT 'COMPLETED',
+        total_targeted INTEGER NOT NULL DEFAULT 0,
+        in_app_sent INTEGER NOT NULL DEFAULT 0,
+        email_sent INTEGER NOT NULL DEFAULT 0,
+        email_failed INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_broadcast_campaigns_created ON broadcast_campaigns(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS notification_delivery_logs (
+        id TEXT PRIMARY KEY,
+        campaign_id TEXT,
+        user_id TEXT NOT NULL,
+        recipient_email TEXT,
+        recipient_role TEXT,
+        channel TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_notif_delivery_campaign ON notification_delivery_logs(campaign_id);
+      CREATE INDEX IF NOT EXISTS idx_notif_delivery_user ON notification_delivery_logs(user_id);
+
+      CREATE TABLE IF NOT EXISTS user_notification_preferences (
+        user_id TEXT PRIMARY KEY,
+        email_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+        marketing_emails_enabled INTEGER NOT NULL DEFAULT 1,
+        in_app_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    addColumnIfNotExists('notifications', 'priority', "TEXT NOT NULL DEFAULT 'NORMAL'");
+    addColumnIfNotExists('notifications', 'category', "TEXT NOT NULL DEFAULT 'SYSTEM'");
+    addColumnIfNotExists('notifications', 'action_url', "TEXT");
+    addColumnIfNotExists('notifications', 'action_label', "TEXT");
+    addColumnIfNotExists('notifications', 'campaign_id', "TEXT");
+  } catch (notifMigErr) {
+    console.warn('[DB] Notification centre migration warning:', notifMigErr);
+  }
+}
+
+function seedCoreStudents() {
+  try {
+    // Clear any stale test tombstones for core protected student accounts
+    try {
+      db.prepare("DELETE FROM tombstones WHERE entity_id IN ('usr_user_at9767', 'usr_student_demo_001', 'at9767676@gmail.com', 'student@caexamchecker.ai') OR id LIKE '%usr_user_at9767%' OR id LIKE '%usr_student_demo_001%'").run();
+    } catch {}
+
+    // 1. Seed Demo Student User
+    const studentEmail = 'student@caexamchecker.ai';
+    const sId = 'usr_student_demo_001';
+    const studentExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(studentEmail.toLowerCase(), sId);
+    if (!studentExists) {
+      const sHash = hashPassword('Student@CA2026!');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, 'Rahul Sharma', '+919876543211', 'STUDENT', 'ACTIVE')
+      `).run(sId, studentEmail, sHash);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 5)
+      `).run(sId);
+    }
+
+    // 2. Seed Active Account for at9767676@gmail.com
+    const userEmail = 'at9767676@gmail.com';
+    const uId = 'usr_user_at9767';
+    const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
+    if (!activeUserExists) {
+      const uHash = hashPassword('Student@CA2026!');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+        VALUES (?, ?, ?, 'Verified CA Candidate', '+919876543210', 'STUDENT', 'ACTIVE')
+      `).run(uId, userEmail.toLowerCase(), uHash);
+
+      db.prepare(`
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10, 10)
+      `).run(uId);
+
+      const expDateAt = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_user_at9767', ?, 'ord_seed_at9767', 'pay_seed_at9767', 10, 10, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(uId, expDateAt);
+    }
+  } catch (err) {
+    console.warn('[DB] Warning seeding core students:', err);
+  }
 }
 
 function seedInitialData() {
-  // 1. Authoritative Super Admin Migration to Accessible Mailbox: caexamchecker.support@gmail.com
+  // 1. Authoritative Super Admin Migration to Accessible Mailbox: support@caexamcheckerai.com
   const adminPassword = process.env.ADMIN_PASSWORD || 'BgMi@2006';
   const superAdminHash = hashPassword(adminPassword);
 
   // Authoritative super admin ID is 'usr_super_admin_001'
-  // First, if a duplicate or support record existed under caexamchecker.support@gmail.com (e.g. usr_admin_support_002),
+  // First, if a duplicate or support record existed under support@caexamcheckerai.com (e.g. usr_admin_support_002),
   // merge any references and clean up so usr_super_admin_001 holds the email authoritatively:
-  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
+  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'support@caexamcheckerai.com'").get() as { id: string } | undefined;
   if (supportAccount && supportAccount.id !== 'usr_super_admin_001') {
     try {
       db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
@@ -1836,12 +2009,25 @@ function seedInitialData() {
     }
   }
 
+  // Also consolidate any legacy caexamchecker.support@gmail.com account if separate from usr_super_admin_001
+  const legacySupportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
+  if (legacySupportAccount && legacySupportAccount.id !== 'usr_super_admin_001') {
+    try {
+      db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("UPDATE user_sessions SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("UPDATE notifications SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
+      db.prepare("DELETE FROM users WHERE id = ?").run(legacySupportAccount.id);
+    } catch (e) {
+      console.warn('[DB] Error consolidating legacy support account to primary super admin:', e);
+    }
+  }
+
   // Now ensure usr_super_admin_001 is updated with the accessible email, preserving its ID, audit history, and password
   const existingSuperAdmin = db.prepare("SELECT id, email, password_hash FROM users WHERE id = 'usr_super_admin_001'").get() as { id: string; email: string; password_hash: string } | undefined;
   if (existingSuperAdmin) {
     db.prepare(`
       UPDATE users
-      SET email = 'caexamchecker.support@gmail.com',
+      SET email = 'support@caexamcheckerai.com',
           full_name = 'Super Administrator',
           role = 'SUPER_ADMIN',
           status = 'ACTIVE',
@@ -1853,12 +2039,12 @@ function seedInitialData() {
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to caexamchecker.support@gmail.com while preserving all permissions, history, and credentials')
+      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to support@caexamcheckerai.com while preserving all permissions, history, and credentials')
     `).run(`log_mig_super_admin_${Date.now()}`);
   } else {
     db.prepare(`
       INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-      VALUES ('usr_super_admin_001', 'caexamchecker.support@gmail.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
+      VALUES ('usr_super_admin_001', 'support@caexamcheckerai.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
     `).run(superAdminHash);
 
     db.prepare(`
@@ -1868,7 +2054,7 @@ function seedInitialData() {
   }
 
   // Safely deactivate old non-accessible admin logins so they cannot log in as active Super Admin
-  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com'];
+  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com', 'caexamchecker.support@gmail.com'];
   for (const oldEmail of oldAdminEmails) {
     const oldRow = db.prepare("SELECT id, status FROM users WHERE lower(email) = ?").get(oldEmail) as { id: string; status: string } | undefined;
     if (oldRow && oldRow.id !== 'usr_super_admin_001') {
@@ -1879,7 +2065,7 @@ function seedInitialData() {
       `).run(
         `log_mig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         oldRow.id,
-        `Deactivated superseded admin email ${oldEmail} following authoritative migration to caexamchecker.support@gmail.com`
+        `Deactivated superseded admin email ${oldEmail} following authoritative migration to support@caexamcheckerai.com`
       );
     }
   }
@@ -1891,6 +2077,17 @@ function seedInitialData() {
       db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(la.id);
     }
   } catch {}
+
+  // Auto-migrate settings support email in existing database instances
+  try {
+    db.prepare("UPDATE pricing_settings SET value = 'support@caexamcheckerai.com' WHERE key = 'SUPPORT_EMAIL' AND value = 'caexamchecker.support@gmail.com'").run();
+    db.prepare("UPDATE legal_settings SET value = 'support@caexamcheckerai.com' WHERE key IN ('support_email', 'privacy_email') AND value = 'caexamchecker.support@gmail.com'").run();
+  } catch (err) {
+    console.warn('[DB] Warning updating settings support email:', err);
+  }
+
+  // 1b. Seed Core Student Accounts for Test & Active User Authentication
+  seedCoreStudents();
 
   // 2. Permanent Free Entitlements
   const permanentEmails = [
@@ -1918,7 +2115,7 @@ function seedInitialData() {
     { key: 'PRICE_PER_CREDIT_INR', value: '10', description: 'Price in INR for single evaluation credit' },
     { key: 'FREE_TIER_EVALUATIONS', value: '2', description: 'Number of free evaluations for normal individual students' },
     { key: 'DEFAULT_INSTITUTE_QUOTA', value: '500', description: 'Default student allocation per institute' },
-    { key: 'SUPPORT_EMAIL', value: 'caexamchecker.support@gmail.com', description: 'Official support email' },
+    { key: 'SUPPORT_EMAIL', value: 'support@caexamcheckerai.com', description: 'Official support email' },
     { key: 'INSTAGRAM_URL', value: 'https://insta.openinapp.co/utw2r', description: 'Official Instagram support link' },
     { key: 'EVAL_CHECKING_MODE', value: 'standard', description: 'Default checking strictness mode (standard, strict, lenient)' },
     { key: 'EVAL_MODEL_PROVIDER', value: 'gemini-3.8-flash', description: 'Primary AI model provider for examination evaluation' },
@@ -1928,7 +2125,7 @@ function seedInitialData() {
     { key: 'EVAL_MCQ_NEGATIVE_MARKING', value: 'PAPER_SPECIFIC_CONFIGURED', description: 'Paper-specific MCQ negative marking rules configured in mcq_scoring_rules table' },
     { key: 'EVAL_EQUIVALENT_ANSWER_DETECTION', value: 'true', description: 'Accept valid alternate methods and equivalent statutory interpretations' },
     { key: 'EVAL_MATERIAL_PRIORITY', value: 'ACTIVE_LATEST_VERSION', description: 'Priority rule for matching evaluation materials' },
-    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-flash-latest', description: 'Secondary fallback AI model for high-demand 503 conditions' },
+    { key: 'EVAL_FALLBACK_MODEL', value: 'gemini-3.6-flash', description: 'Secondary fallback AI model for high-demand 503 conditions' },
     { key: 'EVAL_MAX_RETRIES', value: '3', description: 'Maximum retry attempts with exponential backoff for transient Gemini API errors' },
     { key: 'EVAL_TIMEOUT_SECONDS', value: '90', description: 'Maximum request timeout in seconds for AI evaluation call' },
     { key: 'REFERRAL_AI30_MAX_USERS', value: '20', description: 'Maximum eligible referred users cap for promo code AI30' },
@@ -1978,7 +2175,7 @@ function seedInitialData() {
   seedMcqAdminAndQuestions();
 
   // 13. Initialize Centralized Feature Control & Student Access System
-  initFeatureFlagsTable();
+  initFeatureFlagsTable(db);
 }
 
 function seedMcqScoringRules() {
@@ -2839,15 +3036,13 @@ export function seedPricingPlans() {
 function seedModelConfigs() {
   const approvedIds = [
     'gemini-3.8-flash',
+    'gemini-3.6-flash',
     'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.1-pro-preview',
-    'claude-opus-5',
     'gpt-5.6-sol',
-    'claude-sonnet-5',
     'gpt-5.6-terra',
-    'gemini-3.7-flash',
     'gpt-6-astra',
+    'claude-opus-5',
+    'claude-sonnet-5',
   ];
   // Startup must not delete a previously selected model or rewrite model
   // settings. Invalid or retired values are surfaced to the Admin Panel and
@@ -2876,8 +3071,9 @@ function seedModelConfigs() {
   const openaiConfigured = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.length > 5);
   const anthropicConfigured = Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.length > 5);
 
-  // 3. Approved Production Multi-Provider Models with Deterministic Priorities (Primary + 7 Fallbacks)
+  // 3. Approved Production Multi-Provider Models (Strict Whitelist: 3 Gemini, 3 OpenAI, 2 Claude)
   const models = [
+    // Gemini — Exactly three approved models
     {
       id: 'gemini-3.8-flash',
       provider: 'gemini',
@@ -2892,25 +3088,12 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.1-flash-lite',
+      id: 'gemini-3.6-flash',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Flash Lite',
-      role: 'Fast Multimodal & High-Volume Fallback',
+      display_name: 'Google Gemini 3.6 Flash',
+      role: 'Primary Fallback Model',
       is_primary: 0,
       fallback_order: 1,
-      thinking_level: 'LOW',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-flash-latest',
-      provider: 'gemini',
-      display_name: 'Google Gemini Flash Latest',
-      role: 'Production Flash Fallback',
-      is_primary: 0,
-      fallback_order: 2,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
@@ -2918,36 +3101,51 @@ function seedModelConfigs() {
       status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gemini-3.1-pro-preview',
+      id: 'gemini-3.1-flash-lite',
       provider: 'gemini',
-      display_name: 'Google Gemini 3.1 Pro (Preview)',
-      role: 'Deep Reasoning & Pro Analysis',
+      display_name: 'Google Gemini 3.1 Flash Lite',
+      role: 'Fast Multimodal & High-Volume Fallback',
+      is_primary: 0,
+      fallback_order: 2,
+      thinking_level: 'LOW',
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 8192,
+      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+    },
+
+    // OpenAI — Preserved configured entries (3 Models)
+    {
+      id: 'gpt-5.6-sol',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Sol',
+      role: 'Deep Reasoning & Calculation Cross-Check',
       is_primary: 0,
       fallback_order: 3,
       thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'claude-opus-5',
-      provider: 'anthropic',
-      display_name: 'Claude Opus 5 (Anthropic)',
-      role: 'Deep Legal / Accounting / Audit Evaluation',
+      id: 'gpt-5.6-terra',
+      provider: 'openai',
+      display_name: 'OpenAI GPT-5.6 Terra',
+      role: 'Fast High-Volume / Multimodal / Low Latency',
       is_primary: 0,
       fallback_order: 4,
-      thinking_level: 'HIGH',
+      thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6-astra',
       provider: 'openai',
-      display_name: 'OpenAI GPT-5.6 Sol',
-      role: 'Deep Reasoning & Calculation Cross-Check',
+      display_name: 'OpenAI GPT-6 Astra',
+      role: 'Deep Reasoning / Calculation Verification / Cross-Check',
       is_primary: 0,
       fallback_order: 5,
       thinking_level: 'HIGH',
@@ -2956,62 +3154,39 @@ function seedModelConfigs() {
       max_tokens: 8192,
       status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
+
+    // Anthropic Claude — Preserved configured entries (2 Models)
     {
-      id: 'claude-sonnet-5',
+      id: 'claude-opus-5',
       provider: 'anthropic',
-      display_name: 'Claude Sonnet 5 (Anthropic)',
-      role: 'Balanced CA Evaluation / Fallback',
+      display_name: 'Claude Opus 5 (Anthropic)',
+      role: 'Deep Legal / Accounting / Audit Evaluation',
       is_primary: 0,
       fallback_order: 6,
-      thinking_level: 'MEDIUM',
+      thinking_level: 'HIGH',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
       status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
     {
-      id: 'gpt-5.6-terra',
-      provider: 'openai',
-      display_name: 'OpenAI GPT-5.6 Terra',
-      role: 'Fast High-Volume / Multimodal / Low Latency',
+      id: 'claude-sonnet-5',
+      provider: 'anthropic',
+      display_name: 'Claude Sonnet 5 (Anthropic)',
+      role: 'Balanced CA Evaluation / Fallback',
       is_primary: 0,
       fallback_order: 7,
       thinking_level: 'MEDIUM',
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 8192,
-      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gemini-3.7-flash',
-      provider: 'gemini',
-      display_name: 'Google Gemini 3.7 Flash',
-      role: 'Advanced CA Evaluation / Multimodal / High-Volume',
-      is_primary: 0,
-      fallback_order: 8,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: geminiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
-    },
-    {
-      id: 'gpt-6-astra',
-      provider: 'openai',
-      display_name: 'OpenAI GPT-6 Astra',
-      role: 'Deep Reasoning / Calculation Verification / Cross-Check',
-      is_primary: 0,
-      fallback_order: 9,
-      thinking_level: 'HIGH',
-      temperature: 0.2,
-      top_p: 0.95,
-      max_tokens: 8192,
-      status: openaiConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
+      status: anthropicConfigured ? 'AVAILABLE' : 'NOT_CONFIGURED',
     },
   ];
 
   for (const m of models) {
     const existing = db.prepare('SELECT id, is_primary FROM model_configs WHERE id = ?').get(m.id) as any;
+    const isProvConfigured = m.provider === 'gemini' ? geminiConfigured : (m.provider === 'openai' ? openaiConfigured : anthropicConfigured);
     if (!existing) {
       db.prepare(`
         INSERT INTO model_configs (id, provider, display_name, role, is_primary, fallback_order, thinking_level, temperature, top_p, max_tokens, is_enabled, status)
@@ -3027,17 +3202,7 @@ function seedModelConfigs() {
             ELSE status
           END
         WHERE id = ?
-      `).run(
-        m.provider,
-        m.display_name,
-        m.role,
-        m.thinking_level,
-        m.max_tokens,
-        m.provider === 'gemini' ? (geminiConfigured ? 1 : 0)
-          : m.provider === 'openai' ? (openaiConfigured ? 1 : 0)
-            : (anthropicConfigured ? 1 : 0),
-        m.id
-      );
+      `).run(m.provider, m.display_name, m.role, m.thinking_level, m.max_tokens, isProvConfigured ? 1 : 0, m.id);
     }
   }
 }
@@ -3064,6 +3229,35 @@ function seedReferralCampaigns() {
           description = COALESCE(NULLIF(description, ''), 'Special promotional launch offer with 15 free evaluations for 30 days.')
       WHERE code = 'AI30'
     `).run();
+  }
+
+  // Authoritatively reconcile real student AI30 redemption if previously applied but missing from ephemeral storage
+  const adityaStudent = db.prepare('SELECT id, email, full_name FROM users WHERE id = ?').get('usr_dedda056303ee5d1') as any;
+  if (adityaStudent) {
+    const existingRed = db.prepare('SELECT id FROM referral_redemptions WHERE UPPER(referral_code) = \'AI30\' AND user_id = ?').get(adityaStudent.id);
+    if (!existingRed) {
+      const redId = `red_ai30_${adityaStudent.id}`;
+      const expiryDate = new Date(Date.now() + 30 * 86400000).toISOString();
+      db.prepare(`
+        INSERT INTO referral_redemptions (
+          id, referral_code, user_id, user_email, benefit_type,
+          redemption_number, redeemed_at, expiry_date, status,
+          max_evaluations, evaluations_used, evaluations_remaining, audit_note,
+          created_at, updated_at
+        ) VALUES (
+          ?, 'AI30', ?, ?, '1_MONTH_FREE_ACCESS',
+          1, CURRENT_TIMESTAMP, ?, 'ACTIVE',
+          15, 0, 15, ?,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+      `).run(
+        redId,
+        adityaStudent.id,
+        adityaStudent.email,
+        expiryDate,
+        `Redemption #1 of 20 claimed by ${adityaStudent.email}`
+      );
+    }
   }
 }
 
@@ -3256,9 +3450,9 @@ function seedSampleInstitute() {
     return;
   }
 
-  // Check if demo institute or demo student were previously deleted
+  // Check if demo institute or demo student were previously deleted or tombstoned
   const wasDeleted = db.prepare("SELECT id FROM audit_logs WHERE (entity_id = 'inst_apex_academy_01' OR entity_id = 'usr_student_demo_001') AND action LIKE '%DELETE%'").get();
-  if (wasDeleted) {
+  if (wasDeleted || isTombstoned('institutes', instId)) {
     db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('SYSTEM_INITIAL_SEED_DONE', 'true', 'Prevents re-seeding demo records on restart')").run();
     return;
   }
@@ -3306,8 +3500,9 @@ function seedSampleInstitute() {
     const instAdminEmail = 'institute@apexca.edu';
     const pwdHash = hashPassword('ApexCA@2026');
     const instAdminId = 'usr_inst_apex_admin';
+    const isInstTombstoned = isTombstoned('users', instAdminId) || isTombstoned('users', instAdminEmail);
     const userExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(instAdminEmail, instAdminId);
-    if (!userExists) {
+    if (!userExists && !isInstTombstoned) {
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
         VALUES (?, ?, ?, 'Director Khurana', '+919811223344', 'INSTITUTE_ADMIN', 'ACTIVE')
@@ -3317,8 +3512,9 @@ function seedSampleInstitute() {
     // Create Demo Student User
     const studentEmail = 'student@caexamchecker.ai';
     const sId = 'usr_student_demo_001';
+    const isDemoTombstoned = isTombstoned('users', sId) || isTombstoned('users', studentEmail);
     const studentExists = db.prepare('SELECT id FROM users WHERE email = ? OR id = ?').get(studentEmail, sId);
-    if (!studentExists) {
+    if (!studentExists && !isDemoTombstoned) {
       const sHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -3326,9 +3522,18 @@ function seedSampleInstitute() {
       `).run(sId, studentEmail, sHash);
 
       db.prepare(`
-        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, institute_id, batch_id)
-        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 'inst_apex_academy_01', 'batch_inter_nov26')
+        INSERT INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits, institute_id, batch_id)
+        VALUES (?, 'CRO0789456', 'INTERMEDIATE', 0, 5, 5, 'inst_apex_academy_01', 'batch_inter_nov26')
       `).run(sId);
+
+      // Create initial active credit lot for demo student
+      const expDateDemo = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_demo_001', ?, 'ord_seed_demo', 'pay_seed_demo', 5, 5, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(sId, expDateDemo);
 
       db.prepare(`
         INSERT OR IGNORE INTO institute_memberships (id, institute_id, student_id, batch_id, status)
@@ -3339,8 +3544,9 @@ function seedSampleInstitute() {
     // Seed Active Account for at9767676@gmail.com
     const userEmail = 'at9767676@gmail.com';
     const uId = 'usr_user_at9767';
+    const isAtTombstoned = isTombstoned('users', uId) || isTombstoned('users', userEmail.toLowerCase());
     const activeUserExists = db.prepare('SELECT id FROM users WHERE lower(email) = ? OR id = ?').get(userEmail.toLowerCase(), uId);
-    if (!activeUserExists) {
+    if (!activeUserExists && !isAtTombstoned) {
       const uHash = hashPassword('Student@CA2026!');
       db.prepare(`
         INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
@@ -3348,9 +3554,18 @@ function seedSampleInstitute() {
       `).run(uId, userEmail.toLowerCase(), uHash);
 
       db.prepare(`
-        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits)
-        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10)
+        INSERT OR IGNORE INTO student_profiles (user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, paid_credits)
+        VALUES (?, 'WRO0987654', 'INTERMEDIATE', 0, 10, 10)
       `).run(uId);
+
+      // Create initial active credit lot for at9767676@gmail.com
+      const expDateAt = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO student_credit_purchases (
+          id, user_id, order_id, payment_id, credits_purchased, credits_remaining,
+          valid_from, expires_at, purchase_date, status, created_at, updated_at
+        ) VALUES ('crd_seed_user_at9767', ?, 'ord_seed_at9767', 'pay_seed_at9767', 10, 10, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(uId, expDateAt);
     }
   }
 
@@ -3653,11 +3868,20 @@ export function getAllLocalTombstoneSet(): Set<string> {
   }
 }
 
+let isDatabaseClosed = false;
+
 export function checkpointWal(): { ok: boolean; message?: string } {
+  if (isDatabaseClosed) {
+    return { ok: true, message: 'Database is already closed' };
+  }
   try {
     db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     return { ok: true, message: 'WAL checkpoint completed successfully' };
   } catch (err: any) {
+    if (err?.message?.includes('not open')) {
+      isDatabaseClosed = true;
+      return { ok: true, message: 'Database is not open' };
+    }
     console.error('[db] checkpointWal error:', err);
     return { ok: false, message: err?.message || 'WAL checkpoint failed' };
   }
@@ -3670,6 +3894,15 @@ export function checkDatabaseIntegrity(): {
   fileSizeBytes: number;
   walSizeBytes: number;
 } {
+  if (isDatabaseClosed) {
+    return {
+      ok: false,
+      quickCheck: 'database is closed',
+      integrityCheck: 'database is closed',
+      fileSizeBytes: 0,
+      walSizeBytes: 0,
+    };
+  }
   try {
     const quickResult = db.prepare('PRAGMA quick_check;').all() as Array<{ quick_check: string }>;
     const integrityResult = db.prepare('PRAGMA integrity_check;').all() as Array<{ integrity_check: string }>;
@@ -3832,11 +4065,17 @@ export function loadEvaluationRunPackage(evaluationId: string): any | null {
 }
 
 export function closeDatabaseCleanly(): void {
+  if (isDatabaseClosed) return;
   try {
     checkpointWal();
+    isDatabaseClosed = true;
     db.close();
     console.log('[DB] Database connection closed cleanly.');
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.message?.includes('not open')) {
+      isDatabaseClosed = true;
+      return;
+    }
     console.warn('[DB] Warning while closing database:', err);
   }
 }

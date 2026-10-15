@@ -1611,7 +1611,10 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
     const notifications = db.prepare(`
       SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50
     `).all(req.user!.id);
-    return res.json({ notifications });
+    const unreadCountRow = db.prepare(`
+      SELECT COUNT(*) as unreadCount FROM notifications WHERE user_id = ? AND (read = 0 OR is_read = 0)
+    `).get(req.user!.id) as { unreadCount: number };
+    return res.json({ notifications, unreadCount: unreadCountRow?.unreadCount || 0 });
   } catch (error: unknown) {
     console.error('Get notifications error:', error);
     return res.status(500).json({ error: 'Failed to load notifications' });
@@ -1620,7 +1623,7 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
 
 router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
   try {
-    db.prepare('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.user!.id);
+    db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.user!.id);
     return res.json({ success: true });
   } catch (error: unknown) {
     return res.status(500).json({ error: 'Failed to mark notification read' });
@@ -1629,7 +1632,7 @@ router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
 
 router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
   try {
-    db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.user!.id);
+    db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE user_id = ?').run(req.user!.id);
     return res.json({ success: true });
   } catch (error: unknown) {
     return res.status(500).json({ error: 'Failed to mark all notifications read' });

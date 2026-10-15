@@ -178,7 +178,7 @@ export async function deleteSingleTestRecord(
       return await deleteStudentAccount(id, actor, ipAddress, userAgent);
     }
     case 'INSTITUTES': {
-      return deleteInstituteAccount(id, actor, ipAddress, userAgent);
+      return await deleteInstituteAccount(id, actor, ipAddress, userAgent);
     }
     case 'ORDERS': {
       const order = db.prepare('SELECT * FROM payment_orders WHERE id = ?').get(id) as any;
@@ -415,7 +415,7 @@ export async function bulkDeleteTestCategory(
       let count = 0;
       for (const inst of testInstitutes) {
         try {
-          deleteInstituteAccount(inst.id, actor, ipAddress, userAgent);
+          await deleteInstituteAccount(inst.id, actor, ipAddress, userAgent);
           count++;
         } catch (err) {
           console.error(`[BulkTestCleanup] Failed to delete test institute ${inst.id}:`, err);
