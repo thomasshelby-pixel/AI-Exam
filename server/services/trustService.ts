@@ -148,6 +148,7 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
       // Reconcile and bind device_id if client provided a stable identifier
       if (record && cleanDeviceId && record.device_id !== cleanDeviceId) {
         try {
+          db.prepare('DELETE FROM trusted_devices WHERE user_id = ? AND device_id = ? AND id != ?').run(userId, cleanDeviceId, record.id);
           db.prepare(`UPDATE trusted_devices SET device_id = ? WHERE id = ?`).run(cleanDeviceId, record.id);
           syncRecordToFirestore('trusted_devices', record.id, { device_id: cleanDeviceId }).catch(() => {});
         } catch {}
@@ -202,11 +203,11 @@ export function verifyUserDeviceTrust(
   deviceId?: string,
   candidateTokens?: Array<string | undefined | null>
 ): { isTrusted: boolean; trustToken?: string; expiresAt?: string } {
-  if (!userId || !deviceId || !candidateTokens || candidateTokens.length === 0) {
+  if (!userId || !candidateTokens || candidateTokens.length === 0) {
     return { isTrusted: false };
   }
 
-  const cleanDeviceId = deviceId.trim();
+  const cleanDeviceId = deviceId ? deviceId.trim() : '';
   const validTokens = candidateTokens.filter((t): t is string => Boolean(t && typeof t === 'string' && t.trim().length > 0));
 
   for (const token of validTokens) {
@@ -632,8 +633,9 @@ export function markDeviceAsTrusted(params: {
   // Generate cryptographically secure 256-bit trust token
   const rawSecret = crypto.randomBytes(32).toString('hex');
   const trustToken = `trust_${rawSecret}`;
-  const trustTokenHash = hashTrustToken(trustToken);
-  const recordId = `trd_${crypto.randomBytes(8).toString('hex')}`;
+  const existingRow = db.prepare('SELECT id FROM trusted_devices WHERE user_id = ? AND device_id = ?').get(userId, cleanDeviceId) as { id: string } | undefined;
+  const safeIdHash = crypto.createHash('md5').update(`${userId}:${cleanDeviceId}`).digest('hex').substring(0, 16);
+  const recordId = existingRow?.id || `trd_${safeIdHash}`;
 
   const expiresAt = new Date(Date.now() + TRUST_DURATION_MS).toISOString();
 

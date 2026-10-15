@@ -14,8 +14,17 @@ export function getServerPort(): number {
       return parsed;
     }
   }
-  return process.env.NODE_ENV === 'production' ? 8080 : 3000;
+  // Check CLI arguments for --port <PORT> (e.g. from dev runner)
+  const portArgIndex = process.argv.indexOf('--port');
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const parsedArg = parseInt(process.argv[portArgIndex + 1].trim(), 10);
+    if (!Number.isNaN(parsedArg) && parsedArg > 0) {
+      return parsedArg;
+    }
+  }
+  return 8080;
 }
 
 export const SERVER_PORT: number = getServerPort();
 export const SERVER_HOST: string = '0.0.0.0';
+

@@ -97,8 +97,8 @@ export async function evaluateMfaRequirementForLogin(
       return { requireMfa: false, mfaState };
     }
     // Student voluntarily enabled MFA -> Check trusted device status (365 days)
-    if (deviceContext?.deviceId && candidateTokens.length > 0) {
-      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext.deviceId, candidateTokens);
+    if (candidateTokens.length > 0) {
+      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext?.deviceId, candidateTokens);
       if (trustCheck.isTrusted) {
         return { requireMfa: false, mfaState, deviceTrusted: true, trustToken: trustCheck.trustToken };
       }
@@ -157,8 +157,8 @@ export async function evaluateMfaRequirementForLogin(
     }
 
     // mfaState === 'MFA_ENROLLED': Check trusted device status (365 days)
-    if (deviceContext?.deviceId && candidateTokens.length > 0) {
-      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext.deviceId, candidateTokens);
+    if (candidateTokens.length > 0) {
+      const trustCheck = verifyUserDeviceTrust(user.id, deviceContext?.deviceId, candidateTokens);
       if (trustCheck.isTrusted) {
         return { requireMfa: false, mfaState, deviceTrusted: true, trustToken: trustCheck.trustToken };
       }

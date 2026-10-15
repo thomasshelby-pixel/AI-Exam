@@ -1,13 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { db } from '../db.js';
 
 /**
  * MFA Secret Encryption Service
  * Encrypts stored TOTP secrets at rest using AES-256-GCM.
  * Backward compatible: Automatically decrypts legacy plaintext Base32 secrets.
  * Persistent: Stores and preserves a stable 256-bit encryption master key on disk (data/mfa_master.key)
- * to guarantee that encryption/decryption keys never shift across server reboots, container restarts, or deployments.
+ * and SQLite pricing_settings to guarantee that encryption/decryption keys never shift across server reboots, container restarts, or deployments.
  */
 
 const KEY_FILE = path.join(process.cwd(), 'data', 'mfa_master.key');
@@ -25,6 +26,20 @@ function getOrInitPersistentKey(): Buffer {
     }
   } catch {}
 
+  // Check persistent SQLite database
+  try {
+    const row = db.prepare("SELECT value FROM pricing_settings WHERE key = 'MFA_MASTER_KEY_HEX'").get() as { value: string } | undefined;
+    if (row?.value && row.value.trim().length === 64) {
+      const keyBuf = Buffer.from(row.value.trim(), 'hex');
+      try {
+        const dataDir = path.dirname(KEY_FILE);
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        fs.writeFileSync(KEY_FILE, row.value.trim(), { encoding: 'utf8', mode: 0o600 });
+      } catch {}
+      return keyBuf;
+    }
+  } catch {}
+
   const masterSecret =
     process.env.ENCRYPTION_KEY ||
     process.env.MFA_SECRET_KEY ||
@@ -33,13 +48,18 @@ function getOrInitPersistentKey(): Buffer {
     'ca-exam-checker-production-mfa-security-key-2026';
 
   const derivedKey = crypto.createHash('sha256').update(`mfa-secret-encryption:${masterSecret}`).digest();
+  const hex = derivedKey.toString('hex');
 
   try {
     const dataDir = path.dirname(KEY_FILE);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    fs.writeFileSync(KEY_FILE, derivedKey.toString('hex'), { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(KEY_FILE, hex, { encoding: 'utf8', mode: 0o600 });
+  } catch {}
+
+  try {
+    db.prepare("INSERT OR REPLACE INTO pricing_settings (key, value, description) VALUES ('MFA_MASTER_KEY_HEX', ?, 'Persistent master key for AES-256-GCM MFA secret encryption')").run(hex);
   } catch {}
 
   return derivedKey;

@@ -49,13 +49,8 @@ async function runTests() {
   // ---------------------------------------------------------------------------
   console.log('Test 2: Saving custom fallback order and verifying persistence...');
 
-  const customOrder = [
-    'claude-opus-5',
-    'gpt-5.6-sol',
-    'gemini-3.6-flash',
-    'claude-sonnet-5',
-    'gpt-5.6-terra',
-  ];
+  const fallbackCandidates = APPROVED_MODELS.filter((m) => m.id !== primaryModel).map((m) => m.id);
+  const customOrder = fallbackCandidates.slice(0, 5);
 
   const saveResult = saveAuthoritativeFallbackChain(customOrder, 'usr_super_admin_001');
   assert.strictEqual(saveResult.success, true, 'Save operation must report success');

@@ -53,7 +53,7 @@ interface AuthContextType {
   closeMfaModal: () => void;
   completeMfaChallenge: (verifiedUser: User) => void;
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
-  verifyMfaChallenge: (otpCode: string) => Promise<User>;
+  verifyMfaChallenge: (otpCode: string, trustDevice?: boolean) => Promise<User>;
   verifyMfaRecoveryCode: (recoveryCode: string) => Promise<{ user: User; remainingCodes: number; warning?: string }>;
   generateRecoveryCodes: () => Promise<{ recoveryCodes: string[]; total: number }>;
   getRecoveryCodeStatus: () => Promise<{ total: number; remaining: number; hasCodes: boolean; generatedAt: string | null }>;
@@ -188,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const verifyMfaChallenge = async (otpCode: string): Promise<User> => {
+  const verifyMfaChallenge = async (otpCode: string, trustDevice: boolean = true): Promise<User> => {
     const deviceId = getOrCreateDeviceId();
     let res: { token: string; user: User; trustToken?: string; trustExpiresAt?: string };
     try {
@@ -200,7 +200,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             mfaSessionToken: mfaChallenge?.mfaSessionToken,
             otpCode,
             deviceId,
-            rememberDevice: true,
+            rememberDevice: trustDevice,
+            trustDevice,
           }),
         }
       );
@@ -212,6 +213,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           mfaSessionToken: mfaChallenge?.mfaSessionToken,
           otpCode,
           deviceId,
+          rememberDevice: trustDevice,
+          trustDevice,
         }),
       });
     }
@@ -222,7 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     if (res.trustToken) {
-      saveScopedTrustToken(res.user?.id, res.user?.email, res.trustToken);
+      saveScopedTrustToken(res.user?.id, res.user?.email || mfaChallenge?.email, res.trustToken);
       logMfaDiagnostic('trusted device state created');
     }
 

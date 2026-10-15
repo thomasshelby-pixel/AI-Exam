@@ -31,6 +31,7 @@ import {
 } from '../../lib/firebaseAuth.js';
 import { formatDateTimeIST } from '../../utils/timezone.js';
 import { useTrustedDevice } from '../../hooks/useTrustedDevice.js';
+import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken } from '../../api/client.js';
 
 export type MfaUiState = 'INITIALIZING' | 'READY' | 'VERIFYING' | 'VERIFIED' | 'SHOWING_RECOVERY_CODES' | 'ERROR';
 
@@ -189,6 +190,40 @@ export const MfaModal: React.FC = () => {
     }
   }, [mfaChallenge?.isOpen, mfaChallenge?.mode]);
 
+  // Fast-path: When a browser is recognized as trusted for 365 days in CHALLENGE mode, automatically bypass TOTP
+  useEffect(() => {
+    if (
+      mfaChallenge?.isOpen &&
+      mfaChallenge.mode === 'CHALLENGE' &&
+      isBrowserTrusted &&
+      !isSubmittingRef.current &&
+      mfaState === 'READY'
+    ) {
+      isSubmittingRef.current = true;
+      setMfaState('VERIFYING');
+      validateTotpViaHook('').then((res) => {
+        if (res.success && res.token && res.user) {
+          setMfaState('VERIFIED');
+          setSuccessMsg('Trusted Browser recognized for 365 days. Access granted.');
+          const verifiedUser: User = {
+            ...res.user,
+            mfaEnabled: true,
+            mfaVerified: true,
+          };
+          verifiedUserRef.current = verifiedUser;
+          setUser(verifiedUser);
+          completeMfaChallenge(verifiedUser);
+        } else {
+          setMfaState('READY');
+        }
+      }).catch(() => {
+        setMfaState('READY');
+      }).finally(() => {
+        isSubmittingRef.current = false;
+      });
+    }
+  }, [mfaChallenge?.isOpen, mfaChallenge?.mode, isBrowserTrusted, mfaState]);
+
   const loadTotpSetup = async () => {
     try {
       setMfaState('INITIALIZING');
@@ -197,19 +232,16 @@ export const MfaModal: React.FC = () => {
       // If we have an mfaSessionToken, attempt to query authoritative server setup first
       if (mfaChallenge?.mfaSessionToken) {
         try {
-          const res = await (window as any).fetch(
+          const data = await apiRequest<{ success: boolean; totpSetup: any }>(
             `/api/auth/mfa/setup?mfaSessionToken=${encodeURIComponent(mfaChallenge.mfaSessionToken)}`
           );
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.totpSetup) {
-              setTotpSetup(data.totpSetup);
-              setMfaState('READY');
-              setTimeout(() => {
-                inputRefs.current[0]?.focus();
-              }, 200);
-              return;
-            }
+          if (data?.totpSetup) {
+            setTotpSetup(data.totpSetup);
+            setMfaState('READY');
+            setTimeout(() => {
+              inputRefs.current[0]?.focus();
+            }, 200);
+            return;
           }
         } catch (setupErr) {
           console.warn('[MfaModal] Could not fetch server setup, falling back:', setupErr);
@@ -338,18 +370,20 @@ export const MfaModal: React.FC = () => {
           logMfaDiagnostic('firebase-enrollment-fallback-notice', { error: fbErr?.message });
         }
 
-        const res = await (window as any).fetch('/api/auth/mfa/enroll/verify', {
+        const deviceId = getOrCreateDeviceId();
+        const data = await apiRequest<any>('/api/auth/mfa/enroll/verify', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             otpCode: code,
             mfaSessionToken: mfaChallenge?.mfaSessionToken,
             secretKey: totpSetup?.secretKey || (totpSetup?.secret as any)?.secretKey,
+            deviceId,
+            trustDevice,
+            rememberDevice: trustDevice,
           }),
         });
-        const data = await res.json();
 
-        if (!res.ok || !data.success) {
+        if (!data.success && !data.token) {
           throw new Error(data.error || 'Failed to verify and finalize enrollment.');
         }
 
@@ -358,10 +392,7 @@ export const MfaModal: React.FC = () => {
           setToken(data.token);
         }
         if (data.trustToken) {
-          localStorage.setItem('ca_device_trust_token', data.trustToken);
-          if (data.user?.id) {
-            localStorage.setItem(`ca_device_trust_token_${data.user.id}`, data.trustToken);
-          }
+          saveScopedTrustToken(data.user?.id, data.user?.email || mfaChallenge?.email, data.trustToken);
         }
 
         const verifiedUser: User = {
@@ -383,7 +414,7 @@ export const MfaModal: React.FC = () => {
         }
       } else {
         logMfaDiagnostic('executing-challenge-verification');
-        await verifyMfaChallenge(code);
+        await verifyMfaChallenge(code, trustDevice);
         setMfaState('VERIFIED');
         setSuccessMsg(
           trustDevice

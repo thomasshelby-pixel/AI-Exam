@@ -65,9 +65,10 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
           }
         } else if (
           collectionName.startsWith('mfa_') ||
+          collectionName === 'trusted_devices' ||
           (collectionName === 'users' && (data.mfa_enabled !== undefined || data.mfa_reset_required !== undefined || data.totp_secret !== undefined))
         ) {
-          // Authoritative MFA lifecycle event (enrollment, reset, validation): local security update must propagate to Firestore
+          // Authoritative MFA & Device Trust lifecycle event (enrollment, reset, validation): local security update must propagate to Firestore
         } else {
           console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id} (Firestore: ${fsTime} > Local: ${localTime})`);
           return;
@@ -1367,6 +1368,12 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       const { ensureTrustedDevicesTable } = await import('./trustService.js');
       ensureTrustedDevicesTable();
       const trustedDevicesDocs = await readDocs<any>('trusted_devices');
+      // Sort ascending by last_used_at/trusted_at so the latest state for any (user_id, device_id) wins on insert conflict
+      trustedDevicesDocs.sort((a: any, b: any) => {
+        const timeA = new Date(a.last_used_at || a.trusted_at || 0).getTime();
+        const timeB = new Date(b.last_used_at || b.trusted_at || 0).getTime();
+        return timeA - timeB;
+      });
       for (const td of trustedDevicesDocs) {
         try {
           db.prepare(`

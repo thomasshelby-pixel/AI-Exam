@@ -297,34 +297,10 @@ export async function fixInconsistentAdminMfaStates(): Promise<void> {
         }
       }
 
-      // If still inconsistent after Firestore lookup: transition safely to MFA_RESET_REQUIRED
+      // If secret cannot be decrypted locally yet, log notice and preserve enrolled state.
+      // CRITICAL: NEVER perform destructive automatic MFA wipe or device trust revocation on startup!
       if (admin.mfa_enabled === 1 && !hasValidSecret) {
-        console.warn(`[MFA Architecture] Repairing genuinely inconsistent admin account state for ${admin.email} (${admin.id}): Transitioning to MFA_RESET_REQUIRED.`);
-        db.prepare(`
-          UPDATE users
-          SET mfa_enabled = 0,
-              mfa_enrolled_at = NULL,
-              totp_secret = NULL,
-              pending_totp_secret = NULL,
-              mfa_reset_required = 1,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(admin.id);
-
-        db.prepare(`
-          DELETE FROM mfa_authenticators
-          WHERE user_id = ?
-        `).run(admin.id);
-
-        revokeAllDeviceTrust(admin.id);
-
-        syncRecordToFirestore('users', admin.id, {
-          id: admin.id,
-          mfa_enabled: 0,
-          mfa_reset_required: 1,
-          totp_secret: null,
-          updated_at: new Date().toISOString(),
-        }).catch(() => {});
+        console.warn(`[MFA Architecture] Notice: Admin account ${admin.email} (${admin.id}) has mfa_enabled=1 but secret is currently undecryptable with candidate keys. Preserving account state without destructive reset.`);
       }
     }
   } catch (err) {
