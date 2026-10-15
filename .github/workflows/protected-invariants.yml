@@ -18,10 +18,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          # This repository has no npm lockfile to use for dependency caching.
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-package-lock --no-audit --no-fund
 
       - name: Protected persistence regression tests
         run: npm run test:protected
