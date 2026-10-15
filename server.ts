@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { createServer as createViteServer } from 'vite';
 
@@ -158,8 +159,14 @@ async function startServer() {
   app.use('/api/mcq', mcqRoutes);
   app.use('/api/features', featureRoutes);
 
+  // Robust production mode detection: explicit NODE_ENV === 'production', Cloud Run environment (K_SERVICE), or running pre-compiled bundle with dist/index.html
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE) ||
+    fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
+
   // Vite middleware in development vs static file serving in production
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     // Intercept /@vite/client to provide a silent, zero-WebSocket stub in AI Studio preview environment (where HMR is disabled)
     app.use('/@vite/client', (req, res) => {
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
@@ -242,18 +249,18 @@ export default {};
   // Hydrate persistent cloud data from Cloud Firestore before binding port
   try {
     console.log('[Server] Awaiting durable cloud state hydration from Cloud Firestore before serving traffic...');
-    const requireCompleteHydration = process.env.NODE_ENV !== 'development';
+    const requireCompleteHydration = isProduction && process.env.NODE_ENV !== 'test';
     const hydrationPromise = (async () => {
       await hydrateFromFirestore({ requireComplete: requireCompleteHydration });
       await seedBaselineToFirestoreIfEmpty();
     })();
     const hydrationTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Firestore hydration timeout limit (20s) reached')), 20000)
+      setTimeout(() => reject(new Error('Firestore hydration timeout limit (60s) reached')), 60000)
     );
     await Promise.race([hydrationPromise, hydrationTimeout]);
     console.log('[Server] Cloud Firestore state successfully restored to active runtime.');
   } catch (err) {
-    if (process.env.NODE_ENV !== 'development') {
+    if (isProduction && process.env.NODE_ENV !== 'test') {
       console.error('[Server] Refusing to serve requests before complete Firestore hydration:', err);
       throw err;
     }

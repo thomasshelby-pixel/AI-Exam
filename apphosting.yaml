@@ -12,6 +12,10 @@ scripts:
   runCommand: node dist/server.cjs
 
 env:
+  - variable: NODE_ENV
+    value: production
+  - variable: PORT
+    value: "8080"
   - variable: SMTP_HOST
     value: smtp.resend.com
   - variable: SMTP_PORT

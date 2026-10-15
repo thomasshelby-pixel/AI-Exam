@@ -203,6 +203,12 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // System Configuration (AI Model Routing & System-wide settings)
+    match /system_configuration/{configId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Student Reviews & Feedback
     match /reviews/{reviewId} {
       allow read: if true;
