@@ -191,12 +191,9 @@ export function initMfaRecoveryTables(force: boolean = false): void {
 
   mfaTablesInitialized = true;
 
-  // Fix inconsistent admin MFA states immediately on table initialization
-  try {
-    fixInconsistentAdminMfaStates();
-  } catch (err) {
-    console.warn('[MFA] Note during fixInconsistentAdminMfaStates:', err);
-  }
+  // Do not reconcile enrollment state during schema initialization. The local
+  // SQLite cache may be incomplete until Firestore hydration has loaded every
+  // authenticator record; mutating MFA here can permanently clear valid state.
 }
 
 // Auto-run initialization eagerly if database is already opened
@@ -246,32 +243,9 @@ export function fixInconsistentAdminMfaStates(): void {
       );
 
       if (admin.mfa_enabled === 1 && !hasValidSecret) {
-        console.warn(`[MFA Architecture] Repairing inconsistent admin account state for ${admin.email} (${admin.id}): Transitioning to MFA_RESET_REQUIRED.`);
-        db.prepare(`
-          UPDATE users
-          SET mfa_enabled = 0,
-              mfa_enrolled_at = NULL,
-              totp_secret = NULL,
-              pending_totp_secret = NULL,
-              mfa_reset_required = 1,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(admin.id);
-
-        db.prepare(`
-          DELETE FROM mfa_authenticators
-          WHERE user_id = ? AND (totp_secret IS NULL OR length(totp_secret) < 16)
-        `).run(admin.id);
-
-        revokeAllDeviceTrust(admin.id);
-
-        syncRecordToFirestore('users', admin.id, {
-          id: admin.id,
-          mfa_enabled: 0,
-          mfa_reset_required: 1,
-          totp_secret: null,
-          updated_at: new Date().toISOString(),
-        }).catch(() => {});
+        // Missing secret data is not proof that an administrator reset MFA.
+        // Keep the enrolled flag and all related state intact for recovery.
+        console.error(`[MFA Architecture] Enrolled administrator ${admin.id} is missing a local TOTP secret; enrollment state was preserved for recovery.`);
       }
     }
   } catch (err) {
@@ -279,7 +253,7 @@ export function fixInconsistentAdminMfaStates(): void {
   }
 }
 
-export type AuthoritativeMfaState = 'MFA_NOT_ENROLLED' | 'MFA_ENROLLED' | 'MFA_RESET_REQUIRED' | 'MFA_RECOVERY_PENDING';
+export type AuthoritativeMfaState = 'MFA_NOT_ENROLLED' | 'MFA_ENROLLED' | 'MFA_RESET_REQUIRED' | 'MFA_RECOVERY_PENDING' | 'MFA_RECOVERY_REQUIRED';
 
 /**
  * Generates a cryptographically secure 20-byte Base32 secret (RFC 4648)
@@ -461,6 +435,7 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
     const authRecords = db.prepare(`
       SELECT id, totp_secret FROM mfa_authenticators
       WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
+      ORDER BY CASE WHEN factor_type = 'PRIMARY_TOTP' THEN 0 ELSE 1 END, last_used_at DESC, created_at DESC
     `).all(userId) as Array<{ id: string; totp_secret: string }>;
     const authenticatorsCount = authRecords.length;
 
@@ -483,11 +458,11 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
 
     // 6. Check for valid secret
     let validSecret: string | undefined = undefined;
-    if (userRow.totp_secret && userRow.totp_secret.trim().length >= 16) {
-      validSecret = userRow.totp_secret.trim();
-    } else if (authRecords.length > 0) {
+    if (authRecords.length > 0) {
       validSecret = authRecords[0].totp_secret.trim();
       db.prepare('UPDATE users SET totp_secret = ? WHERE id = ?').run(validSecret, userId);
+    } else if (userRow.totp_secret && userRow.totp_secret.trim().length >= 16) {
+      validSecret = userRow.totp_secret.trim();
     }
 
     // 7. Enrolled state verification
@@ -503,34 +478,10 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
 
     // 8. Inconsistent state detection: mfa_enabled = 1 but NO valid secret
     if (userRow.mfa_enabled === 1 && !validSecret) {
-      console.warn(`[MFA Architecture] Inconsistent MFA enrollment detected for user ${userRow.email} (${userId}). Transitioning safely to MFA_RESET_REQUIRED.`);
-      db.prepare(`
-        UPDATE users
-        SET mfa_enabled = 0,
-            mfa_reset_required = 1,
-            totp_secret = NULL,
-            pending_totp_secret = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(userId);
-
-      db.prepare(`
-        DELETE FROM mfa_authenticators
-        WHERE user_id = ? AND (totp_secret IS NULL OR length(totp_secret) < 16)
-      `).run(userId);
-
-      revokeAllDeviceTrust(userId);
-
-      syncRecordToFirestore('users', userId, {
-        id: userId,
-        mfa_enabled: 0,
-        mfa_reset_required: 1,
-        totp_secret: null,
-        updated_at: new Date().toISOString(),
-      }).catch(() => {});
+      console.error(`[MFA Architecture] Enrolled account ${userId} has no locally hydrated TOTP secret; preserving enrollment and requiring recovery.`);
 
       return {
-        state: 'MFA_RESET_REQUIRED',
+        state: 'MFA_RECOVERY_REQUIRED',
         hasValidSecret: false,
         authenticatorsCount: 0,
         recoveryCodesRemaining,
@@ -547,7 +498,7 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
   } catch (err) {
     console.error(`[MFA getAuthoritativeUserMfaState Error for ${userId}]:`, err);
     return {
-      state: 'MFA_NOT_ENROLLED',
+      state: 'MFA_RECOVERY_REQUIRED',
       hasValidSecret: false,
       authenticatorsCount: 0,
       recoveryCodesRemaining: 0,

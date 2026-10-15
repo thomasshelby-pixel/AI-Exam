@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
-import { getGemini, generateContentWithResilience } from '../gemini.js';
+import { executeModelWithFallback } from '../models/modelRegistry.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
@@ -325,8 +325,6 @@ async function analyzeSinglePageCoverage(
   totalPages: number = 1,
   previousActiveQuestion?: string
 ): Promise<PageCoverageRecord> {
-  const ai = getGemini();
-
   const validDescriptiveList = paperStructure.subQuestions
     .filter((s) => !s.isMcq)
     .map((s) => s.fullQuestionCode)
@@ -377,18 +375,22 @@ Return strictly valid JSON with this schema:
 `;
 
   try {
-    const res = await generateContentWithResilience(ai, {
-      contents: [
-        { inlineData: { mimeType: 'application/pdf', data: pageBase64 } },
-        { text: prompt },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
+    const res = await executeModelWithFallback({
+      systemPrompt: 'You are an expert CA exam answer-sheet page auditor. Return only valid JSON matching the requested schema.',
+      userPrompt: prompt,
+      pdfBase64: pageBase64,
+      mimeType: 'application/pdf',
+      responseMimeType: 'application/json',
+      thinkingLevel: 'LOW',
+      context: {
+        checkingMode: 'strict',
+        pageCount: 1,
+        isRoutineOrHighVolume: totalPages > 25,
       },
     });
 
-    let clean = res.text?.trim() || '{}';
+    console.info(`[AnswerCoverageService] Page ${pageNumber} analyzed with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
+    let clean = res.rawText?.trim() || '{}';
     if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     const raw: any = JSON.parse(clean);
 

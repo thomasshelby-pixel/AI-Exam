@@ -14,6 +14,7 @@ import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
 import { initMfaRecoveryTables } from './mfaRecoveryService.js';
+import { isEntityTombstoned } from './deletionPersistence.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -59,11 +60,21 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
 export async function permanentlyDeleteFromFirestore(collectionName: string, id: string, reason?: string) {
   try {
     recordLocalTombstone(collectionName, id, reason);
-    await recordTombstone(collectionName, id, reason);
-    await deleteFirestoreDoc(collectionName, id);
+    const tombstonePersisted = await recordTombstone(collectionName, id, reason);
+    if (!tombstonePersisted) {
+      console.error(`[FirestoreSync] Durable tombstone was not confirmed for ${collectionName}/${id}.`);
+      return false;
+    }
+    const documentDeleted = await deleteFirestoreDoc(collectionName, id);
+    if (!documentDeleted) {
+      console.error(`[FirestoreSync] Cloud deletion was not confirmed for ${collectionName}/${id}; durable tombstone is retained.`);
+      return false;
+    }
     console.log(`[FirestoreSync] Permanently deleted and tombstoned ${collectionName}/${id}`);
+    return true;
   } catch (err) {
     console.warn(`[FirestoreSync] Failed to permanently delete ${collectionName}/${id}:`, err);
+    return false;
   }
 }
 
@@ -114,7 +125,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       const col = t.collectionName || '';
       const tid = t.targetId || t.id;
       if (col && tid) {
-        if (PROTECTED_CORE_IDS.has(tid)) continue;
+        if (tid === 'usr_super_admin_001' || tid === 'usr_mcq_admin_priyatca15') continue;
         tombstoneSet.add(`${col}_${tid}`);
         tombstoneSet.add(`${col}:${tid}`);
         tombstoneSet.add(tid);
@@ -134,7 +145,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
 
       const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
-      if (!isProtected && tombstoneSet.has(`users_${u.id}`)) continue;
+      const isDeletedStudent = (u.role || 'STUDENT') === 'STUDENT' && isEntityTombstoned(tombstoneSet, 'users', u.id);
+      if (isEntityTombstoned(tombstoneSet, 'users', u.id) && (!isProtected || isDeletedStudent)) continue;
       try {
         let targetId = u.id;
         let targetRole = u.role || 'STUDENT';
@@ -219,7 +231,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     const profiles = await readDocs<any>('student_profiles');
     for (const p of profiles) {
       const uId = p.user_id || p.id;
-      if (tombstoneSet.has(`student_profiles_${uId}`)) continue;
+      if (isEntityTombstoned(tombstoneSet, 'student_profiles', uId)) continue;
       try {
         const authoritativeCredits = getValidStudentCreditBalance(uId);
         const finalCredits = authoritativeCredits > 0 ? authoritativeCredits : (p.purchased_credits || 0);
@@ -950,16 +962,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${healResult.changes} user account(s).`);
       }
 
-      // Ensure Firestore users collection has mfa_enabled = 1 for all locally enrolled accounts
-      const allMfaUsers = db.prepare('SELECT id, mfa_enrolled_at, totp_secret FROM users WHERE mfa_enabled = 1').all() as any[];
-      for (const mfu of allMfaUsers) {
-        setFirestoreDoc('users', mfu.id, {
-          mfa_enabled: 1,
-          mfa_enrolled_at: mfu.mfa_enrolled_at || new Date().toISOString(),
-          totp_secret: mfu.totp_secret || null,
-          updated_at: new Date().toISOString(),
-        }).catch(() => {});
-      }
+      // Firestore is hydrated into SQLite; startup must not push this local
+      // cache back over the authoritative MFA record. In particular, a missing
+      // local secret is not evidence that the cloud secret should be cleared.
     } catch (healMfaErr) {
       console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
     }
@@ -982,7 +987,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
   if (!fdb) return;
 
   try {
-    const tombstones = await getAllFirestoreDocs<any>('tombstones');
+    const tombstones = await getAllFirestoreDocs<any>('tombstones', { failOnError: true });
     const tombstoneSet = new Set(
       tombstones.flatMap((t: any) => [
         `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
@@ -1017,7 +1022,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       console.log('[FirestoreSync] Baseline materials already initialized or intentionally managed by admin; skipping automatic re-seeding.');
     }
 
-    const existingUsers = await getAllFirestoreDocs<any>('users');
+    const existingUsers = await getAllFirestoreDocs<any>('users', { failOnError: true });
     const existingEmailSet = new Set(existingUsers.map((u) => String(u.email || '').toLowerCase().trim()));
 
     // Ensure baseline users are persisted in Cloud Firestore
@@ -1033,6 +1038,10 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUsers = db.prepare(baselineUserQuery).all() as any[];
     for (const bu of baselineUsers) {
       const normEmail = String(bu.email || '').toLowerCase().trim();
+      if (isEntityTombstoned(tombstoneSet, 'users', bu.id)) {
+        console.info(`[FirestoreSync] Skipping tombstoned baseline user ${bu.id}; account seeding cannot restore deleted users.`);
+        continue;
+      }
       if (!existingEmailSet.has(normEmail)) {
         await setFirestoreDoc('users', bu.id, bu);
         const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(bu.id) as any;
@@ -1113,6 +1122,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     }
   } catch (err) {
     console.warn('[FirestoreSync] Baseline seeding warning:', err);
+    throw err;
   }
 }
 

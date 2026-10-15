@@ -2849,26 +2849,9 @@ function seedModelConfigs() {
     'gemini-3.7-flash',
     'gpt-6-astra',
   ];
-  const placeholders = approvedIds.map(() => '?').join(',');
-
-  // 1. Purge all invalid, non-approved, or legacy models
-  db.prepare(`
-    DELETE FROM model_configs
-    WHERE id NOT IN (${placeholders})
-  `).run(...approvedIds);
-
-  // 2. Synchronize active pricing_settings so old models are never chosen
-  db.prepare(`
-    UPDATE pricing_settings
-    SET value = 'gemini-3.8-flash'
-    WHERE key = 'EVAL_MODEL_PROVIDER' AND (value NOT IN (${placeholders}))
-  `).run(...approvedIds);
-
-  db.prepare(`
-    UPDATE pricing_settings
-    SET value = 'gemini-flash-latest'
-    WHERE key = 'EVAL_FALLBACK_MODEL' AND (value NOT IN (${placeholders}) OR value = 'claude-opus-5' OR value LIKE '%3.6%')
-  `).run(...approvedIds);
+  // Startup must not delete a previously selected model or rewrite model
+  // settings. Invalid or retired values are surfaced to the Admin Panel and
+  // rejected by runtime validation until an administrator repairs them.
 
   db.prepare(`
     UPDATE pricing_settings
@@ -2877,10 +2860,16 @@ function seedModelConfigs() {
     WHERE key = 'EVAL_MCQ_NEGATIVE_MARKING'
   `).run();
 
-  // Ensure is_primary is only on gemini-3.8-flash unless admin explicitly switched to another approved model
+  // An inconsistent primary selection is an integrity problem; never repair it
+  // by silently replacing an administrator's selection with a built-in default.
   const currentPrimary = db.prepare("SELECT id FROM model_configs WHERE is_primary = 1").all() as any[];
-  if (currentPrimary.length !== 1 || !approvedIds.includes(currentPrimary[0]?.id)) {
-    db.prepare("UPDATE model_configs SET is_primary = CASE WHEN id = 'gemini-3.8-flash' THEN 1 ELSE 0 END").run();
+  if (currentPrimary.length > 1 || (currentPrimary.length === 1 && !approvedIds.includes(currentPrimary[0]?.id))) {
+    console.error('[Model Config] Invalid primary model state detected during seeding; preserving persisted rows for authorized recovery.');
+  }
+  const modelRowsBeforeSeed = db.prepare('SELECT COUNT(*) as count FROM model_configs').get() as { count: number };
+  const initializeDefaultPrimary = modelRowsBeforeSeed.count === 0;
+  if (!initializeDefaultPrimary && currentPrimary.length === 0) {
+    console.error('[Model Config] Existing model rows have no selected primary; preserving the invalid state for authorized recovery.');
   }
 
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
@@ -3027,18 +3016,28 @@ function seedModelConfigs() {
       db.prepare(`
         INSERT INTO model_configs (id, provider, display_name, role, is_primary, fallback_order, thinking_level, temperature, top_p, max_tokens, is_enabled, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-      `).run(m.id, m.provider, m.display_name, m.role, m.is_primary, m.fallback_order, m.thinking_level, m.temperature, m.top_p, m.max_tokens, m.status);
+      `).run(m.id, m.provider, m.display_name, m.role, initializeDefaultPrimary ? m.is_primary : 0, m.fallback_order, m.thinking_level, m.temperature, m.top_p, m.max_tokens, m.status);
     } else {
       db.prepare(`
         UPDATE model_configs SET
-          provider = ?, display_name = ?, role = ?, fallback_order = ?, thinking_level = ?, max_tokens = ?,
+          provider = ?, display_name = ?, role = ?, thinking_level = ?, max_tokens = ?,
           status = CASE
             WHEN status IN ('RETIRED', 'RATE_LIMITED', 'INSUFFICIENT_CREDITS', 'AUTH_ERROR', 'TEMPORARILY_UNAVAILABLE', 'EVALUATION_READY', 'INFERENCE_READY') THEN status
             WHEN ? = 0 THEN 'NOT_CONFIGURED'
             ELSE status
           END
         WHERE id = ?
-      `).run(m.provider, m.display_name, m.role, m.fallback_order, m.thinking_level, m.max_tokens, geminiConfigured ? 1 : 0, m.id);
+      `).run(
+        m.provider,
+        m.display_name,
+        m.role,
+        m.thinking_level,
+        m.max_tokens,
+        m.provider === 'gemini' ? (geminiConfigured ? 1 : 0)
+          : m.provider === 'openai' ? (openaiConfigured ? 1 : 0)
+            : (anthropicConfigured ? 1 : 0),
+        m.id
+      );
     }
   }
 }

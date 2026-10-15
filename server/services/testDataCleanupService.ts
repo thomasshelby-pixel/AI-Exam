@@ -160,7 +160,7 @@ export function getTestCleanupPreview(): TestCleanupPreview {
 /**
  * Deletes an individual test record from the system.
  */
-export function deleteSingleTestRecord(
+export async function deleteSingleTestRecord(
   category: 'STUDENTS' | 'INSTITUTES' | 'ORDERS' | 'PAYMENTS' | 'EVALUATIONS' | 'PROMO_REDEMPTIONS',
   id: string,
   actor: { id: string; email: string; role: string },
@@ -175,7 +175,7 @@ export function deleteSingleTestRecord(
 
   switch (category) {
     case 'STUDENTS': {
-      return deleteStudentAccount(id, actor, ipAddress, userAgent);
+      return await deleteStudentAccount(id, actor, ipAddress, userAgent);
     }
     case 'INSTITUTES': {
       return deleteInstituteAccount(id, actor, ipAddress, userAgent);
@@ -378,7 +378,7 @@ export function deleteSingleTestRecord(
 /**
  * Bulk deletes all records in a single TEST category.
  */
-export function bulkDeleteTestCategory(
+export async function bulkDeleteTestCategory(
   category: 'STUDENTS' | 'INSTITUTES' | 'ORDERS' | 'PAYMENTS' | 'EVALUATIONS' | 'PROMO_REDEMPTIONS',
   actor: { id: string; email: string; role: string },
   ipAddress?: string | null,
@@ -399,7 +399,7 @@ export function bulkDeleteTestCategory(
       let count = 0;
       for (const s of testStudents) {
         try {
-          deleteStudentAccount(s.id, actor, ipAddress, userAgent);
+          await deleteStudentAccount(s.id, actor, ipAddress, userAgent);
           count++;
         } catch (err) {
           console.error(`[BulkTestCleanup] Failed to delete test student ${s.id}:`, err);
@@ -608,7 +608,7 @@ export function bulkDeleteTestCategory(
  * Executes a full system test-data wipe across all TEST entities.
  * Strictly guarantees that NORMAL/production records are untouched.
  */
-export function bulkDeleteAllTestData(
+export async function bulkDeleteAllTestData(
   actor: { id: string; email: string; role: string },
   ipAddress?: string | null,
   userAgent?: string | null
@@ -620,19 +620,19 @@ export function bulkDeleteAllTestData(
   }
 
   // 1. Delete all test institutes first
-  const institutesRes = bulkDeleteTestCategory('INSTITUTES', actor, ipAddress, userAgent);
+  const institutesRes = await bulkDeleteTestCategory('INSTITUTES', actor, ipAddress, userAgent);
 
   // 2. Delete all test students
-  const studentsRes = bulkDeleteTestCategory('STUDENTS', actor, ipAddress, userAgent);
+  const studentsRes = await bulkDeleteTestCategory('STUDENTS', actor, ipAddress, userAgent);
 
   // 3. Delete all orphaned test evaluations
-  const evaluationsRes = bulkDeleteTestCategory('EVALUATIONS', actor, ipAddress, userAgent);
+  const evaluationsRes = await bulkDeleteTestCategory('EVALUATIONS', actor, ipAddress, userAgent);
 
   // 4. Delete all test orders and transactions
-  const ordersRes = bulkDeleteTestCategory('ORDERS', actor, ipAddress, userAgent);
+  const ordersRes = await bulkDeleteTestCategory('ORDERS', actor, ipAddress, userAgent);
 
   // 5. Delete all test promo redemptions
-  const promoRes = bulkDeleteTestCategory('PROMO_REDEMPTIONS', actor, ipAddress, userAgent);
+  const promoRes = await bulkDeleteTestCategory('PROMO_REDEMPTIONS', actor, ipAddress, userAgent);
 
   const totalCleaned =
     (institutesRes.count || 0) +

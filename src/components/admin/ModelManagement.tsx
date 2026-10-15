@@ -84,6 +84,8 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [providers, setProviders] = useState<Record<string, ProviderStatus>>({});
   const [fallbackHierarchy, setFallbackHierarchy] = useState<FallbackHierarchyItem[]>([]);
+  const [configurationPersisted, setConfigurationPersisted] = useState<boolean>(false);
+  const [savingRoutingConfiguration, setSavingRoutingConfiguration] = useState<boolean>(false);
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -101,12 +103,13 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
     try {
       setLoading(true);
       const [modelsRes, telemetryRes] = await Promise.all([
-        apiRequest<{ models: ModelConfig[]; providerStatus: Record<string, ProviderStatus>; fallbackHierarchy?: FallbackHierarchyItem[] }>('/api/admin/models'),
+        apiRequest<{ models: ModelConfig[]; providerStatus: Record<string, ProviderStatus>; fallbackHierarchy?: FallbackHierarchyItem[]; configurationPersisted?: boolean }>('/api/admin/models'),
         apiRequest<TelemetryData>('/api/admin/models/telemetry'),
       ]);
 
       setModels(modelsRes.models || []);
       setProviders(modelsRes.providerStatus || {});
+      setConfigurationPersisted(Boolean(modelsRes.configurationPersisted));
       if (modelsRes.fallbackHierarchy) {
         setFallbackHierarchy(modelsRes.fallbackHierarchy);
       }
@@ -116,6 +119,31 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
       onNotify?.(msg, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveRoutingConfiguration = async () => {
+    const primaryModel = models.find((model) => model.is_primary)?.id;
+    if (!primaryModel) {
+      onNotify?.('Select exactly one primary model before saving routing.', 'error');
+      return;
+    }
+    const fallbackOrder = models
+      .filter((model) => !model.is_primary && model.is_enabled)
+      .sort((a, b) => a.fallback_order - b.fallback_order || a.id.localeCompare(b.id))
+      .map((model) => model.id);
+    try {
+      setSavingRoutingConfiguration(true);
+      await apiRequest('/api/admin/models/routing-configuration', {
+        method: 'PUT',
+        body: JSON.stringify({ primaryModel, fallbackOrder }),
+      });
+      onNotify?.('Primary model and fallback order persisted to the authoritative server store.', 'success');
+      await fetchData();
+    } catch (err: any) {
+      onNotify?.(err?.message || 'Failed to persist model routing configuration', 'error');
+    } finally {
+      setSavingRoutingConfiguration(false);
     }
   };
 
@@ -276,6 +304,22 @@ export const ModelManagement: React.FC<ModelManagementProps> = ({ onNotify }) =>
 
   return (
     <div className="space-y-6">
+      {!configurationPersisted && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-amber-950">Routing configuration is not yet persisted centrally</p>
+            <p className="text-xs text-amber-900 mt-1">Review the displayed primary and fallback order. Save only after confirming they match the administrator-approved values.</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveRoutingConfiguration}
+            disabled={savingRoutingConfiguration || loading || models.length === 0}
+            className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {savingRoutingConfiguration ? 'Saving…' : 'Save confirmed routing'}
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

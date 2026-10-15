@@ -34,6 +34,14 @@ import {
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
 import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { APPROVED_MODELS } from '../models/modelRegistry.js';
+import {
+  applyModelRoutingConfiguration,
+  buildModelRoutingConfiguration,
+  validateModelRoutingConfiguration,
+  type ModelRoutingConfiguration,
+  type ModelRoutingRow,
+} from '../services/modelRoutingConfig.js';
 import {
   permanentlyDeleteFromFirestore,
   syncRecordToFirestore,
@@ -1705,7 +1713,7 @@ router.get('/test-cleanup/preview', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-record', async (req: AuthRequest, res: Response) => {
   try {
     const { category, id } = req.body;
     if (!category || !id) {
@@ -1714,7 +1722,7 @@ router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => 
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = deleteSingleTestRecord(category, id, req.user!, ipAddress, userAgent);
+    const result = await deleteSingleTestRecord(category, id, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete test record error:', error);
@@ -1722,7 +1730,7 @@ router.post('/test-cleanup/delete-record', (req: AuthRequest, res: Response) => 
   }
 });
 
-router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-category', async (req: AuthRequest, res: Response) => {
   try {
     const { category } = req.body;
     if (!category) {
@@ -1731,7 +1739,7 @@ router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) =
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = bulkDeleteTestCategory(category, req.user!, ipAddress, userAgent);
+    const result = await bulkDeleteTestCategory(category, req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete test category error:', error);
@@ -1739,7 +1747,7 @@ router.post('/test-cleanup/delete-category', (req: AuthRequest, res: Response) =
   }
 });
 
-router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
+router.post('/test-cleanup/delete-all', async (req: AuthRequest, res: Response) => {
   try {
     const { confirmation } = req.body;
     if (confirmation !== 'DELETE ALL TEST DATA') {
@@ -1748,7 +1756,7 @@ router.post('/test-cleanup/delete-all', (req: AuthRequest, res: Response) => {
     const ipAddress = req.ip || (req.headers['x-forwarded-for'] as string) || null;
     const userAgent = req.headers['user-agent'] || null;
 
-    const result = bulkDeleteAllTestData(req.user!, ipAddress, userAgent);
+    const result = await bulkDeleteAllTestData(req.user!, ipAddress, userAgent);
     return res.json(result);
   } catch (error: any) {
     console.error('Delete all test data error:', error);
@@ -1969,7 +1977,7 @@ router.patch('/students/:id/classification', (req: AuthRequest, res: Response) =
 });
 
 // Super Admin Permanent Student Account Delete
-router.delete('/students/:id', (req: AuthRequest, res: Response) => {
+router.delete('/students/:id', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     if (!studentId || typeof studentId !== 'string') {
@@ -1984,7 +1992,7 @@ router.delete('/students/:id', (req: AuthRequest, res: Response) => {
     const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
     const userAgent = (req.headers['user-agent'] || '') as string;
 
-    const result = deleteStudentAccount(studentId, req.user!, ip, userAgent);
+    const result = await deleteStudentAccount(studentId, req.user!, ip, userAgent);
     return res.json(result);
   } catch (error: any) {
     const status = error.statusCode || 500;
@@ -1994,7 +2002,7 @@ router.delete('/students/:id', (req: AuthRequest, res: Response) => {
 });
 
 // Also support router.delete('/users/:id') with role verification
-router.delete('/users/:id', (req: AuthRequest, res: Response) => {
+router.delete('/users/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.params.id;
     if (!userId || typeof userId !== 'string') {
@@ -2019,7 +2027,7 @@ router.delete('/users/:id', (req: AuthRequest, res: Response) => {
     const ip = (req.ip || (req.headers['x-forwarded-for'] as string) || '') as string;
     const userAgent = (req.headers['user-agent'] || '') as string;
 
-    const result = deleteStudentAccount(userId, req.user!, ip, userAgent);
+    const result = await deleteStudentAccount(userId, req.user!, ip, userAgent);
     return res.json(result);
   } catch (error: any) {
     const status = error.statusCode || 500;
@@ -4522,8 +4530,26 @@ router.put('/support/:id', (req: AuthRequest, res: Response, next) => {
 // ==========================================
 // 19. PLUGGABLE AI MODEL ARCHITECTURE & CONTROLS
 // ==========================================
-router.get('/models', (req: AuthRequest, res: Response) => {
+router.get('/models', async (req: AuthRequest, res: Response) => {
   try {
+    const storedRouting = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing');
+    let authoritativeRouting: ModelRoutingConfiguration | undefined;
+    if (storedRouting) {
+      const validation = validateModelRoutingConfiguration(storedRouting, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) {
+        return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      }
+      authoritativeRouting = validation.config;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        applyModelRoutingConfiguration(db, authoritativeRouting, APPROVED_MODELS.map((model) => model.id));
+        db.exec('COMMIT');
+      } catch (applyError) {
+        db.exec('ROLLBACK');
+        throw applyError;
+      }
+    }
+
     const models = db.prepare(`
       SELECT * FROM model_configs ORDER BY is_primary DESC, fallback_order ASC, display_name ASC
     `).all() as any[];
@@ -4557,21 +4583,22 @@ router.get('/models', (req: AuthRequest, res: Response) => {
       },
     };
 
-    const fallbackHierarchy = [
-      { order: 0, modelId: 'gemini-3.8-flash', provider: 'gemini', role: 'Primary CA Evaluation' },
-      { order: 1, modelId: 'gemini-3.1-flash-lite', provider: 'gemini', role: 'Fast Multimodal & High-Volume Fallback' },
-      { order: 2, modelId: 'gemini-flash-latest', provider: 'gemini', role: 'Production Flash Fallback' },
-      { order: 3, modelId: 'gemini-3.1-pro-preview', provider: 'gemini', role: 'Deep Reasoning Preview' },
-      { order: 4, modelId: 'claude-opus-5', provider: 'anthropic', role: 'Deep Reasoning (Legal/Tax/Audit)' },
-      { order: 5, modelId: 'gpt-5.6-sol', provider: 'openai', role: 'Deep Reasoning (Calculation Cross-Check)' },
-      { order: 6, modelId: 'claude-sonnet-5', provider: 'anthropic', role: 'Balanced Evaluation' },
-      { order: 7, modelId: 'gpt-5.6-terra', provider: 'openai', role: 'Fast Multimodal & OCR' },
-    ];
+    const fallbackHierarchy = models
+      .filter((model) => !model.is_primary && model.is_enabled && APPROVED_MODELS.some((approved) => approved.id === model.id))
+      .sort((a, b) => a.fallback_order - b.fallback_order)
+      .map((model) => ({
+        order: model.fallback_order,
+        modelId: model.id,
+        provider: model.provider,
+        role: model.role,
+      }));
 
     return res.json({
       models,
       providerStatus,
       fallbackHierarchy,
+      configurationPersisted: Boolean(authoritativeRouting),
+      routingConfiguration: authoritativeRouting || null,
     });
   } catch (error: unknown) {
     console.error('Get models error:', error);
@@ -4579,7 +4606,55 @@ router.get('/models', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/models/:id', (req: AuthRequest, res: Response) => {
+router.put('/models/routing-configuration', async (req: AuthRequest, res: Response) => {
+  try {
+    const validation = validateModelRoutingConfiguration(req.body, APPROVED_MODELS.map((model) => model.id));
+    if ('error' in validation) return res.status(400).json({ error: validation.error });
+
+    const config: ModelRoutingConfiguration = {
+      ...validation.config,
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.user!.id,
+    };
+    const rows = db.prepare('SELECT id FROM model_configs').all() as Array<{ id: string }>;
+    const configuredIds = new Set(rows.map((row) => row.id));
+    const unknownIds = [config.primaryModel, ...config.fallbackOrder].filter((id) => !configuredIds.has(id));
+    if (unknownIds.length > 0) {
+      return res.status(400).json({ error: `Models are not present in the configured registry: ${unknownIds.join(', ')}` });
+    }
+
+    const saved = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
+    if (!saved) {
+      return res.status(503).json({ error: 'Could not persist model routing configuration to Firestore; no local configuration was changed.' });
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      applyModelRoutingConfiguration(db, config, APPROVED_MODELS.map((model) => model.id));
+      db.exec('COMMIT');
+    } catch (applyError) {
+      db.exec('ROLLBACK');
+      throw applyError;
+    }
+
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+      VALUES (?, ?, 'UPDATE_MODEL_ROUTING', 'SYSTEM', ?)
+    `).run(
+      `log_${crypto.randomBytes(8).toString('hex')}`,
+      req.user!.id,
+      JSON.stringify({ primaryModel: config.primaryModel, fallbackOrder: config.fallbackOrder, updatedAt: config.updatedAt })
+    );
+
+    return res.json({ success: true, configurationPersisted: true, routingConfiguration: config });
+  } catch (error: any) {
+    console.error('Update model routing configuration error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to persist model routing configuration' });
+  }
+});
+
+router.put('/models/:id', async (req: AuthRequest, res: Response) => {
+  let routingTransactionOpen = false;
   try {
     const modelId = req.params.id;
     const { is_primary, fallback_order, is_enabled, role, thinking_level, temperature, top_p, max_tokens, custom_endpoint } = req.body;
@@ -4587,6 +4662,21 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
     const existing = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId) as any;
     if (!existing) {
       return res.status(404).json({ error: 'Model configuration not found' });
+    }
+
+    const routingChanged = is_primary !== undefined || fallback_order !== undefined || is_enabled !== undefined;
+    if (routingChanged) {
+      if (!APPROVED_MODELS.some((model) => model.id === modelId)) {
+        return res.status(400).json({ error: 'Only approved models can be used for evaluation routing.' });
+      }
+      db.exec('BEGIN IMMEDIATE');
+      routingTransactionOpen = true;
+    }
+
+    if (existing.is_primary === 1 && is_enabled !== undefined && !is_enabled) {
+      const error: any = new Error('The current primary model cannot be disabled. Select another primary first.');
+      error.statusCode = 400;
+      throw error;
     }
 
     if (is_primary === 1 || is_primary === true) {
@@ -4610,7 +4700,17 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
     }
 
     if (fallback_order !== undefined) {
-      db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(Number(fallback_order), modelId);
+      const requestedOrder = Number(fallback_order);
+      if (!Number.isInteger(requestedOrder) || requestedOrder < 1 || existing.is_primary === 1) {
+        const error: any = new Error('Fallback order must be a positive whole number for a non-primary model.');
+        error.statusCode = 400;
+        throw error;
+      }
+      const collision = db.prepare('SELECT id FROM model_configs WHERE is_primary = 0 AND fallback_order = ? AND id != ?').get(requestedOrder, modelId) as { id: string } | undefined;
+      if (collision) {
+        db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(existing.fallback_order, collision.id);
+      }
+      db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(requestedOrder, modelId);
     }
 
     if (is_enabled !== undefined && !is_primary) {
@@ -4633,6 +4733,21 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
       db.prepare('UPDATE model_configs SET custom_endpoint = ? WHERE id = ?').run(custom_endpoint || null, modelId);
     }
 
+    if (routingChanged) {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      const config = {
+        ...buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)),
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user!.id,
+      };
+      const persisted = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
+      if (!persisted) {
+        const error: any = new Error('Could not persist model routing configuration to Firestore; the local changes were rolled back.');
+        error.statusCode = 503;
+        throw error;
+      }
+    }
+
     // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
@@ -4644,11 +4759,22 @@ router.put('/models/:id', (req: AuthRequest, res: Response) => {
       `Updated model configuration for ${modelId} (Primary: ${Boolean(is_primary)})`
     );
 
+    if (routingTransactionOpen) {
+      db.exec('COMMIT');
+      routingTransactionOpen = false;
+    }
+
     const updated = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId);
     return res.json({ success: true, model: updated });
   } catch (error: unknown) {
+    if (routingTransactionOpen) {
+      try { db.exec('ROLLBACK'); } catch (rollbackError) {
+        console.error('Model configuration rollback error:', rollbackError);
+      }
+    }
     console.error('Update model error:', error);
-    return res.status(500).json({ error: 'Failed to update model configuration' });
+    const status = (error as any)?.statusCode || 500;
+    return res.status(status).json({ error: (error as any)?.message || 'Failed to update model configuration' });
   }
 });
 

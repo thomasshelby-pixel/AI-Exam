@@ -2,6 +2,8 @@ import { getGemini } from '../gemini.js';
 import { db } from '../db.js';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { getFirestoreDoc } from '../services/firestoreDbService.js';
+import { validateModelRoutingConfiguration } from '../services/modelRoutingConfig.js';
 
 export type ModelProviderType = 'gemini' | 'openai' | 'anthropic';
 
@@ -255,6 +257,7 @@ export interface ModelExecutionParams {
     isAmbiguousOrComplex?: boolean;
     isRoutineOrHighVolume?: boolean;
     adminPreferredModel?: string;
+    adminFallbackOrder?: string[];
     crossCheckEnabled?: boolean;
   };
 }
@@ -804,6 +807,7 @@ export function determineModelRouting(context?: {
   isAmbiguousOrComplex?: boolean;
   isRoutineOrHighVolume?: boolean;
   adminPreferredModel?: string;
+  adminFallbackOrder?: string[];
   crossCheckEnabled?: boolean;
 }): {
   primaryModel: string;
@@ -851,11 +855,14 @@ export function determineModelRouting(context?: {
 
   const isFast = context?.checkingMode === 'fast' || context?.isRoutineOrHighVolume || pageCount > 25;
 
-  const isModelUsable = (mId: string): boolean => {
+  const isModelUsable = (mId: string, listedInAdminFallback = false): boolean => {
     const p = getProviderForModel(mId);
     if (!isProviderConfigured(p) || isProviderCreditExhausted(p) || isModelCoolingDown(mId)) return false;
     try {
       const row = db.prepare('SELECT status, is_enabled FROM model_configs WHERE id = ?').get(mId) as any;
+      if (listedInAdminFallback) {
+        return Boolean(row && row.status !== 'INSUFFICIENT_CREDITS' && row.status !== 'FAILED' && row.status !== 'RETIRED');
+      }
       return Boolean(row && row.is_enabled === 1 && row.status !== 'INSUFFICIENT_CREDITS' && row.status !== 'FAILED' && row.status !== 'NOT_CONFIGURED');
     } catch {
       return true;
@@ -881,8 +888,10 @@ export function determineModelRouting(context?: {
   let thinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = defaultGemini === 'gemini-3.1-flash-lite' ? 'LOW' : 'MEDIUM';
   let routingReason = `Primary CA Evaluation: ${selectedModel} for step-marking and ICAI compliance`;
 
-  // 1. Honor explicit admin selection if configured, active, and usable
-  if (adminModel && APPROVED_MODELS.some((m) => m.id === adminModel) && isModelUsable(adminModel)) {
+  // 1. Honor the persisted administrator selection even when it is currently
+  // unavailable. Availability affects execution/fallback, never the saved
+  // primary choice shown to the administrator.
+  if (adminModel && APPROVED_MODELS.some((m) => m.id === adminModel)) {
     selectedModel = adminModel;
     const desc = APPROVED_MODELS.find((m) => m.id === adminModel);
     thinkingLevel = desc?.defaultThinkingLevel || 'HIGH';
@@ -909,31 +918,28 @@ export function determineModelRouting(context?: {
     routingReason = `Default Primary Routing: ${defaultGemini} for standard ICAI evaluation`;
   }
 
-  // 2. Build deterministic multi-provider fallback hierarchy:
-  const canonicalFallbackOrder = [
-    'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.1-pro-preview',
-    'claude-opus-5',
-    'gpt-5.6-sol',
-    'claude-sonnet-5',
-    'gpt-5.6-terra',
-    'gemini-3.7-flash',
-    'gpt-6-astra',
-  ];
-
-  const remaining = canonicalFallbackOrder.filter((m) => m !== selectedModel);
-  // Sort remaining so that healthy (non-cooling) models are evaluated first
-  remaining.sort((a, b) => {
-    const aCool = isModelCoolingDown(a) ? 1 : 0;
-    const bCool = isModelCoolingDown(b) ? 1 : 0;
-    return aCool - bCool;
-  });
+  // 2. Use the persisted administrator order. Health checks may skip an
+  // unavailable entry, but must never reorder the remaining configured list.
+  let configuredFallbackOrder = context?.adminFallbackOrder;
+  if (!configuredFallbackOrder) {
+    try {
+      configuredFallbackOrder = (db.prepare(`
+        SELECT id FROM model_configs
+        WHERE is_primary = 0 AND is_enabled = 1
+        ORDER BY fallback_order ASC, id ASC
+      `).all() as Array<{ id: string }>).map((row) => row.id);
+    } catch (err) {
+      console.error('[Model Registry] Could not read configured fallback order:', err);
+      configuredFallbackOrder = [];
+    }
+  }
+  const remaining = configuredFallbackOrder.filter((id) =>
+    id !== selectedModel && APPROVED_MODELS.some((model) => model.id === id)
+  );
 
   // Filter out models that are credit-exhausted, disabled, or unconfigured
-  const usableFallbacks = remaining.filter((m) => isModelUsable(m));
-  const finalFallbackChain = usableFallbacks.length > 0 ? usableFallbacks : remaining.filter((m) => m.startsWith('gemini'));
+  const usableFallbacks = remaining.filter((m) => isModelUsable(m, Boolean(context?.adminFallbackOrder)));
+  const finalFallbackChain = usableFallbacks;
 
   // Determine cross-check model
   let crossCheckModel: string | undefined;
@@ -966,27 +972,33 @@ export async function executeModelWithFallback(
   params: ModelExecutionParams
 ): Promise<ModelExecutionResult> {
   let adminPreferredModel: string | undefined;
+  let adminFallbackOrder: string[] | undefined;
   try {
-    const primaryRow = db
-      .prepare('SELECT id FROM model_configs WHERE is_primary = 1 AND is_enabled = 1')
-      .get() as { id: string } | undefined;
-    if (primaryRow?.id && APPROVED_MODELS.some((m) => m.id === primaryRow.id)) {
-      adminPreferredModel = primaryRow.id;
+    const storedRouting = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing');
+    if (storedRouting) {
+      const validation = validateModelRoutingConfiguration(storedRouting, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) throw new Error(`Saved evaluation model configuration is invalid: ${validation.error}`);
+      adminPreferredModel = validation.config.primaryModel;
+      adminFallbackOrder = validation.config.fallbackOrder;
+    } else if (process.env.NODE_ENV === 'production') {
+      throw new Error('Persistent evaluation model configuration is not initialized in Firestore. An administrator must confirm and save the primary model and fallback order before evaluations can run.');
     } else {
-      const pSetting = db
-        .prepare("SELECT value FROM pricing_settings WHERE key = 'EVAL_MODEL_PROVIDER'")
-        .get() as { value: string } | undefined;
-      if (pSetting?.value && APPROVED_MODELS.some((m) => m.id === pSetting.value)) {
-        adminPreferredModel = pSetting.value;
+      const primaryRow = db
+        .prepare('SELECT id FROM model_configs WHERE is_primary = 1')
+        .get() as { id: string } | undefined;
+      if (primaryRow?.id && APPROVED_MODELS.some((m) => m.id === primaryRow.id)) {
+        adminPreferredModel = primaryRow.id;
       }
     }
   } catch (err) {
-    console.warn('Could not read admin model preference from db:', err);
+    console.error('Could not read or apply authoritative model routing configuration:', err);
+    throw err;
   }
 
   const routing = determineModelRouting({
     ...params.context,
-    adminPreferredModel: params.context?.adminPreferredModel || adminPreferredModel,
+    adminPreferredModel,
+    adminFallbackOrder,
   });
 
   // Query database for enabled models
@@ -997,7 +1009,9 @@ export async function executeModelWithFallback(
       is_enabled: number;
       status: string;
     }>;
-    if (dbModels && dbModels.length > 0) {
+    if (adminPreferredModel && adminFallbackOrder) {
+      enabledModelIds = new Set([adminPreferredModel, ...adminFallbackOrder]);
+    } else if (dbModels && dbModels.length > 0) {
       enabledModelIds = new Set(
         dbModels
           .filter((m) => m.is_enabled === 1 && m.status !== 'RETIRED')
@@ -1046,9 +1060,16 @@ export async function executeModelWithFallback(
     // Skip if model itself is marked INSUFFICIENT_CREDITS or disabled
     try {
       const row = db.prepare('SELECT status, is_enabled FROM model_configs WHERE id = ?').get(candidateModel) as any;
-      if (row && (row.is_enabled === 0 || row.status === 'INSUFFICIENT_CREDITS' || row.status === 'NOT_CONFIGURED')) {
+      const authorityConfiguredCandidate = candidateModel === adminPreferredModel || adminFallbackOrder?.includes(candidateModel);
+      const unavailableByStatus = row && (
+        row.status === 'INSUFFICIENT_CREDITS' ||
+        row.status === 'FAILED' ||
+        row.status === 'RETIRED' ||
+        (!authorityConfiguredCandidate && (row.is_enabled === 0 || row.status === 'NOT_CONFIGURED'))
+      );
+      if (unavailableByStatus) {
         if (candidateSequence.some((m) => m !== candidateModel)) {
-          console.info(`[Model Registry] Skipping ${candidateModel} because status is ${row.status}.`);
+          console.info(`[Model Registry] Skipping ${candidateModel} because status is ${row.status || 'disabled'}.`);
           continue;
         }
       }

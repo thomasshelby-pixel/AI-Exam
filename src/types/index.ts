@@ -420,6 +420,10 @@ export interface EvaluationReferencePackage {
 
 export interface QuestionEvaluation {
   questionNumber: string;
+  modelUsed?: string;
+  modelProvider?: string;
+  fallbackOccurred?: boolean;
+  fallbackReason?: string;
   subQuestion?: string;
   questionId?: string;
   subQuestionId?: string;

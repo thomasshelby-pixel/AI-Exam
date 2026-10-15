@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  writeBatch,
   deleteDoc,
   collection,
   getDocs,
@@ -77,6 +78,33 @@ export async function setFirestoreDoc(collectionName: string, docId: string, dat
     );
   } catch (err) {
     console.warn(`[Firestore] Failed to set document in ${collectionName}/${docId}:`, err);
+    return false;
+  }
+}
+
+export async function setFirestoreDocsAtomically(
+  writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }>
+): Promise<boolean> {
+  const db = getFirestoreDb();
+  if (!db || writes.length === 0 || writes.some((write) => !write.docId)) return false;
+  try {
+    const batch = writeBatch(db);
+    for (const write of writes) {
+      const cleanData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(write.data)) {
+        if (value !== undefined) cleanData[key] = value;
+      }
+      cleanData._updatedAt = new Date().toISOString();
+      batch.set(doc(db, write.collectionName, String(write.docId)), cleanData, { merge: true });
+    }
+    return await withTimeout(
+      batch.commit().then(() => true),
+      12000,
+      false,
+      'setFirestoreDocsAtomically'
+    );
+  } catch (err) {
+    console.warn('[Firestore] Failed to atomically persist protected records:', err);
     return false;
   }
 }
@@ -162,38 +190,43 @@ export async function getAllFirestoreDocs<T = DocumentData>(
 }
 
 // Tombstones: Ensure permanent deletions survive restarts and prevent re-seeding
-export async function recordTombstone(collectionName: string, docId: string, reason?: string): Promise<void> {
+export async function recordTombstone(collectionName: string, docId: string, reason?: string): Promise<boolean> {
   const db = getFirestoreDb();
-  if (!db || !docId) return;
+  if (!db || !docId) return false;
   try {
     const tombstoneId = `${collectionName}_${docId}`;
-    await withTimeout(
+    return await withTimeout(
       setDoc(doc(db, 'tombstones', tombstoneId), {
         collectionName,
         targetId: docId,
         reason: reason || 'PERMANENT_DELETION',
         deletedAt: new Date().toISOString(),
-      }),
-      2500,
-      undefined
+      }).then(() => true),
+      12000,
+      false,
+      `recordTombstone(${collectionName}/${docId})`
     );
   } catch (err) {
     console.warn(`[Firestore] Failed to record tombstone for ${collectionName}/${docId}:`, err);
+    return false;
   }
 }
 
 export async function isTombstoned(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
-  if (!db || !docId) return false;
+  if (!db || !docId) throw new Error('Firestore is unavailable while checking a deletion tombstone.');
   try {
     const tombstoneId = `${collectionName}_${docId}`;
     const snap = await withTimeout(
       getDoc(doc(db, 'tombstones', tombstoneId)),
-      2500,
-      null
+      12000,
+      null,
+      `isTombstoned(${collectionName}/${docId})`
     );
+    if (!snap) throw new Error(`Timed out checking tombstone for ${collectionName}/${docId}.`);
     return Boolean(snap && snap.exists());
-  } catch {
-    return false;
+  } catch (err) {
+    console.error(`[Firestore] Could not verify tombstone state for ${collectionName}/${docId}:`, err);
+    throw err;
   }
 }

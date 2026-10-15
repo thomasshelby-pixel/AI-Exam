@@ -11,6 +11,7 @@ import {
   AuthRequest,
 } from '../auth.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { setFirestoreDocsAtomically } from '../services/firestoreDbService.js';
 import {
   markDeviceAsTrusted,
   isDeviceTrusted,
@@ -518,27 +519,69 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       });
     }
 
-    // Update user record in SQLite: enable MFA, store persistent TOTP secret, clear pending_totp_secret, and clear mfa_reset_required
-    db.prepare(`
-      UPDATE users
-      SET mfa_enabled = 1,
-          mfa_enrolled_at = CURRENT_TIMESTAMP,
-          totp_secret = ?,
-          pending_totp_secret = NULL,
-          mfa_reset_required = 0,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(candidateSecret, user.id);
-
-    // Ensure primary authenticator record exists with persistent secret
     const primaryId = `auth_prim_${user.id}`;
-    db.prepare(`
-      INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
-      VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(id) DO UPDATE SET
-        totp_secret = excluded.totp_secret,
-        last_used_at = CURRENT_TIMESTAMP
-    `).run(primaryId, user.id, candidateSecret);
+    const enrolledAt = new Date().toISOString();
+    const cloudPersisted = await setFirestoreDocsAtomically([
+      {
+        collectionName: 'users',
+        docId: user.id,
+        data: {
+          id: user.id,
+          mfa_enabled: 1,
+          mfa_enrolled_at: enrolledAt,
+          totp_secret: candidateSecret,
+          pending_totp_secret: null,
+          mfa_reset_required: 0,
+          updated_at: enrolledAt,
+        },
+      },
+      {
+        collectionName: 'mfa_authenticators',
+        docId: primaryId,
+        data: {
+          id: primaryId,
+          user_id: user.id,
+          factor_type: 'PRIMARY_TOTP',
+          label: 'Primary Authenticator App',
+          totp_secret: candidateSecret,
+          created_at: enrolledAt,
+          last_used_at: enrolledAt,
+        },
+      },
+    ]);
+    if (!cloudPersisted) {
+      return res.status(503).json({
+        error: 'Authenticator enrollment was not completed because durable MFA persistence is unavailable. Your account was not marked enrolled; please retry when the service is available.',
+      });
+    }
+
+    // Only report enrollment after the authoritative Firestore records are
+    // committed. SQLite remains a hydrated runtime cache.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        UPDATE users
+        SET mfa_enabled = 1,
+            mfa_enrolled_at = ?,
+            totp_secret = ?,
+            pending_totp_secret = NULL,
+            mfa_reset_required = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(enrolledAt, candidateSecret, user.id);
+
+      db.prepare(`
+        INSERT INTO mfa_authenticators (id, user_id, factor_type, label, totp_secret, created_at, last_used_at)
+        VALUES (?, ?, 'PRIMARY_TOTP', 'Primary Authenticator App', ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          totp_secret = excluded.totp_secret,
+          last_used_at = excluded.last_used_at
+      `).run(primaryId, user.id, candidateSecret, enrolledAt, enrolledAt);
+      db.exec('COMMIT');
+    } catch (dbError) {
+      db.exec('ROLLBACK');
+      throw dbError;
+    }
 
     // Provisions recovery codes if not already present
     let recoveryCodes: string[] | undefined = undefined;
@@ -554,12 +597,6 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
     } else {
       const existingStatus = getRecoveryCodeStatus(user.id);
       remainingCodes = existingStatus.remaining;
-    }
-
-    // Mirror full updated user record to Firestore to preserve complete credentials
-    const fullEnrolledUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
-    if (fullEnrolledUser) {
-      syncRecordToFirestore('users', user.id, fullEnrolledUser).catch(() => {});
     }
 
     logMfaAudit({
