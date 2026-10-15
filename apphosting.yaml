@@ -8,14 +8,18 @@ runConfig:
   memoryMiB: 1024
 
 scripts:
-  buildCommand: npm run build
+  buildCommand: npm run apphosting:build
   runCommand: node dist/server.cjs
 
 env:
   - variable: NODE_ENV
     value: production
+    availability:
+      - RUN
   - variable: PORT
     value: "8080"
+    availability:
+      - RUN
   - variable: SMTP_HOST
     value: smtp.resend.com
   - variable: SMTP_PORT
