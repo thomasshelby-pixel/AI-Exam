@@ -95,7 +95,7 @@ export function parseCookieValue(cookieHeader: string | undefined, key: string):
 /**
  * Determines whether a given user + device + trustToken combination is authoritative and valid.
  * Validates:
- * 1. Matching user_id and trust_token_hash (with device_id reconciliation)
+ * 1. Matching user_id, device_id, and trust_token_hash
  * 2. status === 'ACTIVE'
  * 3. revoked_at IS NULL
  * 4. expires_at > CURRENT_TIMESTAMP (365 days window)
@@ -104,7 +104,7 @@ export function parseCookieValue(cookieHeader: string | undefined, key: string):
  * Marks expired records as 'EXPIRED'.
  */
 export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: string): boolean {
-  if (!userId || !trustToken) {
+  if (!userId || !deviceId || !trustToken) {
     return false;
   }
 
@@ -132,27 +132,6 @@ export function isDeviceTrusted(userId: string, deviceId?: string, trustToken?: 
           AND trust_token_hash = ?
         LIMIT 1
       `).get(userId, cleanDeviceId, tokenHash) as any;
-    }
-
-    // 2. Secondary cryptographic lookup by user_id and trust_token_hash
-    // Resolves client UUID vs server fallback MD5 deviceId drift without compromising security
-    if (!record) {
-      record = db.prepare(`
-        SELECT id, device_id, status, revoked_at, expires_at
-        FROM trusted_devices
-        WHERE user_id = ?
-          AND trust_token_hash = ?
-        LIMIT 1
-      `).get(userId, tokenHash) as any;
-
-      // Reconcile and bind device_id if client provided a stable identifier
-      if (record && cleanDeviceId && record.device_id !== cleanDeviceId) {
-        try {
-          db.prepare('DELETE FROM trusted_devices WHERE user_id = ? AND device_id = ? AND id != ?').run(userId, cleanDeviceId, record.id);
-          db.prepare(`UPDATE trusted_devices SET device_id = ? WHERE id = ?`).run(cleanDeviceId, record.id);
-          syncRecordToFirestore('trusted_devices', record.id, { device_id: cleanDeviceId }).catch(() => {});
-        } catch {}
-      }
     }
 
     if (!record) {
@@ -203,7 +182,7 @@ export function verifyUserDeviceTrust(
   deviceId?: string,
   candidateTokens?: Array<string | undefined | null>
 ): { isTrusted: boolean; trustToken?: string; expiresAt?: string } {
-  if (!userId || !candidateTokens || candidateTokens.length === 0) {
+  if (!userId || !deviceId || !candidateTokens || candidateTokens.length === 0) {
     return { isTrusted: false };
   }
 
@@ -633,6 +612,7 @@ export function markDeviceAsTrusted(params: {
   // Generate cryptographically secure 256-bit trust token
   const rawSecret = crypto.randomBytes(32).toString('hex');
   const trustToken = `trust_${rawSecret}`;
+  const trustTokenHash = hashTrustToken(trustToken);
   const existingRow = db.prepare('SELECT id FROM trusted_devices WHERE user_id = ? AND device_id = ?').get(userId, cleanDeviceId) as { id: string } | undefined;
   const safeIdHash = crypto.createHash('md5').update(`${userId}:${cleanDeviceId}`).digest('hex').substring(0, 16);
   const recordId = existingRow?.id || `trd_${safeIdHash}`;

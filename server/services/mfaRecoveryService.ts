@@ -191,6 +191,10 @@ export function initMfaRecoveryTables(force: boolean = false): void {
   addCol('mfa_audit_logs', 'correlation_id', 'TEXT');
 
   mfaTablesInitialized = true;
+
+  // Do not reconcile enrollment state during schema initialization. The local
+  // SQLite cache may be incomplete until Firestore hydration has loaded every
+  // authenticator record; mutating MFA here can permanently clear valid state.
 }
 
 // Auto-run table creation eagerly if database is already opened
@@ -265,6 +269,10 @@ export async function fixInconsistentAdminMfaStates(): Promise<void> {
 
       // If local secret is missing but user is marked enrolled, inspect Cloud Firestore before taking any destructive action
       if (admin.mfa_enabled === 1 && !hasValidSecret) {
+        // Missing secret data is not proof that an administrator reset MFA.
+        // Keep the enrolled flag and all related state intact for recovery.
+        console.error(`[MFA Architecture] Enrolled administrator ${admin.id} is missing a local TOTP secret; enrollment state was preserved for recovery.`);
+
         try {
           const fsUser = await getFirestoreDoc<any>('users', admin.id);
           if (fsUser && fsUser.totp_secret) {
@@ -308,7 +316,7 @@ export async function fixInconsistentAdminMfaStates(): Promise<void> {
   }
 }
 
-export type AuthoritativeMfaState = 'MFA_NOT_ENROLLED' | 'MFA_ENROLLED' | 'MFA_RESET_REQUIRED' | 'MFA_RECOVERY_PENDING';
+export type AuthoritativeMfaState = 'MFA_NOT_ENROLLED' | 'MFA_ENROLLED' | 'MFA_RESET_REQUIRED' | 'MFA_RECOVERY_PENDING' | 'MFA_RECOVERY_REQUIRED';
 
 /**
  * Generates a cryptographically secure 20-byte Base32 secret (RFC 4648)
@@ -539,7 +547,8 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
     // 4. Inspect authenticators with valid secrets
     const authRecords = db.prepare(`
       SELECT id, totp_secret FROM mfa_authenticators
-      WHERE user_id = ? AND totp_secret IS NOT NULL
+      WHERE user_id = ? AND totp_secret IS NOT NULL AND length(totp_secret) >= 16
+      ORDER BY CASE WHEN factor_type = 'PRIMARY_TOTP' THEN 0 ELSE 1 END, last_used_at DESC, created_at DESC
     `).all(userId) as Array<{ id: string; totp_secret: string }>;
 
     // 5. Count remaining recovery codes
@@ -567,6 +576,16 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
 
     const authenticatorsCount = validSecret ? Math.max(1, authRecords.length) : authRecords.length;
 
+    if (userRow.mfa_reset_required === 1) {
+      return {
+        state: 'MFA_RESET_REQUIRED',
+        hasValidSecret: false,
+        pendingSecret: userRow.pending_totp_secret ? decryptMfaSecret(userRow.pending_totp_secret) : undefined,
+        authenticatorsCount,
+        recoveryCodesRemaining,
+      };
+    }
+
     // 7. Enrolled state verification
     if (validSecret) {
       // If user has a verified secret, they are authoritatively enrolled!
@@ -591,10 +610,12 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
       };
     }
 
-    // 8. Explicit Reset Required: user lacks active enrollment after authorized reset
-    if (userRow.mfa_reset_required === 1) {
+    // 8. Inconsistent state detection: mfa_enabled = 1 but NO valid secret
+    if (userRow.mfa_enabled === 1 && !validSecret) {
+      console.error(`[MFA Architecture] Enrolled account ${userId} has no locally hydrated TOTP secret; preserving enrollment and requiring recovery.`);
+
       return {
-        state: 'MFA_RESET_REQUIRED',
+        state: 'MFA_RECOVERY_REQUIRED',
         hasValidSecret: false,
         pendingSecret: userRow.pending_totp_secret ? decryptMfaSecret(userRow.pending_totp_secret) : undefined,
         authenticatorsCount,
@@ -624,7 +645,7 @@ export async function getAuthoritativeUserMfaState(userId: string): Promise<{
   } catch (err) {
     console.error(`[MFA getAuthoritativeUserMfaState Error for ${userId}]:`, err);
     return {
-      state: 'MFA_NOT_ENROLLED',
+      state: 'MFA_RECOVERY_REQUIRED',
       hasValidSecret: false,
       authenticatorsCount: 0,
       recoveryCodesRemaining: 0,

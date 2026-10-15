@@ -13,6 +13,8 @@ import {
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
+import { isEntityTombstoned } from './deletionPersistence.js';
+
 import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
 import { decryptMfaSecret } from './mfaCryptoService.js';
 
@@ -90,11 +92,23 @@ export async function permanentlyDeleteFromFirestore(
   id: string,
   reason?: string,
   options: { failOnError?: boolean } = {}
-) {
+): Promise<boolean> {
   try {
     recordLocalTombstone(collectionName, id, reason);
-    await recordTombstone(collectionName, id, reason, options);
-    await deleteFirestoreDoc(collectionName, id);
+    const tombstonePersisted = await recordTombstone(collectionName, id, reason, { failOnError: options.failOnError });
+    if (!tombstonePersisted) {
+      const error = new Error(`Durable tombstone was not confirmed for ${collectionName}/${id}.`);
+      console.error(`[FirestoreSync] ${error.message}`);
+      if (options.failOnError) throw error;
+      return false;
+    }
+    const documentDeleted = await deleteFirestoreDoc(collectionName, id);
+    if (!documentDeleted) {
+      const error = new Error(`Cloud deletion was not confirmed for ${collectionName}/${id}; durable tombstone is retained.`);
+      console.error(`[FirestoreSync] ${error.message}`);
+      if (options.failOnError) throw error;
+      return false;
+    }
     console.log(`[FirestoreSync] Permanently deleted and tombstoned ${collectionName}/${id}`);
     return true;
   } catch (err) {
@@ -103,7 +117,6 @@ export async function permanentlyDeleteFromFirestore(
     return false;
   }
 }
-
 /**
  * Hydrates all Firestore data into local SQLite upon server startup.
  * Ensures:
@@ -150,7 +163,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       const rawTid = t.targetId || t.id;
       const tid = rawTid ? rawTid.replace(new RegExp(`^${col}_`), '') : '';
       if (col && tid) {
-        if (PROTECTED_CORE_IDS.has(tid)) continue;
+        if (tid === 'usr_super_admin_001' || tid === 'usr_mcq_admin_priyatca15') continue;
         tombstoneSet.add(`${col}_${tid}`);
         tombstoneSet.add(`${col}:${tid}`);
         tombstoneSet.add(tid);
@@ -263,14 +276,18 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         continue;
       }
 
-      const isUserTombstoned = tombstoneSet.has(`users_${u.id}`) ||
-                               tombstoneSet.has(`users:${u.id}`) ||
-                               tombstoneSet.has(u.id) ||
-                               tombstoneSet.has(`users_${normEmail}`) ||
-                               tombstoneSet.has(normEmail) ||
-                               isLocalTombstoned('users', u.id) ||
-                               isLocalTombstoned('users', normEmail);
-      if (isUserTombstoned) {
+      const isProtected = PROTECTED_CORE_IDS.has(u.id) || PROTECTED_CORE_EMAILS.has(normEmail);
+      const isDeletedStudent = (u.role || 'STUDENT') === 'STUDENT' && (
+        isEntityTombstoned(tombstoneSet, 'users', u.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', u.id) ||
+        isLocalTombstoned('users', normEmail)
+      );
+      const isUserTombstoned = isEntityTombstoned(tombstoneSet, 'users', u.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', u.id) ||
+        isLocalTombstoned('users', normEmail);
+      if (isUserTombstoned && (!isProtected || isDeletedStudent)) {
         console.log(`[FirestoreSync] Skipping tombstoned user ${u.id} (${normEmail}) during hydration.`);
         continue;
       }
@@ -307,7 +324,18 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         }
 
         // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
-        const existingLocalUser = db.prepare('SELECT id, password_hash FROM users WHERE id = ? OR lower(email) = ?').get(targetId, normEmail) as { id: string; password_hash: string } | undefined;
+        const existingLocalUser = db.prepare(`
+          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, updated_at
+          FROM users WHERE id = ? OR lower(email) = ?
+        `).get(targetId, normEmail) as {
+          id: string;
+          password_hash: string;
+          mfa_enabled: number | null;
+          mfa_enrolled_at: string | null;
+          totp_secret: string | null;
+          mfa_reset_required: number | null;
+          updated_at: string | null;
+        } | undefined;
         const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
         const userClassification = u.account_classification || 'NORMAL';
 
@@ -317,16 +345,23 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           db.prepare('DELETE FROM users WHERE id = ?').run(collidingUser.id);
         }
 
-        const uMfaEnabled = u.mfa_enabled ? 1 : 0;
-        const uMfaEnrolledAt = u.mfa_enrolled_at || null;
-        const uTotpSecret = u.totp_secret || null;
-        const uMfaResetRequired = u.mfa_reset_required === 1 ? 1 : 0;
+        const cloudMfaTimestamp = new Date(u._updatedAt || u.updated_at || u.mfa_enrolled_at || 0).getTime();
+        const localMfaTimestamp = new Date(existingLocalUser?.updated_at || existingLocalUser?.mfa_enrolled_at || 0).getTime();
+        const preserveNewerLocalMfa = Boolean(existingLocalUser && localMfaTimestamp > cloudMfaTimestamp);
+        const uMfaEnabled = preserveNewerLocalMfa || u.mfa_enabled === undefined || u.mfa_enabled === null
+          ? null
+          : u.mfa_enabled ? 1 : 0;
+        const uMfaEnrolledAt = preserveNewerLocalMfa || u.mfa_enrolled_at === undefined ? null : u.mfa_enrolled_at || null;
+        const uTotpSecret = preserveNewerLocalMfa || u.totp_secret === undefined ? null : u.totp_secret || null;
+        const uMfaResetRequired = preserveNewerLocalMfa || u.mfa_reset_required === undefined || u.mfa_reset_required === null
+          ? null
+          : u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
         const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
 
         db.prepare(`
           INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -344,24 +379,30 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
             mfa_enabled = CASE
-              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN 1
-              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN 0
-              ELSE excluded.mfa_enabled
+              WHEN excluded.mfa_reset_required = 1 THEN 0
+              WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
+              WHEN excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL THEN 1
+              WHEN users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL THEN 1
+              WHEN users.mfa_reset_required = 1 AND excluded.mfa_enabled != 1 THEN users.mfa_enabled
+              ELSE COALESCE(excluded.mfa_enabled, users.mfa_enabled)
             END,
             mfa_enrolled_at = CASE
+              WHEN excluded.mfa_reset_required = 1 THEN NULL
               WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at, CURRENT_TIMESTAMP)
-              WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN NULL
+              WHEN excluded.mfa_enabled IS NULL AND excluded.mfa_enrolled_at IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enrolled_at
+              WHEN users.mfa_reset_required = 1 AND excluded.mfa_enabled != 1 THEN users.mfa_enrolled_at
               ELSE COALESCE(users.mfa_enrolled_at, excluded.mfa_enrolled_at)
             END,
             totp_secret = CASE
-              WHEN users.totp_secret IS NOT NULL THEN users.totp_secret
+              WHEN excluded.mfa_reset_required = 1 THEN NULL
               WHEN excluded.totp_secret IS NOT NULL THEN excluded.totp_secret
               ELSE users.totp_secret
             END,
             mfa_reset_required = CASE
-              WHEN (users.mfa_enabled = 1 AND users.totp_secret IS NOT NULL) OR (excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL) THEN 0
-              WHEN users.mfa_reset_required = 1 OR excluded.mfa_reset_required = 1 THEN 1
-              ELSE 0
+              WHEN excluded.mfa_reset_required IS NULL THEN users.mfa_reset_required
+              WHEN excluded.mfa_reset_required = 1 THEN 1
+              WHEN excluded.mfa_enabled = 1 AND excluded.totp_secret IS NOT NULL THEN 0
+              ELSE excluded.mfa_reset_required
             END,
             updated_at = CURRENT_TIMESTAMP
         `).run(
@@ -1047,7 +1088,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             id, institute_id, title, level, subject_key, subject_name, paper, material_type,
             question_paper_text, question_paper_pdf_base64, suggested_answers_text, suggested_answers_pdf_base64,
             marking_scheme_text, marking_scheme_pdf_base64, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             question_paper_text = excluded.question_paper_text,
@@ -1456,8 +1497,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         console.log(`[FirestoreSync] Post-hydration: Reconciled and restored MFA enrollment on ${restoredCount} user account(s).`);
       }
 
-      // Safe, post-hydration admin consistency check with Firestore grounding
-      await fixInconsistentAdminMfaStates();
+      // Firestore is hydrated into SQLite; startup must not push this local
+      // cache back over the authoritative MFA record. In particular, a missing
+      // local secret is not evidence that the cloud secret should be cleared.
     } catch (healMfaErr) {
       console.warn('[FirestoreSync] MFA post-hydration reconciliation notice:', healMfaErr);
     }
@@ -1470,38 +1512,28 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       console.warn('[FirestoreSync] Post-hydration credit reconciliation notice:', credReconErr);
     }
 
-    // 19. Reconcile and synchronize AI evaluation model configuration from Firestore
+    // The administrator-approved routing document is the sole model-routing source of truth.
     try {
-      const fsModelConfig = await getFirestoreDoc<any>('system_settings', 'ai_model_config');
-      if (fsModelConfig && fsModelConfig.primary_model) {
-        const approvedIds = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
-        if (approvedIds.includes(fsModelConfig.primary_model)) {
-          db.prepare(`
-            INSERT INTO pricing_settings (key, value, updated_at)
-            VALUES ('EVAL_MODEL_PROVIDER', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-          `).run(fsModelConfig.primary_model);
-          db.prepare('UPDATE model_configs SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END').run(fsModelConfig.primary_model);
-
-          if (Array.isArray(fsModelConfig.fallback_chain)) {
-            const validChain = fsModelConfig.fallback_chain.filter((m: string) => approvedIds.includes(m) && m !== fsModelConfig.primary_model);
-            db.prepare(`
-              INSERT INTO pricing_settings (key, value, updated_at)
-              VALUES ('EVAL_FALLBACK_ORDER', ?, CURRENT_TIMESTAMP)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-            `).run(JSON.stringify(validChain));
-
-            validChain.forEach((mId: string, idx: number) => {
-              db.prepare('UPDATE model_configs SET fallback_order = ?, is_enabled = 1 WHERE id = ?').run(idx + 1, mId);
-            });
-          }
-          console.log(`[FirestoreSync] Post-hydration: Reconciled AI model config from Firestore (Primary: ${fsModelConfig.primary_model}).`);
+      const fsModelConfig = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: requireComplete });
+      if (fsModelConfig) {
+        const { APPROVED_MODELS } = await import('../models/modelRegistry.js');
+        const { validateModelRoutingConfiguration, applyModelRoutingConfiguration } = await import('./modelRoutingConfig.js');
+        const validation = validateModelRoutingConfiguration(fsModelConfig, APPROVED_MODELS.map((model) => model.id));
+        if ('error' in validation) throw new Error(`Persisted model routing configuration is invalid: ${validation.error}`);
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          applyModelRoutingConfiguration(db, validation.config, APPROVED_MODELS.map((model) => model.id));
+          db.exec('COMMIT');
+        } catch (applyError) {
+          db.exec('ROLLBACK');
+          throw applyError;
         }
+        console.log(`[FirestoreSync] Applied authoritative evaluation routing config (${validation.config.primaryModel}).`);
       }
     } catch (modelReconErr) {
       console.warn('[FirestoreSync] Post-hydration model configuration notice:', modelReconErr);
+      if (requireComplete) throw modelReconErr;
     }
-
     console.log(`[FirestoreSync] Hydration complete: Loaded ${materials.length} materials, ${evaluations.length} evaluations (${evHydrated} active), ${users.length} users (${uHydrated} active), ${legalDocs.length} legal documents from Firestore.`);
   } catch (err) {
     console.error('[FirestoreSync] Error during Firestore hydration:', err);
@@ -1520,7 +1552,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
   if (!fdb) return;
 
   try {
-    const tombstones = await getAllFirestoreDocs<any>('tombstones');
+    const tombstones = await getAllFirestoreDocs<any>('tombstones', { failOnError: true });
     const tombstoneSet = new Set(
       tombstones.flatMap((t: any) => [
         `${t.collectionName || t.entity_type}_${t.targetId || t.entity_id || t.id}`,
@@ -1555,7 +1587,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
       console.log('[FirestoreSync] Baseline materials already initialized or intentionally managed by admin; skipping automatic re-seeding.');
     }
 
-    const existingUsers = await getAllFirestoreDocs<any>('users');
+    const existingUsers = await getAllFirestoreDocs<any>('users', { failOnError: true });
     const existingEmailSet = new Set(existingUsers.map((u) => String(u.email || '').toLowerCase().trim()));
 
     // Ensure baseline users are persisted in Cloud Firestore
@@ -1571,15 +1603,12 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUsers = db.prepare(baselineUserQuery).all() as any[];
     for (const bu of baselineUsers) {
       const normEmail = String(bu.email || '').toLowerCase().trim();
-      const isBuTombstoned = tombstoneSet.has(`users_${bu.id}`) ||
-                             tombstoneSet.has(`users:${bu.id}`) ||
-                             tombstoneSet.has(bu.id) ||
-                             tombstoneSet.has(`users_${normEmail}`) ||
-                             tombstoneSet.has(normEmail) ||
-                             isLocalTombstoned('users', bu.id) ||
-                             isLocalTombstoned('users', normEmail);
-      if (isBuTombstoned) {
-        console.log(`[FirestoreSync] Skipping baseline seeding for tombstoned user ${bu.email} (${bu.id})`);
+      const isBaselineUserTombstoned = isEntityTombstoned(tombstoneSet, 'users', bu.id) ||
+        isEntityTombstoned(tombstoneSet, 'users', normEmail) ||
+        isLocalTombstoned('users', bu.id) ||
+        isLocalTombstoned('users', normEmail);
+      if (isBaselineUserTombstoned) {
+        console.info(`[FirestoreSync] Skipping tombstoned baseline user ${bu.id}; account seeding cannot restore deleted users.`);
         continue;
       }
       if (!existingEmailSet.has(normEmail)) {
@@ -1726,6 +1755,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     }
   } catch (err) {
     console.warn('[FirestoreSync] Baseline seeding warning:', err);
+    throw err;
   }
 }
 

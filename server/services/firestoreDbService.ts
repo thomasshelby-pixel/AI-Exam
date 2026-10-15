@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  writeBatch,
   deleteDoc,
   collection,
   getDocs,
@@ -124,24 +125,63 @@ export async function setFirestoreDoc(collectionName: string, docId: string, dat
   }
 }
 
-export async function getFirestoreDoc<T = DocumentData>(collectionName: string, docId: string): Promise<T | null> {
+export async function setFirestoreDocsAtomically(
+  writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }>
+): Promise<boolean> {
   const db = getFirestoreDb();
-  if (!db || !docId) return null;
+  if (!db || writes.length === 0 || writes.some((write) => !write.docId)) return false;
+  try {
+    const batch = writeBatch(db);
+    for (const write of writes) {
+      const cleanData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(write.data)) {
+        if (value !== undefined) cleanData[key] = value;
+      }
+      cleanData._updatedAt = new Date().toISOString();
+      batch.set(doc(db, write.collectionName, String(write.docId)), cleanData, { merge: true });
+    }
+    return await withTimeout(
+      batch.commit().then(() => true),
+      12000,
+      false,
+      'setFirestoreDocsAtomically'
+    );
+  } catch (err) {
+    console.warn('[Firestore] Failed to atomically persist protected records:', err);
+    return false;
+  }
+}
+
+export async function getFirestoreDoc<T = DocumentData>(
+  collectionName: string,
+  docId: string,
+  options: { failOnError?: boolean } = {}
+): Promise<T | null> {
+  const firestore = getFirestoreDb();
+  if (!firestore || !docId) {
+    const error = new Error(`Firestore is unavailable while reading ${collectionName}/${docId}.`);
+    if (options.failOnError) throw error;
+    return null;
+  }
   try {
     const snap = await withTimeout(
-      getDoc(doc(db, collectionName, String(docId))),
+      getDoc(doc(firestore, collectionName, String(docId))),
       12000,
       null as any,
       `getFirestoreDoc(${collectionName}/${docId})`
     );
-    if (!snap || !snap.exists()) return null;
+    if (!snap) {
+      if (options.failOnError) throw new Error(`Firestore read timed out for ${collectionName}/${docId}.`);
+      return null;
+    }
+    if (!snap.exists()) return null;
     return { id: snap.id, ...snap.data() } as unknown as T;
   } catch (err) {
     console.warn(`[Firestore] Failed to get document in ${collectionName}/${docId}:`, err);
+    if (options.failOnError) throw err;
     return null;
   }
 }
-
 export async function deleteFirestoreDoc(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) return false;
@@ -157,7 +197,6 @@ export async function deleteFirestoreDoc(collectionName: string, docId: string):
     return false;
   }
 }
-
 export async function getAllFirestoreDocs<T = DocumentData>(
   collectionName: string,
   options: { failOnError?: boolean } = {}
@@ -210,31 +249,39 @@ export async function recordTombstone(
   docId: string,
   reason?: string,
   options: { failOnError?: boolean } = {}
-): Promise<void> {
-  const db = getFirestoreDb();
-  if (!db || !docId) return;
+): Promise<boolean> {
+  const firestore = getFirestoreDb();
+  if (!firestore || !docId) {
+    const error = new Error(`Firestore is unavailable while recording a deletion tombstone for ${collectionName}/${docId}.`);
+    if (options.failOnError) throw error;
+    return false;
+  }
   try {
     const tombstoneId = `${collectionName}_${docId}`;
-    await withTimeout(
-      setDoc(doc(db, 'tombstones', tombstoneId), {
+    const recorded = await withTimeout(
+      setDoc(doc(firestore, 'tombstones', tombstoneId), {
         collectionName,
         targetId: docId,
         reason: reason || 'PERMANENT_DELETION',
         deletedAt: new Date().toISOString(),
-      }),
-      4000,
-      undefined,
+      }).then(() => true),
+      12000,
+      false,
       `recordTombstone(${collectionName}/${docId})`
     );
+    if (!recorded && options.failOnError) {
+      throw new Error(`Firestore did not confirm the deletion tombstone for ${collectionName}/${docId}.`);
+    }
+    return recorded;
   } catch (err) {
     console.warn(`[Firestore] Failed to record tombstone for ${collectionName}/${docId}:`, err);
     if (options.failOnError) throw err;
+    return false;
   }
 }
-
 export async function isTombstoned(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
-  if (!db || !docId) return false;
+  if (!db || !docId) throw new Error('Firestore is unavailable while checking a deletion tombstone.');
   try {
     // For credit-related collections, never block updates unless the entire user account is tombstoned
     if (collectionName === 'student_profiles' || collectionName === 'student_credit_purchases' || collectionName === 'credit_ledger') {
@@ -252,11 +299,14 @@ export async function isTombstoned(collectionName: string, docId: string): Promi
     const tombstoneId = `${collectionName}_${docId}`;
     const snap = await withTimeout(
       getDoc(doc(db, 'tombstones', tombstoneId)),
-      2500,
-      null
+      12000,
+      null,
+      `isTombstoned(${collectionName}/${docId})`
     );
+    if (!snap) throw new Error(`Timed out checking tombstone for ${collectionName}/${docId}.`);
     return Boolean(snap && snap.exists());
-  } catch {
-    return false;
+  } catch (err) {
+    console.error(`[Firestore] Could not verify tombstone state for ${collectionName}/${docId}:`, err);
+    throw err;
   }
 }

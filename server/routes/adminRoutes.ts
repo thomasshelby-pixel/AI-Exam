@@ -36,6 +36,13 @@ import {
 } from '../services/evaluationDeleteService.js';
 import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import {
+  applyModelRoutingConfiguration,
+  buildModelRoutingConfiguration,
+  validateModelRoutingConfiguration,
+  type ModelRoutingConfiguration,
+  type ModelRoutingRow,
+} from '../services/modelRoutingConfig.js';
+import {
   permanentlyDeleteFromFirestore,
   syncRecordToFirestore,
   rebuildLocalCacheFromFirestore,
@@ -75,9 +82,6 @@ import {
   validateEvaluationModelId,
   EVALUATION_MODEL_REGISTRY,
   APPROVED_MODELS,
-  getAuthoritativePrimaryModel,
-  getAuthoritativeFallbackChain,
-  saveAuthoritativeFallbackChain,
   DEFAULT_FALLBACK_CHAIN,
 } from '../models/modelRegistry.js';
 import {
@@ -5180,8 +5184,26 @@ router.put('/support/:id', (req: AuthRequest, res: Response, next) => {
 // ==========================================
 // 19. PLUGGABLE AI MODEL ARCHITECTURE & CONTROLS
 // ==========================================
-router.get('/models', (req: AuthRequest, res: Response) => {
+router.get('/models', async (req: AuthRequest, res: Response) => {
   try {
+    const storedRouting = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let authoritativeRouting: ModelRoutingConfiguration | undefined;
+    if (storedRouting) {
+      const validation = validateModelRoutingConfiguration(storedRouting, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) {
+        return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      }
+      authoritativeRouting = validation.config;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        applyModelRoutingConfiguration(db, authoritativeRouting, APPROVED_MODELS.map((model) => model.id));
+        db.exec('COMMIT');
+      } catch (applyError) {
+        db.exec('ROLLBACK');
+        throw applyError;
+      }
+    }
+
     const models = db.prepare(`
       SELECT * FROM model_configs ORDER BY is_primary DESC, fallback_order ASC, display_name ASC
     `).all() as any[];
@@ -5231,12 +5253,15 @@ router.get('/models', (req: AuthRequest, res: Response) => {
       },
     };
 
-    const currentPrimary = getAuthoritativePrimaryModel();
-    const currentFallbackChain = getAuthoritativeFallbackChain(currentPrimary);
+    const currentPrimary = authoritativeRouting?.primaryModel || models.find((model) => model.is_primary)?.id;
+    const currentFallbackChain = authoritativeRouting?.fallbackOrder || models
+      .filter((model) => !model.is_primary && model.is_enabled && APPROVED_MODELS.some((approved) => approved.id === model.id))
+      .sort((a, b) => a.fallback_order - b.fallback_order || a.id.localeCompare(b.id))
+      .map((model) => model.id);
     const primaryDesc = APPROVED_MODELS.find((m) => m.id === currentPrimary);
 
     const fallbackHierarchy = [
-      { order: 0, modelId: currentPrimary, provider: primaryDesc?.provider || 'gemini', role: primaryDesc?.role || 'Primary CA Evaluation' },
+      ...(currentPrimary ? [{ order: 0, modelId: currentPrimary, provider: primaryDesc?.provider || 'gemini', role: primaryDesc?.role || 'Primary CA Evaluation' }] : []),
       ...currentFallbackChain.map((mId, idx) => {
         const desc = APPROVED_MODELS.find((m) => m.id === mId);
         return {
@@ -5247,11 +5272,12 @@ router.get('/models', (req: AuthRequest, res: Response) => {
         };
       }),
     ];
-
     return res.json({
       models,
       providerStatus,
       fallbackHierarchy,
+      configurationPersisted: Boolean(authoritativeRouting),
+      routingConfiguration: authoritativeRouting || null,
     });
   } catch (error: unknown) {
     console.error('Get models error:', error);
@@ -5259,91 +5285,147 @@ router.get('/models', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.get('/models/fallback-order', (req: AuthRequest, res: Response) => {
-  try {
-    const primaryModel = getAuthoritativePrimaryModel();
-    const fallbackChain = getAuthoritativeFallbackChain(primaryModel);
-    const availableModels = APPROVED_MODELS
-      .filter((m) => m.id !== primaryModel && !fallbackChain.includes(m.id))
-      .map((m) => ({ id: m.id, displayName: m.displayName, provider: m.provider, role: m.role }));
+async function persistAuthoritativeModelRoutingConfiguration(
+  value: unknown,
+  adminUserId: string
+): Promise<ModelRoutingConfiguration> {
+  const validation = validateModelRoutingConfiguration(value, APPROVED_MODELS.map((model) => model.id));
+  if ('error' in validation) {
+    const error: any = new Error(validation.error);
+    error.statusCode = 400;
+    throw error;
+  }
 
+  const config: ModelRoutingConfiguration = {
+    ...validation.config,
+    updatedAt: new Date().toISOString(),
+    updatedBy: adminUserId,
+  };
+  const configuredRows = db.prepare('SELECT id FROM model_configs').all() as Array<{ id: string }>;
+  const configuredIds = new Set(configuredRows.map((row) => row.id));
+  const unknownIds = [config.primaryModel, ...config.fallbackOrder].filter((id) => !configuredIds.has(id));
+  if (unknownIds.length > 0) {
+    const error: any = new Error(`Models are not present in the configured registry: ${unknownIds.join(', ')}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const persisted = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
+  if (!persisted) {
+    const error: any = new Error('Could not persist model routing configuration to Firestore; no local routing configuration was changed.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    applyModelRoutingConfiguration(db, config, APPROVED_MODELS.map((model) => model.id));
+    db.exec('COMMIT');
+  } catch (applyError) {
+    db.exec('ROLLBACK');
+    throw applyError;
+  }
+
+  db.prepare(`
+    INSERT INTO audit_logs (id, user_id, action, entity_type, details)
+    VALUES (?, ?, 'UPDATE_MODEL_ROUTING', 'SYSTEM', ?)
+  `).run(
+    `log_${crypto.randomBytes(8).toString('hex')}`,
+    adminUserId,
+    JSON.stringify({ primaryModel: config.primaryModel, fallbackOrder: config.fallbackOrder, updatedAt: config.updatedAt })
+  );
+  return config;
+}
+
+router.put('/models/routing-configuration', async (req: AuthRequest, res: Response) => {
+  try {
+    const config = await persistAuthoritativeModelRoutingConfiguration(req.body, req.user!.id);
+    return res.json({ success: true, configurationPersisted: true, routingConfiguration: config });
+  } catch (error: any) {
+    console.error('Update model routing configuration error:', error);
+    return res.status(error.statusCode || 500).json({ error: error.message || 'Failed to persist model routing configuration' });
+  }
+});
+
+router.get('/models/fallback-order', async (req: AuthRequest, res: Response) => {
+  try {
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let config: ModelRoutingConfiguration;
+    let configurationPersisted = false;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      config = validation.config;
+      configurationPersisted = true;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      config = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id));
+    }
+
+    const availableModels = APPROVED_MODELS
+      .filter((model) => model.id !== config.primaryModel && !config.fallbackOrder.includes(model.id))
+      .map((model) => ({ id: model.id, displayName: model.displayName, provider: model.provider, role: model.role }));
     return res.json({
-      primaryModel,
-      fallbackChain,
+      primaryModel: config.primaryModel,
+      fallbackChain: config.fallbackOrder,
       availableModels,
-      defaultFallbackChain: DEFAULT_FALLBACK_CHAIN.filter((m) => m !== primaryModel),
-      approvedModels: APPROVED_MODELS.map((m) => ({ id: m.id, displayName: m.displayName, provider: m.provider, role: m.role })),
+      defaultFallbackChain: DEFAULT_FALLBACK_CHAIN.filter((model) => model !== config.primaryModel),
+      approvedModels: APPROVED_MODELS.map((model) => ({ id: model.id, displayName: model.displayName, provider: model.provider, role: model.role })),
+      configurationPersisted,
     });
   } catch (error: any) {
     console.error('Get fallback order error:', error);
-    return res.status(500).json({ error: 'Failed to load fallback order configuration' });
+    return res.status(503).json({ error: error?.message || 'Failed to load fallback order configuration' });
   }
 });
 
 router.put('/models/fallback-order', async (req: AuthRequest, res: Response) => {
   try {
-    const { fallbackChain } = req.body;
-    if (!Array.isArray(fallbackChain)) {
+    if (!Array.isArray(req.body?.fallbackChain)) {
       return res.status(400).json({ error: 'fallbackChain must be an array of model identifiers.' });
     }
-
-    const result = saveAuthoritativeFallbackChain(fallbackChain, req.user!.id);
-
-    try {
-      const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
-      await setFirestoreDoc('system_settings', 'ai_model_config', {
-        primary_model: result.primaryModel,
-        fallback_chain: result.fallbackChain,
-        updated_at: new Date().toISOString(),
-        updated_by: req.user!.id,
-      });
-    } catch (fsErr) {
-      console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let primaryModel: string;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      primaryModel = validation.config.primaryModel;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      primaryModel = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)).primaryModel;
     }
-
-    return res.json({
-      success: true,
-      message: 'Fallback order updated and persisted successfully',
-      primaryModel: result.primaryModel,
-      fallbackChain: result.fallbackChain,
-    });
+    const config = await persistAuthoritativeModelRoutingConfiguration({ primaryModel, fallbackOrder: req.body.fallbackChain }, req.user!.id);
+    return res.json({ success: true, message: 'Fallback order updated and persisted successfully', primaryModel: config.primaryModel, fallbackChain: config.fallbackOrder });
   } catch (error: any) {
     console.error('Update fallback order error:', error);
-    return res.status(400).json({ error: error?.message || 'Failed to update fallback order' });
+    return res.status(error.statusCode || 400).json({ error: error?.message || 'Failed to update fallback order' });
   }
 });
 
 router.post('/models/fallback-order/reset-default', async (req: AuthRequest, res: Response) => {
   try {
-    const primaryModel = getAuthoritativePrimaryModel();
-    const defaultChain = DEFAULT_FALLBACK_CHAIN.filter((m) => m !== primaryModel);
-    const result = saveAuthoritativeFallbackChain(defaultChain, req.user!.id);
-
-    try {
-      const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
-      await setFirestoreDoc('system_settings', 'ai_model_config', {
-        primary_model: result.primaryModel,
-        fallback_chain: result.fallbackChain,
-        updated_at: new Date().toISOString(),
-        updated_by: req.user!.id,
-      });
-    } catch (fsErr) {
-      console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
+    const stored = await getFirestoreDoc<any>('system_configuration', 'evaluation_model_routing', { failOnError: true });
+    let primaryModel: string;
+    if (stored) {
+      const validation = validateModelRoutingConfiguration(stored, APPROVED_MODELS.map((model) => model.id));
+      if ('error' in validation) return res.status(503).json({ error: `Saved model configuration requires administrator recovery: ${validation.error}` });
+      primaryModel = validation.config.primaryModel;
+    } else {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      primaryModel = buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)).primaryModel;
     }
-
-    return res.json({
-      success: true,
-      message: 'Default fallback order restored successfully',
-      primaryModel: result.primaryModel,
-      fallbackChain: result.fallbackChain,
-    });
+    const config = await persistAuthoritativeModelRoutingConfiguration({
+      primaryModel,
+      fallbackOrder: DEFAULT_FALLBACK_CHAIN.filter((model) => model !== primaryModel),
+    }, req.user!.id);
+    return res.json({ success: true, message: 'Default fallback order restored successfully', primaryModel: config.primaryModel, fallbackChain: config.fallbackOrder });
   } catch (error: any) {
     console.error('Reset default fallback order error:', error);
-    return res.status(500).json({ error: error?.message || 'Failed to reset default fallback order' });
+    return res.status(error.statusCode || 500).json({ error: error?.message || 'Failed to reset fallback order' });
   }
 });
-
 router.put('/models/:id', async (req: AuthRequest, res: Response) => {
+  let routingTransactionOpen = false;
   try {
     const modelId = req.params.id;
     const allowed = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra', 'claude-opus-5', 'claude-sonnet-5'];
@@ -5357,6 +5439,21 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Model configuration not found' });
     }
 
+    const routingChanged = is_primary !== undefined || fallback_order !== undefined || is_enabled !== undefined;
+    if (routingChanged) {
+      if (!APPROVED_MODELS.some((model) => model.id === modelId)) {
+        return res.status(400).json({ error: 'Only approved models can be used for evaluation routing.' });
+      }
+      db.exec('BEGIN IMMEDIATE');
+      routingTransactionOpen = true;
+    }
+
+    if (existing.is_primary === 1 && is_enabled !== undefined && !is_enabled) {
+      const error: any = new Error('The current primary model cannot be disabled. Select another primary first.');
+      error.statusCode = 400;
+      throw error;
+    }
+
     if (is_primary === 1 || is_primary === true) {
       db.prepare('UPDATE model_configs SET is_primary = 0').run();
       db.prepare('UPDATE model_configs SET is_primary = 1, is_enabled = 1 WHERE id = ?').run(modelId);
@@ -5366,22 +5463,6 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
       `).run(modelId);
 
-      // Remove new primary from fallback chain if present
-      const currentFallbacks = getAuthoritativeFallbackChain(modelId);
-      const cleanedFallbacks = currentFallbacks.filter((m) => m !== modelId);
-      saveAuthoritativeFallbackChain(cleanedFallbacks, req.user!.id);
-
-      try {
-        const { setFirestoreDoc } = await import('../services/firestoreDbService.js');
-        await setFirestoreDoc('system_settings', 'ai_model_config', {
-          primary_model: modelId,
-          fallback_chain: cleanedFallbacks,
-          updated_at: new Date().toISOString(),
-          updated_by: req.user!.id,
-        });
-      } catch (fsErr) {
-        console.warn('[AdminRoutes] Could not sync ai_model_config to Firestore:', fsErr);
-      }
     }
 
     if (role !== undefined) {
@@ -5393,7 +5474,17 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
     }
 
     if (fallback_order !== undefined) {
-      db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(Number(fallback_order), modelId);
+      const requestedOrder = Number(fallback_order);
+      if (!Number.isInteger(requestedOrder) || requestedOrder < 1 || existing.is_primary === 1) {
+        const error: any = new Error('Fallback order must be a positive whole number for a non-primary model.');
+        error.statusCode = 400;
+        throw error;
+      }
+      const collision = db.prepare('SELECT id FROM model_configs WHERE is_primary = 0 AND fallback_order = ? AND id != ?').get(requestedOrder, modelId) as { id: string } | undefined;
+      if (collision) {
+        db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(existing.fallback_order, collision.id);
+      }
+      db.prepare('UPDATE model_configs SET fallback_order = ? WHERE id = ?').run(requestedOrder, modelId);
     }
 
     if (is_enabled !== undefined && !is_primary) {
@@ -5416,6 +5507,22 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
       db.prepare('UPDATE model_configs SET custom_endpoint = ? WHERE id = ?').run(custom_endpoint || null, modelId);
     }
 
+    if (routingChanged) {
+      const rows = db.prepare('SELECT id, is_primary, is_enabled, fallback_order FROM model_configs').all() as unknown as ModelRoutingRow[];
+      const config = {
+        ...buildModelRoutingConfiguration(rows, APPROVED_MODELS.map((model) => model.id)),
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user!.id,
+      };
+      const persisted = await setFirestoreDoc('system_configuration', 'evaluation_model_routing', config);
+      if (!persisted) {
+        const error: any = new Error('Could not persist model routing configuration to Firestore; the local changes were rolled back.');
+        error.statusCode = 503;
+        throw error;
+      }
+    }
+
+    // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'UPDATE_MODEL_CONFIG', 'AI_MODEL', ?, ?)
@@ -5426,11 +5533,22 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
       `Updated model configuration for ${modelId} (Primary: ${Boolean(is_primary)})`
     );
 
+    if (routingTransactionOpen) {
+      db.exec('COMMIT');
+      routingTransactionOpen = false;
+    }
+
     const updated = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(modelId);
     return res.json({ success: true, model: updated });
   } catch (error: unknown) {
+    if (routingTransactionOpen) {
+      try { db.exec('ROLLBACK'); } catch (rollbackError) {
+        console.error('Model configuration rollback error:', rollbackError);
+      }
+    }
     console.error('Update model error:', error);
-    return res.status(500).json({ error: 'Failed to update model configuration' });
+    const status = (error as any)?.statusCode || 500;
+    return res.status(status).json({ error: (error as any)?.message || 'Failed to update model configuration' });
   }
 });
 

@@ -8,7 +8,7 @@ import { UserRole } from '../../src/types/index.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
@@ -123,6 +123,27 @@ export async function evaluateMfaRequirementForLogin(
 
   // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
+    if (mfaState === 'MFA_RECOVERY_REQUIRED') {
+      // Fail closed without clearing enrollment or issuing a new authenticator
+      // QR. An administrator must complete the existing authorized recovery
+      // process when the persisted secret cannot currently be read.
+      const sessionToken = generateMfaSessionToken({
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.full_name,
+        type: 'MFA_CHALLENGE',
+      });
+      return {
+        requireMfa: true,
+        mfaState,
+        mfaEnrolled: true,
+        mfaSessionToken: sessionToken,
+        role: user.role,
+        message: 'Your existing MFA enrollment is preserved, but its secret is unavailable. Contact an administrator to complete secure MFA recovery.',
+      };
+    }
+
     if (mfaState === 'MFA_RECOVERY_PENDING') {
       return {
         requireMfa: true,
@@ -238,6 +259,11 @@ async function authenticateWithFirestoreFallback(
       if (expectedRole === 'SUPER_ADMIN' || uRole !== 'SUPER_ADMIN') {
         return null;
       }
+    }
+
+    if (uRole === 'STUDENT' && await isTombstoned('users', uId)) {
+      console.warn(`[Auth] Refusing Firestore login fallback for tombstoned student ${uId}.`);
+      return null;
     }
 
     const uFullName = fUserDoc.full_name || fUserDoc.name || 'CA Student';

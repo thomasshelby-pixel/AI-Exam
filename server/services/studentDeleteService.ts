@@ -5,6 +5,7 @@ import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
+import { requireConfirmedDeletions, type DurableDeletionTarget } from './deletionPersistence.js';
 
 export interface DeleteStudentResult {
   success: boolean;
@@ -97,6 +98,18 @@ export async function deleteStudentAccount(
 
   // 4. Collect all student-owned evaluations and locate associated files on disk
   const studentEvaluations = db.prepare('SELECT id FROM evaluations WHERE student_id = ?').all(studentId) as { id: string }[];
+
+  // Record each durable cloud tombstone before deleting the local account. A
+  // failed cloud write must leave the account intact and return an error.
+  const durableDeleteTargets = [
+    ['users', studentId, `Super admin permanently deleted student ${targetUser.email}`],
+    ['student_profiles', studentId, `Deleted student profile for ${studentId}`],
+    ['student_examiner_profiles', studentId, `Deleted examiner profile for ${studentId}`],
+    ...studentEvaluations.map((ev) => ['evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`] as [string, string, string]),
+  ] as DurableDeletionTarget[];
+  db.prepare("UPDATE users SET status = 'DELETING', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(studentId);
+  revokeAllSessionsForUser(studentId);
+  await requireConfirmedDeletions(durableDeleteTargets, permanentlyDeleteFromFirestore);
   
   const uploadDirs = [
     path.join(process.cwd(), 'uploads'),
@@ -250,28 +263,6 @@ export async function deleteStudentAccount(
     // Commit atomic transaction
     db.exec('COMMIT');
 
-    // 7I. Authoritative Cloud Firestore Synchronization & Tombstoning (Prevents resurrection upon restart)
-    const cloudPromises: Promise<any>[] = [
-      permanentlyDeleteFromFirestore('users', studentId, `Super admin permanently deleted student ${targetUser.email}`, { failOnError: true }),
-      permanentlyDeleteFromFirestore('student_profiles', studentId, `Deleted student profile for ${studentId}`, { failOnError: true }),
-      permanentlyDeleteFromFirestore('student_examiner_profiles', studentId, `Deleted student examiner profile for ${studentId}`),
-    ];
-    for (const ev of studentEvaluations) {
-      cloudPromises.push(
-        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion of evaluation for deleted student ${studentId}`)
-      );
-    }
-
-    const settledResults = await Promise.allSettled(cloudPromises);
-    const userDeletionResult = settledResults[0];
-    if (userDeletionResult.status === 'rejected') {
-      const errReason = (userDeletionResult as PromiseRejectedResult).reason;
-      console.error('[StudentDeleteService] Failed to persist user tombstone to Cloud Firestore:', errReason);
-      const error: any = new Error(`Local student data was purged, but authoritative Cloud Firestore tombstone could not be confirmed: ${errReason?.message || 'Cloud write failure'}.`);
-      error.statusCode = 502;
-      throw error;
-    }
-
     return {
       success: true,
       message: `Student account ${targetUser.full_name} (${targetUser.email}) has been permanently deleted.`,
@@ -374,7 +365,7 @@ export interface SelfDeleteStudentParams {
 export interface SelfDeleteStudentResult {
   success: boolean;
   message: string;
-  status: 'DELETED';
+  status: 'DELETED' | 'DELETING';
   alreadyDeleted?: boolean;
   cleanupSummary: {
     evaluationsRemoved: number;
@@ -508,9 +499,9 @@ export async function selfDeleteStudentAccount(
     const elapsedSeconds = (Date.now() - new Date(activeReq.started_at).getTime()) / 1000;
     if (elapsedSeconds < 60) {
       return {
-        success: true,
+        success: false,
         message: 'Your account deletion is already in progress.',
-        status: 'DELETED',
+        status: 'DELETING',
         cleanupSummary: {
           evaluationsRemoved: 0,
           filesRemoved: 0,
@@ -538,6 +529,25 @@ export async function selfDeleteStudentAccount(
 
   // 6. Collect student-owned evaluations and remove disk & cloud files
   const studentEvaluations = db.prepare('SELECT id FROM evaluations WHERE student_id = ?').all(studentId) as { id: string }[];
+
+  // Persist cloud tombstones before removing the local records. Every cloud
+  // delete is awaited; a failed write leaves the account in an explicit
+  // recoverable DELETING state instead of claiming deletion completed.
+  const durableDeleteTargets = [
+    ['users', studentId, `Student self-deleted account: ${targetUser.email}`],
+    ['student_profiles', studentId, `Self-deleted student profile: ${studentId}`],
+    ['student_examiner_profiles', studentId, `Self-deleted student examiner profile: ${studentId}`],
+    ...studentEvaluations.map((ev) => ['evaluations', ev.id, `Cascaded deletion for self-deleted student: ${studentId}`] as [string, string, string]),
+  ] as DurableDeletionTarget[];
+  try {
+    await requireConfirmedDeletions(durableDeleteTargets, permanentlyDeleteFromFirestore);
+  } catch (deleteError: any) {
+    const failureMessage = `Account deletion is incomplete. The account remains blocked in DELETING state; retry after persistence is available or contact support. ${deleteError?.message || ''}`.trim();
+    db.prepare("UPDATE account_deletion_requests SET status = 'DELETION_FAILED', error_message = ? WHERE id = ?").run(failureMessage, requestId);
+    const error: any = new Error(failureMessage);
+    error.statusCode = deleteError?.statusCode || 503;
+    throw error;
+  }
 
   const uploadDirs = [
     path.join(process.cwd(), 'uploads'),
@@ -700,19 +710,6 @@ export async function selfDeleteStudentAccount(
     // Commit atomic transaction
     db.exec('COMMIT');
 
-    // 8J. Authoritative Cloud Firestore Permanent Deletion & Tombstoning
-    const cloudPromises: Promise<any>[] = [
-      permanentlyDeleteFromFirestore('users', studentId, `Student self-deleted account: ${targetUser.email}`, { failOnError: true }),
-      permanentlyDeleteFromFirestore('student_profiles', studentId, `Self-deleted student profile: ${studentId}`, { failOnError: true }),
-      permanentlyDeleteFromFirestore('student_examiner_profiles', studentId, `Self-deleted student examiner profile: ${studentId}`),
-    ];
-    for (const ev of studentEvaluations) {
-      cloudPromises.push(
-        permanentlyDeleteFromFirestore('evaluations', ev.id, `Cascaded deletion for self-deleted student: ${studentId}`)
-      );
-    }
-    await Promise.allSettled(cloudPromises);
-
     return {
       success: true,
       message: 'Your account has been deleted successfully.',
@@ -742,7 +739,9 @@ export async function selfDeleteStudentAccount(
         SET status = 'DELETION_FAILED', error_message = ?
         WHERE id = ?
       `).run(txErr?.message || 'Database transaction failed', requestId);
-      db.prepare("UPDATE users SET status = 'ACTIVE' WHERE id = ?").run(studentId);
+      // Cloud tombstones may already be durable. Keep this account blocked;
+      // silently reactivating it could bypass the deletion ledger.
+      db.prepare("UPDATE users SET status = 'DELETING' WHERE id = ?").run(studentId);
     } catch (recErr) {
       console.error('[StudentDeleteService] Failed to record DELETION_FAILED state:', recErr);
     }

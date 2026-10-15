@@ -1,6 +1,5 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
-import { getGemini, generateContentWithResilience } from '../gemini.js';
 import { executeModelWithFallback } from '../models/modelRegistry.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
@@ -250,44 +249,25 @@ Return strictly valid JSON with this schema:
 `;
 
   try {
-    let cleanText = '';
-    let executedModel = 'gemini-3.8-flash';
-    let executedProvider = 'gemini';
-
-    try {
-      const modelExec = await executeModelWithFallback({
-        systemPrompt: 'You are an examiner-style evaluator, not a binary answer matcher.',
-        userPrompt: prompt,
-        pdfBase64: chunkBase64,
-        mimeType: 'application/pdf',
-        responseMimeType: 'application/json',
-        context: {
-          level,
-          subjectName,
-          checkingMode,
-        },
-      });
-      cleanText = modelExec.rawText?.trim() || '{}';
-      executedModel = modelExec.modelUsed;
-      executedProvider = modelExec.provider;
-    } catch (fallbackErr: any) {
-      console.warn(`[QuestionChunkEvaluator] executeModelWithFallback error, trying resilient direct invocation:`, fallbackErr?.message || fallbackErr);
-      const ai = getGemini();
-      const res = await generateContentWithResilience(ai, {
-        contents: [
-          { inlineData: { mimeType: 'application/pdf', data: chunkBase64 } },
-          { text: prompt },
-        ],
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
-      cleanText = res.text?.trim() || '{}';
-    }
+    const res = await executeModelWithFallback({
+      systemPrompt: 'You are an examiner-style evaluator. Return only valid JSON matching the requested schema.',
+      userPrompt: prompt,
+      pdfBase64: chunkBase64,
+      mimeType: 'application/pdf',
+      responseMimeType: 'application/json',
+      thinkingLevel: checkingMode === 'strict' ? 'HIGH' : 'MEDIUM',
+      context: {
+        level,
+        subjectName,
+        checkingMode,
+        pageCount: mapping.pages.length,
+      },
+    });
+    console.info(`[QuestionChunkEvaluator] ${fullCode} evaluated with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
 
     let raw: any = {};
     try {
-      let clean = cleanText;
+      let clean = res.rawText?.trim() || '{}';
       if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       raw = JSON.parse(clean);
     } catch {
@@ -341,6 +321,10 @@ Return strictly valid JSON with this schema:
 
     const qEval: QuestionEvaluation = {
       questionNumber: qNum,
+      modelUsed: res.modelUsed,
+      modelProvider: res.provider,
+      fallbackOccurred: res.fallbackOccurred,
+      fallbackReason: res.fallbackReason,
       subQuestion: subQ,
       maximumMarks: maxMarks,
       marksAwarded: finalAwarded,

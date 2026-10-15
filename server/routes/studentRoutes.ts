@@ -2773,10 +2773,10 @@ router.post('/delete-account', async (req: AuthRequest, res: Response) => {
       userAgent,
     });
 
-    return res.json({
-      success: true,
-      message: 'Your account has been deleted successfully.',
-      status: 'DELETED',
+    return res.status(result.status === 'DELETING' ? 202 : 200).json({
+      success: result.success,
+      message: result.message,
+      status: result.status,
       cleanupSummary: result.cleanupSummary,
     });
   } catch (error: any) {
@@ -2812,10 +2812,10 @@ router.delete('/account', async (req: AuthRequest, res: Response) => {
       userAgent,
     });
 
-    return res.json({
-      success: true,
-      message: 'Your account has been deleted successfully.',
-      status: 'DELETED',
+    return res.status(result.status === 'DELETING' ? 202 : 200).json({
+      success: result.success,
+      message: result.message,
+      status: result.status,
       cleanupSummary: result.cleanupSummary,
     });
   } catch (error: any) {
