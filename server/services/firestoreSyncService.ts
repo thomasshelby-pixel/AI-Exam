@@ -54,6 +54,63 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
 }
 
 /**
+ * Persist a student-initiated profile edit to the authoritative profile document.
+ * This intentionally bypasses syncRecordToFirestore's stale-local timestamp guard:
+ * a confirmed, authenticated profile save is a new user write, and SQLite's
+ * second-resolution updated_at can otherwise compare older than Firestore's
+ * millisecond-resolution _updatedAt even when the save just happened.
+ */
+export interface StudentProfileFirestoreAdapter {
+  isConfigured(): boolean;
+  isTombstoned(collectionName: string, id: string): Promise<boolean>;
+  setDocument(collectionName: string, id: string, data: Record<string, string | null>): Promise<boolean>;
+  getDocument<T>(collectionName: string, id: string): Promise<T | null>;
+}
+
+const defaultStudentProfileFirestoreAdapter: StudentProfileFirestoreAdapter = {
+  isConfigured: () => {
+    // The validator resolves this config relative to process.cwd(). In local
+    // test/dev runs the file may intentionally be absent; production startup
+    // requires the file and complete hydration before serving.
+    if (!fs.existsSync(path.resolve(process.cwd(), 'firebase-applet-config.json'))) return false;
+    return getFirestoreDb() !== null;
+  },
+  isTombstoned,
+  setDocument: setFirestoreDoc,
+  getDocument: getFirestoreDoc,
+};
+
+export async function persistStudentProfileEditToFirestore(
+  userId: string,
+  profileFields: Record<string, string | null>,
+  adapter: StudentProfileFirestoreAdapter = defaultStudentProfileFirestoreAdapter
+): Promise<'persisted' | 'unconfigured' | 'failed'> {
+  try {
+    // Local development and isolated tests may deliberately run without Firestore.
+    // Production startup requires complete Firestore hydration before serving.
+    if (!adapter.isConfigured()) return 'unconfigured';
+
+    if (await adapter.isTombstoned('student_profiles', userId)) {
+      console.warn(`[FirestoreSync] Refusing to update tombstoned student profile ${userId}.`);
+      return 'failed';
+    }
+
+    const written = await adapter.setDocument('student_profiles', userId, profileFields);
+    if (!written) return 'failed';
+
+    const persisted = await adapter.getDocument<Record<string, any>>('student_profiles', userId);
+    if (!persisted || Object.entries(profileFields).some(([key, value]) => persisted[key] !== value)) {
+      console.error(`[FirestoreSync] Student profile write verification failed for ${userId}.`);
+      return 'failed';
+    }
+    return 'persisted';
+  } catch (error) {
+    console.warn(`[FirestoreSync] Failed to persist student profile edit for ${userId}:`, error);
+    return 'failed';
+  }
+}
+
+/**
  * Permanently removes a record from Cloud Firestore and marks a tombstone
  * so it will NEVER be re-seeded or resurrected on server restarts.
  */

@@ -12,6 +12,7 @@ const allTestFiles = [
   'evaluationIntegrityHardening.test.ts',
   'examinerProfileAndCsCma.test.ts',
   'googleAuthAndSrnValidation.test.ts',
+  'studentProfileCoursePersistence.test.ts',
   'mcqMaterialUploadAndDuplicate.test.ts',
   'instituteSubscriptionGatingAndTrustedDevice.test.ts',
   'mcqCaseBasedBulkImportAndQuickResume.test.ts',

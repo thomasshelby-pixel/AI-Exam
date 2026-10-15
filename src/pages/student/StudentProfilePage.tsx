@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
@@ -279,6 +279,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
   // Profile Form States
   const [profileData, setProfileData] = useState<ProfileApiResponse | null>(null);
+  const profileFetchVersion = useRef(0);
   const [fullName, setFullName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [city, setCity] = useState<string>('');
@@ -328,13 +329,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [activePromoState, setActivePromoState] = useState<ProfileApiResponse['activePromo'] | null>(null);
   const [referralStatus, setReferralStatus] = useState<ReferralStatusResponse | null>(null);
 
-  const fetchProfileAndReferrals = async () => {
+  const fetchProfileAndReferrals = async (): Promise<ProfileApiResponse | null> => {
+    const fetchVersion = ++profileFetchVersion.current;
     try {
       setIsLoading(true);
       const [profRes, refRes] = await Promise.all([
         apiRequest<ProfileApiResponse>('/api/student/profile'),
         apiRequest<ReferralStatusResponse>('/api/student/referral/status'),
       ]);
+
+      if (fetchVersion !== profileFetchVersion.current) return null;
 
       setProfileData(profRes);
       setFullName(profRes.user.fullName || '');
@@ -347,14 +351,17 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setReferralStatus(refRes);
       setCampaignInfo(refRes.ai30Campaign);
       setActivePromoState(profRes.activePromo || refRes.activePromo);
+      return profRes;
     } catch (err: any) {
+      if (fetchVersion !== profileFetchVersion.current) return null;
       console.error('Failed to load profile data:', err);
       setProfileMessage({
         type: 'error',
         text: err?.message || 'Failed to load profile details. Please try again.',
       });
+      return null;
     } finally {
-      setIsLoading(false);
+      if (fetchVersion === profileFetchVersion.current) setIsLoading(false);
     }
   };
 
@@ -381,7 +388,14 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
     try {
       setIsSavingProfile(true);
-      const res = await apiRequest<{ success: boolean; message: string }>('/api/student/profile', {
+      // Invalidate any profile request started before this save so it cannot
+      // apply an older course after the authoritative update completes.
+      profileFetchVersion.current += 1;
+      const res = await apiRequest<{
+        success: boolean;
+        message: string;
+        profile: Pick<ProfileApiResponse['profile'], 'caLevel'>;
+      }>('/api/student/profile', {
         method: 'PUT',
         body: JSON.stringify({
           fullName: fullName.trim(),
@@ -392,6 +406,21 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
           avatarUrl: avatarUrl.trim(),
         }),
       });
+
+      if (!res.success || res.profile?.caLevel !== caLevel) {
+        throw new Error('The saved CA course could not be verified. Please retry.');
+      }
+
+      const refreshedProfile = await fetchProfileAndReferrals();
+      if (!refreshedProfile || refreshedProfile.profile.caLevel !== res.profile.caLevel) {
+        setCaLevel(profileData?.profile.caLevel || 'INTERMEDIATE');
+        setPreferredSubjects(profileData?.profile.preferredSubjects || []);
+        setProfileMessage({
+          type: 'error',
+          text: 'The saved profile could not be confirmed after reloading. Your last confirmed course has been restored.',
+        });
+        return;
+      }
 
       setProfileMessage({ type: 'success', text: res.message || 'Profile updated successfully.' });
 
@@ -409,10 +438,10 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         refreshUser().catch(() => {});
       }
 
-      // Refresh data
-      fetchProfileAndReferrals();
     } catch (err: any) {
       console.error('Update profile failed:', err);
+      setCaLevel(profileData?.profile.caLevel || caLevel);
+      setPreferredSubjects(profileData?.profile.preferredSubjects || preferredSubjects);
       setProfileMessage({
         type: 'error',
         text: err?.message || 'Failed to update profile. Please try again.',
