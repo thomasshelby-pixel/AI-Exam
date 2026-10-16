@@ -65,6 +65,11 @@ export const StudyPlannerPage: React.FC = () => {
   const [selectedStrength, setSelectedStrength] = useState('MODERATE');
   const [strengthSaveState, setStrengthSaveState] = useState('');
   const [plannerWorkflow, setPlannerWorkflow] = useState<'strength' | 'performance'>('strength');
+  const [dailyMinutes, setDailyMinutes] = useState('180');
+  const [dailyDate, setDailyDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dailyPlan, setDailyPlan] = useState<any>(null);
+  const [dailyPlanState, setDailyPlanState] = useState('');
+  const [dailyPlanBusy, setDailyPlanBusy] = useState(false);
   const [mockSubject, setMockSubject] = useState('Taxation (Income Tax & GST)');
   const [mockScore, setMockScore] = useState('');
   const [mockMaxScore, setMockMaxScore] = useState('100');
@@ -105,7 +110,22 @@ export const StudyPlannerPage: React.FC = () => {
       setStrengths(restored);
       setPriorities(priorityData.priorities || []);
     }).catch(() => { /* Keep chat usable if profile or curriculum is temporarily unavailable. */ });
-    return () => { cancelled = true; };
+    const generateDailyPlan = () => {
+    const minutes = Number(dailyMinutes);
+    if (!Number.isInteger(minutes) || minutes < 30 || minutes > 720) { setDailyPlanState('Enter study time between 30 minutes and 12 hours.'); setDailyPlan(null); return; }
+    if (!dailyDate || Number.isNaN(new Date(dailyDate + 'T00:00:00').getTime())) { setDailyPlanState('Choose a valid date.'); return; }
+    if (!priorities.length) { setDailyPlanState('Rate at least one chapter first. The planner will not guess your weak areas.'); setDailyPlan(null); return; }
+    const ranked = [...priorities].sort((a, b) => b.priority_score - a.priority_score).slice(0, Math.min(4, priorities.length));
+    const chunks: Array<{ chapter: typeof ranked[number]; minutes: number }> = []; let remaining = minutes; let index = 0;
+    while (remaining > 0) { const part = Math.min(50, remaining); chunks.push({ chapter: ranked[index % ranked.length], minutes: part }); remaining -= part; index += 1; }
+    const defs = [{ label: 'Concept review', activity: 'CONCEPT_REVIEW', share: 0.4, instruction: 'Revise notes and core concepts; identify the key provision, rule or formula.' }, { label: 'Question practice', activity: 'QUESTION_PRACTICE', share: 0.4, instruction: 'Attempt module, RTP or MTP questions before checking the solution.' }, { label: 'Active recall', activity: 'ACTIVE_RECALL', share: 0.2, instruction: 'Close the material, recall key points and note mistakes for revision.' }];
+    const sessions: any[] = [];
+    for (const chunk of chunks) { const splits = defs.map((d) => Math.floor(chunk.minutes * d.share)); splits[2] += chunk.minutes - splits.reduce((sum, value) => sum + value, 0); defs.forEach((d, i) => { if (splits[i] > 0) sessions.push({ order: sessions.length + 1, subject: chunk.chapter.subject, chapter: chunk.chapter.chapter, label: d.label, activity: d.activity, minutes: splits[i], instruction: d.instruction, priority_score: chunk.chapter.priority_score }); }); }
+    setDailyPlan({ title: 'Priority-based daily study plan', total_minutes: minutes, date: dailyDate, sessions }); setDailyPlanState('Draft ready. Review the sessions before saving.');
+  };
+  const saveDailyPlan = async () => { if (!dailyPlan) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
+
+  return () => { cancelled = true; };
   }, []);
 
   const sendRequest = async (rawText?: string) => {
@@ -159,7 +179,14 @@ export const StudyPlannerPage: React.FC = () => {
           </button>
         </div>
       </section>
-      {plannerWorkflow === 'strength' ? (
+      <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
+        <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><CalendarClock className="h-5 w-5" /></div><div className="min-w-0 flex-1"><h2 className="font-extrabold text-slate-900 dark:text-white">Build your daily timetable</h2><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Uses saved chapter priorities. Mock marks are optional; chapter ratings are enough.</p></div></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Study time (minutes)</span><input type="number" min="30" max="720" step="15" value={dailyMinutes} onChange={(e) => setDailyMinutes(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Plan date</span><input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label><button type="button" onClick={generateDailyPlan} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"><Sparkles className="h-4 w-4" />Generate timetable</button></div>
+        {dailyPlanState && <p role="status" className="mt-3 text-xs text-slate-600 dark:text-slate-300">{dailyPlanState}</p>}
+        {dailyPlan && <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-3 dark:bg-slate-900"><div><h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{dailyPlan.title}</h3><p className="text-xs text-slate-500">{dailyPlan.date} · {dailyPlan.total_minutes} study minutes</p></div><button type="button" disabled={dailyPlanBusy} onClick={() => void saveDailyPlan()} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{dailyPlanBusy ? 'Saving…' : 'Save timetable'}</button></div><ol className="divide-y divide-slate-100 dark:divide-slate-800">{dailyPlan.sessions.map((session: any) => <li key={session.order} className="flex gap-3 px-3 py-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{session.order}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</p><span className="text-xs font-bold text-slate-500">{session.minutes} min</span></div><p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject} · {session.chapter}</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{session.instruction}</p></div></li>)}</ol><p className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500 dark:border-slate-800">Take a 5–10 minute break between focused blocks. Breaks are not counted as study time.</p></div>}
+      </section>
+
+            {plannerWorkflow === 'strength' ? (
               <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><BookOpen className="h-5 w-5" /></div>
