@@ -227,6 +227,23 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS student_mock_results (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      course TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      score REAL NOT NULL CHECK (score >= 0),
+      max_score REAL NOT NULL CHECK (max_score > 0 AND score <= max_score),
+      exam_date TEXT NOT NULL DEFAULT (date('now')),
+      source TEXT NOT NULL DEFAULT 'SELF_REPORTED' CHECK (source IN ('SELF_REPORTED', 'MOCK_TEST', 'PAST_PAPER')),
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mock_results_user_subject_date
+      ON student_mock_results(user_id, course, subject, exam_date DESC, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS student_study_plans (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
