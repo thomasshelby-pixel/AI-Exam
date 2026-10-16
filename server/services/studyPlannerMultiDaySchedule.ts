@@ -19,6 +19,8 @@ export interface MultiDaySession {
   priority_score: number;
 }
 
+export interface ClassBlock { day_of_week: number; start_time: string; end_time: string; label?: string; }
+
 export interface MultiDayStudyPlan {
   start_date: string;
   end_date: string;
@@ -27,6 +29,7 @@ export interface MultiDayStudyPlan {
   daily_study_minutes: number;
   study_start_time: string;
   preferred_end_time: string;
+  class_mode: 'none' | 'fixed' | 'flexible';
   sessions: MultiDaySession[];
   assumptions: string[];
 }
@@ -62,6 +65,8 @@ export function createMultiDayStudyPlan(input: {
   preferred_end_time: string;
   attempt: string;
   exact_exam_date?: string | null;
+  class_mode?: 'none' | 'fixed' | 'flexible';
+  class_blocks?: ClassBlock[];
   priorities: MultiDayPriority[];
 }): MultiDayStudyPlan {
   if (!isValidISODate(input.start_date)) throw new Error('start_date must be a valid YYYY-MM-DD date');
@@ -77,6 +82,17 @@ export function createMultiDayStudyPlan(input: {
   if (examDate && (!isValidISODate(examDate) || examDate < input.start_date)) {
     throw new Error('Exact exam date must be a valid date on or after the plan start date.');
   }
+  const classMode = input.class_mode || 'none';
+  if (!['none', 'fixed', 'flexible'].includes(classMode)) throw new Error('Choose no classes, fixed class times, or flexible class hours.');
+  const classBlocks = (input.class_blocks || []).map((block) => {
+    const blockStart = parseClock(block.start_time);
+    const blockEnd = parseClock(block.end_time);
+    if (!Number.isInteger(block.day_of_week) || block.day_of_week < 0 || block.day_of_week > 6 || blockStart === null || blockEnd === null || blockEnd <= blockStart) {
+      throw new Error('Each class block needs a valid weekday and an end time after its start time.');
+    }
+    return { day_of_week: block.day_of_week, start: blockStart, end: blockEnd, label: String(block.label || 'Class').slice(0, 100) };
+  });
+  if (classMode === 'fixed' && classBlocks.length === 0) throw new Error('Add at least one fixed weekly class time, or choose no classes / flexible class hours.');
   const dailyMinutes = Math.round(input.daily_study_hours * 60);
   if (dailyMinutes > end - start) throw new Error('Your daily study hours do not fit between the chosen start and end times.');
   const unique = new Map<string, MultiDayPriority>();
@@ -106,11 +122,23 @@ export function createMultiDayStudyPlan(input: {
     const date = addDaysISO(input.start_date, day);
     if (date > lastDate) break;
     if (!chapters.length) continue;
+    const weekday = new Date(date + 'T00:00:00.000Z').getUTCDay();
+    const unavailable = classMode === 'fixed' ? classBlocks.filter((block) => block.day_of_week === weekday).sort((a,b) => a.start - b.start) : [];
+    const windows: Array<{ start: number; end: number }> = [];
+    let windowStart = start;
+    for (const block of unavailable) {
+      if (block.end <= windowStart || block.start >= end) continue;
+      if (block.start > windowStart) windows.push({ start: windowStart, end: Math.min(block.start, end) });
+      windowStart = Math.max(windowStart, block.end);
+    }
+    if (windowStart < end) windows.push({ start: windowStart, end });
     let remaining = dailyMinutes;
     let clock = start;
     let activityCursor = day % activityList.length;
     let dayOrder = 1;
-    while (remaining > 0 && clock + Math.min(45, remaining) <= end) {
+    for (const window of windows) {
+      clock = Math.max(clock, window.start);
+      while (remaining > 0 && clock + Math.min(45, remaining) <= window.end) {
       const minutes = Math.min(45, remaining);
       const chapter = chapters[chapterCursor % chapters.length];
       const activity = activityList[activityCursor % activityList.length];
@@ -123,6 +151,8 @@ export function createMultiDayStudyPlan(input: {
       activityCursor += 1;
       remaining -= minutes;
       clock += minutes + (remaining > 0 ? 10 : 0);
+      }
+      if (remaining <= 0) break;
     }
   }
   return {
@@ -130,7 +160,8 @@ export function createMultiDayStudyPlan(input: {
     daily_study_minutes: dailyMinutes, study_start_time: input.study_start_time, preferred_end_time: input.preferred_end_time,
     sessions,
     assumptions: chapters.length
-      ? ['This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.', 'Exact exam date is optional. Without it, the selected attempt month is a target label, not an assumed exam date.']
+      ? ['This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
+        classMode === 'none' ? 'No class time was supplied; all selected study windows are treated as available.' : classMode === 'fixed' ? 'Recurring fixed class blocks are excluded from study windows.' : 'Flexible class hours selected: enter your actual unavailable windows by adjusting start/end times before following the plan.', 'Exact exam date is optional. Without it, the selected attempt month is a target label, not an assumed exam date.']
       : ['Rate at least one chapter first. The planner will not guess which chapters are weak.'],
   };
 }
