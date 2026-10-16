@@ -217,7 +217,7 @@ export const StudyPlannerPage: React.FC = () => {
                   setSelectedStrength(value);
                 }} className="rounded-lg border border-slate-200 px-3 py-2 text-left dark:border-slate-800">
                   <span className="block max-w-[240px] truncate text-xs font-bold text-slate-800 dark:text-slate-100">{chapter}</span>
-                  <span className="mt-1 block text-[10px] text-slate-500">{subject} · {value.toLowerCase()}</span>
+                  <span className="mt-1 block text-[10px] text-slate-500">{subject} · {String(value).toLowerCase()}</span>
                 </button>;
               })}
             </div>
