@@ -232,7 +232,7 @@ router.post('/daily-schedule', authenticateToken, (req: AuthRequest, res: Respon
   if (course !== 'CA_INTERMEDIATE') {
     return res.status(400).json({ success: false, error: 'Daily schedules are currently available for CA Intermediate only.' });
   }
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || new Date(date + 'T00:00:00.000Z').toISOString().slice(0, 10) !== date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || new Date(date + 'T00:00:00.000Z').toISOString().slice(0, 10) !== date) {
     return res.status(400).json({ success: false, error: 'Provide a valid date in YYYY-MM-DD format.' });
   }
   if (!Number.isInteger(availableMinutes) || availableMinutes < 30 || availableMinutes > 720) {
