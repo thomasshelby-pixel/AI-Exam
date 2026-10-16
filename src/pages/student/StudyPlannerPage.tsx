@@ -64,6 +64,12 @@ export const StudyPlannerPage: React.FC = () => {
   const [selectedStrengthChapter, setSelectedStrengthChapter] = useState('');
   const [selectedStrength, setSelectedStrength] = useState('MODERATE');
   const [strengthSaveState, setStrengthSaveState] = useState('');
+  const [mockSubject, setMockSubject] = useState('Taxation (Income Tax & GST)');
+  const [mockScore, setMockScore] = useState('');
+  const [mockMaxScore, setMockMaxScore] = useState('100');
+  const [mockSaveState, setMockSaveState] = useState('');
+  const [mockBusy, setMockBusy] = useState(false);
+  const [priorities, setPriorities] = useState<Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }>>([]);
   const [strengthBusy, setStrengthBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 1,
@@ -82,7 +88,8 @@ export const StudyPlannerPage: React.FC = () => {
     Promise.all([
       apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=CA_INTERMEDIATE'),
       apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE'),
-    ]).then(([curriculum, profile]) => {
+      apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE'),
+    ]).then(([curriculum, profile, priorityData]) => {
       if (cancelled) return;
       const options = curriculum.subjects || [];
       setCurriculumSubjects(options);
@@ -95,6 +102,7 @@ export const StudyPlannerPage: React.FC = () => {
         if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
       }
       setStrengths(restored);
+      setPriorities(priorityData.priorities || []);
     }).catch(() => { /* Keep chat usable if profile or curriculum is temporarily unavailable. */ });
     return () => { cancelled = true; };
   }, []);
@@ -220,6 +228,55 @@ export const StudyPlannerPage: React.FC = () => {
                   <span className="mt-1 block text-[10px] text-slate-500">{subject} · {String(value).toLowerCase()}</span>
                 </button>;
               })}
+            </div>
+          )}
+        </div>
+      </section>
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"><CalendarClock className="h-5 w-5" /></div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-extrabold text-slate-900 dark:text-white">Adaptive chapter priorities</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Save a mock-test result to combine it with your chapter confidence ratings. Higher scores below mean a higher revision priority.</p>
+          </div>
+        </div>
+        <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={async (event) => {
+          event.preventDefault(); setMockBusy(true); setMockSaveState('');
+          try {
+            await apiRequest('/api/student/study-planner/mock-results', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject: mockSubject, score: Number(mockScore), max_score: Number(mockMaxScore), source: 'MOCK_TEST' }) });
+            const result = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
+            setPriorities(result.priorities || []);
+            setMockSaveState('Mock result saved. Chapter priorities updated.');
+            setMockScore('');
+          } catch (err: any) { setMockSaveState(err?.message || 'Could not save the mock result.'); }
+          finally { setMockBusy(false); }
+        }}>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Subject</span>
+            <select value={mockSubject} onChange={(e) => setMockSubject(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+              {curriculumSubjects.map((subject) => <option key={subject.key} value={subject.name}>{subject.name}</option>)}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Marks scored</span><input required min="0" step="0.5" type="number" value={mockScore} onChange={(e) => setMockScore(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" placeholder="35" /></label>
+            <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Out of</span><input required min="1" step="0.5" type="number" value={mockMaxScore} onChange={(e) => setMockMaxScore(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" placeholder="100" /></label>
+          </div>
+          <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+            <button type="submit" disabled={mockBusy || mockScore === '' || mockMaxScore === ''} className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{mockBusy ? 'Saving…' : 'Save mock result & update priorities'}</button>
+            {mockSaveState && <p role="status" className="text-xs text-slate-500">{mockSaveState}</p>}
+          </div>
+        </form>
+        <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-500">Your chapter priorities</h3><span className="text-[10px] text-slate-500">60% self-rating · 40% mock score risk</span></div>
+          {priorities.length === 0 ? <p className="text-xs text-slate-500 dark:text-slate-400">Rate some chapters above to start your priority list. Add a mock score to improve the ranking.</p> : (
+            <div className="space-y-2">
+              {priorities.slice(0, 8).map((item, index) => (
+                <div key={item.subject + '::' + item.chapter} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-xs font-extrabold text-amber-800 dark:bg-amber-950 dark:text-amber-200">{index + 1}</div>
+                  <div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-900 dark:text-white">{item.chapter}</p><p className="mt-0.5 text-xs text-slate-500">{item.subject} · {item.strength.toLowerCase()}{item.mock_percentage !== null ? ' · latest mock ' + item.mock_percentage + '%' : ' · no mock result yet'}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{item.rationale}</p></div>
+                  <span className={'shrink-0 rounded-full px-2 py-1 text-[10px] font-extrabold ' + (item.priority === 'HIGH' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-200' : item.priority === 'MEDIUM' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200')}>{item.priority}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
