@@ -474,11 +474,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             id="dashboard-study-planner-btn"
             type="button"
             onClick={() => navigate('/student/study-planner')}
-            className="px-3.5 py-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 font-semibold text-xs sm:text-sm transition border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 cursor-pointer"
-            title="Create a draft study plan"
+            aria-label="Open AI Planner"
+            title="AI Planner"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/70 dark:focus-visible:ring-offset-slate-900"
           >
-            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>Study Planner</span>
+            <Sparkles className="h-5 w-5" aria-hidden="true" />
           </button>
 
           <a
