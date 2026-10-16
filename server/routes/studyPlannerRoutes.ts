@@ -408,7 +408,7 @@ router.post('/plans', authenticateToken, (req: AuthRequest, res: Response) => {
   }
   const total = Number(plan.total_minutes);
   const sum = plan.sessions.reduce((n: number, session: any) => n + Number(session?.minutes || 0), 0);
-  if (!Number.isInteger(total) || total < 1 || total > 1440 || sum !== total || plan.sessions.some((s: any) => !s || typeof s.subject !== 'string' || typeof s.label !== 'string' || !Number.isInteger(s.minutes) || s.minutes < 1)) {
+  if (!Number.isInteger(total) || total < 1 || total > 10080 || sum !== total || plan.sessions.some((s: any) => !s || typeof s.subject !== 'string' || typeof s.label !== 'string' || !Number.isInteger(s.minutes) || s.minutes < 1)) {
     return res.status(400).json({ success: false, error: 'Study-plan sessions failed validation.' });
   }
   const id = randomUUID();
