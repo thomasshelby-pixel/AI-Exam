@@ -602,6 +602,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user: User;
         mfaRequired?: boolean;
         mfaEnrolled?: boolean;
+        mfaState?: string;
         mfaSessionToken?: string;
         totpSetup?: any;
         canonicalPhoneE164?: string;
@@ -618,7 +619,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return new Promise<User>((resolve, reject) => {
           setMfaChallenge({
             isOpen: true,
-            mode: res.mfaEnrolled ? 'CHALLENGE' : 'ENROLL',
+            // The authoritative state wins if the legacy boolean is stale or inconsistent.
+            // Never show an enrollment QR for an account the server says is already enrolled
+            // or whose existing enrollment requires recovery.
+            mode:
+              res.mfaState === 'MFA_ENROLLED' ||
+              res.mfaState === 'MFA_RECOVERY_REQUIRED' ||
+              res.mfaEnrolled === true
+                ? 'CHALLENGE'
+                : 'ENROLL',
             mfaSessionToken: res.mfaSessionToken!,
             totpSetup: res.totpSetup,
             canonicalPhoneE164: res.canonicalPhoneE164,
