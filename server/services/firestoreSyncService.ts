@@ -511,11 +511,24 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     for (const c of earlyLedger) {
       try {
         db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, payment_order_id, note, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, order_id, payment_id, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
           ON CONFLICT(id) DO NOTHING
-        `).run(c.id, c.student_id, c.amount, c.source, c.balance_after || 0, c.evaluation_id || null, c.payment_order_id || null, c.note || '', c.created_at || null);
-      } catch {}
+        `).run(
+          c.id,
+          c.student_id,
+          c.amount,
+          c.source,
+          c.balance_after ?? 0,
+          c.evaluation_id || null,
+          c.order_id || c.payment_order_id || null,
+          c.payment_id || null,
+          c.note || '',
+          c.created_at || null
+        );
+      } catch (ledgerErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate credit ledger entry ${c.id}:`, ledgerErr);
+      }
     }
 
     // 3. Hydrate Student Profiles
@@ -1064,12 +1077,23 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     for (const c of ledger) {
       try {
         db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, payment_order_id, note, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, order_id, payment_id, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
           ON CONFLICT(id) DO NOTHING
-        `).run(c.id, c.student_id, c.amount, c.source, c.balance_after || 0, c.evaluation_id || null, c.payment_order_id || null, c.note || '', c.created_at || null);
-      } catch {
-        // ignore
+        `).run(
+          c.id,
+          c.student_id,
+          c.amount,
+          c.source,
+          c.balance_after ?? 0,
+          c.evaluation_id || null,
+          c.order_id || c.payment_order_id || null,
+          c.payment_id || null,
+          c.note || '',
+          c.created_at || null
+        );
+      } catch (ledgerErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate credit ledger entry ${c.id}:`, ledgerErr);
       }
     }
 
