@@ -65,8 +65,12 @@ export const StudyPlannerPage: React.FC = () => {
   const [selectedStrength, setSelectedStrength] = useState('MODERATE');
   const [strengthSaveState, setStrengthSaveState] = useState('');
   const [plannerWorkflow, setPlannerWorkflow] = useState<'strength' | 'performance'>('strength');
-  const [dailyMinutes, setDailyMinutes] = useState('180');
+  const [dailyMinutes, setDailyMinutes] = useState('240');
   const [dailyDate, setDailyDate] = useState(new Date().toISOString().slice(0, 10));
+  const [studyStartTime, setStudyStartTime] = useState('06:00');
+  const [preferredEndTime, setPreferredEndTime] = useState('22:00');
+  const [examAttempt, setExamAttempt] = useState('May 2027');
+  const [exactExamDate, setExactExamDate] = useState('');
   const [dailyPlan, setDailyPlan] = useState<any>(null);
   const [dailyPlanState, setDailyPlanState] = useState('');
   const [dailyPlanBusy, setDailyPlanBusy] = useState(false);
@@ -170,8 +174,8 @@ export const StudyPlannerPage: React.FC = () => {
 
   const generateDailyPlan = async () => {
     const minutes = Number(dailyMinutes);
-    if (!Number.isInteger(minutes) || minutes < 30 || minutes > 720) {
-      setDailyPlanState('Enter study time between 30 minutes and 12 hours.');
+    if (!Number.isInteger(minutes) || minutes < 60 || minutes > 720 || minutes % 15 !== 0) {
+      setDailyPlanState('Enter daily study time from 1 to 12 hours in 15-minute increments.');
       setDailyPlan(null);
       return;
     }
@@ -184,25 +188,35 @@ export const StudyPlannerPage: React.FC = () => {
     setDailyPlanState('');
     setDailyPlan(null);
     try {
-      const response = await apiRequest<{ success: boolean; schedule: { date: string; available_minutes: number; scheduled_minutes: number; unscheduled_minutes: number; sessions: any[]; assumptions: string[] }; error?: string }>(
-        '/api/student/study-planner/daily-schedule',
+      const response = await apiRequest<{ success: boolean; plan: { start_date: string; end_date: string; attempt: string; exact_exam_date: string | null; daily_study_minutes: number; sessions: any[]; assumptions: string[] }; error?: string }>(
+        '/api/student/study-planner/multi-day-schedule',
         {
           method: 'POST',
-          body: JSON.stringify({ course: 'CA_INTERMEDIATE', date: dailyDate, available_minutes: minutes }),
+          body: JSON.stringify({
+            course: 'CA_INTERMEDIATE',
+            start_date: dailyDate,
+            daily_study_hours: minutes / 60,
+            study_start_time: studyStartTime,
+            preferred_end_time: preferredEndTime,
+            attempt: examAttempt,
+            exact_exam_date: exactExamDate || null,
+          }),
         },
       );
-      const schedule = response.schedule;
+      const schedule = response.plan;
       setDailyPlan({
-        title: 'Priority-based daily study plan',
-        total_minutes: schedule.scheduled_minutes,
-        available_minutes: schedule.available_minutes,
-        unscheduled_minutes: schedule.unscheduled_minutes,
-        date: schedule.date,
+        title: '7-day study timetable · ' + schedule.attempt,
+        total_minutes: schedule.daily_study_minutes,
+        available_minutes: schedule.daily_study_minutes,
+        unscheduled_minutes: 0,
+        date: schedule.start_date,
+        end_date: schedule.end_date,
+        attempt: schedule.attempt,
         sessions: schedule.sessions,
         assumptions: schedule.assumptions,
       });
       setDailyPlanState(schedule.sessions.length
-        ? 'Draft ready. Review the sessions before saving.'
+        ? '7-day draft ready. Review the subject rotation and session times before saving.'
         : 'Rate at least one chapter first. The planner will not guess which chapters are weak.');
       await apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE')
         .then((data) => setPriorities(data.priorities || []))
@@ -267,10 +281,18 @@ export const StudyPlannerPage: React.FC = () => {
         </div>
       </section>
       <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
-        <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><CalendarClock className="h-5 w-5" /></div><div className="min-w-0 flex-1"><h2 className="font-extrabold text-slate-900 dark:text-white">Build your daily timetable</h2><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Uses saved chapter priorities. Mock marks are optional; chapter ratings are enough.</p></div></div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Study time (minutes)</span><input type="number" min="30" max="720" step="15" value={dailyMinutes} onChange={(e) => setDailyMinutes(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label><label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Plan date</span><input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label><button type="button" onClick={generateDailyPlan} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"><Sparkles className="h-4 w-4" />Generate timetable</button></div>
+        <div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><CalendarClock className="h-5 w-5" /></div><div className="min-w-0 flex-1"><h2 className="font-extrabold text-slate-900 dark:text-white">Build your 7-day timetable</h2><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Distributes rated chapters across the week, with exact session times and your selected CA attempt. Mock marks remain optional.</p></div></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Daily study hours (minutes)</span><input type="number" min="60" max="720" step="15" value={dailyMinutes} onChange={(e) => setDailyMinutes(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-[11px] text-slate-500">{(Number(dailyMinutes) / 60 || 0)} hours/day</span></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Plan starts on</span><input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Study start time</span><input type="time" value={studyStartTime} onChange={(e) => setStudyStartTime(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Preferred end time</span><input type="time" value={preferredEndTime} onChange={(e) => setPreferredEndTime(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">CA Inter attempt</span><select value={examAttempt} onChange={(e) => setExamAttempt(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>January 2027</option><option>May 2027</option><option>September 2027</option><option>January 2028</option><option>May 2028</option><option>September 2028</option></select></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Exact exam date (optional)</span><input type="date" value={exactExamDate} min={dailyDate} onChange={(e) => setExactExamDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <div className="sm:col-span-2"><button type="button" disabled={dailyPlanBusy} onClick={generateDailyPlan} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50"><Sparkles className="h-4 w-4" />{dailyPlanBusy ? 'Building timetable…' : 'Generate 7-day timetable'}</button></div>
+        </div>
         {dailyPlanState && <p role="status" className="mt-3 text-xs text-slate-600 dark:text-slate-300">{dailyPlanState}</p>}
-        {dailyPlan && <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-3 dark:bg-slate-900"><div><h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{dailyPlan.title}</h3><p className="text-xs text-slate-500">{dailyPlan.date} · {dailyPlan.total_minutes} study minutes</p></div><button type="button" disabled={dailyPlanBusy || !dailyPlan.sessions.length} onClick={() => void saveDailyPlan()} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{dailyPlanBusy ? 'Saving…' : 'Save timetable'}</button></div><ol className="divide-y divide-slate-100 dark:divide-slate-800">{dailyPlan.sessions.map((session: any) => <li key={session.order} className="flex gap-3 px-3 py-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{session.order}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</p><span className="text-xs font-bold text-slate-500">{session.minutes} min</span></div><p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject} · {session.chapter}</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{session.instruction}</p></div></li>)}</ol><p className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500 dark:border-slate-800">Take a 5–10 minute break between focused blocks. Breaks are not counted as study time.</p></div>}
+        {dailyPlan && <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-3 dark:bg-slate-900"><div><h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{dailyPlan.title}</h3><p className="text-xs text-slate-500">{dailyPlan.date} to {dailyPlan.end_date} · {dailyPlan.total_minutes} study minutes/day · {dailyPlan.attempt}</p></div><button type="button" disabled={dailyPlanBusy || !dailyPlan.sessions.length} onClick={() => void saveDailyPlan()} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{dailyPlanBusy ? 'Saving…' : 'Save timetable'}</button></div><ol className="divide-y divide-slate-100 dark:divide-slate-800">{dailyPlan.sessions.map((session: any) => <li key={session.date + '-' + session.order} className="flex gap-3 px-3 py-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{session.order}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</p><span className="text-xs font-bold text-slate-500">{session.date} · {session.start_time}–{session.end_time} · {session.minutes} min</span></div><p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject} · {session.chapter}</p><p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{session.instruction}</p></div></li>)}</ol><p className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500 dark:border-slate-800">Take a 5–10 minute break between focused blocks. Breaks are not counted as study time.</p></div>}
       </section>
 
             {plannerWorkflow === 'strength' ? (
