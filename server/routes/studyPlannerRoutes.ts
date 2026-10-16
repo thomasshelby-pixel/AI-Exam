@@ -14,17 +14,123 @@ const MAX_MESSAGE_LENGTH = 1200;
 const ALLOWED_STRENGTHS = new Set(['STRONG', 'MODERATE', 'WEAK']);
 
 
+// Chapter labels are maintained against the current shared CA Intermediate subject registry.
+ // More granular chapter names are used where the shared registry currently stores only broad areas.
+const INTERMEDIATE_CHAPTERS: Record<string, string[]> = {
+  'Advanced Accounting': [
+    'Accounting Standards (AS 1, AS 2, AS 3, AS 4, AS 5)',
+    'Accounting Standards (AS 7, AS 9, AS 10, AS 11, AS 12)',
+    'Accounting Standards (AS 13, AS 14, AS 16, AS 17, AS 18)',
+    'Accounting Standards (AS 19, AS 20, AS 22, AS 24, AS 26, AS 28, AS 29)',
+    'Company Accounts',
+    'Amalgamation of Companies',
+    'Internal Reconstruction',
+    'Branch Accounts',
+    'Consolidated Financial Statements',
+  ],
+  'Corporate and Other Laws': [
+    'Preliminary and Incorporation of Company',
+    'Prospectus and Allotment of Securities',
+    'Share Capital and Debentures',
+    'Acceptance of Deposits',
+    'Registration of Charges',
+    'Management and Administration',
+    'Declaration and Payment of Dividend',
+    'Accounts of Companies',
+    'Audit and Auditors',
+    'Companies Incorporated Outside India',
+    'The Limited Liability Partnership Act, 2008',
+    'The General Clauses Act, 1897',
+    'Interpretation of Statutes',
+    'The Foreign Exchange Management Act, 1999',
+  ],
+  'Taxation (Income Tax & GST)': [
+    'Basic Concepts and Residential Status',
+    'Income from Salaries',
+    'Income from House Property',
+    'Profits and Gains from Business or Profession',
+    'Capital Gains',
+    'Income from Other Sources',
+    'Clubbing of Income',
+    'Set-off and Carry Forward of Losses',
+    'Deductions from Gross Total Income',
+    'Advance Tax, TDS and TCS',
+    'Return of Income and Self-Assessment',
+    'GST: Supply and Levy',
+    'GST: Place of Supply',
+    'GST: Exemptions',
+    'GST: Time and Value of Supply',
+    'GST: Input Tax Credit',
+    'GST: Registration',
+    'GST: Tax Invoice, Credit and Debit Notes',
+    'GST: Accounts and Records',
+    'GST: E-Way Bill',
+    'GST: Payment of Tax',
+  ],
+  'Cost and Management Accounting': [
+    'Introduction to Cost and Management Accounting',
+    'Material Cost',
+    'Employee Cost',
+    'Direct Expenses',
+    'Overheads',
+    'Activity Based Costing',
+    'Cost Sheet',
+    'Cost Accounting Systems',
+    'Unit and Batch Costing',
+    'Job Costing and Contract Costing',
+    'Process and Joint Products Costing',
+    'Service Costing',
+    'Standard Costing',
+    'Marginal Costing',
+    'Budget and Budgetary Control',
+  ],
+  'Auditing and Ethics': [
+    'Nature, Objective and Scope of Audit',
+    'Audit Strategy, Planning and Programme',
+    'Risk Assessment and Internal Control',
+    'Audit Evidence',
+    'Audit Documentation',
+    'Audit Sampling',
+    'Analytical Procedures',
+    'Audit of Items of Financial Statements',
+    'Company Audit',
+    'Audit Report',
+    'Audit of Banks',
+    'Audit of Different Types of Entities',
+    'Ethics and Terms of Engagement',
+    'Standards on Auditing (SA 200 series)',
+    'Standards on Auditing (SA 300 series)',
+    'Standards on Auditing (SA 500 series)',
+    'Standards on Auditing (SA 700 series)',
+  ],
+  'Financial Management and Strategic Management': [
+    'Scope and Objectives of Financial Management',
+    'Types of Financing',
+    'Financial Analysis and Planning',
+    'Cost of Capital',
+    'Capital Structure',
+    'Leverages',
+    'Investment Decisions',
+    'Dividend Decisions',
+    'Management of Working Capital',
+    'Introduction to Strategic Management',
+    'Strategic Intent and Mission',
+    'External and Internal Environment Analysis',
+    'Industrial and Competitive Analysis',
+    'Strategic Choices',
+    'Strategy Implementation and Evaluation',
+  ],
+};
+
 function getIntermediateChapterOptions() {
-  return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => {
-    const topics = [...(subject.keyProvisions || []), ...(subject.accountingStandards || [])];
-    return {
-      key: subject.key,
-      name: subject.name,
-      paperNumber: subject.paperNumber,
-      group: subject.group || null,
-      chapters: Array.from(new Set(topics.map((topic) => topic.trim()).filter(Boolean))),
-    };
-  });
+  return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
+    key: subject.key,
+    name: subject.name,
+    paperNumber: subject.paperNumber,
+    group: subject.group || null,
+    chapters: INTERMEDIATE_CHAPTERS[subject.name]
+      || [...(subject.keyProvisions || []), ...(subject.accountingStandards || [])],
+  }));
 }
 
 router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) => {
