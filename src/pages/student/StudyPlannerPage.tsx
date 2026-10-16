@@ -76,6 +76,10 @@ export const StudyPlannerPage: React.FC = () => {
   const [classStart, setClassStart] = useState('09:00');
   const [classEnd, setClassEnd] = useState('13:00');
   const [classBlocks, setClassBlocks] = useState<Array<{day_of_week:number;start_time:string;end_time:string;label:string}>>([]);
+  const [attemptRoadmap, setAttemptRoadmap] = useState<any>(null);
+  const [roadmapCompletion, setRoadmapCompletion] = useState('40');
+  const [roadmapBusy, setRoadmapBusy] = useState(false);
+  const [roadmapMessage, setRoadmapMessage] = useState('');
   const [dailyPlan, setDailyPlan] = useState<any>(null);
   const [dailyPlanState, setDailyPlanState] = useState('');
   const [dailyPlanBusy, setDailyPlanBusy] = useState(false);
@@ -177,6 +181,18 @@ export const StudyPlannerPage: React.FC = () => {
     }
   };
 
+  const generateAttemptRoadmap = async () => {
+    if (!exactExamDate) { setRoadmapMessage('Choose the exact exam date first. The planner will not guess it.'); setAttemptRoadmap(null); return; }
+    const completion = Number(roadmapCompletion);
+    if (!Number.isFinite(completion) || completion < 0 || completion > 100) { setRoadmapMessage('Syllabus completion must be between 0 and 100%.'); setAttemptRoadmap(null); return; }
+    setRoadmapBusy(true); setRoadmapMessage('');
+    try {
+      const response = await apiRequest<{ success: boolean; roadmap: any[]; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion }) });
+      setAttemptRoadmap(response.roadmap); setRoadmapMessage('Attempt roadmap generated. Use the weekly timetable below for individual sessions.');
+    } catch (err: any) { setAttemptRoadmap(null); setRoadmapMessage(err?.message || 'Could not generate attempt roadmap.'); }
+    finally { setRoadmapBusy(false); }
+  };
+
   const generateDailyPlan = async () => {
     const hours = Number(dailyMinutes);
     if (!Number.isFinite(hours) || hours < 1 || hours > 12 || Math.round(hours * 4) !== hours * 4) {
@@ -273,6 +289,19 @@ export const StudyPlannerPage: React.FC = () => {
         <ArrowLeft className="h-4 w-4" /> Back to dashboard
       </button>
 
+
+      <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
+        <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
+        <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Plan start date<input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-transparent p-2 text-sm dark:border-slate-700" /></label>
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Exact exam date<input type="date" value={exactExamDate} min={dailyDate} onChange={e=>setExactExamDate(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-transparent p-2 text-sm dark:border-slate-700" /></label>
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Syllabus completed (%)<input type="number" min="0" max="100" value={roadmapCompletion} onChange={e=>setRoadmapCompletion(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 bg-transparent p-2 text-sm dark:border-slate-700" /></label>
+        </div>
+        <button type="button" disabled={roadmapBusy} onClick={()=>void generateAttemptRoadmap()} className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{roadmapBusy ? 'Building roadmap…' : 'Generate attempt roadmap'}</button>
+        {roadmapMessage && <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">{roadmapMessage}</p>}
+        {attemptRoadmap && <div className="mt-4 space-y-3">{attemptRoadmap.map((phase:any)=><div key={phase.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900 dark:text-white">{phase.title}</h3><span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">{phase.goals.map((goal:string)=><li key={goal}>{goal}</li>)}</ul></div>)}</div>}
+      </section>
 
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
         <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">Choose your planning workflow</h2>
