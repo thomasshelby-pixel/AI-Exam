@@ -607,13 +607,17 @@ export function consumeEvaluationEntitlementAtomic(params: {
   // If evaluationId is provided, verify whether deduction was already recorded for this exact evaluation.
   // Prevents duplicate credit consumption on network retries, browser refresh, or remount.
   if (evaluationId) {
-    const existingDeduction = db.prepare(`
-      SELECT source FROM credit_ledger
-      WHERE student_id = ? AND evaluation_id = ? AND amount < 0
-      ORDER BY datetime(created_at) DESC LIMIT 1
-    `).get(userId, evaluationId) as { source: string } | undefined;
+    const latestEvaluationLedgerEntry = db.prepare(`
+      SELECT source, amount FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ?
+      ORDER BY rowid DESC LIMIT 1
+    `).get(userId, evaluationId) as { source: string; amount: number } | undefined;
 
-    if (existingDeduction) {
+    // A positive refund is the latest event when a failed evaluation was refunded.
+    // In that case a later admin finalization must consume the entitlement again.
+    // A latest negative entry means the evaluation is already settled and protects retries.
+    if (latestEvaluationLedgerEntry && Number(latestEvaluationLedgerEntry.amount) < 0) {
+      const existingDeduction = latestEvaluationLedgerEntry;
       const status = ensureMonthlyFreeEvaluationsReset(userId);
       if (existingDeduction.source.includes('PROMO')) {
         const activePromo = db.prepare(`
