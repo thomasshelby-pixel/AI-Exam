@@ -57,8 +57,9 @@ export function createAdaptiveRevisionRounds(input: {
     const end = new Date(start_date + 'T00:00:00.000Z');
     end.setUTCDate(end.getUTCDate() + days - 1);
     const end_date = end.toISOString().slice(0, 10);
-    cursor = new Date(end_date + 'T00:00:00.000Z');
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const next = new Date(end_date + 'T00:00:00.000Z');
+    next.setUTCDate(next.getUTCDate() + 1);
+    cursor = next.toISOString().slice(0, 10);
     const key = 'R' + (index + 1);
     return {
       key,
