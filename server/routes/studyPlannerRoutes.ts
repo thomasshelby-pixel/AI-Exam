@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
+import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import {
   createStudyPlanDraft,
@@ -11,6 +12,36 @@ const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
 
 const ALLOWED_STRENGTHS = new Set(['STRONG', 'MODERATE', 'WEAK']);
+
+
+function getIntermediateChapterOptions() {
+  return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => {
+    const topics = [...(subject.keyProvisions || []), ...(subject.accountingStandards || [])];
+    return {
+      key: subject.key,
+      name: subject.name,
+      paperNumber: subject.paperNumber,
+      group: subject.group || null,
+      chapters: Array.from(new Set(topics.map((topic) => topic.trim()).filter(Boolean))),
+    };
+  });
+}
+
+router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
+  if (course !== 'CA_INTERMEDIATE') {
+    return res.status(400).json({ success: false, error: 'Chapter-level assessment is currently available for CA Intermediate only.' });
+  }
+  return res.json({
+    success: true,
+    course,
+    source: 'CA_CURRICULUM',
+    subjects: getIntermediateChapterOptions(),
+  });
+});
 
 router.get('/profile', authenticateToken, (req: AuthRequest, res: Response) => {
   if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
@@ -46,8 +77,25 @@ router.put('/strengths', authenticateToken, (req: AuthRequest, res: Response) =>
   const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
   const chapter = typeof body.chapter === 'string' ? body.chapter.trim() : '';
   const strength = String(body.strength || '').toUpperCase();
-  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE'].includes(course) || !subject || subject.length > 160 || !chapter || chapter.length > 200 || !ALLOWED_STRENGTHS.has(strength)) {
-    return res.status(400).json({ success: false, error: 'Provide a valid course, subject, chapter and strength.' });
+  const allowedSubject = course === 'CA_INTERMEDIATE'
+    ? CA_CURRICULUM.INTERMEDIATE.subjects.find((item) => item.name === subject)
+    : undefined;
+  const allowedTopics = allowedSubject
+    ? [...(allowedSubject.keyProvisions || []), ...(allowedSubject.accountingStandards || [])]
+    : [];
+  const validLegacySubjectRating = chapter === '__SUBJECT_LEVEL__'
+    && course === 'CA_INTERMEDIATE'
+    && Boolean(allowedSubject);
+  if (
+    course !== 'CA_INTERMEDIATE'
+    || !allowedSubject
+    || subject.length > 160
+    || !chapter
+    || chapter.length > 200
+    || (!validLegacySubjectRating && !allowedTopics.includes(chapter))
+    || !ALLOWED_STRENGTHS.has(strength)
+  ) {
+    return res.status(400).json({ success: false, error: 'Choose a subject and chapter from the supported CA Intermediate curriculum.' });
   }
   db.prepare(`
     INSERT INTO student_chapter_strengths (id, user_id, course, subject, chapter, strength, updated_at)
