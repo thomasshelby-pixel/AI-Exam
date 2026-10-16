@@ -10,6 +10,7 @@ import {
 import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.js';
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
+import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -327,12 +328,23 @@ router.post('/attempt-roadmap', authenticateToken, (req: AuthRequest, res: Respo
   const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
   if (course !== 'CA_INTERMEDIATE') return res.status(400).json({ success: false, error: 'Attempt roadmaps are currently available for CA Intermediate only.' });
   try {
+    const startDate = String(body.start_date || '');
+    const examDate = String(body.exact_exam_date || '');
     const roadmap = createAttemptStudyPhases({
-      start_date: String(body.start_date || ''),
-      exact_exam_date: String(body.exact_exam_date || ''),
+      start_date: startDate,
+      exact_exam_date: examDate,
       syllabus_completion_percent: body.syllabus_completion_percent === undefined ? 0 : Number(body.syllabus_completion_percent),
     });
-    return res.json({ success: true, course, roadmap });
+    const chapterRows = db.prepare(
+      'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
+    ).all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string }>;
+    const revisionRounds = createAdaptiveRevisionRounds({
+      start_date: startDate,
+      exact_exam_date: examDate,
+      daily_study_hours: Number(body.daily_study_hours || 4),
+      chapters: chapterRows,
+    });
+    return res.json({ success: true, course, roadmap, revision_rounds: revisionRounds, chapter_ratings_used: chapterRows.length });
   } catch (error) {
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not create attempt roadmap.' });
   }
