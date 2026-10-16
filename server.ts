@@ -9,6 +9,7 @@ EventEmitter.defaultMaxListeners = 100;
 import { db, initDatabase, closeDatabaseCleanly } from './server/db.js';
 import authRoutes from './server/routes/authRoutes.js';
 import studentRoutes from './server/routes/studentRoutes.js';
+import studyPlannerRoutes from './server/routes/studyPlannerRoutes.js';
 import instituteRoutes from './server/routes/instituteRoutes.js';
 import adminRoutes from './server/routes/adminRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
@@ -146,6 +147,8 @@ async function startServer() {
   });
 
   app.use('/api/auth', authRoutes);
+  // Study Planner beta must register before the broader /api/student router.
+  app.use('/api/student/study-planner', studyPlannerRoutes);
   app.use('/api/student', studentRoutes);
   app.use('/api/institute', instituteRoutes);
   app.use('/api/admin', adminRoutes);
