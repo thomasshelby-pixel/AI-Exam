@@ -245,7 +245,9 @@ export const StudyPlannerPage: React.FC = () => {
                           await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject: selectedStrengthSubject, chapter: selectedStrengthChapter, strength: selectedStrength }) });
                           const key = selectedStrengthSubject + '::' + selectedStrengthChapter;
                           setStrengths((current) => ({ ...current, [key]: selectedStrength }));
-                          setStrengthSaveState('Saved: ' + selectedStrengthChapter + ' · ' + selectedStrength.toLowerCase() + '.');
+                          const updatedPriorities = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
+                          setPriorities(updatedPriorities.priorities || []);
+                          setStrengthSaveState('Saved: ' + selectedStrengthChapter + ' · ' + selectedStrength.toLowerCase() + '. Priorities refreshed.');
                         } catch (err: any) { setStrengthSaveState(err?.message || 'Could not save this chapter rating.'); }
                         finally { setStrengthBusy(false); }
                       }} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{strengthBusy ? 'Saving…' : 'Save chapter rating'}</button>
