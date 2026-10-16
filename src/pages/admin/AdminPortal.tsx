@@ -2134,12 +2134,40 @@ export const AdminPortal: React.FC = () => {
                                 </span>
                               </td>
                               <td className="py-3 px-3">
-                                <span className="font-mono font-bold text-slate-900">{st.evaluations_count || 0}</span>
-                                {st.average_percentage !== null && st.average_percentage !== undefined && (
-                                  <span className="text-[10px] text-slate-400 block">
-                                    Avg: {Math.round(st.average_percentage)}%
-                                  </span>
-                                )}
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-semibold text-slate-700">Evaluations:</span>
+                                    <span className="font-mono font-bold text-slate-900 text-xs">
+                                      {st.total_evaluations_count !== undefined ? st.total_evaluations_count : (st.evaluations_count || 0)}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[10px]">
+                                    <span className="text-slate-500">Completed:</span>
+                                    <span className="font-mono font-semibold text-emerald-700">
+                                      {st.completed_evaluations_count ?? 0}
+                                    </span>
+                                  </div>
+                                  {Number(st.pending_review_count || 0) > 0 ? (
+                                    <div className="flex items-center gap-1 text-[10px]">
+                                      <span className="text-amber-700 font-medium">Needs Review:</span>
+                                      <span className="font-mono font-bold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200">
+                                        {st.pending_review_count}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                      <span>Needs Review:</span>
+                                      <span className="font-mono">0</span>
+                                    </div>
+                                  )}
+                                  <div className="text-[10px] text-slate-400">
+                                    {st.average_percentage !== null && st.average_percentage !== undefined ? (
+                                      <span>Avg: {Math.round(st.average_percentage)}%</span>
+                                    ) : (
+                                      <span>Avg: —</span>
+                                    )}
+                                  </div>
+                                </div>
                               </td>
                               <td className="py-3 px-3">
                                 {st.permanent_free_active ? (
@@ -4112,6 +4140,51 @@ export const AdminPortal: React.FC = () => {
                 <span className="text-xs font-bold font-mono text-blue-600 mt-0.5 block">
                   {viewStudentModal.student.purchased_credits || 0} credits
                 </span>
+              </div>
+            </div>
+
+            {/* Student Evaluations Record Card */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 mb-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <FileCheck2 className="w-4 h-4 text-blue-600" />
+                  <h4 className="text-xs font-bold text-slate-900">Student Evaluations Record</h4>
+                </div>
+                {Number(viewStudentModal.student.pending_review_count || 0) > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                    {viewStudentModal.student.pending_review_count} Awaiting Review
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block font-medium">Total Evaluations</span>
+                  <span className="font-mono font-bold text-slate-900 text-sm">
+                    {viewStudentModal.student.total_evaluations_count !== undefined
+                      ? viewStudentModal.student.total_evaluations_count
+                      : (viewStudentModal.student.evaluations_count || 0)}
+                  </span>
+                </div>
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block font-medium">Completed</span>
+                  <span className="font-mono font-bold text-emerald-700 text-sm">
+                    {viewStudentModal.student.completed_evaluations_count ?? 0}
+                  </span>
+                </div>
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block font-medium">Needs Review</span>
+                  <span className={`font-mono font-bold text-sm ${Number(viewStudentModal.student.pending_review_count || 0) > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
+                    {viewStudentModal.student.pending_review_count ?? 0}
+                  </span>
+                </div>
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block font-medium">Average Score (Completed)</span>
+                  <span className="font-mono font-bold text-slate-800 text-sm">
+                    {viewStudentModal.student.average_percentage !== null && viewStudentModal.student.average_percentage !== undefined
+                      ? `${Math.round(viewStudentModal.student.average_percentage)}%`
+                      : '—'}
+                  </span>
+                </div>
               </div>
             </div>
 

@@ -1940,8 +1940,11 @@ router.get('/students', (req: AuthRequest, res: Response) => {
              p.city,
              i.name as institute_name,
              pfe.is_active as permanent_free_active,
-             COUNT(e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage,
+             COUNT(DISTINCT e.id) as total_evaluations_count,
+             COUNT(DISTINCT e.id) as evaluations_count,
+             COUNT(DISTINCT CASE WHEN e.status = 'COMPLETED' THEN e.id END) as completed_evaluations_count,
+             COUNT(DISTINCT CASE WHEN e.status = 'NEEDS_REVIEW' THEN e.id END) as pending_review_count,
+             AVG(CASE WHEN e.status = 'COMPLETED' THEN e.percentage END) as average_percentage,
              COALESCE((
                SELECT SUM(r.max_evaluations)
                FROM referral_redemptions r
@@ -1973,7 +1976,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
+      LEFT JOIN evaluations e ON e.student_id = u.id
       WHERE u.role = 'STUDENT'
     `;
     const params: any[] = [];
@@ -2013,6 +2016,10 @@ router.get('/students', (req: AuthRequest, res: Response) => {
 
       return {
         ...st,
+        total_evaluations_count: Number(st.total_evaluations_count ?? st.evaluations_count ?? 0),
+        evaluations_count: Number(st.total_evaluations_count ?? st.evaluations_count ?? 0),
+        completed_evaluations_count: Number(st.completed_evaluations_count ?? 0),
+        pending_review_count: Number(st.pending_review_count ?? 0),
         permanent_free_active: isPermanentFree ? 1 : 0,
         has_permanent_free_access: isPermanentFree,
         monthly_free_evaluations_remaining: monthlyFreeRemaining,
@@ -2045,8 +2052,11 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
              i.id as institute_id, i.name as institute_name,
              b.id as batch_id, b.name as batch_name,
              pfe.is_active as permanent_free_active,
+             COUNT(DISTINCT e.id) as total_evaluations_count,
              COUNT(DISTINCT e.id) as evaluations_count,
-             AVG(e.percentage) as average_percentage,
+             COUNT(DISTINCT CASE WHEN e.status = 'COMPLETED' THEN e.id END) as completed_evaluations_count,
+             COUNT(DISTINCT CASE WHEN e.status = 'NEEDS_REVIEW' THEN e.id END) as pending_review_count,
+             AVG(CASE WHEN e.status = 'COMPLETED' THEN e.percentage END) as average_percentage,
              COALESCE((
                SELECT SUM(r.max_evaluations)
                FROM referral_redemptions r
@@ -2079,7 +2089,7 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN batches b ON b.id = p.batch_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id AND e.status = 'COMPLETED'
+      LEFT JOIN evaluations e ON e.student_id = u.id
       WHERE u.id = ? AND u.role = 'STUDENT'
       GROUP BY u.id
     `).get(studentId) as any;
@@ -2130,6 +2140,10 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
 
     const student = {
       ...studentRaw,
+      total_evaluations_count: Number(studentRaw.total_evaluations_count ?? studentRaw.evaluations_count ?? 0),
+      evaluations_count: Number(studentRaw.total_evaluations_count ?? studentRaw.evaluations_count ?? 0),
+      completed_evaluations_count: Number(studentRaw.completed_evaluations_count ?? 0),
+      pending_review_count: Number(studentRaw.pending_review_count ?? 0),
       permanent_free_active: isPermanentFree ? 1 : 0,
       has_permanent_free_access: isPermanentFree,
       monthly_free_evaluations_remaining: monthlyFreeRemaining,
