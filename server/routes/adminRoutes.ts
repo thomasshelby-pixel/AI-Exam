@@ -13,7 +13,7 @@ import {
 } from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -3550,7 +3550,24 @@ router.post('/evaluations/:id/review/finalize', async (req: AuthRequest, res: Re
       created_at: nowIso,
     });
 
-    // Step 5: Authoritatively Update evaluations Table
+    // Step 5: Settle the evaluation entitlement before marking a NEEDS_REVIEW evaluation completed.
+    // The evaluation may have been refunded after an earlier validation failure; the credit service
+    // uses the latest ledger event to distinguish that case from an already-settled retry.
+    if (evalRecord.status === 'NEEDS_REVIEW') {
+      const storedSource = String(evalRecord.entitlement_source || '');
+      const forcedSource = storedSource === 'PROMO' ||
+        storedSource === 'PERSONAL_FREE' ||
+        storedSource === 'PERSONAL_PURCHASED_CREDIT'
+        ? storedSource as 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT'
+        : undefined;
+      consumeEvaluationEntitlementAtomic({
+        userId: evalRecord.student_id,
+        evaluationId,
+        ...(forcedSource ? { forcedSource } : {}),
+      });
+    }
+
+    // Step 6: Authoritatively Update evaluations Table
     const reviewStatus = affirmAsIs ? 'AFFIRMED' : 'AMENDED';
     db.prepare(`
       UPDATE evaluations
