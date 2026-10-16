@@ -29,6 +29,7 @@ import { UnifiedAuthPage } from './pages/auth/UnifiedAuthPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
+import { StudyPlannerPage } from './pages/student/StudyPlannerPage.js';
 import { UploadEvaluation } from './pages/student/UploadEvaluation.js';
 import { MyEvaluations } from './pages/student/MyEvaluations.js';
 import { StudentProfilePage } from './pages/student/StudentProfilePage.js';
@@ -935,6 +936,17 @@ const AppRoutes: React.FC = () => {
                   onNavigateEnrollments={() => navigate('/student/enrollments')}
                   onNavigateExaminerProfile={() => navigate('/student/examiner-profile')}
                 />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/study-planner"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <StudyPlannerPage />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
           }

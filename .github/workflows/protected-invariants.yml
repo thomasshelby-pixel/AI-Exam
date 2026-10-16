@@ -29,6 +29,9 @@ jobs:
       - name: Existing protected-system regression suites
         run: npm run test:protected:ci
 
+      - name: Study planner regression suite
+        run: npm run test:study-planner
+
       - name: Typecheck
         run: npm run lint
 
