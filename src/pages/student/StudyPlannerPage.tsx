@@ -73,6 +73,21 @@ export const StudyPlannerPage: React.FC = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, loading]);
 
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE')
+      .then((profile) => {
+        if (cancelled) return;
+        const restored: Record<string, string> = {};
+        for (const item of profile.strengths || []) {
+          if (item.chapter === '__SUBJECT_LEVEL__') restored[item.subject] = item.strength;
+        }
+        setStrengths((current) => ({ ...Object.fromEntries(Object.keys(current).map((key) => [key, restored[key] || current[key]])), ...restored }));
+      })
+      .catch(() => { /* Keep the planner usable if saved profile data is temporarily unavailable. */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const sendRequest = async (rawText?: string) => {
     const text = (rawText ?? request).trim();
     if (!text || loading) return;
