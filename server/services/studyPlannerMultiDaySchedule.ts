@@ -32,12 +32,12 @@ export interface MultiDayStudyPlan {
 }
 
 function isValidISODate(value: string): boolean {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(value + 'T00:00:00.000Z');
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 function parseClock(value: string): number | null {
-  if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(value)) return null;
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
   const [hours, minutes] = value.split(':').map(Number);
   return hours * 60 + minutes;
 }
@@ -72,7 +72,7 @@ export function createMultiDayStudyPlan(input: {
   const end = parseClock(input.preferred_end_time);
   if (start === null || end === null || end <= start) throw new Error('Choose a valid study start and end time; end must be later than start.');
   const attempt = String(input.attempt || '').trim();
-  if (!/^(January|May|September) \\d{4}$/.test(attempt)) throw new Error('Choose a supported CA attempt, for example May 2027.');
+  if (!/^(January|May|September) \d{4}$/.test(attempt)) throw new Error('Choose a supported CA attempt, for example May 2027.');
   const examDate = input.exact_exam_date ? String(input.exact_exam_date) : null;
   if (examDate && (!isValidISODate(examDate) || examDate < input.start_date)) {
     throw new Error('Exact exam date must be a valid date on or after the plan start date.');
