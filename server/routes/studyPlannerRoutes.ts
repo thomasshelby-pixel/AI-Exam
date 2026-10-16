@@ -9,6 +9,7 @@ import {
 } from '../services/studyPlannerEngine.js';
 import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.js';
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
+import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -315,6 +316,25 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
     return res.json({ success: true, course, plan });
   } catch (error) {
     return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not create the multi-day study plan.' });
+  }
+});
+
+router.post('/attempt-roadmap', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
+  if (course !== 'CA_INTERMEDIATE') return res.status(400).json({ success: false, error: 'Attempt roadmaps are currently available for CA Intermediate only.' });
+  try {
+    const roadmap = createAttemptStudyPhases({
+      start_date: String(body.start_date || ''),
+      exact_exam_date: String(body.exact_exam_date || ''),
+      syllabus_completion_percent: body.syllabus_completion_percent === undefined ? 0 : Number(body.syllabus_completion_percent),
+    });
+    return res.json({ success: true, course, roadmap });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not create attempt roadmap.' });
   }
 });
 
