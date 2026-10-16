@@ -69,7 +69,7 @@ export function createAttemptStudyPhases(input: {
   ];
 
   let cursor = input.start_date;
-  return definitions.map((definition, index) => {
+  const phases = definitions.map((definition, index) => {
     const length = durations[index];
     const end_date = addDays(cursor, Math.max(0, length - 1));
     const phase: AttemptPhase = {
@@ -81,4 +81,7 @@ export function createAttemptStudyPhases(input: {
     cursor = addDays(end_date, 1);
     return phase;
   });
+  const priorPercentages = phases.slice(0, -1).reduce((sum, phase) => sum + phase.percentage, 0);
+  phases[phases.length - 1].percentage = 100 - priorPercentages;
+  return phases;
 }
