@@ -59,6 +59,10 @@ export const StudyPlannerPage: React.FC = () => {
   const [savingPlanId, setSavingPlanId] = useState<number | null>(null);
   const [savedPlanIds, setSavedPlanIds] = useState<number[]>([]);
   const [strengths, setStrengths] = useState<Record<string, string>>({});
+  const [curriculumSubjects, setCurriculumSubjects] = useState<Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }>>([]);
+  const [selectedStrengthSubject, setSelectedStrengthSubject] = useState('');
+  const [selectedStrengthChapter, setSelectedStrengthChapter] = useState('');
+  const [selectedStrength, setSelectedStrength] = useState('MODERATE');
   const [strengthSaveState, setStrengthSaveState] = useState('');
   const [strengthBusy, setStrengthBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([{
@@ -75,16 +79,23 @@ export const StudyPlannerPage: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE')
-      .then((profile) => {
-        if (cancelled) return;
-        const restored: Record<string, string> = {};
-        for (const item of profile.strengths || []) {
-          if (item.chapter === '__SUBJECT_LEVEL__') restored[item.subject] = item.strength;
-        }
-        setStrengths((current) => ({ ...Object.fromEntries(Object.keys(current).map((key) => [key, restored[key] || current[key]])), ...restored }));
-      })
-      .catch(() => { /* Keep the planner usable if saved profile data is temporarily unavailable. */ });
+    Promise.all([
+      apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=CA_INTERMEDIATE'),
+      apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE'),
+    ]).then(([curriculum, profile]) => {
+      if (cancelled) return;
+      const options = curriculum.subjects || [];
+      setCurriculumSubjects(options);
+      if (options.length) {
+        setSelectedStrengthSubject((current) => current || options[0].name);
+        setSelectedStrengthChapter((current) => current || options[0].chapters[0] || '');
+      }
+      const restored: Record<string, string> = {};
+      for (const item of profile.strengths || []) {
+        if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
+      }
+      setStrengths(restored);
+    }).catch(() => { /* Keep chat usable if profile or curriculum is temporarily unavailable. */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -129,34 +140,88 @@ export const StudyPlannerPage: React.FC = () => {
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><BookOpen className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
-            <h2 className="font-extrabold text-slate-900 dark:text-white">Chapter strength profile</h2>
-            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Mark how confident you feel in each CA Intermediate subject. These ratings are saved to your account for future prioritisation.</p>
+            <h2 className="font-extrabold text-slate-900 dark:text-white">Chapter strength assessment</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Choose a subject and a topic from the curriculum, then rate your confidence. Each rating is saved to your account.</p>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {['Advanced Accounting','Corporate and Other Laws','Taxation','Cost and Management Accounting','Auditing and Ethics','Financial Management and Strategic Management'].map((subject) => (
-            <label key={subject} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-              <span className="mb-2 block text-sm font-bold text-slate-800 dark:text-slate-100">{subject}</span>
-              <select value={strengths[subject] || 'MODERATE'} onChange={(e) => setStrengths((current) => ({ ...current, [subject]: e.target.value }))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                <option value="WEAK">Weak — need more practice</option>
-                <option value="MODERATE">Moderate — improving</option>
-                <option value="STRONG">Strong — confident</option>
-              </select>
-            </label>
-          ))}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button type="button" disabled={strengthBusy} onClick={async () => {
-            setStrengthBusy(true); setStrengthSaveState('');
-            try {
-              for (const [subject, strength] of Object.entries(strengths)) {
-                await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject, chapter: '__SUBJECT_LEVEL__', strength }) });
-              }
-              setStrengthSaveState('Your subject strengths are saved.');
-            } catch (err: any) { setStrengthSaveState(err?.message || 'Could not save strengths.'); }
-            finally { setStrengthBusy(false); }
-          }} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{strengthBusy ? 'Saving…' : 'Save strengths'}</button>
-          {strengthSaveState && <p role="status" className="text-xs text-slate-500">{strengthSaveState}</p>}
+        {curriculumSubjects.length === 0 ? (
+          <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">Loading curriculum topics… If this continues, refresh the page and try again.</p>
+        ) : (
+          <>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">CA Intermediate subject</span>
+                <select value={selectedStrengthSubject} onChange={(e) => {
+                  const subject = curriculumSubjects.find((item) => item.name === e.target.value);
+                  setSelectedStrengthSubject(e.target.value);
+                  setSelectedStrengthChapter(subject?.chapters[0] || '');
+                  setSelectedStrength(subject?.chapters[0] ? (strengths[e.target.value + '::' + subject.chapters[0]] || 'MODERATE') : 'MODERATE');
+                }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+                  {curriculumSubjects.map((subject) => <option key={subject.key} value={subject.name}>Paper {subject.paperNumber}: {subject.name}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Chapter / topic</span>
+                <select value={selectedStrengthChapter} onChange={(e) => {
+                  setSelectedStrengthChapter(e.target.value);
+                  setSelectedStrength(strengths[selectedStrengthSubject + '::' + e.target.value] || 'MODERATE');
+                }} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+                  {(curriculumSubjects.find((item) => item.name === selectedStrengthSubject)?.chapters || []).map((chapter) => <option key={chapter} value={chapter}>{chapter}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="mt-3">
+              <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Your confidence</span>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'WEAK', label: 'Weak', description: 'Needs focus' },
+                  { value: 'MODERATE', label: 'Moderate', description: 'Needs revision' },
+                  { value: 'STRONG', label: 'Strong', description: 'Mostly confident' },
+                ].map((option) => (
+                  <button key={option.value} type="button" onClick={() => setSelectedStrength(option.value)} aria-pressed={selectedStrength === option.value} className={'rounded-xl border px-3 py-3 text-left transition ' + (selectedStrength === option.value ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500 dark:border-indigo-500 dark:bg-indigo-950/50' : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900')}>
+                    <span className="block text-sm font-extrabold text-slate-900 dark:text-white">{option.label}</span>
+                    <span className="mt-1 block text-[10px] text-slate-500 dark:text-slate-400">{option.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button type="button" disabled={strengthBusy || !selectedStrengthSubject || !selectedStrengthChapter} onClick={async () => {
+                setStrengthBusy(true); setStrengthSaveState('');
+                try {
+                  await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject: selectedStrengthSubject, chapter: selectedStrengthChapter, strength: selectedStrength }) });
+                  const key = selectedStrengthSubject + '::' + selectedStrengthChapter;
+                  setStrengths((current) => ({ ...current, [key]: selectedStrength }));
+                  setStrengthSaveState('Saved: ' + selectedStrengthChapter + ' · ' + selectedStrength.toLowerCase() + '.');
+                } catch (err: any) { setStrengthSaveState(err?.message || 'Could not save this chapter rating.'); }
+                finally { setStrengthBusy(false); }
+              }} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Save className="h-4 w-4" />{strengthBusy ? 'Saving…' : 'Save chapter rating'}</button>
+              {strengthSaveState && <p role="status" className="text-xs text-slate-500">{strengthSaveState}</p>}
+            </div>
+          </>
+        )}
+        <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-500">Saved chapter ratings</h3>
+            <span className="text-xs text-slate-500">{Object.keys(strengths).length} rated</span>
+          </div>
+          {Object.keys(strengths).length === 0 ? (
+            <p className="text-xs text-slate-500 dark:text-slate-400">Your saved chapter ratings will appear here.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(strengths).map(([key, value]) => {
+                const [subject, chapter] = key.split('::');
+                return <button key={key} type="button" onClick={() => {
+                  setSelectedStrengthSubject(subject);
+                  setSelectedStrengthChapter(chapter);
+                  setSelectedStrength(value);
+                }} className="rounded-lg border border-slate-200 px-3 py-2 text-left dark:border-slate-800">
+                  <span className="block max-w-[240px] truncate text-xs font-bold text-slate-800 dark:text-slate-100">{chapter}</span>
+                  <span className="mt-1 block text-[10px] text-slate-500">{subject} · {String(value).toLowerCase()}</span>
+                </button>;
+              })}
+            </div>
+          )}
         </div>
       </section>
       <section className="flex min-h-[68vh] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
