@@ -47,3 +47,25 @@ test('rejects invalid attempt, clock ranges, and dates', () => {
   assert.throws(() => createMultiDayStudyPlan({ ...base, attempt: 'soon' }), /supported CA attempt/);
   assert.throws(() => createMultiDayStudyPlan({ ...base, start_date: '2026-02-30' }), /valid YYYY-MM-DD/);
 });
+
+test('fixed weekly class blocks are skipped when placing study sessions', () => {
+  const plan = createMultiDayStudyPlan({
+    start_date: '2026-10-17', daily_study_hours: 2, study_start_time: '06:00',
+    preferred_end_time: '22:00', attempt: 'May 2027', priorities,
+    class_mode: 'fixed',
+    class_blocks: [{ day_of_week: 6, start_time: '09:00', end_time: '13:00', label: 'Coaching' }],
+  });
+  const saturdaySessions = plan.sessions.filter(s => s.date === '2026-10-17');
+  assert.ok(saturdaySessions.every(s => s.end_time <= '09:00' || s.start_time >= '13:00'));
+  assert.equal(plan.class_mode, 'fixed');
+});
+
+test('no-class and flexible class modes are supported without inventing fixed blocks', () => {
+  for (const class_mode of ['none', 'flexible'] as const) {
+    const plan = createMultiDayStudyPlan({
+      start_date: '2026-10-17', daily_study_hours: 2, study_start_time: '06:00',
+      preferred_end_time: '22:00', attempt: 'May 2027', priorities, class_mode,
+    });
+    assert.equal(plan.class_mode, class_mode);
+  }
+});
