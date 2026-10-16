@@ -7,6 +7,7 @@ import {
   createStudyPlanDraft,
   parseStudyPlannerRequest,
 } from '../services/studyPlannerEngine.js';
+import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -219,6 +220,54 @@ router.get('/priorities', authenticateToken, (req: AuthRequest, res: Response) =
     priorities,
     mock_results: results.slice(0, 30),
   });
+});
+
+router.post('/daily-schedule', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
+  const date = typeof body.date === 'string' ? body.date : '';
+  const availableMinutes = Number(body.available_minutes);
+  if (course !== 'CA_INTERMEDIATE') {
+    return res.status(400).json({ success: false, error: 'Daily schedules are currently available for CA Intermediate only.' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || new Date(date + 'T00:00:00.000Z').toISOString().slice(0, 10) !== date) {
+    return res.status(400).json({ success: false, error: 'Provide a valid date in YYYY-MM-DD format.' });
+  }
+  if (!Number.isInteger(availableMinutes) || availableMinutes < 30 || availableMinutes > 720) {
+    return res.status(400).json({ success: false, error: 'Study time must be an integer between 30 and 720 minutes.' });
+  }
+
+  const strengths = db.prepare(
+    'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
+  ).all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string }>;
+  const results = db.prepare(
+    'SELECT subject, score, max_score, exam_date FROM student_mock_results WHERE user_id = ? AND course = ? ORDER BY exam_date DESC, created_at DESC LIMIT 200'
+  ).all(req.user.id, course) as Array<{ subject: string; score: number; max_score: number; exam_date: string }>;
+  const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string }>();
+  for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
+
+  const priorities = strengths.map((item) => {
+    const aliases = getCanonicalStrengthSubject(item.subject);
+    const matchingSubject = CA_CURRICULUM.INTERMEDIATE.subjects.find((subject) => aliases.includes(subject.name));
+    const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
+    const mock = [...latestBySubject.values()].find((result) =>
+      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
+    );
+    const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
+    const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
+    const score = mockRisk === null ? strengthRisk : Math.round(strengthRisk * 0.6 + mockRisk * 0.4);
+    return { subject: item.subject, chapter: item.chapter, strength: item.strength, priority_score: score };
+  });
+
+  try {
+    const schedule = createDailyStudySchedule({ date, available_minutes: availableMinutes, priorities });
+    return res.json({ success: true, course, schedule });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not create a daily schedule.' });
+  }
 });
 
 router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) => {
