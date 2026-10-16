@@ -7,6 +7,7 @@ import {
   createStudyPlanDraft,
   parseStudyPlannerRequest,
 } from '../services/studyPlannerEngine.js';
+import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
