@@ -51,7 +51,7 @@ export function createAttemptStudyPhases(input: {
     : completion >= 70
       ? [10, 20, 25, 20, 25]
       : [30, 20, 20, 15, 15];
-  const activeWeights = weights.map((weight, index) => index === 0 ? weight * remaining / 100 : weight);
+  const activeWeights = weights.map((weight, index) => index === 0 ? Math.max(5, weight * remaining / 100) : weight);
   const weightTotal = activeWeights.reduce((sum, value) => sum + value, 0);
   const durations = activeWeights.map((weight) => Math.max(0, Math.floor(totalDays * weight / weightTotal)));
   let allocated = durations.reduce((sum, value) => sum + value, 0);
