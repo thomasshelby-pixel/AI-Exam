@@ -158,6 +158,7 @@ export function createMultiDayStudyPlan(input: {
   return {
     start_date: input.start_date, end_date: lastDate, attempt, exact_exam_date: examDate,
     daily_study_minutes: dailyMinutes, study_start_time: input.study_start_time, preferred_end_time: input.preferred_end_time,
+    class_mode: classMode,
     sessions,
     assumptions: chapters.length
       ? ['This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
