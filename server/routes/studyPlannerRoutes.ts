@@ -324,7 +324,8 @@ router.put('/strengths', authenticateToken, (req: AuthRequest, res: Response) =>
     ? CA_CURRICULUM.INTERMEDIATE.subjects.find((item) => item.name === subject)
     : undefined;
   const allowedTopics = allowedSubject
-    ? [...(allowedSubject.keyProvisions || []), ...(allowedSubject.accountingStandards || [])]
+    ? (INTERMEDIATE_CHAPTERS[allowedSubject.name]
+      || [...(allowedSubject.keyProvisions || []), ...(allowedSubject.accountingStandards || [])])
     : [];
   const validLegacySubjectRating = chapter === '__SUBJECT_LEVEL__'
     && course === 'CA_INTERMEDIATE'
