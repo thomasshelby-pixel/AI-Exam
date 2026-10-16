@@ -168,18 +168,50 @@ export const StudyPlannerPage: React.FC = () => {
     }
   };
 
-  const generateDailyPlan = () => {
-  const minutes = Number(dailyMinutes);
-  if (!Number.isInteger(minutes) || minutes < 30 || minutes > 720) { setDailyPlanState('Enter study time between 30 minutes and 12 hours.'); setDailyPlan(null); return; }
-  if (!dailyDate || Number.isNaN(new Date(dailyDate + 'T00:00:00').getTime())) { setDailyPlanState('Choose a valid date.'); return; }
-  if (!priorities.length) { setDailyPlanState('Rate at least one chapter first. The planner will not guess your weak areas.'); setDailyPlan(null); return; }
-  const ranked = [...priorities].sort((a, b) => b.priority_score - a.priority_score).slice(0, Math.min(4, priorities.length));
-  const chunks: Array<{ chapter: typeof ranked[number]; minutes: number }> = []; let remaining = minutes; let index = 0;
-  while (remaining > 0) { const part = Math.min(50, remaining); chunks.push({ chapter: ranked[index % ranked.length], minutes: part }); remaining -= part; index += 1; }
-  const defs = [{ label: 'Concept review', activity: 'CONCEPT_REVIEW', share: 0.4, instruction: 'Revise notes and core concepts; identify the key provision, rule or formula.' }, { label: 'Question practice', activity: 'QUESTION_PRACTICE', share: 0.4, instruction: 'Attempt module, RTP or MTP questions before checking the solution.' }, { label: 'Active recall', activity: 'ACTIVE_RECALL', share: 0.2, instruction: 'Close the material, recall key points and note mistakes for revision.' }];
-  const sessions: any[] = [];
-  for (const chunk of chunks) { const splits = defs.map((d) => Math.floor(chunk.minutes * d.share)); splits[2] += chunk.minutes - splits.reduce((sum, value) => sum + value, 0); defs.forEach((d, i) => { if (splits[i] > 0) sessions.push({ order: sessions.length + 1, subject: chunk.chapter.subject, chapter: chunk.chapter.chapter, label: d.label, activity: d.activity, minutes: splits[i], instruction: d.instruction, priority_score: chunk.chapter.priority_score }); }); }
-  setDailyPlan({ title: 'Priority-based daily study plan', total_minutes: minutes, date: dailyDate, sessions }); setDailyPlanState('Draft ready. Review the sessions before saving.');
+  const generateDailyPlan = async () => {
+    const minutes = Number(dailyMinutes);
+    if (!Number.isInteger(minutes) || minutes < 30 || minutes > 720) {
+      setDailyPlanState('Enter study time between 30 minutes and 12 hours.');
+      setDailyPlan(null);
+      return;
+    }
+    if (!dailyDate || Number.isNaN(new Date(dailyDate + 'T00:00:00').getTime())) {
+      setDailyPlanState('Choose a valid date.');
+      setDailyPlan(null);
+      return;
+    }
+    setDailyPlanBusy(true);
+    setDailyPlanState('');
+    setDailyPlan(null);
+    try {
+      const response = await apiRequest<{ success: boolean; schedule: { date: string; available_minutes: number; scheduled_minutes: number; unscheduled_minutes: number; sessions: any[]; assumptions: string[] }; error?: string }>(
+        '/api/student/study-planner/daily-schedule',
+        {
+          method: 'POST',
+          body: JSON.stringify({ course: 'CA_INTERMEDIATE', date: dailyDate, available_minutes: minutes }),
+        },
+      );
+      const schedule = response.schedule;
+      setDailyPlan({
+        title: 'Priority-based daily study plan',
+        total_minutes: schedule.scheduled_minutes,
+        available_minutes: schedule.available_minutes,
+        unscheduled_minutes: schedule.unscheduled_minutes,
+        date: schedule.date,
+        sessions: schedule.sessions,
+        assumptions: schedule.assumptions,
+      });
+      setDailyPlanState(schedule.sessions.length
+        ? 'Draft ready. Review the sessions before saving.'
+        : 'Rate at least one chapter first. The planner will not guess which chapters are weak.');
+      await apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE')
+        .then((data) => setPriorities(data.priorities || []))
+        .catch(() => undefined);
+    } catch (err: any) {
+      setDailyPlanState(err?.message || 'Could not generate the daily timetable.');
+    } finally {
+      setDailyPlanBusy(false);
+    }
   };
   const saveDailyPlan = async () => { if (!dailyPlan) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
