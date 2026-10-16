@@ -308,6 +308,8 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
       preferred_end_time: String(body.preferred_end_time || ''),
       attempt: String(body.attempt || ''),
       exact_exam_date: typeof body.exact_exam_date === 'string' && body.exact_exam_date ? body.exact_exam_date : null,
+      class_mode: body.class_mode === 'fixed' || body.class_mode === 'flexible' ? body.class_mode : 'none',
+      class_blocks: Array.isArray(body.class_blocks) ? body.class_blocks : [],
       priorities,
     });
     return res.json({ success: true, course, plan });
