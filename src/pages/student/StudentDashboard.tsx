@@ -166,7 +166,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     latestRedemption?: any;
     ai30Campaign: any;
   } | null>(null);
-  const [dashboardPromoCode, setDashboardPromoCode] = useState<string>('AI30');
+  const [dashboardPromoCode, setDashboardPromoCode] = useState<string>('');
   const [isRedeeming, setIsRedeeming] = useState<boolean>(false);
   const [promoMessage, setPromoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -331,7 +331,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         method: 'POST',
         body: JSON.stringify({ code: dashboardPromoCode.trim().toUpperCase() }),
       });
-      setPromoMessage({ type: 'success', text: res.message || 'AI30 promo activated successfully!' });
+      setPromoMessage({ type: 'success', text: res.message || 'Promo activated successfully!' });
       // Refresh dashboard data
       fetchDashboard();
     } catch (err: any) {

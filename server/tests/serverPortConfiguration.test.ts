@@ -33,6 +33,18 @@ try {
   assert.strictEqual(custom9000, 9000, 'Port must respect custom environment PORT');
   console.log('[PASS] Test 4: When process.env.PORT = "9000" -> server respects 9000');
 
+  // Test 4b: When PORT has surrounding whitespace, getServerPort trims and parses as Number
+  process.env.PORT = '  8088  ';
+  const trimmedPort = getServerPort();
+  assert.strictEqual(trimmedPort, 8088, 'Port must trim whitespace and parse as Number');
+  console.log('[PASS] Test 4b: When process.env.PORT = "  8088  " -> server parses 8088');
+
+  // Test 4c: When PORT is invalid non-numeric or negative, getServerPort safely falls back to 8080
+  process.env.PORT = 'invalid-port';
+  const invalidPort = getServerPort();
+  assert.strictEqual(invalidPort, 8080, 'Port must safely fallback to 8080 when PORT is invalid');
+  console.log('[PASS] Test 4c: When process.env.PORT is non-numeric -> server safely falls back to 8080');
+
   // Test 5: Verify host binding address is 0.0.0.0
   assert.strictEqual(SERVER_HOST, '0.0.0.0', 'Server bind host must strictly be 0.0.0.0');
   console.log('[PASS] Test 5: Authoritative SERVER_HOST is 0.0.0.0 (not localhost/127.0.0.1 only)');

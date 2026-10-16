@@ -8,16 +8,19 @@
  */
 
 export function getServerPort(): number {
-  if (process.env.PORT && process.env.PORT.trim()) {
-    const parsed = parseInt(process.env.PORT.trim(), 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      return parsed;
+  if (process.env.PORT !== undefined && process.env.PORT !== null) {
+    const trimmed = String(process.env.PORT).trim();
+    if (trimmed !== '') {
+      const parsed = Number(trimmed);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
     }
   }
-  // Check CLI arguments for --port <PORT> (e.g. from dev runner)
+  // Check CLI arguments for --port <PORT> (e.g. from local development runner)
   const portArgIndex = process.argv.indexOf('--port');
   if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
-    const parsedArg = parseInt(process.argv[portArgIndex + 1].trim(), 10);
+    const parsedArg = Number(process.argv[portArgIndex + 1].trim());
     if (!Number.isNaN(parsedArg) && parsedArg > 0) {
       return parsedArg;
     }

@@ -261,13 +261,6 @@ export const StudentPromoBanner: React.FC<StudentPromoBannerProps> = ({
                     )}
                   </button>
                 </form>
-
-                {referralStatus?.ai30Campaign && !referralStatus.ai30Campaign.isFullyClaimed && (
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Use code <strong className="font-mono font-bold text-slate-700 dark:text-slate-300">AI30</strong>{' '}
-                    for instant 1-month access
-                  </span>
-                )}
               </div>
             </div>
           </motion.div>

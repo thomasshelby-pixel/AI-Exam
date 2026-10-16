@@ -327,7 +327,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   };
 
   // Referral / Promo Code States
-  const [promoCodeInput, setPromoCodeInput] = useState<string>('AI30');
+  const [promoCodeInput, setPromoCodeInput] = useState<string>('');
   const [isRedeemingPromo, setIsRedeemingPromo] = useState<boolean>(false);
   const [promoMessage, setPromoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [campaignInfo, setCampaignInfo] = useState<ReferralStatusResponse['ai30Campaign'] | null>(null);
