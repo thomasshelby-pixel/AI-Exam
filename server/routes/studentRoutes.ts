@@ -2552,6 +2552,15 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
 router.put('/profile', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
+    if (req.user!.role !== 'STUDENT') {
+      return res.status(403).json({ error: 'Access denied: Only student accounts can update student profiles.' });
+    }
+
+    const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(studentId) as { role: string } | undefined;
+    if (!targetUser || targetUser.role !== 'STUDENT') {
+      return res.status(403).json({ error: 'Access denied: Cannot modify non-student accounts via student profile endpoint.' });
+    }
+
     const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl, icaiRegistrationNumber } = req.body;
 
     // Field-level validation

@@ -353,14 +353,14 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         let targetRole = u.role || 'STUDENT';
         let targetStatus = u.status || 'ACTIVE';
 
-        // Super Admin migration enforcement:
-        if (normEmail === 'support@caexamcheckerai.com' || normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
+        // Super Admin identity enforcement:
+        if (normEmail === 'admin@caexamchecker.ai' || normEmail === 'support@caexamcheckerai.com' || normEmail === 'caexamchecker.support@gmail.com' || u.id === 'usr_super_admin_001') {
           targetId = 'usr_super_admin_001';
-          normEmail = 'support@caexamcheckerai.com';
+          normEmail = 'admin@caexamchecker.ai';
           targetRole = 'SUPER_ADMIN';
           targetStatus = 'ACTIVE';
 
-          // Clean up old support admin document in Firestore if it had a different id
+          // Clean up old duplicate support admin document in Firestore if it had a different id
           if (u.id !== 'usr_super_admin_001') {
             await deleteFirestoreDoc('users', u.id).catch(() => {});
           }
@@ -374,8 +374,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           targetStatus = 'ACTIVE';
         }
 
-        // Deactivate old superseded admin emails if present in Firestore
-        if (normEmail === 'admin@caexamchecker.ai' || normEmail === 'superadmin@ca-exam-checker.com') {
+        // Deactivate obsolete demo admin emails if present in Firestore
+        if (normEmail === 'superadmin@ca-exam-checker.com') {
           targetStatus = 'DISABLED';
           targetRole = 'DISABLED';
         }
@@ -1651,6 +1651,7 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
     const baselineUserQuery = `
       SELECT * FROM users 
       WHERE email IN (
+        'admin@caexamchecker.ai',
         'support@caexamcheckerai.com',
         'institute@apexca.edu',
         'student@caexamchecker.ai',
@@ -1695,10 +1696,10 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
           }
         }
       } else if (bu.role === 'SUPER_ADMIN') {
-        // Ensure authoritative ADMIN_PASSWORD configured in server environment stays in sync in Cloud Firestore
+        // Ensure authoritative Super Admin credentials stay in sync in Cloud Firestore
         // while preserving existing MFA enrollment state
         const superAdminData: Record<string, any> = {
-          email: bu.email,
+          email: 'admin@caexamchecker.ai',
           password_hash: bu.password_hash,
           status: 'ACTIVE',
           role: 'SUPER_ADMIN',
@@ -1709,19 +1710,19 @@ export async function seedBaselineToFirestoreIfEmpty(): Promise<void> {
           superAdminData.mfa_enrolled_at = bu.mfa_enrolled_at || new Date().toISOString();
         }
         await setFirestoreDoc('users', bu.id, superAdminData);
-        console.log(`[FirestoreSync] Synchronized SUPER_ADMIN ${bu.email} credentials to Cloud Firestore.`);
+        console.log(`[FirestoreSync] Synchronized SUPER_ADMIN ${superAdminData.email} credentials to Cloud Firestore.`);
       }
     }
 
-    // Safely deactivate superseded admin emails in Firestore if present
-    for (const oldAdm of existingUsers.filter((u) => u.email === 'admin@caexamchecker.ai' || u.email === 'superadmin@ca-exam-checker.com')) {
+    // Safely deactivate obsolete demo admin emails in Firestore if present
+    for (const oldAdm of existingUsers.filter((u) => u.email === 'superadmin@ca-exam-checker.com')) {
       if (oldAdm.id !== 'usr_super_admin_001') {
         await setFirestoreDoc('users', oldAdm.id, {
           status: 'DISABLED',
           role: 'DISABLED',
           updated_at: new Date().toISOString()
         });
-        console.log(`[FirestoreSync] Deactivated superseded admin email in Firestore: ${oldAdm.email}`);
+        console.log(`[FirestoreSync] Deactivated obsolete demo admin email in Firestore: ${oldAdm.email}`);
       }
     }
 

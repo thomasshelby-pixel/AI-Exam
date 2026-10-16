@@ -1990,93 +1990,35 @@ function seedCoreStudents() {
 }
 
 function seedInitialData() {
-  // 1. Authoritative Super Admin Migration to Accessible Mailbox: support@caexamcheckerai.com
+  // 1. Authoritative Super Admin: admin@caexamchecker.ai (UID: usr_super_admin_001)
+  const originalSuperAdminHash = 'ed84eb956c11cd1fbc867d2c843ba366:e9221b7cfd6dc76d82f8abc0104cb46c69b789acfc7ee73a352b4ee5d10d57719de0c13bbe1378941e5c9b8b4734cfe449576b0601e58b49e1e799fa1e59f854';
   const adminPassword = process.env.ADMIN_PASSWORD || 'BgMi@2006';
-  const superAdminHash = hashPassword(adminPassword);
 
-  // Authoritative super admin ID is 'usr_super_admin_001'
-  // First, if a duplicate or support record existed under support@caexamcheckerai.com (e.g. usr_admin_support_002),
-  // merge any references and clean up so usr_super_admin_001 holds the email authoritatively:
-  const supportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'support@caexamcheckerai.com'").get() as { id: string } | undefined;
-  if (supportAccount && supportAccount.id !== 'usr_super_admin_001') {
-    try {
-      db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
-      db.prepare("UPDATE user_sessions SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
-      db.prepare("UPDATE notifications SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(supportAccount.id);
-      db.prepare("DELETE FROM users WHERE id = ?").run(supportAccount.id);
-    } catch (e) {
-      console.warn('[DB] Error consolidating support account to primary super admin:', e);
-    }
-  }
-
-  // Also consolidate any legacy caexamchecker.support@gmail.com account if separate from usr_super_admin_001
-  const legacySupportAccount = db.prepare("SELECT id FROM users WHERE lower(email) = 'caexamchecker.support@gmail.com'").get() as { id: string } | undefined;
-  if (legacySupportAccount && legacySupportAccount.id !== 'usr_super_admin_001') {
-    try {
-      db.prepare("UPDATE audit_logs SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
-      db.prepare("UPDATE user_sessions SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
-      db.prepare("UPDATE notifications SET user_id = 'usr_super_admin_001' WHERE user_id = ?").run(legacySupportAccount.id);
-      db.prepare("DELETE FROM users WHERE id = ?").run(legacySupportAccount.id);
-    } catch (e) {
-      console.warn('[DB] Error consolidating legacy support account to primary super admin:', e);
-    }
-  }
-
-  // Now ensure usr_super_admin_001 is updated with the accessible email, preserving its ID, audit history, and password
+  // Authoritative super admin ID is 'usr_super_admin_001' with verified registered email admin@caexamchecker.ai
   const existingSuperAdmin = db.prepare("SELECT id, email, password_hash FROM users WHERE id = 'usr_super_admin_001'").get() as { id: string; email: string; password_hash: string } | undefined;
   if (existingSuperAdmin) {
     db.prepare(`
       UPDATE users
-      SET email = 'support@caexamcheckerai.com',
+      SET email = 'admin@caexamchecker.ai',
           full_name = 'Super Administrator',
           role = 'SUPER_ADMIN',
           status = 'ACTIVE',
-          password_hash = ?,
+          password_hash = COALESCE(password_hash, ?),
           phone = COALESCE(phone, '+919876543210'),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = 'usr_super_admin_001'
-    `).run(existingSuperAdmin.password_hash || superAdminHash);
-
-    db.prepare(`
-      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, 'usr_super_admin_001', 'MIGRATE_SUPER_ADMIN_EMAIL', 'USER', 'usr_super_admin_001', 'Migrated Super Admin email to support@caexamcheckerai.com while preserving all permissions, history, and credentials')
-    `).run(`log_mig_super_admin_${Date.now()}`);
+    `).run(originalSuperAdminHash);
   } else {
     db.prepare(`
       INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-      VALUES ('usr_super_admin_001', 'support@caexamcheckerai.com', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
-    `).run(superAdminHash);
+      VALUES ('usr_super_admin_001', 'admin@caexamchecker.ai', ?, 'Super Administrator', '+919876543210', 'SUPER_ADMIN', 'ACTIVE')
+    `).run(originalSuperAdminHash);
 
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES ('log_init_super_admin', 'usr_super_admin_001', 'INITIALIZE_SYSTEM', 'USER', 'usr_super_admin_001', 'Created SUPER_ADMIN account')
     `).run();
   }
-
-  // Safely deactivate old non-accessible admin logins so they cannot log in as active Super Admin
-  const oldAdminEmails = ['admin@caexamchecker.ai', 'superadmin@ca-exam-checker.com', 'caexamchecker.support@gmail.com'];
-  for (const oldEmail of oldAdminEmails) {
-    const oldRow = db.prepare("SELECT id, status FROM users WHERE lower(email) = ?").get(oldEmail) as { id: string; status: string } | undefined;
-    if (oldRow && oldRow.id !== 'usr_super_admin_001') {
-      db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(oldRow.id);
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, 'usr_super_admin_001', 'DEACTIVATE_SUPERSEDED_ADMIN', 'USER', ?, ?)
-      `).run(
-        `log_mig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        oldRow.id,
-        `Deactivated superseded admin email ${oldEmail} following authoritative migration to support@caexamcheckerai.com`
-      );
-    }
-  }
-
-  // Also deactivate any lingering unaccessible @caexamchecker.ai admin records
-  try {
-    const lingeringAdmins = db.prepare("SELECT id, email FROM users WHERE (lower(email) LIKE '%admin@caexamchecker.ai' OR lower(email) LIKE '%superadmin@ca-exam-checker%') AND id != 'usr_super_admin_001' AND status != 'DISABLED'").all() as Array<{ id: string; email: string }>;
-    for (const la of lingeringAdmins) {
-      db.prepare("UPDATE users SET status = 'DISABLED', role = 'DISABLED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(la.id);
-    }
-  } catch {}
 
   // Auto-migrate settings support email in existing database instances
   try {
