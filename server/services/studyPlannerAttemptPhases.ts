@@ -37,7 +37,7 @@ export function createAttemptStudyPhases(input: {
   if (!validDate(input.start_date) || !validDate(input.exact_exam_date)) {
     throw new Error('A valid start date and exact exam date are required for an attempt-wide plan.');
   }
-  const totalDays = daysBetween(input.start_date, input.exact_exam_date);
+  const totalDays = daysBetween(input.start_date, input.exact_exam_date) + 1;
   if (totalDays < 14) throw new Error('Attempt-wide planning needs at least 14 days before the exact exam date.');
   const completion = input.syllabus_completion_percent ?? 0;
   if (!Number.isFinite(completion) || completion < 0 || completion > 100) {
