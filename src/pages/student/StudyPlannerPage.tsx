@@ -70,6 +70,10 @@ export const StudyPlannerPage: React.FC = () => {
   const [dailyPlan, setDailyPlan] = useState<any>(null);
   const [dailyPlanState, setDailyPlanState] = useState('');
   const [dailyPlanBusy, setDailyPlanBusy] = useState(false);
+  const [savedPlans, setSavedPlans] = useState<Array<any>>([]);
+  const [progressLogs, setProgressLogs] = useState<Array<any>>([]);
+  const [progressBusyKey, setProgressBusyKey] = useState('');
+  const [progressMessage, setProgressMessage] = useState('');
   const [mockSubject, setMockSubject] = useState('Taxation (Income Tax & GST)');
   const [mockScore, setMockScore] = useState('');
   const [mockMaxScore, setMockMaxScore] = useState('100');
@@ -93,7 +97,7 @@ export const StudyPlannerPage: React.FC = () => {
     let cancelled = false;
     Promise.all([
       apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=CA_INTERMEDIATE'),
-      apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE'),
+      apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE'),
       apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE'),
     ]).then(([curriculum, profile, priorityData]) => {
       if (cancelled) return;
@@ -109,11 +113,60 @@ export const StudyPlannerPage: React.FC = () => {
       }
       setStrengths(restored);
       setPriorities(priorityData.priorities || []);
+      setSavedPlans(profile.plans || []);
+      setProgressLogs(profile.progress || []);
     }).catch(() => { /* Keep chat usable if profile or curriculum is temporarily unavailable. */ });
 
 
   return () => { cancelled = true; };
   }, []);
+
+  const refreshSavedPlans = async () => {
+    const profile = await apiRequest<{ plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE');
+    setSavedPlans(profile.plans || []);
+    setProgressLogs(profile.progress || []);
+  };
+
+  const logStudySession = async (planId: string, session: any, studiedOn?: string) => {
+    const key = planId + ':' + String(session.order ?? session.label);
+    setProgressBusyKey(key);
+    setProgressMessage('');
+    try {
+      await apiRequest('/api/student/study-planner/progress', {
+        method: 'POST',
+        body: JSON.stringify({
+          course: 'CA_INTERMEDIATE',
+          plan_id: planId,
+          subject: String(session.subject || 'CA Intermediate'),
+          chapter: typeof session.chapter === 'string' ? session.chapter : '',
+          activity: String(session.activity || session.label || 'Study session'),
+          duration_minutes: Number(session.minutes),
+          studied_on: studiedOn || new Date().toLocaleDateString('en-CA'),
+          notes: 'Logged from saved AI Planner timetable.',
+        }),
+      });
+      await refreshSavedPlans();
+      setProgressMessage('Study session logged successfully.');
+    } catch (err: any) {
+      setProgressMessage(err?.message || 'Could not log this study session.');
+    } finally {
+      setProgressBusyKey('');
+    }
+  };
+
+  const completeSavedPlan = async (planId: string) => {
+    setProgressBusyKey('complete:' + planId);
+    setProgressMessage('');
+    try {
+      await apiRequest('/api/student/study-planner/plans/' + encodeURIComponent(planId) + '/complete', { method: 'PATCH' });
+      await refreshSavedPlans();
+      setProgressMessage('Plan marked as completed.');
+    } catch (err: any) {
+      setProgressMessage(err?.message || 'Could not complete this plan.');
+    } finally {
+      setProgressBusyKey('');
+    }
+  };
 
   const generateDailyPlan = () => {
   const minutes = Number(dailyMinutes);
@@ -128,7 +181,7 @@ export const StudyPlannerPage: React.FC = () => {
   for (const chunk of chunks) { const splits = defs.map((d) => Math.floor(chunk.minutes * d.share)); splits[2] += chunk.minutes - splits.reduce((sum, value) => sum + value, 0); defs.forEach((d, i) => { if (splits[i] > 0) sessions.push({ order: sessions.length + 1, subject: chunk.chapter.subject, chapter: chunk.chapter.chapter, label: d.label, activity: d.activity, minutes: splits[i], instruction: d.instruction, priority_score: chunk.chapter.priority_score }); }); }
   setDailyPlan({ title: 'Priority-based daily study plan', total_minutes: minutes, date: dailyDate, sessions }); setDailyPlanState('Draft ready. Review the sessions before saving.');
   };
-  const saveDailyPlan = async () => { if (!dailyPlan) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
+  const saveDailyPlan = async () => { if (!dailyPlan) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
   const sendRequest = async (rawText?: string) => {
     const text = (rawText ?? request).trim();
@@ -332,6 +385,49 @@ export const StudyPlannerPage: React.FC = () => {
               </section>
         
       )}
+      <section className="mb-4 rounded-2xl border border-emerald-200 bg-white p-4 dark:border-emerald-900 dark:bg-slate-950 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-extrabold text-slate-900 dark:text-white">My saved plans & study progress</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">Saved plans stay linked to your account. Log a session after studying, or mark the whole plan complete.</p>
+          </div>
+          <button type="button" onClick={() => void refreshSavedPlans().catch((err: any) => setProgressMessage(err?.message || 'Could not refresh progress.'))} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 dark:border-slate-700 dark:text-slate-200">Refresh</button>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs text-slate-500">Saved plans</p><p className="mt-1 text-xl font-black text-slate-900 dark:text-white">{savedPlans.length}</p></div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs text-slate-500">Minutes logged</p><p className="mt-1 text-xl font-black text-slate-900 dark:text-white">{progressLogs.reduce((sum, item) => sum + Number(item.duration_minutes || 0), 0)}</p></div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900"><p className="text-xs text-slate-500">Plans completed</p><p className="mt-1 text-xl font-black text-slate-900 dark:text-white">{savedPlans.filter((plan) => String(plan.status).toUpperCase() === 'COMPLETED').length}</p></div>
+        </div>
+        {progressMessage && <p role="status" className="mt-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300">{progressMessage}</p>}
+        {savedPlans.length === 0 ? (
+          <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700">No saved plans yet. Generate a daily timetable above and choose Save timetable.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {savedPlans.map((saved) => {
+              const planId = String(saved.id);
+              const plan = saved.plan && typeof saved.plan === 'object' ? saved.plan : {};
+              const sessions = Array.isArray(plan.sessions) ? plan.sessions : [];
+              const completed = String(saved.status).toUpperCase() === 'COMPLETED';
+              return <div key={planId} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0"><p className="text-sm font-extrabold text-slate-900 dark:text-white">{saved.title || plan.title || 'Study plan'}</p><p className="mt-1 text-xs text-slate-500">{Number(plan.total_minutes || 0)} study minutes · {saved.created_at ? new Date(saved.created_at).toLocaleDateString() : 'Saved plan'}</p></div>
+                  <span className={'rounded-full px-2.5 py-1 text-[10px] font-extrabold ' + (completed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300')}>{completed ? 'COMPLETED' : 'ACTIVE'}</span>
+                </div>
+                {sessions.length > 0 && <div className="mt-3 space-y-2">{sessions.map((session: any, index: number) => {
+                  const sessionKey = planId + ':' + String(session.order ?? session.label ?? index);
+                  const logged = progressLogs.some((entry) => String(entry.plan_id) === planId && String(entry.subject) === String(session.subject || '') && String(entry.activity) === String(session.activity || session.label || 'Study session') && Number(entry.duration_minutes) === Number(session.minutes));
+                  return <div key={sessionKey} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                    <div className="min-w-0 flex-1"><p className="text-xs font-bold text-slate-800 dark:text-slate-100">{session.label || session.activity || 'Study session'} · {session.minutes} min</p><p className="mt-0.5 text-[11px] text-slate-500">{session.subject}{session.chapter ? ' · ' + session.chapter : ''}</p></div>
+                    <button type="button" disabled={completed || logged || Boolean(progressBusyKey)} onClick={() => void logStudySession(planId, session, typeof plan.date === 'string' ? plan.date : undefined)} className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 disabled:opacity-50 dark:border-emerald-900 dark:text-emerald-300">{logged ? 'Logged' : progressBusyKey === sessionKey ? 'Logging…' : 'Log session'}</button>
+                  </div>;
+                })}</div>}
+                {!completed && <button type="button" disabled={Boolean(progressBusyKey)} onClick={() => void completeSavedPlan(planId)} className="mt-3 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{progressBusyKey === 'complete:' + planId ? 'Updating…' : 'Mark plan complete'}</button>}
+              </div>;
+            })}
+          </div>
+        )}
+      </section>
+
       <section className="flex min-h-[68vh] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <header className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-950 via-slate-900 to-blue-950 px-4 py-4 text-white sm:px-6">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
@@ -400,7 +496,7 @@ export const StudyPlannerPage: React.FC = () => {
                             setSavingPlanId(message.id); setError('');
                             try {
                               await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan: message.result?.plan }) });
-                              setSavedPlanIds((ids) => [...ids, message.id]);
+                              setSavedPlanIds((ids) => [...ids, message.id]); await refreshSavedPlans();
                             } catch (err: any) { setError(err?.message || 'Could not save this plan.'); }
                             finally { setSavingPlanId(null); }
                           }} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
