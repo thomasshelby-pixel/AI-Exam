@@ -77,6 +77,7 @@ export const StudyPlannerPage: React.FC = () => {
   const [classEnd, setClassEnd] = useState('13:00');
   const [classBlocks, setClassBlocks] = useState<Array<{day_of_week:number;start_time:string;end_time:string;label:string}>>([]);
   const [attemptRoadmap, setAttemptRoadmap] = useState<any>(null);
+  const [revisionRounds, setRevisionRounds] = useState<any[]>([]);
   const [roadmapCompletion, setRoadmapCompletion] = useState('40');
   const [roadmapBusy, setRoadmapBusy] = useState(false);
   const [roadmapMessage, setRoadmapMessage] = useState('');
@@ -182,13 +183,13 @@ export const StudyPlannerPage: React.FC = () => {
   };
 
   const generateAttemptRoadmap = async () => {
-    if (!exactExamDate) { setRoadmapMessage('Choose the exact exam date first. The planner will not guess it.'); setAttemptRoadmap(null); return; }
+    if (!exactExamDate) { setRoadmapMessage('Choose the exact exam date first. The planner will not guess it.'); setAttemptRoadmap(null); setRevisionRounds([]); return; }
     const completion = Number(roadmapCompletion);
     if (!Number.isFinite(completion) || completion < 0 || completion > 100) { setRoadmapMessage('Syllabus completion must be between 0 and 100%.'); setAttemptRoadmap(null); return; }
     setRoadmapBusy(true); setRoadmapMessage('');
     try {
-      const response = await apiRequest<{ success: boolean; roadmap: any[]; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion }) });
-      setAttemptRoadmap(response.roadmap); setRoadmapMessage('Exam roadmap generated. Revision rounds are planned up to your exam; use the weekly timetable below for individual sessions.');
+      const response = await apiRequest<{ success: boolean; roadmap: any[]; revision_rounds?: any[]; chapter_ratings_used?: number; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion, daily_study_hours: Number(dailyMinutes) || 4 }) });
+      setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []); setRoadmapMessage('Exam roadmap generated. ' + (response.chapter_ratings_used ? response.chapter_ratings_used + ' saved chapter ratings used.' : 'Rate chapters to personalise revision priorities.') + ' Weekly timetable remains your daily execution view.');
     } catch (err: any) { setAttemptRoadmap(null); setRoadmapMessage(err?.message || 'Could not generate attempt roadmap.'); }
     finally { setRoadmapBusy(false); }
   };
@@ -300,7 +301,7 @@ export const StudyPlannerPage: React.FC = () => {
         </div>
         <button type="button" disabled={roadmapBusy} onClick={()=>void generateAttemptRoadmap()} className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{roadmapBusy ? 'Building roadmap…' : 'Build exam roadmap'}</button>
         {roadmapMessage && <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">{roadmapMessage}</p>}
-        {attemptRoadmap && <div className="mt-4 space-y-3">{attemptRoadmap.map((phase:any)=><div key={phase.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900 dark:text-white">{phase.title}</h3><span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">{phase.goals.map((goal:string)=><li key={goal}>{goal}</li>)}</ul></div>)}</div>}
+        {attemptRoadmap && <div className="mt-4 space-y-3">{attemptRoadmap.map((phase:any)=><div key={phase.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900 dark:text-white">{phase.title}</h3><span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">{phase.goals.map((goal:string)=><li key={goal}>{goal}</li>)}</ul></div>)}</div>}{revisionRounds.length > 0 && <div className="mt-4"><h3 className="mb-2 text-sm font-extrabold text-slate-900 dark:text-white">Your adaptive revision rounds</h3><div className="space-y-2">{revisionRounds.map((round:any)=><div key={round.key} className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 dark:border-indigo-900 dark:bg-indigo-950/20"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-bold text-slate-900 dark:text-white">{round.title}</h4><span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">{round.days} days</span></div><p className="mt-1 text-xs text-slate-500">{round.start_date} – {round.end_date}</p><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{round.focus}</p><p className="mt-1 text-xs text-slate-500">{round.chapters?.length || 0} high-priority chapters included</p></div>)}</div></div>}
       </section>
 
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
