@@ -133,6 +133,94 @@ function getIntermediateChapterOptions() {
   }));
 }
 
+
+const PRIORITY_SUBJECT_ALIASES: Record<string, string[]> = {
+  'Taxation': ['Taxation (Income Tax & GST)', 'Taxation'],
+  'Costing': ['Cost and Management Accounting', 'Costing'],
+  'Cost and Management Accounting': ['Cost and Management Accounting', 'Costing'],
+  'Law': ['Corporate and Other Laws', 'Law'],
+  'Corporate and Other Laws': ['Corporate and Other Laws', 'Law'],
+  'Audit': ['Auditing and Ethics', 'Audit'],
+  'Auditing and Ethics': ['Auditing and Ethics', 'Audit'],
+  'Advanced Accounting': ['Advanced Accounting'],
+  'Financial Management and Strategic Management': ['Financial Management and Strategic Management', 'FM and SM'],
+};
+
+function getCanonicalStrengthSubject(subject: string): string[] {
+  return PRIORITY_SUBJECT_ALIASES[subject] || [subject];
+}
+
+router.post('/mock-results', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const course = String(body.course || '').toUpperCase();
+  const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+  const score = Number(body.score);
+  const maxScore = Number(body.max_score);
+  const source = String(body.source || 'MOCK_TEST').toUpperCase();
+  const examDate = typeof body.exam_date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(body.exam_date)
+    ? body.exam_date
+    : new Date().toISOString().slice(0, 10);
+  const allowedSubjects = CA_CURRICULUM.INTERMEDIATE.subjects.map((item) => item.name);
+  const validSubject = allowedSubjects.includes(subject) || ['Taxation', 'Costing', 'Law', 'Audit', 'FM and SM'].includes(subject);
+  if (course !== 'CA_INTERMEDIATE' || !validSubject || !Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0 || score < 0 || score > maxScore || maxScore > 1000 || !['SELF_REPORTED', 'MOCK_TEST', 'PAST_PAPER'].includes(source)) {
+    return res.status(400).json({ success: false, error: 'Provide a valid subject, score, maximum marks and source.' });
+  }
+  const id = randomUUID();
+  db.prepare('INSERT INTO student_mock_results (id, user_id, course, subject, score, max_score, exam_date, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, req.user.id, course, subject, score, maxScore, examDate, source);
+  return res.status(201).json({ success: true, id, percentage: Math.round((score / maxScore) * 1000) / 10 });
+});
+
+router.get('/priorities', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
+  if (course !== 'CA_INTERMEDIATE') {
+    return res.status(400).json({ success: false, error: 'Adaptive priorities are currently available for CA Intermediate only.' });
+  }
+  const strengths = db.prepare('SELECT subject, chapter, strength, updated_at FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?')
+    .all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string; updated_at: string }>;
+  const results = db.prepare('SELECT subject, score, max_score, exam_date, source FROM student_mock_results WHERE user_id = ? AND course = ? ORDER BY exam_date DESC, created_at DESC LIMIT 200')
+    .all(req.user.id, course) as Array<{ subject: string; score: number; max_score: number; exam_date: string; source: string }>;
+  const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string; source: string }>();
+  for (const result of results) {
+    if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
+  }
+  const subjects = CA_CURRICULUM.INTERMEDIATE.subjects;
+  const priorities = strengths.map((item) => {
+    const aliases = getCanonicalStrengthSubject(item.subject);
+    const matchingSubject = subjects.find((subject) => aliases.includes(subject.name));
+    const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
+    const mock = [...latestBySubject.values()].find((result) => canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias)));
+    const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
+    const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
+    const score = mockRisk === null ? strengthRisk : Math.round(strengthRisk * 0.6 + mockRisk * 0.4);
+    return {
+      subject: item.subject,
+      chapter: item.chapter,
+      strength: item.strength,
+      mock_percentage: mock ? Math.round((mock.score / mock.max_score) * 1000) / 10 : null,
+      mock_exam_date: mock?.exam_date || null,
+      priority_score: score,
+      priority: score >= 70 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW',
+      rationale: mock
+        ? item.strength.toLowerCase() + ' self-assessment combined with ' + Math.round((mock.score / mock.max_score) * 100) + '% in the latest matching subject result.'
+        : item.strength.toLowerCase() + ' self-assessment; add a mock result for a more evidence-based ranking.',
+    };
+  }).sort((a, b) => b.priority_score - a.priority_score || a.subject.localeCompare(b.subject) || a.chapter.localeCompare(b.chapter));
+  return res.json({
+    success: true,
+    course,
+    formula: 'priority = 60% self-assessed weakness + 40% latest matching mock-score risk; higher means higher revision priority',
+    priorities,
+    mock_results: results.slice(0, 30),
+  });
+});
+
 router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) => {
   if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
     return res.status(403).json({ success: false, error: 'Student account required.' });
