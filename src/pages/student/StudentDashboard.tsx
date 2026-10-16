@@ -470,6 +470,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
 
+          <button
+            id="dashboard-study-planner-btn"
+            type="button"
+            onClick={() => navigate('/student/study-planner')}
+            className="px-3.5 py-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 font-semibold text-xs sm:text-sm transition border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 cursor-pointer"
+            title="Create a draft study plan"
+          >
+            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+            <span>Study Planner</span>
+          </button>
+
           <a
             id="dashboard-progress-trend-btn"
             href="#student-progress-dashboard"
