@@ -41,6 +41,20 @@ test('GST is normalized to Intermediate Taxation', () => {
   assert.equal(parsed.duration_minutes, 90);
 });
 
+test('Natural shorthand request creates a draft without requiring the word plan', () => {
+  const parsed = parseStudyPlannerRequest(
+    'Taxation 3 hours detailed',
+    'CA_INTERMEDIATE',
+  );
+  assert.equal(parsed.intent, 'create_study_plan');
+  assert.deepEqual(parsed.subjects, ['Taxation']);
+  assert.equal(parsed.duration_minutes, 180);
+  assert.equal(parsed.should_call_planner, true);
+  const draft = createStudyPlanDraft(parsed);
+  assert.equal(draft?.total_minutes, 180);
+  assert.equal(draft?.sessions.reduce((sum, session) => sum + session.minutes, 0), 180);
+});
+
 test('Multiple subjects preserve mention order', () => {
   const parsed = parseStudyPlannerRequest(
     'Make a 2-hour study plan for Taxation and Advanced Accounting tomorrow.',

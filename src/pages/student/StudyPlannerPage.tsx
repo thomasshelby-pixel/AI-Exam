@@ -1,18 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  AlertCircle,
-  CalendarDays,
-  CheckCircle2,
-  Clock3,
-  BookOpen,
-  Sparkles,
-  ListChecks,
-} from 'lucide-react';
+import { ArrowLeft, Bot, CalendarClock, CheckCircle2, Clock3, Send, Sparkles, UserRound } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
-
-type PlannerCourse = '' | 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL';
 
 interface ParsedRequest {
   intent: string;
@@ -27,7 +16,6 @@ interface ParsedRequest {
   missing_info: string[];
   should_call_planner: boolean;
 }
-
 interface StudyPlanSession {
   order: number;
   subject: string;
@@ -35,7 +23,6 @@ interface StudyPlanSession {
   minutes: number;
   instruction: string;
 }
-
 interface StudyPlanDraft {
   title: string;
   total_minutes: number;
@@ -44,282 +31,178 @@ interface StudyPlanDraft {
   saved: false;
   note: string;
 }
-
 interface PlannerResponse {
   success: boolean;
   status: string;
   message: string;
   parsed: ParsedRequest;
   plan: StudyPlanDraft | null;
-  metadata?: {
-    version: string;
-    modelUsed: boolean;
-    persistentStorage: boolean;
-  };
+  metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
 }
-
-const EXAMPLES: Array<{ course: Exclude<PlannerCourse, '' | 'CA_FINAL'>; label: string; message: string }> = [
-  {
-    course: 'CA_FOUNDATION',
-    label: 'Foundation · Accounting',
-    message: 'Give me 60 minutes of Accounting revision tomorrow.',
-  },
-  {
-    course: 'CA_INTERMEDIATE',
-    label: 'Intermediate · Taxation',
-    message: 'I have 90 minutes for Taxation revision today.',
-  },
-  {
-    course: 'CA_INTERMEDIATE',
-    label: 'Two subjects · 2 hours',
-    message: 'Make a 2-hour study plan for Taxation and Advanced Accounting tomorrow.',
-  },
+interface ChatMessage {
+  id: number;
+  role: 'assistant' | 'user';
+  text: string;
+  result?: PlannerResponse;
+}
+const STARTER_PROMPTS = [
+  'Taxation 3 hours detailed',
+  'I have 2 hours for Costing. Focus on Marginal Costing.',
+  'Make a 90-minute revision plan for Law tomorrow.',
 ];
-
-function formatIntent(intent: string): string {
-  return intent.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
 
 export const StudyPlannerPage: React.FC = () => {
   const navigate = useNavigate();
-  const [course, setCourse] = useState<PlannerCourse>('');
   const [request, setRequest] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<PlannerResponse | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: 1,
+    role: 'assistant',
+    text: 'Hi! I’m your CA Intermediate study planner. Tell me what you need to study and how much time you have. I’ll help break it into concept revision, question practice and active recall.',
+  }]);
+  const nextId = useRef(2);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const submitRequest = async (event: React.FormEvent) => {
-    event.preventDefault();
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, loading]);
+
+  const sendRequest = async (rawText?: string) => {
+    const text = (rawText ?? request).trim();
+    if (!text || loading) return;
     setError('');
-    setResult(null);
-
-    if (!course) {
-      setError('Select CA Foundation or CA Intermediate first.');
-      return;
-    }
-    if (!request.trim()) {
-      setError('Describe your study goal and available time.');
-      return;
-    }
-
+    setRequest('');
+    const userMessage: ChatMessage = { id: nextId.current++, role: 'user', text };
+    setMessages((current) => [...current, userMessage]);
     setLoading(true);
     try {
       const response = await apiRequest<PlannerResponse>('/api/student/study-planner', {
         method: 'POST',
-        body: JSON.stringify({ message: request.trim(), course }),
+        body: JSON.stringify({ message: text, course: 'CA_INTERMEDIATE' }),
       });
-      setResult(response);
+      setMessages((current) => [...current, {
+        id: nextId.current++,
+        role: 'assistant',
+        text: response.message || 'I’ve reviewed your request.',
+        result: response,
+      }]);
     } catch (err: any) {
-      setError(err?.message || 'Unable to prepare the study-plan draft. Please try again.');
+      setError(err?.message || 'I couldn’t process that request. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const applyExample = (example: typeof EXAMPLES[number]) => {
-    setCourse(example.course);
-    setRequest(example.message);
-    setResult(null);
-    setError('');
-  };
-
-  const isClarification = result?.status === 'needs_clarification' || result?.status === 'unsupported_course';
-
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+    <div className="mx-auto flex min-h-[calc(100dvh-9rem)] w-full max-w-4xl flex-col px-3 py-4 sm:px-6 sm:py-6">
       <button
         type="button"
         onClick={() => navigate('/student/dashboard')}
-        className="mb-5 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        className="mb-4 inline-flex w-fit items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
       >
-        <ArrowLeft className="h-4 w-4" />
-        Back to dashboard
+        <ArrowLeft className="h-4 w-4" /> Back to dashboard
       </button>
 
-      <section className="overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-blue-950 px-6 py-7 text-white sm:px-8">
-          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-300/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-indigo-100">
-            <Sparkles className="h-3.5 w-3.5" />
-            AI Study Planner · Beta
+      <section className="flex min-h-[68vh] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <header className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-950 via-slate-900 to-blue-950 px-4 py-4 text-white sm:px-6">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
+            <Sparkles className="h-5 w-5 text-indigo-200" />
           </div>
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">Plan your next study session</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Describe your CA course, subjects, and available time. The planner creates a structured draft for concept revision, question practice, and active recall.
-          </p>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base font-extrabold sm:text-lg">AI Study Planner</h1>
+            <p className="mt-0.5 text-xs text-slate-300">CA Intermediate · Study planning assistant</p>
+          </div>
+          <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-200">Beta</span>
+        </header>
+
+        <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
+          <CalendarClock className="h-4 w-4 text-indigo-500" />
+          Your plan is drafted from your request; it is not saved to your calendar yet.
         </div>
 
-        <div className="grid gap-7 p-5 sm:p-8 lg:grid-cols-[1.1fr_0.9fr]">
-          <form onSubmit={submitRequest} className="space-y-5">
-            <div>
-              <label htmlFor="planner-course" className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">
-                CA level
-              </label>
-              <select
-                id="planner-course"
-                value={course}
-                onChange={(event) => {
-                  setCourse(event.target.value as PlannerCourse);
-                  setResult(null);
-                  setError('');
-                }}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              >
-                <option value="">Select your course</option>
-                <option value="CA_FOUNDATION">CA Foundation</option>
-                <option value="CA_INTERMEDIATE">CA Intermediate</option>
-                <option value="CA_FINAL" disabled>CA Final · Not supported yet</option>
-              </select>
-              <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
-                Foundation and Intermediate are supported in this beta.
-              </p>
-            </div>
-
-            <div>
-              <label htmlFor="planner-request" className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">
-                What would you like to study?
-              </label>
-              <textarea
-                id="planner-request"
-                rows={5}
-                maxLength={1200}
-                value={request}
-                onChange={(event) => {
-                  setRequest(event.target.value);
-                  setResult(null);
-                  setError('');
-                }}
-                placeholder="Example: I have 2 hours for Taxation and Advanced Accounting tomorrow."
-                className="w-full resize-y rounded-xl border border-slate-300 bg-white px-3.5 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
-              <div className="mt-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>Include subject(s), time, and date when known.</span>
-                <span>{request.length}/1200</span>
+        <div className="flex-1 space-y-5 overflow-y-auto px-3 py-5 sm:px-6">
+          {messages.map((message) => (
+            <div key={message.id} className={'flex items-start gap-2.5 ' + (message.role === 'user' ? 'flex-row-reverse' : '')}>
+              <div className={'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ' + (message.role === 'assistant' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200')}>
+                {message.role === 'assistant' ? <Bot className="h-4 w-4" /> : <UserRound className="h-4 w-4" />}
               </div>
-            </div>
-
-            {error && (
-              <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? <Clock3 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {loading ? 'Preparing your draft…' : 'Create draft study plan'}
-            </button>
-          </form>
-
-          <aside className="space-y-5">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/70">
-              <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-                <BookOpen className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                Try an example
-              </div>
-              <div className="space-y-2">
-                {EXAMPLES.map((example) => (
-                  <button
-                    key={example.label}
-                    type="button"
-                    onClick={() => applyExample(example)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left text-xs font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/40"
-                  >
-                    {example.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-              <div className="mb-1 flex items-center gap-2 font-bold">
-                <AlertCircle className="h-4 w-4" />
-                Beta limitations
-              </div>
-              This first version creates draft study sessions only. It does not save plans, update class timetables, log progress, or calculate chapter rankings. CA Final is not supported yet.
-            </div>
-          </aside>
-        </div>
-      </section>
-
-      {result && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-7">
-          <div className="flex items-start gap-3">
-            <div className={'rounded-xl p-2 ' + (isClarification ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300')}>
-              {isClarification ? <AlertCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-black text-slate-900 dark:text-white">
-                {result.plan ? result.plan.title : 'Request summary'}
-              </h2>
-              <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">{result.message}</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
-              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Intent</div>
-              <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{formatIntent(result.parsed.intent)}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
-              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Course</div>
-              <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{result.parsed.course || 'Not identified'}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
-              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Subjects</div>
-              <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{result.parsed.subjects.join(', ') || 'Not identified'}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950">
-              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Available time</div>
-              <div className="mt-1 text-sm font-bold text-slate-900 dark:text-white">
-                {result.parsed.duration_minutes ? result.parsed.duration_minutes + ' minutes' : 'Not specified'}
-              </div>
-            </div>
-          </div>
-
-          {result.parsed.missing_info.length > 0 && (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-              <p className="font-bold">Still needed</p>
-              <ul className="mt-1 list-inside list-disc">
-                {result.parsed.missing_info.map((item) => <li key={item}>{item}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {result.plan && (
-            <div className="mt-6">
-              <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
-                <ListChecks className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                Draft schedule · {result.plan.total_minutes} minutes
-              </div>
-              <ol className="space-y-3">
-                {result.plan.sessions.map((session) => (
-                  <li key={session.order} className="flex gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-sm font-black text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                      {session.order}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</h3>
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{session.minutes} min</span>
+              <div className={'min-w-0 max-w-[92%] sm:max-w-[86%] ' + (message.role === 'user' ? 'text-right' : '')}>
+                <div className={'inline-block rounded-2xl px-4 py-3 text-left text-sm leading-6 ' + (message.role === 'assistant' ? 'rounded-tl-md bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100' : 'rounded-tr-md bg-indigo-600 text-white')}>
+                  {message.text}
+                </div>
+                {message.result?.parsed && (
+                  <div className="mt-3 space-y-3 text-left">
+                    {message.result.parsed.missing_info.length > 0 && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                        <p className="mb-1 font-bold">Tell me a little more</p>
+                        <ul className="list-inside list-disc space-y-0.5">
+                          {message.result.parsed.missing_info.map((item) => <li key={item}>{item}</li>)}
+                        </ul>
                       </div>
-                      <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject}</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">{session.instruction}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-              <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                <CalendarDays className="mt-0.5 h-4 w-4 shrink-0" />
-                {result.plan.note}
-              </p>
+                    )}
+                    {message.result.plan && (
+                      <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-white dark:border-indigo-900 dark:bg-slate-950">
+                        <div className="flex items-center gap-3 bg-indigo-50 px-4 py-3 dark:bg-indigo-950/50">
+                          <CheckCircle2 className="h-5 w-5 text-indigo-600 dark:text-indigo-300" />
+                          <div className="min-w-0 flex-1">
+                            <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.plan.title}</h2>
+                            <p className="text-xs text-slate-600 dark:text-slate-300">{message.result.plan.subjects.join(' · ')}</p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 dark:bg-slate-900 dark:text-indigo-200">{message.result.plan.total_minutes} min</span>
+                        </div>
+                        <ol className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {message.result.plan.sessions.map((session) => (
+                            <li key={session.order} className="flex gap-3 px-4 py-3">
+                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{session.order}</div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</p>
+                                  <span className="text-xs font-bold text-slate-500">{session.minutes} min</span>
+                                </div>
+                                <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject}</p>
+                                <p className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-300">{session.instruction}</p>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                        <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">{message.result.plan.note}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><Bot className="h-4 w-4" /></div>
+              <div className="rounded-2xl rounded-tl-md bg-slate-100 px-4 py-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300"><Clock3 className="mr-2 inline h-4 w-4 animate-spin" />Thinking through your study plan…</div>
             </div>
           )}
-        </section>
-      )}
+          <div ref={bottomRef} />
+        </div>
+
+        {messages.length === 1 && (
+          <div className="border-t border-slate-100 px-3 py-3 dark:border-slate-800 sm:px-5">
+            <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Try asking</p>
+            <div className="flex flex-wrap gap-2">
+              {STARTER_PROMPTS.map((prompt) => (
+                <button key={prompt} type="button" disabled={loading} onClick={() => void sendRequest(prompt)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/50">{prompt}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={(event) => { event.preventDefault(); void sendRequest(); }} className="border-t border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 sm:p-4">
+          {error && <p role="alert" className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{error}</p>}
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-slate-50 p-2 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/15 dark:border-slate-700 dark:bg-slate-900">
+            <textarea value={request} onChange={(event) => setRequest(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendRequest(); } }} rows={2} maxLength={1200} placeholder="Tell me what you want to study and how much time you have…" className="max-h-36 min-h-[48px] flex-1 resize-y bg-transparent px-2 py-2 text-sm leading-5 text-slate-900 outline-none placeholder:text-slate-400 dark:text-white" />
+            <button type="submit" disabled={loading || !request.trim()} aria-label="Send message" className="mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Send className="h-4 w-4" /></button>
+          </div>
+          <p className="mt-2 px-1 text-[10px] text-slate-500">Enter to send · Shift + Enter for a new line</p>
+        </form>
+      </section>
     </div>
   );
 };

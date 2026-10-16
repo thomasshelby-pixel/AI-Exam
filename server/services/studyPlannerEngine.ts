@@ -293,7 +293,15 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
   const progressRequest = /\b(log|record|track|save)\b.{0,40}\b(progress|study time|revision)\b/i.test(raw);
   const priorityAction = /\b(prioriti[sz]e|rank my|which subject should i revise first|what should i study first)\b/i.test(raw);
   const generalAdvice = /\bgeneral advice\b/i.test(raw) || (/\bspaced revision\b/i.test(raw) && isPlannerNegated(raw));
-  const revisionAction = /\b(study|studying|revision|revise|review|timetable|study plan|study schedule|plan my study|plan my revision)\b/i.test(raw);
+  // A natural request such as "Taxation 3 hours detailed" is a study-plan request
+  // even when the student does not use an explicit verb like "plan" or "revise".
+  const implicitStudyPlan = Boolean(
+    result.subjects.length > 0
+    && result.duration_minutes
+    && /\b(detailed|in detail|study|studying|revision|revise|review|practice|questions|prepare|preparation|learn|cover|finish)\b/i.test(raw)
+  );
+  const revisionAction = /\b(study|studying|revision|revise|review|timetable|study plan|study schedule|plan my study|plan my revision)\b/i.test(raw)
+    || implicitStudyPlan;
 
   if (classRequest) {
     result.intent = 'update_class_schedule';
