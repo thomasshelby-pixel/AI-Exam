@@ -215,6 +215,53 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS student_chapter_strengths (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      course TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      chapter TEXT NOT NULL,
+      strength TEXT NOT NULL CHECK (strength IN ('STRONG', 'MODERATE', 'WEAK')),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, course, subject, chapter),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS student_study_plans (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      course TEXT NOT NULL,
+      title TEXT NOT NULL,
+      plan_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'COMPLETED', 'ARCHIVED')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS student_study_progress (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      plan_id TEXT,
+      course TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      chapter TEXT,
+      activity TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
+      studied_on TEXT NOT NULL DEFAULT (date('now')),
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (plan_id) REFERENCES student_study_plans(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_study_strengths_user_course
+      ON student_chapter_strengths(user_id, course);
+    CREATE INDEX IF NOT EXISTS idx_study_plans_user_status
+      ON student_study_plans(user_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_study_progress_user_date
+      ON student_study_progress(user_id, studied_on DESC);
+
     CREATE TABLE IF NOT EXISTS institutes (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
