@@ -25,7 +25,7 @@ jobs:
 
       - name: Evaluation supervisor training-pipeline regression
         run: |
-          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_qlora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py
+          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_qlora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py
           python3 research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py --output-dir /tmp/ca-evaluation-supervisor-test-data --train-per-category 3 --validation-per-category 2 --test-per-category 2 --seed 123
           python3 - <<'PY'
           import json
