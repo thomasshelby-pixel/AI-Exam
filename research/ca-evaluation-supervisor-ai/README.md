@@ -29,6 +29,12 @@ A reference PDF alone is **not** a supervised training example. For real-materia
 
 The model only produces audit flags and review actions. It does not set the final score, override deterministic integrity gates, or certify a copy by itself. The existing TypeScript supervisor and correction loop remain the safety layer.
 
+## Re-check cost control
+
+The production supervisor now caps targeted correction invocations at **4 per answer-sheet evaluation** across no more than 2 correction rounds. If issues remain after the budget is used, the evaluation fails closed to human review instead of sending more questions to the model. Parallelism is limited to 2 correction calls at a time.
+
+This caps supervisor correction invocations, **not necessarily the exact provider HTTP request count**: the configured model-routing/fallback layer may try another provider if a request fails. Each re-check can increase Gemini/GPT/API token usage and provider charges. It does not intentionally consume an additional student answer-sheet credit by itself; the platform's entitlement remains one evaluation. Provider spend should be measured separately, including fallback attempts, before setting customer pricing.
+
 ## Important limitations
 
 1. The included starter dataset is synthetic and contains no student answer sheets or ICAI solution text.
