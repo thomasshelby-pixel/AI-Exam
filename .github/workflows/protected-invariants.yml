@@ -25,8 +25,40 @@ jobs:
 
       - name: Evaluation supervisor training-pipeline regression
         run: |
-          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_lora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py
+          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_lora.py research/ca-evaluation-supervisor-ai/training_tokenization_utils.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py
           python3 research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py --output-dir /tmp/ca-evaluation-supervisor-test-data --train-per-category 3 --validation-per-category 2 --test-per-category 2 --seed 123
+          PYTHONPATH=research/ca-evaluation-supervisor-ai python3 - <<'PY'
+          from training_tokenization_utils import build_prompt_target_sequence
+
+          # Reproduce the root failure: prompt over max_length with a short target.
+          prompt = list(range(2000))
+          target = [7001, 7002, 7003, 7004, 7005]
+          full = prompt + target
+          marker = [9001, 9002]
+          max_length = 96
+          input_ids, labels = build_prompt_target_sequence(prompt, full, max_length, marker)
+          assert len(input_ids) <= max_length
+          assert input_ids[-len(target):] == target
+          assert labels[-len(target):] == target
+          assert all(label == -100 for label in labels[:-len(target)])
+          assert input_ids[45:47] == marker
+          # Short prompt: no context is removed, and the target remains fully supervised.
+          short_prompt = [10, 11, 12]
+          short_target = [20, 21, 22]
+          short_inputs, short_labels = build_prompt_target_sequence(
+              short_prompt, short_prompt + short_target, 32, []
+          )
+          assert short_inputs == short_prompt + short_target
+          assert short_labels == [-100, -100, -100] + short_target
+          # Oversized target must fail clearly rather than silently masking/truncating it.
+          try:
+              build_prompt_target_sequence([1], list(range(100)), 32, [])
+          except ValueError as exc:
+              assert "Assistant target" in str(exc)
+          else:
+              raise AssertionError("Oversized target should raise an actionable ValueError.")
+          print("✅ Target-preserving tokenization tests passed.")
+          PY
           python3 - <<'PY'
           import json
           from pathlib import Path

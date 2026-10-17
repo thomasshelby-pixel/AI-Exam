@@ -16,6 +16,7 @@ from typing import Any
 
 import torch
 from datasets import Dataset
+from training_tokenization_utils import build_prompt_target_sequence
 from peft import LoraConfig, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
@@ -126,15 +127,29 @@ def tokenize_record(record: dict[str, Any], tokenizer: Any, max_length: int) -> 
         tokenize=False,
         add_generation_prompt=False,
     )
-    full = tokenizer(full_text, add_special_tokens=False, truncation=True, max_length=max_length)
-    prompt = tokenizer(prompt_text, add_special_tokens=False, truncation=True, max_length=max_length)
-    ids = full["input_ids"]
-    labels = list(ids)
-    prompt_len = min(len(prompt["input_ids"]), len(labels))
-    labels[:prompt_len] = [-100] * prompt_len
-    if all(label == -100 for label in labels):
-        raise ValueError(f"Target was truncated away for sample {record['id']}; reduce prompt or sequence length.")
-    return {"input_ids": ids, "attention_mask": full["attention_mask"], "labels": labels}
+
+    # Tokenize both streams without truncation. The prior implementation truncated
+    # the full conversation from the right, which could remove the whole assistant
+    # target when the input report was longer than max_length.
+    prompt = tokenizer(prompt_text, add_special_tokens=False, truncation=False)
+    full = tokenizer(full_text, add_special_tokens=False, truncation=False)
+    marker = tokenizer(
+        "\n[INPUT CONTEXT OMITTED TO FIT MAX SEQUENCE LENGTH]\n",
+        add_special_tokens=False,
+        truncation=False,
+    )["input_ids"]
+
+    input_ids, labels = build_prompt_target_sequence(
+        prompt_ids=prompt["input_ids"],
+        full_ids=full["input_ids"],
+        max_length=max_length,
+        truncation_marker_ids=marker,
+    )
+    return {
+        "input_ids": input_ids,
+        "attention_mask": [1] * len(input_ids),
+        "labels": labels,
+    }
 
 
 def verify_splits(train_rows: list[dict[str, Any]], val_rows: list[dict[str, Any]]) -> None:
