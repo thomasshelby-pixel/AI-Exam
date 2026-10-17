@@ -24,6 +24,9 @@ CATEGORIES = [
     "RATIONALE_SCORE_CONTRADICTION",
     "UNSUPPORTED_PRESENTATION_DEDUCTION",
     "EVIDENCE_RATIONALE_CONTRADICTION",
+    "MODE_NOT_RESPECTED",
+    "VALID_ALTERNATIVE_METHOD_NOT_CREDITED",
+    "PARTIAL_CREDIT_OMITTED",
 ]
 
 PHRASING = {
@@ -71,6 +74,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
     max_marks = {qid: rng.choice([4, 5, 6, 8, 10]) for qid in ids}
     awarded = {qid: rng.randint(0, max_marks[qid]) for qid in ids}
     subject = rng.choice(SUBJECTS)
+    checking_mode = rng.choice(["standard", "strict", "lenient"])
     evaluations = []
     attempts = []
     references = []
@@ -103,6 +107,11 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
             "question_paper_found": True,
             "suggested_answer_found": True,
             "marking_scheme_found": True,
+            "valid_alternative_methods": [
+                "A mathematically equivalent algebraic method with the same correct treatment.",
+                "A logically valid working order that reaches the supported result.",
+            ],
+            "alternative_methods_are_not_automatically_wrong": True,
         })
         evaluations.append({
             "question_id": qid,
@@ -118,6 +127,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
             ),
             "evidence_points": evidence,
             "reference_question_id": qid,
+            "checking_mode_applied": checking_mode,
             "marking_components": [{
                 "component": "overall_rubric",
                 "marks_available": maximum,
@@ -131,14 +141,26 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         "paper_structure": [{"question_id": q, "maximum_marks": max_marks[q]} for q in ids],
         "attempted_answers": attempts,
         "references": references,
+        "checking_mode": checking_mode,
+        "checking_mode_policy": {
+            "standard": "Balanced, realistic marking anchored to the official rubric; allocate proportional step marks.",
+            "strict": "Rigorous scrutiny of required workings/provisions, without inventing deductions or rejecting valid alternatives; consequential credit still applies.",
+            "lenient": "Recognize every valid intermediate step, formula and conceptual application; do not exceed the component or question maximum.",
+        },
         "marking_rules": {
             "maximum_marks_are_authoritative": True,
             "presentation_deductions_allowed": False,
+            "partial_credit_for_correct_steps": True,
+            "accept_valid_alternative_methods": True,
+            "no_double_penalty_for_consequential_errors": True,
         },
         "evaluation": evaluations,
         "reported_total_marks": sum(awarded.values()),
         "instruction": (
-            "Audit the data. Never invent or directly change marks. Flag issues with a question id and action. "
+            "Audit the data. Never invent or directly change marks. Respect the student's selected checking_mode. "
+            "Use the uploaded MTP/PYQ question paper, Suggested Answer and marking scheme as paired authoritative references. "
+            "A valid alternative method must not be rejected merely because it differs in wording or working order. "
+            "Award proportional partial credit for each independently correct step and obey consequential-credit rules. "
             "If a reference cannot be locked, require review rather than guessing. Return JSON only."
         ),
     }
@@ -246,6 +268,47 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"]
         case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         flag(category, qid, "RECHECK_REASONING_AND_MARKS", "The recorded answer evidence conflicts with the stated reason for deduction.")
+
+    elif category == "MODE_NOT_RESPECTED":
+        qid = ids[0]
+        entry = next(e for e in evaluations if e["question_id"] == qid)
+        alternatives = [mode for mode in ["standard", "strict", "lenient"] if mode != checking_mode]
+        entry["checking_mode_applied"] = rng.choice(alternatives)
+        flag(category, qid, "RECHECK_IN_SELECTED_MODE", "The report applied a different checking mode than the student selected.")
+    elif category == "VALID_ALTERNATIVE_METHOD_NOT_CREDITED":
+        qid = ids[1]
+        entry = next(e for e in evaluations if e["question_id"] == qid)
+        entry["awarded_marks"] = 0
+        entry["status"] = "incorrect"
+        entry["reason"] = "No marks were given because the candidate used a different method from the Suggested Answer."
+        entry["candidate_method"] = "Equivalent algebraic method with valid working and a supported result."
+        entry["evidence_points"] = {k: "present" for k in RUBRIC_COMPONENTS}
+        next(a for a in attempts if a["question_id"] == qid)["answer_summary"] = (
+            "Valid equivalent alternative method; working is internally consistent and evidence points are present."
+        )
+        next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
+        entry["marking_components"][0]["marks_awarded"] = 0
+        case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
+        flag(category, qid, "RECHECK_VALID_ALTERNATIVE", "A valid alternative method is explicitly supported by the rubric but was rejected solely for differing from the Suggested Answer.")
+    elif category == "PARTIAL_CREDIT_OMITTED":
+        qid = ids[2]
+        entry = next(e for e in evaluations if e["question_id"] == qid)
+        entry["awarded_marks"] = 0
+        entry["status"] = "incorrect"
+        entry["reason"] = "The final answer is incorrect, so no marks were awarded."
+        entry["evidence_points"] = {
+            "principle": "present",
+            "application": "present",
+            "working": "partially_present",
+            "conclusion": "not_present",
+        }
+        next(a for a in attempts if a["question_id"] == qid)["answer_summary"] = (
+            "Several independently correct steps and a correct principle are shown, but the final conclusion is wrong."
+        )
+        next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
+        entry["marking_components"][0]["marks_awarded"] = 0
+        case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
+        flag(category, qid, "REASSESS_COMPONENT_LEVEL_PARTIAL_CREDIT", "Some independently correct steps are recorded, yet the evaluator gave zero solely because the final answer is wrong.")
     elif category != "PASS":
         raise ValueError("Unknown category: " + category)
 
