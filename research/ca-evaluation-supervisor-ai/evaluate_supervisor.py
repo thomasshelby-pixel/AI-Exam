@@ -124,7 +124,7 @@ def infer_one(model: Any, tokenizer: Any, input_text: str) -> tuple[str, dict[st
         messages, tokenize=False, add_generation_prompt=True
     )
     inputs = tokenizer(
-        prompt, return_tensors="pt", add_special_tokens=False, truncation=True, max_length=1024
+        prompt, return_tensors="pt", add_special_tokens=False, truncation=True, max_length=1536
     ).to(model.device)
     with torch.inference_mode():
         generated = model.generate(
