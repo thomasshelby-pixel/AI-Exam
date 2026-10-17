@@ -17,6 +17,9 @@ export interface ChunkEvaluationContext {
   checkingMode: 'standard' | 'strict' | 'lenient';
   level: string;
   subjectName: string;
+  /** Issues identified by the supervisor; when present, the model must re-check this question. */
+  supervisorIssues?: string[];
+  supervisorCorrectionAttempt?: number;
 }
 
 export interface ExtractedReferenceSnippets {
@@ -29,6 +32,10 @@ export interface ExtractedReferenceSnippets {
   markingSchemeSection: string;
   suggestedAnswerSection: string;
   verifiedTruthSnippet: string;
+  questionPaperFound: boolean;
+  suggestedAnswerFound: boolean;
+  markingSchemeFound: boolean;
+  referenceNeedsReview: boolean;
 }
 
 /**
@@ -61,6 +68,10 @@ export function extractRelevantReferenceSnippets(
     markingSchemeSection: ms.sectionHeader,
     suggestedAnswerSection: sa.sectionHeader,
     verifiedTruthSnippet,
+    questionPaperFound: qp.found,
+    suggestedAnswerFound: sa.found,
+    markingSchemeFound: ms.found,
+    referenceNeedsReview: lockedRef.needsReview,
   };
 }
 
@@ -113,6 +124,10 @@ export async function evaluateQuestionChunk(
         `- Authoritative Formula / Method: ${t.sourceFormula || 'Standard ICAI methodology'}\n` +
         `- Instruction: Execute Two-Stage Interpretation (Stage A: Source meaning -> Stage B: Student treatment).`
       ).join('\n')
+    : '';
+
+  const correctionDirective = ctx.supervisorIssues?.length
+    ? `\nSUPERVISOR CORRECTION REQUEST (attempt ${ctx.supervisorCorrectionAttempt || 1}):\nThe previous evaluation was flagged for the following specific reason(s):\n${ctx.supervisorIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\nRe-open and independently reassess the original student answer on the supplied page(s) against the locked Question Paper, Suggested Answer, and Marking Scheme. Correct only issues supported by the actual answer and authoritative references. Do not blindly comply with a flag if the evidence does not support it; explain the conflict and return status \"unclear\" when the evidence or mapping is insufficient. Keep the authoritative question identity and maximum marks unchanged. Re-evaluate component marks and reasons, not merely the total.\n`
     : '';
 
   const prompt = `
@@ -173,6 +188,7 @@ Never exceed the prescribed maximum marks.
 Never produce an invalid negative score.
 Never silently fabricate certainty."
 
+${correctionDirective}
 TARGET EVALUATION DETAILS:
 Question: ${fullCode} (Question ${qNum}${subQ ? `, Sub-part (${subQ})` : ''})
 Subject: ${subjectName} (${level})
