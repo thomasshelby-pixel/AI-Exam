@@ -19,6 +19,10 @@ test('builds ordered revision rounds through the exact exam date and prioritises
   assert.equal(rounds[3].end_date, '2027-05-10');
   assert.ok(rounds.every((round, index) => round.days >= 1 && (index === 0 || round.start_date > rounds[index - 1].end_date)));
   assert.equal(rounds[0].chapters[0].chapter, 'Salary');
+  assert.equal(rounds[0].chapters.length, 3);
+  assert.ok(rounds[0].chapters.every((chapter) => chapter.start_date >= rounds[0].start_date && chapter.end_date <= rounds[0].end_date));
+  assert.ok(rounds[0].chapters.every((chapter) => chapter.estimated_hours > 0 && chapter.method.length > 0 && chapter.steps.length >= 3));
+  assert.ok(rounds[0].chapters[0].estimated_hours > rounds[0].chapters[1].estimated_hours);
 });
 
 test('reduces the number of rounds when the exam window is short', () => {
