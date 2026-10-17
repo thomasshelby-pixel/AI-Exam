@@ -10,6 +10,7 @@ const allTestFiles = [
   'sourceGroundedTransformation.test.ts',
   'evaluationIntegrity.test.ts',
   'evaluationIntegrityHardening.test.ts',
+  'evaluationSupervisor.test.ts',
   'examinerProfileAndCsCma.test.ts',
   'googleAuthAndSrnValidation.test.ts',
   'studentProfileCoursePersistence.test.ts',
