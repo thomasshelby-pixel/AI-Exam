@@ -184,6 +184,14 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         if entry["awarded_marks"] == 0:
             entry["awarded_marks"] = 2
             entry["status"] = "partially_correct"
+            entry["reason"] = "Some supported credit was awarded; the component ledger does not reconcile."
+            entry["evidence_points"] = {
+                "principle": "present",
+                "application": "partially_present",
+                "working": "present",
+                "conclusion": "partially_present",
+            }
+            next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
             case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"] - 1
         flag(category, qid, "RECHECK_MARK_ALLOCATION", "Question marks disagree with the sum of its marking-component scores.")
