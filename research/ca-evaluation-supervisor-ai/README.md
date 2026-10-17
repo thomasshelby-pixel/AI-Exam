@@ -29,6 +29,8 @@ Discovery is **ICAI/BoS first**. If a resource is not found there, the notebook 
 
 The batch importer asks for **separate rights confirmation** for (1) official ICAI/BoS material and (2) secondary archive sources. Answer YES only for the category whose specific files and AI training/retrieval storage are covered by written permission/licensing. The downloader filters sources to the confirmed categories; a mirror being publicly available is not sufficient permission. On Colab it batch-fetches confirmed PDFs into the user's Google Drive; on Kaggle it saves into the working directory for the user to export. It hashes files and extracts selectable text but does not push PDFs to GitHub.
 
+Attempt-dated PDFs inside the requested window are placed under `in_date_window/`. Curriculum/applicability documents and PDFs whose attempt couldn't be confidently identified go into separate review folders with manifest flags; uncertain files must not be treated as confirmed May 2024–September 2026 training material until checked. Resources detected as explicitly out of range are excluded from the download queue.
+
 Downloaded material is **reference-only**, not supervised training labels. Real-material fine-tuning still requires human-verified student answers, per-component awarded marks, reasons, selected checking mode and adjudicated target outcomes. Synthetic examples spanning both curricula only test the pipeline's integrity logic; they do not prove CA subject-grading accuracy.
 
 ## Re-check cost control
