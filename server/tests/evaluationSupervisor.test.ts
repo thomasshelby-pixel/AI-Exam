@@ -77,6 +77,46 @@ function makeStructure(): AuthoritativePaperStructure {
   };
 }
 
+function makeMultiCoverage(count: number): AnswerCoverageMap {
+  return {
+    totalPages: count,
+    pages: [],
+    attemptedQuestions: Array.from({ length: count }, (_, index) => ({
+      fullQuestionCode: 'Q' + (index + 1) + '(a)',
+      questionNumber: String(index + 1),
+      subQuestionNumber: 'a',
+      pages: [index + 1],
+      status: 'ATTEMPTED_READABLE',
+      studentSnippet: 'The student shows working for this question.',
+      isMcq: false,
+    })),
+    allDetectedCodes: Array.from({ length: count }, (_, index) => 'Q' + (index + 1) + '(a)'),
+    unmappedPages: [],
+    unclearPages: [],
+    coveredPages: Array.from({ length: count }, (_, index) => index + 1),
+    is100PercentCovered: true,
+    mcqSelections: {},
+  } as AnswerCoverageMap;
+}
+
+function makeMultiStructure(count: number): AuthoritativePaperStructure {
+  return {
+    paperTitle: 'Budget Test Paper',
+    totalPaperMaxMarks: count * 5,
+    questions: [],
+    subQuestions: Array.from({ length: count }, (_, index) => ({
+      fullQuestionCode: 'Q' + (index + 1) + '(a)',
+      questionNumber: String(index + 1),
+      subQuestionNumber: 'a',
+      maximumMarks: 5,
+      compulsory: true,
+      isMcq: false,
+      section: 'GENERAL',
+    })),
+    mcqs: [],
+  };
+}
+
 function makeResult(question?: QuestionEvaluation, validationStatus: 'VALID' | 'NEEDS_REVIEW' = 'VALID'): EvaluationResult {
   return {
     evaluationId: 'supervisor-test',
@@ -223,6 +263,67 @@ async function run(): Promise<void> {
     assert(result.validationStatus === 'NEEDS_REVIEW', 'A reference mismatch blocks certification');
     assert(result.downloadsUnlocked === false, 'A reference mismatch keeps downloads locked');
     assert(audit?.unresolvedIssues.some((issue: string) => issue.includes('SUPERVISOR_REFERENCE_LOCK_INCOMPLETE')), 'The precise reference-lock issue is recorded');
+  }
+
+  // 4. A per-sheet budget prevents a large paper with many flagged questions from
+  // triggering unbounded paid model re-evaluations. Remaining items fail closed.
+  {
+    const count = 6;
+    let calls = 0;
+    const coverage = makeMultiCoverage(count);
+    const structure = makeMultiStructure(count);
+    const base = makeParams(makeResult(undefined, 'NEEDS_REVIEW'), coverage);
+    const multiResult = {
+      ...base.evaluationResult,
+      totalMarks: 0,
+      maximumMarks: count * 5,
+      officialPaperMaxMarks: count * 5,
+      validationErrors: [],
+    } as EvaluationResult;
+    const params: EvaluationSupervisorParams = {
+      ...base,
+      evaluationResult: multiResult,
+      paperStructure: structure,
+      coverageMap: coverage,
+      questionPaperText: 'Question Paper with six 5-mark questions.',
+      suggestedAnswersText: 'Matching Suggested Answers for Q1(a) to Q6(a).',
+      markingSchemeText: 'Each question is worth 5 marks.',
+      officialPaperMaxMarks: count * 5,
+    };
+    const dependencies: EvaluationSupervisorDependencies = {
+      extractReferenceSnippets: () => makeReferenceSnippet(true),
+      evaluateChunk: async (context) => {
+        calls++;
+        const code = context.subQuestion.fullQuestionCode;
+        return {
+          ...makeQuestion(4),
+          questionNumber: context.subQuestion.questionNumber,
+          subQuestion: context.subQuestion.subQuestionNumber,
+          canonicalId: code,
+          fullQuestionCode: code,
+          maximumMarks: 5,
+        };
+      },
+      reprocessIntegrity: (result) => {
+        const totalMarks = result.questions.reduce((sum, question) => sum + Number(question.marksAwarded || 0), 0);
+        return {
+          ...result,
+          totalMarks,
+          maximumMarks: count * 5,
+          officialPaperMaxMarks: count * 5,
+          percentage: (totalMarks / (count * 5)) * 100,
+          validationStatus: 'NEEDS_REVIEW',
+          validationErrors: [],
+        } as EvaluationResult;
+      },
+    };
+    const result = await runEvaluationSupervisor(params, dependencies);
+    const audit = (result.integrityAudit as any)?.supervisor;
+    assert(calls === 4, 'Repair model calls stop at the per-evaluation cost ceiling');
+    assert(audit?.correctionCallsUsed === 4 && audit?.maxCorrectionCalls === 4, 'Repair-call budget is recorded in the audit summary');
+    assert(audit?.status === 'HUMAN_REVIEW', 'Questions remaining after budget exhaustion require human review');
+    assert(audit?.unresolvedIssues.some((issue: string) => issue.includes('SUPERVISOR_REPAIR_BUDGET_EXHAUSTED')), 'Budget exhaustion has an explicit fail-closed issue');
+    assert(result.downloadsUnlocked === false, 'Budget exhaustion keeps checked-copy downloads locked');
   }
 
   console.log('Supervisor test result: ' + passed + '/' + total + ' passed.');
