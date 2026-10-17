@@ -1,0 +1,12 @@
+# Hosted Kaggle GPU runtime (Python 3.13-friendly ranges)
+# Deliberately no bitsandbytes/Triton: the training/evaluation path uses FP16 LoRA.
+transformers>=4.48.0,<5.0.0
+peft>=0.14.0,<1.0.0
+accelerate>=1.2.0,<2.0.0
+datasets>=3.1.0,<5.0.0
+scikit-learn>=1.6.0,<2.0.0
+safetensors>=0.5.0
+sentencepiece>=0.2.0
+PyMuPDF>=1.26.4
+beautifulsoup4>=4.13.0
+requests>=2.31.0
