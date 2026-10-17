@@ -41,7 +41,7 @@ jobs:
           assert input_ids[-len(target):] == target
           assert labels[-len(target):] == target
           assert all(label == -100 for label in labels[:-len(target)])
-          assert marker == input_ids[46:48] or all(token in input_ids for token in marker)
+          assert input_ids[45:47] == marker
           # Short prompt: no context is removed, and the target remains fully supervised.
           short_prompt = [10, 11, 12]
           short_target = [20, 21, 22]
