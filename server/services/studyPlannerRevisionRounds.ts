@@ -5,6 +5,18 @@ export interface ChapterDifficulty {
   priority_score?: number;
 }
 
+export interface RevisionRoundChapter {
+  subject: string;
+  chapter: string;
+  strength: string;
+  priority_score: number;
+  start_date: string;
+  end_date: string;
+  estimated_hours: number;
+  method: string;
+  steps: string[];
+}
+
 export interface RevisionRound {
   key: string;
   title: string;
@@ -12,7 +24,7 @@ export interface RevisionRound {
   end_date: string;
   days: number;
   focus: string;
-  chapters: Array<{ subject: string; chapter: string; strength: string; priority_score: number }>;
+  chapters: RevisionRoundChapter[];
 }
 
 /** Deterministic round planner. Difficulty controls priority and time pressure; dates are never guessed. */
@@ -61,12 +73,46 @@ export function createAdaptiveRevisionRounds(input: {
     next.setUTCDate(next.getUTCDate() + 1);
     cursor = next.toISOString().slice(0, 10);
     const key = 'R' + (index + 1);
+    const totalWeight = chapters.reduce((sum, item) => sum + (item.strength === 'WEAK' ? 3 : item.strength === 'STRONG' ? 1 : 2), 0) || 1;
+    let cumulativeWeight = 0;
+    const roundChapters = chapters.map((chapter) => {
+      const weight = chapter.strength === 'WEAK' ? 3 : chapter.strength === 'STRONG' ? 1 : 2;
+      const chapterStartOffset = Math.min(days - 1, Math.floor((cumulativeWeight / totalWeight) * days));
+      cumulativeWeight += weight;
+      const chapterEndOffset = Math.min(days - 1, Math.max(chapterStartOffset, Math.ceil((cumulativeWeight / totalWeight) * days) - 1));
+      const chapterStart = new Date(start_date + 'T00:00:00.000Z');
+      chapterStart.setUTCDate(chapterStart.getUTCDate() + chapterStartOffset);
+      const chapterEnd = new Date(start_date + 'T00:00:00.000Z');
+      chapterEnd.setUTCDate(chapterEnd.getUTCDate() + chapterEndOffset);
+      const method = index === 0
+        ? 'Review concepts and notes first, then solve chapter questions without looking at the solution.'
+        : index === 1
+          ? 'Recall key points from memory, solve exam-style questions, then review mistakes.'
+          : index === 2
+            ? 'Practise RTP/MTP/PYQs under time limits and record every error.'
+            : 'Rapid active recall, formula/provision review and targeted practice from mock-test errors.';
+      const steps = index === 0
+        ? ['Review concepts, notes and key provisions/formulas', 'Close notes and recall the chapter structure', 'Solve selected module questions', 'Record doubts and mistakes']
+        : index === 1
+          ? ['Do a 10-minute closed-book recall', 'Attempt exam-style questions', 'Check answers and classify mistakes', 'Revisit weak concepts only']
+          : index === 2
+            ? ['Attempt RTP/MTP/PYQs timed', 'Check answers against the suggested answer', 'Maintain an error log', 'Redo incorrect questions']
+            : ['Revise short notes, formulas and provisions', 'Review mock-test errors', 'Attempt a short timed question set', 'Finish with active recall'];
+      return {
+        ...chapter,
+        start_date: chapterStart.toISOString().slice(0, 10),
+        end_date: chapterEnd.toISOString().slice(0, 10),
+        estimated_hours: Math.max(0.5, Math.round((days * input.daily_study_hours * weight / totalWeight) * 10) / 10),
+        method,
+        steps,
+      };
+    });
     return {
       key,
       title: key + (index === 0 ? ' · Foundation revision' : index === roundCount - 1 ? ' · Final exam revision' : ' · Practice and recall'),
       start_date, end_date, days,
       focus: focuses[Math.min(index, focuses.length - 1)],
-      chapters: chapters.slice(0, Math.max(1, Math.ceil(chapters.length * (index === 0 ? 1 : index === roundCount - 1 ? 0.65 : 0.85)))),
+      chapters: roundChapters,
     };
   });
 }
