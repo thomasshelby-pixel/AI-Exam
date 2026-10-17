@@ -166,7 +166,7 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         device_map="auto",
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
     )
     model.config.use_cache = False
     lora = LoraConfig(

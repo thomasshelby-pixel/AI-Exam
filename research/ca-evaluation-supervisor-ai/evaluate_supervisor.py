@@ -101,7 +101,7 @@ def load_model(base_model: str, adapter_dir: str | None):
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         device_map="auto",
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
     )
     if adapter_dir:
         model = PeftModel.from_pretrained(model, adapter_dir)

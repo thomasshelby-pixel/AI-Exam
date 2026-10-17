@@ -39,6 +39,12 @@ The [CPU-safe preparation notebook](https://colab.research.google.com/github/tho
 
 **It deliberately emits zero training examples.** These PDFs have image-based handwritten answer pages; the current SmolLM2 evaluation supervisor is text-only and audits integrity flags rather than directly grading images. Summary marks alone do not contain the candidate's answer evidence or the matched rubric. To use them for real supervised grading, first pair exact May 2026 question papers and Suggested Answers, transcribe/visually verify answer evidence and step marks, and mark each reviewed record as human-verified. Keep the source PDFs private and out of GitHub.
 
+## Kaggle FP16 LoRA environment compatibility
+
+The Kaggle notebook uses standard FP16 LoRA and does not require `torchao` or `bitsandbytes`. Some Kaggle images may preinstall a legacy `torchao` such as 0.10.0; recent PEFT builds can detect that optional package and fail while injecting the LoRA adapter. The notebook setup uninstalls these unused optional backends before importing/using PEFT. Model loading uses the current Transformers `dtype=` argument rather than the deprecated `torch_dtype=` alias.
+
+If a Kaggle session is already open on the older notebook, rerun the updated setup after pulling the latest `main`, or run `!pip uninstall -y torchao`, restart the session, then rerun setup, dataset generation, and training. The warning about `torch_dtype` is not by itself fatal; the old `torchao` compatibility error is what caused the reported crash.
+
 ## Re-check cost control
 
 The production supervisor now caps targeted correction invocations at **4 per answer-sheet evaluation** across no more than 2 correction rounds. If issues remain after the budget is used, the evaluation fails closed to human review instead of sending more questions to the model. Parallelism is limited to 2 correction calls at a time.
