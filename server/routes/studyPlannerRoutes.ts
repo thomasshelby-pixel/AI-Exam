@@ -350,6 +350,51 @@ router.post('/attempt-roadmap', authenticateToken, (req: AuthRequest, res: Respo
   }
 });
 
+router.get('/revision-progress', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
+  const examDate = String(req.query.exam_date || '');
+  if (course !== 'CA_INTERMEDIATE' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(examDate) ||
+      Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
+      new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate) {
+    return res.status(400).json({ success: false, error: 'A valid CA Intermediate exam date is required.' });
+  }
+  const progress = db.prepare(
+    'SELECT round_key, subject, chapter, completed, completed_at, updated_at FROM student_revision_round_progress WHERE user_id = ? AND course = ? AND exam_date = ?'
+  ).all(req.user.id, course, examDate);
+  return res.json({ success: true, progress });
+});
+
+router.put('/revision-progress', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ success: false, error: 'Student account required.' });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const course = String(body.course || '').toUpperCase();
+  const examDate = typeof body.exam_date === 'string' ? body.exam_date : '';
+  const roundKey = String(body.round_key || '').toUpperCase();
+  const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+  const chapter = typeof body.chapter === 'string' ? body.chapter.trim() : '';
+  if (course !== 'CA_INTERMEDIATE' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(examDate) ||
+      Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
+      new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate ||
+      !['R1', 'R2', 'R3', 'R4'].includes(roundKey) || !subject || subject.length > 160 ||
+      !chapter || chapter.length > 200 || typeof body.completed !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'Provide a valid round, exam date, subject, chapter and completion state.' });
+  }
+  const completed = body.completed ? 1 : 0;
+  const id = randomUUID();
+  db.prepare(`
+    INSERT INTO student_revision_round_progress (id, user_id, course, exam_date, round_key, subject, chapter, completed, completed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, course, exam_date, round_key, subject, chapter)
+    DO UPDATE SET completed = excluded.completed, completed_at = CASE WHEN excluded.completed = 1 THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP
+  `).run(id, req.user.id, course, examDate, roundKey, subject, chapter, completed, completed);
+  return res.json({ success: true, round_key: roundKey, subject, chapter, completed: Boolean(completed) });
+});
+
 router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) => {
   if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
     return res.status(403).json({ success: false, error: 'Student account required.' });
