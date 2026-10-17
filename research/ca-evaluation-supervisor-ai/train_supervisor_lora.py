@@ -213,7 +213,7 @@ def main() -> None:
         max_grad_norm=0.3,
         lr_scheduler_type="cosine",
         logging_steps=20,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=2,
         load_best_model_at_end=True,
