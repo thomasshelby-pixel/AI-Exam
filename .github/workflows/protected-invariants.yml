@@ -114,6 +114,9 @@ jobs:
               print(f"✅ Python code cells parse: {path}")
           PY
 
+      - name: Source catalogue classifier regression
+        run: python3 research/ca-evaluation-supervisor-ai/test_source_catalogue_classifier.py
+
       - name: Protected persistence regression tests
         run: npm run test:protected
 
