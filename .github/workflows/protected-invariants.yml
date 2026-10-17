@@ -89,6 +89,29 @@ jobs:
           print("✅ Supervisor synthetic dataset shape, labels, and split isolation passed.")
           PY
 
+      - name: Training notebook code-cell syntax check
+        run: |
+          python3 - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+
+          path = Path("research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_colab.ipynb")
+          notebook = json.loads(path.read_text(encoding="utf-8"))
+          for index, cell in enumerate(notebook.get("cells", [])):
+              if cell.get("cell_type") != "code":
+                  continue
+              source = "".join(cell.get("source", []))
+              # Colab/IPython line magics are runtime commands, not Python syntax.
+              source = "\n".join(
+                  line for line in source.splitlines()
+                  if not line.lstrip().startswith(("%", "!", "%%"))
+              )
+              if source.strip():
+                  ast.parse(source, filename=f"{path}:cell-{index}")
+          print("✅ All notebook Python code cells parse successfully.")
+          PY
+
       - name: Protected persistence regression tests
         run: npm run test:protected
 
