@@ -23,6 +23,52 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock --no-audit --no-fund
 
+      - name: Evaluation supervisor training-pipeline regression
+        run: |
+          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_qlora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py
+          python3 research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py --output-dir /tmp/ca-evaluation-supervisor-test-data --train-per-category 3 --validation-per-category 2 --test-per-category 2 --seed 123
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("/tmp/ca-evaluation-supervisor-test-data")
+          expected = {
+              "PASS",
+              "MISSING_ATTEMPTED_QUESTION",
+              "MISSING_OR_NON_NUMERIC_MARKS",
+              "SCORE_OUT_OF_RANGE",
+              "FINAL_TOTAL_MISMATCH",
+              "COMPONENT_SUM_MISMATCH",
+              "REFERENCE_QUESTION_MISMATCH",
+              "AUTHORITATIVE_REFERENCE_NOT_LOCKED",
+              "RATIONALE_SCORE_CONTRADICTION",
+              "UNSUPPORTED_PRESENTATION_DEDUCTION",
+              "EVIDENCE_RATIONALE_CONTRADICTION",
+          }
+          ids_by_split = {}
+          inputs_by_split = {}
+          for split, expected_each in (("train", 3), ("validation", 2), ("test", 2)):
+              records = [json.loads(line) for line in (root / f"{split}.jsonl").read_text().splitlines() if line]
+              assert len(records) == len(expected) * expected_each, (split, len(records))
+              assert {record["category"] for record in records} == expected
+              assert all(record.get("id") and record.get("input") and record.get("target") for record in records)
+              ids_by_split[split] = {record["id"] for record in records}
+              inputs_by_split[split] = {record["input"] for record in records}
+              for record in records:
+                  target = json.loads(record["target"])
+                  if record["category"] == "PASS":
+                      assert target == {"decision": "PASS", "issues": []}
+                  else:
+                      assert target["decision"] == "REVIEW"
+                      assert record["category"] in {issue["code"] for issue in target["issues"]}
+          assert not (ids_by_split["train"] & ids_by_split["validation"])
+          assert not (ids_by_split["train"] & ids_by_split["test"])
+          assert not (ids_by_split["validation"] & ids_by_split["test"])
+          assert not (inputs_by_split["train"] & inputs_by_split["validation"])
+          assert not (inputs_by_split["train"] & inputs_by_split["test"])
+          assert not (inputs_by_split["validation"] & inputs_by_split["test"])
+          print("✅ Supervisor synthetic dataset shape, labels, and split isolation passed.")
+          PY
+
       - name: Protected persistence regression tests
         run: npm run test:protected
 
