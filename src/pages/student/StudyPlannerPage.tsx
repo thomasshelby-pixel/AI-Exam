@@ -249,6 +249,20 @@ export const StudyPlannerPage: React.FC = () => {
     finally { setRoadmapBusy(false); }
   };
 
+  const toggleRevisionChapter = async (round: any, chapter: any) => {
+    if (!exactExamDate) { setRoadmapMessage('Set the exact exam date before tracking revision progress.'); return; }
+    const key = revisionProgressKey(round.key, chapter.subject, chapter.chapter);
+    const completed = !revisionProgress[key];
+    setRevisionProgressBusy(key);
+    setRoadmapMessage('');
+    try {
+      await apiRequest('/api/student/study-planner/revision-progress', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', exam_date: exactExamDate, round_key: round.key, subject: chapter.subject, chapter: chapter.chapter, completed }) });
+      setRevisionProgress((current) => ({ ...current, [key]: completed }));
+      setRoadmapMessage(completed ? 'Chapter marked complete. Remaining chapters in this round have been rescheduled.' : 'Chapter marked incomplete. The remaining schedule has been recalculated.');
+    } catch (err: any) { setRoadmapMessage(err?.message || 'Could not save chapter progress.'); }
+    finally { setRevisionProgressBusy(''); }
+  };
+
   const generateDailyPlan = async () => {
     const hours = Number(dailyMinutes);
     if (!Number.isFinite(hours) || hours < 1 || hours > 12 || Math.round(hours * 4) !== hours * 4) {
