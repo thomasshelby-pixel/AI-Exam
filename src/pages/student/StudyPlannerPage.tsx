@@ -51,6 +51,53 @@ const STARTER_PROMPTS = [
   'Make a 90-minute revision plan for Law tomorrow.',
 ];
 
+const revisionProgressKey = (roundKey: string, subject: string, chapter: string) =>
+  [roundKey, subject, chapter].join('::');
+
+function getAdjustedRevisionChapters(round: any, progress: Record<string, boolean>, dailyHours: number) {
+  const chapters = Array.isArray(round.chapters) ? round.chapters : [];
+  const remaining = chapters.filter((chapter: any) => !progress[revisionProgressKey(round.key, chapter.subject, chapter.chapter)]);
+  if (!remaining.length) {
+    return chapters.map((chapter: any) => ({ ...chapter, completed: true }));
+  }
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const todayText = today.toISOString().slice(0, 10);
+  const startText = round.start_date > todayText ? round.start_date : todayText;
+  const start = new Date(startText + 'T00:00:00.000Z');
+  const roundEnd = new Date(round.end_date + 'T00:00:00.000Z');
+  const end = roundEnd >= start ? roundEnd : start;
+  const availableDays = Math.max(1, Math.floor((end.getTime() - start.getTime()) / 86400000) + 1);
+  const weightOf = (chapter: any) => chapter.strength === 'WEAK' ? 3 : chapter.strength === 'STRONG' ? 1 : 2;
+  const totalWeight = remaining.reduce((sum: number, chapter: any) => sum + weightOf(chapter), 0) || 1;
+  let cumulative = 0;
+  const adjusted = new Map<string, any>();
+  remaining.forEach((chapter: any) => {
+    const weight = weightOf(chapter);
+    const fromOffset = Math.min(availableDays - 1, Math.floor(cumulative / totalWeight * availableDays));
+    cumulative += weight;
+    const toOffset = Math.min(availableDays - 1, Math.max(fromOffset, Math.ceil(cumulative / totalWeight * availableDays) - 1));
+    const chapterStart = new Date(start);
+    chapterStart.setUTCDate(chapterStart.getUTCDate() + fromOffset);
+    const chapterEnd = new Date(start);
+    chapterEnd.setUTCDate(chapterEnd.getUTCDate() + toOffset);
+    adjusted.set(revisionProgressKey(round.key, chapter.subject, chapter.chapter), {
+      ...chapter,
+      start_date: chapterStart.toISOString().slice(0, 10),
+      end_date: chapterEnd.toISOString().slice(0, 10),
+      estimated_hours: Math.max(0.5, Math.round((availableDays * dailyHours * weight / totalWeight) * 10) / 10),
+      completed: false,
+      rescheduled: chapter.start_date !== chapterStart.toISOString().slice(0, 10) || chapter.end_date !== chapterEnd.toISOString().slice(0, 10),
+    });
+  });
+  return chapters.map((chapter: any) => {
+    const key = revisionProgressKey(round.key, chapter.subject, chapter.chapter);
+    return progress[key]
+      ? { ...chapter, completed: true }
+      : adjusted.get(key) || { ...chapter, completed: false };
+  });
+}
+
 export const StudyPlannerPage: React.FC = () => {
   const navigate = useNavigate();
   const [request, setRequest] = useState('');
@@ -79,6 +126,8 @@ export const StudyPlannerPage: React.FC = () => {
   const [attemptRoadmap, setAttemptRoadmap] = useState<any>(null);
   const [revisionRounds, setRevisionRounds] = useState<any[]>([]);
   const [expandedRevisionRounds, setExpandedRevisionRounds] = useState<Record<string, boolean>>({});
+  const [revisionProgress, setRevisionProgress] = useState<Record<string, boolean>>({});
+  const [revisionProgressBusy, setRevisionProgressBusy] = useState('');
   const [roadmapCompletion, setRoadmapCompletion] = useState('40');
   const [roadmapBusy, setRoadmapBusy] = useState(false);
   const [roadmapMessage, setRoadmapMessage] = useState('');
@@ -190,7 +239,12 @@ export const StudyPlannerPage: React.FC = () => {
     setRoadmapBusy(true); setRoadmapMessage('');
     try {
       const response = await apiRequest<{ success: boolean; roadmap: any[]; revision_rounds?: any[]; chapter_ratings_used?: number; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion, daily_study_hours: Number(dailyMinutes) || 4 }) });
-      setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []); setRoadmapMessage('Exam roadmap generated. ' + (response.chapter_ratings_used ? response.chapter_ratings_used + ' saved chapter ratings used.' : 'Rate chapters to personalise revision priorities.') + ' Weekly timetable remains your daily execution view.');
+      setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []);
+      const savedProgress = await apiRequest<{ success: boolean; progress: Array<{ round_key: string; subject: string; chapter: string; completed: number }> }>('/api/student/study-planner/revision-progress?course=CA_INTERMEDIATE&exam_date=' + encodeURIComponent(exactExamDate));
+      const restoredProgress: Record<string, boolean> = {};
+      for (const item of savedProgress.progress || []) restoredProgress[revisionProgressKey(item.round_key, item.subject, item.chapter)] = Boolean(item.completed);
+      setRevisionProgress(restoredProgress);
+      setRoadmapMessage('Exam roadmap generated. ' + (response.chapter_ratings_used ? response.chapter_ratings_used + ' saved chapter ratings used.' : 'Rate chapters to personalise revision priorities.') + ' Chapter completion is saved and unfinished work will be rescheduled automatically.');
     } catch (err: any) { setAttemptRoadmap(null); setRoadmapMessage(err?.message || 'Could not generate attempt roadmap.'); }
     finally { setRoadmapBusy(false); }
   };
