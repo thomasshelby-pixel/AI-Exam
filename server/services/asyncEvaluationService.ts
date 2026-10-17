@@ -19,6 +19,7 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
+import { runEvaluationSupervisor } from './evaluationSupervisorService.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
@@ -210,7 +211,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       throw gateErr;
     }
 
-    const evaluationResult = await evaluateCAAnswerSheet({
+    let evaluationResult = await evaluateCAAnswerSheet({
       evaluationId,
       studentName: job.studentName,
       icaiRegistrationNumber: job.icaiRegistrationNumber || 'N/A',
@@ -273,6 +274,25 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     } else if (evaluationResult.coverageMap && Array.isArray(evaluationResult.coverageMap.attemptedQuestions)) {
       evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
     }
+
+    // Stage 4B: Supervisor audit + bounded targeted correction loop.
+    // This runs BEFORE PDFs are generated so the report reflects the audited result.
+    evaluationResult = await runEvaluationSupervisor({
+      evaluationResult,
+      pdfBuffer: job.pdfBuf,
+      paperStructure: paperStruct,
+      questionPaperText: job.referenceQuestionPaperText || '',
+      suggestedAnswersText: job.referenceSuggestedAnswersText || '',
+      markingSchemeText: job.markingSchemeText || '',
+      checkingMode: (job.checkingMode as any) || 'standard',
+      level: job.level,
+      subjectName: job.subjectName,
+      officialPaperMaxMarks: job.officialPaperMaxMarks || 100,
+      paper: job.paper,
+      subjectKey: job.subjectKey,
+      materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+      coverageMap: evaluationResult.coverageMap || null,
+    });
 
     // Stage 5: Artifact Generation (Checked Copy & Detailed Report PDFs)
     updateEvaluationProgress(
@@ -453,7 +473,14 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // Check critical integrity: questions exist, ledger arithmetic is sound, no bounds violations
     const hasValidQuestions = Array.isArray(evaluationResult.questions) && evaluationResult.questions.length > 0;
     const isMathConsistent = consistencyReport.isValid && (!runPackage?.scoreLedger || runPackage.scoreLedger.isReconciled);
-    const criticalIntegrityPassed = hasValidQuestions && isMathConsistent && (evaluationResult.validationStatus as string) !== 'VALIDATION_FAILED';
+    const supervisorAuditStatus = (evaluationResult.integrityAudit as any)?.supervisor?.status;
+    const supervisorApproved = supervisorAuditStatus === undefined || supervisorAuditStatus === 'PASS';
+    const criticalIntegrityPassed =
+      hasValidQuestions &&
+      isMathConsistent &&
+      (evaluationResult.validationStatus as string) !== 'VALIDATION_FAILED' &&
+      (evaluationResult.validationStatus as string) !== 'NEEDS_REVIEW' &&
+      supervisorApproved;
 
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';
