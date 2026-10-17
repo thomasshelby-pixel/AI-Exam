@@ -21,13 +21,15 @@ The supervisor prompt explicitly distinguishes the three existing modes:
 - **strict:** rigorous scrutiny, but valid alternative methods and consequential credit remain protected;
 - **lenient:** recognize valid intermediate steps/concepts, without exceeding component or question maximums.
 
-## Foundation + Intermediate source materials
+## Foundation + Intermediate source archive (May 2024–September 2026)
 
-The Colab notebook now scans official ICAI/BoS pages for **both CA Foundation and CA Intermediate** and writes a source catalogue (CSV/JSON) into the user's Google Drive. It targets MTP/mock tests (Series I and II where available), matching Suggested Answers, RTPs, previous-year question papers, applicability/amendment notices, and course material. It does not push PDFs or extracted content to GitHub.
+The Colab notebook builds a source catalogue for **CA Foundation and CA Intermediate** from May 2024 through September 2026. Categories include MTP/mock tests (Series I and II), matching Suggested Answers/marking guidance, RTPs, actual exam question papers, MCQ keys, applicable study material, amendments and applicability notices.
 
-PDF downloading is deliberately **off by default**. ICAI/BoS copyright notices state that use in a retrieval system requires written permission. The notebook only downloads official-domain PDFs after the user explicitly sets the permission acknowledgement. Publicly viewable links are not proof of permission, and the notebook should remain in catalogue-only mode until written permission is confirmed.
+Discovery is **ICAI/BoS first**. If a resource is not found there, the notebook also checks secondary archive pages including CAprep, CA Study Web, VSI Jaipur, CAWizard, OpenMock and Jobaaj. Those are secondary and unverified, not official ICAI endorsements. The catalogue captures the source URL, course, attempt, series, type, source tier and date confidence. Dates outside the range are marked out-of-scope; unknown dates need review; syllabus/applicability documents are retained as curriculum-reference candidates.
 
-Downloaded PDFs/text are **reference-only**, not supervised training labels. For real-material fine-tuning, add human-verified cases pairing the relevant question/reference with a student's answer, applicable marks/rubric, selected checking mode, and an adjudicated target outcome. Never manufacture labels from a Suggested Answer alone. Synthetic examples cover both Foundation and Intermediate subject families, but this is only a structural/consistency prototype, not subject-mastery evidence.
+Bulk downloading is deliberately **off by default**. ICAI publication notices limit reproduction/storage in retrieval systems, so the user must have written permission/licensing for each source and for AI training/retrieval storage before enabling the download gate. A mirrored file being publicly available is not sufficient permission. The notebook can batch-fetch rights-cleared PDFs into Google Drive, hash them and extract selectable text, but it does not push PDFs to GitHub.
+
+Downloaded material is **reference-only**, not supervised training labels. Real-material fine-tuning still requires human-verified student answers, per-component awarded marks, reasons, selected checking mode and adjudicated target outcomes. Synthetic examples spanning both curricula only test the pipeline's integrity logic; they do not prove CA subject-grading accuracy.
 
 ## Re-check cost control
 
