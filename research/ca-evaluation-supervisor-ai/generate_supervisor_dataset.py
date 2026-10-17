@@ -48,14 +48,22 @@ PHRASING = {
     ],
 }
 
-SUBJECTS = [
-    "Accounting",
-    "Taxation",
-    "Corporate and Other Laws",
-    "Costing",
-    "Audit",
-    "Financial Management",
-]
+COURSE_SUBJECTS = {
+    "CA_FOUNDATION": [
+        "Accounting",
+        "Business Laws",
+        "Quantitative Aptitude",
+        "Business Economics",
+    ],
+    "CA_INTERMEDIATE": [
+        "Advanced Accounting",
+        "Corporate and Other Laws",
+        "Taxation",
+        "Cost and Management Accounting",
+        "Auditing and Ethics",
+        "Financial Management and Strategic Management",
+    ],
+}
 ANSWER_SNIPPETS = [
     "The candidate shows a method, working and a final conclusion.",
     "The candidate states a relevant principle, applies it to the facts and concludes.",
@@ -73,7 +81,8 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
     ids = ["Q1(a)", "Q1(b)", "Q2(a)"]
     max_marks = {qid: rng.choice([4, 5, 6, 8, 10]) for qid in ids}
     awarded = {qid: rng.randint(0, max_marks[qid]) for qid in ids}
-    subject = rng.choice(SUBJECTS)
+    course = rng.choice(list(COURSE_SUBJECTS))
+    subject = rng.choice(COURSE_SUBJECTS[course])
     checking_mode = rng.choice(["standard", "strict", "lenient"])
     evaluations = []
     attempts = []
@@ -137,6 +146,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
 
     case: dict[str, Any] = {
         "case_id": sample_id,
+        "course": course,
         "subject": subject,
         "paper_structure": [{"question_id": q, "maximum_marks": max_marks[q]} for q in ids],
         "attempted_answers": attempts,
@@ -316,6 +326,8 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
     input_text = request + "\nReturn exactly one JSON object with keys decision and issues.\nEvaluation package:\n" + json_text(case)
     return {
         "id": sample_id,
+        "course": course,
+        "subject": subject,
         "category": category,
         "input": input_text,
         "target": json_text(target),

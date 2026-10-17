@@ -7,3 +7,4 @@ scikit-learn==1.5.2
 safetensors==0.4.5
 sentencepiece==0.2.0
 PyMuPDF==1.26.4
+beautifulsoup4==4.12.3
