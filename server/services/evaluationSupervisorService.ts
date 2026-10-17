@@ -14,6 +14,9 @@ import { toCanonicalQuestionId } from './canonicalQuestionService.js';
 
 const MAX_CORRECTION_ROUNDS = 2;
 const MAX_PARALLEL_CORRECTIONS = 2;
+// Hard ceiling on targeted question re-evaluation calls per uploaded answer sheet.
+// If the ceiling is reached, remaining repairable items require review rather than more paid calls.
+const MAX_REPAIR_CALLS_PER_EVALUATION = 4;
 
 export type SupervisorStatus = 'PASS' | 'HUMAN_REVIEW';
 
@@ -22,6 +25,8 @@ export interface SupervisorAuditSummary {
   status: SupervisorStatus;
   maxCorrectionRounds: number;
   correctionRoundsUsed: number;
+  maxCorrectionCalls: number;
+  correctionCallsUsed: number;
   correctionsApplied: number;
   correctedQuestionIds: string[];
   initialIssues: string[];
@@ -360,6 +365,8 @@ export async function runEvaluationSupervisor(
   const correctedQuestionIds: string[] = [];
   const initialIssues: string[] = [];
   let correctionRoundsUsed = 0;
+  let correctionCallsUsed = 0;
+  const budgetExhaustedQuestionIds: string[] = [];
 
   for (let round = 1; round <= MAX_CORRECTION_ROUNDS; round++) {
     const audit = auditEvaluation(
@@ -381,8 +388,13 @@ export async function runEvaluationSupervisor(
     if (targets.length === 0) break;
 
     let appliedThisRound = 0;
-    for (let index = 0; index < targets.length; index += MAX_PARALLEL_CORRECTIONS) {
-      const batch = targets.slice(index, index + MAX_PARALLEL_CORRECTIONS);
+    let index = 0;
+    while (index < targets.length && correctionCallsUsed < MAX_REPAIR_CALLS_PER_EVALUATION) {
+      const remainingBudget = MAX_REPAIR_CALLS_PER_EVALUATION - correctionCallsUsed;
+      const batchSize = Math.min(MAX_PARALLEL_CORRECTIONS, remainingBudget);
+      const batch = targets.slice(index, index + batchSize);
+      index += batch.length;
+      correctionCallsUsed += batch.length;
       const results = await Promise.all(batch.map(async (target) => {
         const supervisorContext: ChunkEvaluationContext = {
           subQuestion: target.subQuestion,
@@ -443,6 +455,10 @@ export async function runEvaluationSupervisor(
       current = { ...current, questions: nextQuestions };
     }
 
+    if (index < targets.length) {
+      budgetExhaustedQuestionIds.push(...targets.slice(index).map((target) => target.canonicalId));
+    }
+
     if (appliedThisRound === 0) break;
     correctionRoundsUsed = round;
 
@@ -464,12 +480,17 @@ export async function runEvaluationSupervisor(
     params,
     extractReferences
   );
-  const unresolvedIssues = uniqueStrings(finalAudit.issues);
+  const budgetIssues = budgetExhaustedQuestionIds.length > 0
+    ? ['SUPERVISOR_REPAIR_BUDGET_EXHAUSTED: Human review required for ' + uniqueStrings(budgetExhaustedQuestionIds).join(', ')]
+    : [];
+  const unresolvedIssues = uniqueStrings([...finalAudit.issues, ...budgetIssues]);
   const summary: SupervisorAuditSummary = {
     version: 'evaluation-supervisor-v1',
     status: unresolvedIssues.length === 0 ? 'PASS' : 'HUMAN_REVIEW',
     maxCorrectionRounds: MAX_CORRECTION_ROUNDS,
     correctionRoundsUsed,
+    maxCorrectionCalls: MAX_REPAIR_CALLS_PER_EVALUATION,
+    correctionCallsUsed,
     correctionsApplied: correctedQuestionIds.length,
     correctedQuestionIds: uniqueStrings(correctedQuestionIds),
     initialIssues: uniqueStrings(initialIssues).slice(0, 100),

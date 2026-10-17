@@ -43,6 +43,9 @@ jobs:
               "RATIONALE_SCORE_CONTRADICTION",
               "UNSUPPORTED_PRESENTATION_DEDUCTION",
               "EVIDENCE_RATIONALE_CONTRADICTION",
+              "MODE_NOT_RESPECTED",
+              "VALID_ALTERNATIVE_METHOD_NOT_CREDITED",
+              "PARTIAL_CREDIT_OMITTED",
           }
           ids_by_split = {}
           inputs_by_split = {}
@@ -60,6 +63,23 @@ jobs:
                   else:
                       assert target["decision"] == "REVIEW"
                       assert record["category"] in {issue["code"] for issue in target["issues"]}
+                  package_json = record["input"].split("Evaluation package:\n", 1)[-1]
+                  package = json.loads(package_json)
+                  assert package["checking_mode"] in {"standard", "strict", "lenient"}
+                  if record["category"] == "MODE_NOT_RESPECTED":
+                      question_id = next(issue["question_id"] for issue in target["issues"])
+                      entry = next(item for item in package["evaluation"] if item["question_id"] == question_id)
+                      assert entry["checking_mode_applied"] != package["checking_mode"]
+                  if record["category"] == "VALID_ALTERNATIVE_METHOD_NOT_CREDITED":
+                      question_id = next(issue["question_id"] for issue in target["issues"])
+                      entry = next(item for item in package["evaluation"] if item["question_id"] == question_id)
+                      assert entry["awarded_marks"] == 0 and entry["candidate_method"]
+                  if record["category"] == "PARTIAL_CREDIT_OMITTED":
+                      question_id = next(issue["question_id"] for issue in target["issues"])
+                      entry = next(item for item in package["evaluation"] if item["question_id"] == question_id)
+                      assert entry["awarded_marks"] == 0
+                      assert "present" in entry["evidence_points"].values()
+                      assert "partially_present" in entry["evidence_points"].values()
           assert not (ids_by_split["train"] & ids_by_split["validation"])
           assert not (ids_by_split["train"] & ids_by_split["test"])
           assert not (ids_by_split["validation"] & ids_by_split["test"])
