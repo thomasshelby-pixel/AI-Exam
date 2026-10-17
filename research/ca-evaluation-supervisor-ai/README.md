@@ -66,7 +66,7 @@ This caps supervisor correction invocations, **not necessarily the exact provide
 
 1. For Colab, select Runtime → Change runtime type → T4 GPU. If GPU quota is exhausted, source discovery and synthetic dataset preparation can still run on CPU; actual training will skip cleanly.
 2. For Kaggle, enable Accelerator → GPU and import the current repository notebook. The Kaggle notebook uses FP16 LoRA without bitsandbytes, installs the Kaggle-specific dependencies, generates a synthetic dataset, trains a separate adapter, and measures held-out synthetic metrics.
-4. The adapter is saved to a new versioned directory under MyDrive/CA_Exam_Checker_AI/training_runs/. It never writes to model_checkpoint_v1, model_weights, or ca_study_ai.joblib.
+3. The adapter is saved to a new versioned directory under MyDrive/CA_Exam_Checker_AI/training_runs/. It never writes to model_checkpoint_v1, model_weights, or ca_study_ai.joblib.
 5. Review the JSON parse rate, issue-code F1, and false-pass rate. Keep the adapter in research if outputs are malformed or the synthetic benchmark is weak.
 6. Only after separate human-reviewed test cases pass should an inference service be built and connected to the website. The current Vercel/Firebase production path must not be pointed at an unvalidated adapter.
 
