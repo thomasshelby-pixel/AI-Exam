@@ -171,6 +171,8 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         qid = rng.choice(ids)
         entry = next(e for e in evaluations if e["question_id"] == qid)
         entry["awarded_marks"] = entry["maximum_marks"] + 1 if rng.random() < 0.5 else -1
+        entry["status"] = "correct" if entry["awarded_marks"] > entry["maximum_marks"] else "incorrect"
+        entry["reason"] = "The evaluator returned an invalid score value that must be rejected."
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"]
         case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         flag(category, qid, "REJECT_INVALID_SCORE", "Awarded marks are outside the allowed range of zero to maximum marks.")
