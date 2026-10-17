@@ -164,6 +164,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         entry["awarded_marks"] = None
         entry["status"] = "unclear"
         entry["reason"] = "The evaluator did not return a numeric mark."
+        entry["marking_components"][0]["marks_awarded"] = None
         case["reported_total_marks"] = sum(e["awarded_marks"] or 0 for e in evaluations)
         flag(category, qid, "RE_EVALUATE_QUESTION", "The question has no numeric awarded-mark value.")
     elif category == "SCORE_OUT_OF_RANGE":
