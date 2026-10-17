@@ -89,6 +89,8 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
             }
             if not any(value in ("present", "partially_present") for value in evidence.values()):
                 evidence["working"] = "partially_present"
+            if all(value == "present" for value in evidence.values()):
+                evidence["conclusion"] = "partially_present"
         attempts.append({
             "question_id": qid,
             "attempted": True,
