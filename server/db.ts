@@ -272,6 +272,24 @@ export function initDatabase() {
       FOREIGN KEY (plan_id) REFERENCES student_study_plans(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS student_revision_round_progress (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      course TEXT NOT NULL,
+      exam_date TEXT NOT NULL,
+      round_key TEXT NOT NULL CHECK (round_key IN ('R1', 'R2', 'R3', 'R4')),
+      subject TEXT NOT NULL,
+      chapter TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+      completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, course, exam_date, round_key, subject, chapter),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_revision_round_progress_user_exam
+      ON student_revision_round_progress(user_id, course, exam_date, round_key);
+
     CREATE INDEX IF NOT EXISTS idx_study_strengths_user_course
       ON student_chapter_strengths(user_id, course);
     CREATE INDEX IF NOT EXISTS idx_study_plans_user_status
