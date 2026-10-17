@@ -78,10 +78,17 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
     for qid in ids:
         score = awarded[qid]
         maximum = max_marks[qid]
-        evidence = {
-            component: rng.choice(["present", "partially_present", "not_present"])
-            for component in RUBRIC_COMPONENTS
-        }
+        if score == maximum:
+            evidence = {component: "present" for component in RUBRIC_COMPONENTS}
+        elif score == 0:
+            evidence = {component: "not_present" for component in RUBRIC_COMPONENTS}
+        else:
+            evidence = {
+                component: rng.choice(["present", "partially_present", "not_present"])
+                for component in RUBRIC_COMPONENTS
+            }
+            if not any(value in ("present", "partially_present") for value in evidence.values()):
+                evidence["working"] = "partially_present"
         attempts.append({
             "question_id": qid,
             "attempted": True,
@@ -170,7 +177,12 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
     elif category == "COMPONENT_SUM_MISMATCH":
         qid = rng.choice(ids)
         entry = next(e for e in evaluations if e["question_id"] == qid)
-        entry["marking_components"][0]["marks_awarded"] = max(0, entry["awarded_marks"] - 1)
+        # Ensure the sample really contains a component-sum mismatch even if the random score was zero.
+        if entry["awarded_marks"] == 0:
+            entry["awarded_marks"] = 2
+            entry["status"] = "partially_correct"
+            case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
+        entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"] - 1
         flag(category, qid, "RECHECK_MARK_ALLOCATION", "Question marks disagree with the sum of its marking-component scores.")
     elif category == "REFERENCE_QUESTION_MISMATCH":
         qid = ids[0]
@@ -190,6 +202,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         entry["status"] = "partially_correct"
         entry["reason"] = "All required points are present and correct; full marks are warranted."
         entry["evidence_points"] = {k: "present" for k in RUBRIC_COMPONENTS}
+        next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"]
         case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         flag(category, qid, "RECHECK_REASONING_AND_MARKS", "The rationale claims complete correct work but the score is below maximum.")
@@ -200,6 +213,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
         entry["status"] = "partially_correct"
         entry["reason"] = "One mark was deducted solely because the presentation was untidy."
         entry["evidence_points"] = {k: "present" for k in RUBRIC_COMPONENTS}
+        next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"]
         case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         flag(category, qid, "RECHECK_DEDUCTION", "The configured marking rules do not allow a presentation-only deduction.")
@@ -215,6 +229,7 @@ def build_example(rng: random.Random, category: str, sample_id: str, split: str)
             "working": "present",
             "conclusion": "present",
         }
+        next(a for a in attempts if a["question_id"] == qid)["evidence_points"] = dict(entry["evidence_points"])
         entry["marking_components"][0]["marks_awarded"] = entry["awarded_marks"]
         case["reported_total_marks"] = sum(e["awarded_marks"] for e in evaluations)
         flag(category, qid, "RECHECK_REASONING_AND_MARKS", "The recorded answer evidence conflicts with the stated reason for deduction.")
