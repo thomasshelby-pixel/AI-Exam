@@ -21,13 +21,13 @@ The supervisor prompt explicitly distinguishes the three existing modes:
 - **strict:** rigorous scrutiny, but valid alternative methods and consequential credit remain protected;
 - **lenient:** recognize valid intermediate steps/concepts, without exceeding component or question maximums.
 
-## MTP/PYQ source materials
+## Foundation + Intermediate source materials
 
-The Colab notebook lets you upload a Question Paper and its matching Suggested Answer (plus the official marking scheme if available) as a paired reference pack into your own Google Drive. It extracts selectable PDF text and records source hashes and page counts. It does not upload these PDFs to GitHub.
+The Colab notebook now scans official ICAI/BoS pages for **both CA Foundation and CA Intermediate** and writes a source catalogue (CSV/JSON) into the user's Google Drive. It targets MTP/mock tests (Series I and II where available), matching Suggested Answers, RTPs, previous-year question papers, applicability/amendment notices, and course material. It does not push PDFs or extracted content to GitHub.
 
-A reference PDF alone is **not** a supervised training example. For real-material fine-tuning, add human-verified cases that pair the relevant question/reference with the student's answer, applicable marks/rubric, the selected checking mode, and an adjudicated target outcome. Do not manufacture labels from a Suggested Answer alone.
+PDF downloading is deliberately **off by default**. ICAI/BoS copyright notices state that use in a retrieval system requires written permission. The notebook only downloads official-domain PDFs after the user explicitly sets the permission acknowledgement. Publicly viewable links are not proof of permission, and the notebook should remain in catalogue-only mode until written permission is confirmed.
 
-The model only produces audit flags and review actions. It does not set the final score, override deterministic integrity gates, or certify a copy by itself. The existing TypeScript supervisor and correction loop remain the safety layer.
+Downloaded PDFs/text are **reference-only**, not supervised training labels. For real-material fine-tuning, add human-verified cases pairing the relevant question/reference with a student's answer, applicable marks/rubric, selected checking mode, and an adjudicated target outcome. Never manufacture labels from a Suggested Answer alone. Synthetic examples cover both Foundation and Intermediate subject families, but this is only a structural/consistency prototype, not subject-mastery evidence.
 
 ## Re-check cost control
 
