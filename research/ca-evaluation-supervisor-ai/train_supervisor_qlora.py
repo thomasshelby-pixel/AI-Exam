@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
-    parser.add_argument("--max-seq-length", type=int, default=1024)
+    parser.add_argument("--max-seq-length", type=int, default=1536)
     parser.add_argument("--train-limit", type=int, default=0, help="Use 0 for the full training set.")
     return parser.parse_args()
 
