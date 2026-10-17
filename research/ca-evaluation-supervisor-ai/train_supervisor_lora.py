@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""QLoRA fine-tuning for the isolated CA evaluation-integrity supervisor adapter.
+"""FP16 LoRA fine-tuning for the isolated CA evaluation-integrity supervisor adapter.
 
-Requires a CUDA GPU (Google Colab T4 recommended). The base model and all existing
-planner artifacts are left untouched. Output must be a separate versioned folder.
+Requires a CUDA GPU (Google Colab/Kaggle T4 recommended). This deliberately avoids
+bitsandbytes/4-bit quantization to prevent Triton ABI issues in hosted runtimes.
+The small 360M base model fits on a T4 in FP16; base and planner artifacts stay untouched.
 """
 from __future__ import annotations
 
@@ -15,11 +16,10 @@ from typing import Any
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     DataCollatorForSeq2Seq,
     Trainer,
     TrainingArguments,
@@ -162,21 +162,13 @@ def main() -> None:
     tokenizer.padding_side = "right"
 
     compute_dtype = torch.float16
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=compute_dtype,
-        bnb_4bit_use_double_quant=True,
-    )
-    print("Loading 4-bit base model (the upstream base weights remain unchanged)...")
+    print("Loading base model in FP16 for standard LoRA (no bitsandbytes or Triton dependency)...")
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
-        quantization_config=bnb_config,
         device_map="auto",
         torch_dtype=compute_dtype,
     )
     model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model)
     lora = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -186,6 +178,8 @@ def main() -> None:
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
     model = get_peft_model(model, lora)
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
     model.print_trainable_parameters()
 
     def tokenize_all(rows: list[dict[str, Any]]) -> Dataset:
@@ -219,7 +213,7 @@ def main() -> None:
         max_grad_norm=0.3,
         lr_scheduler_type="cosine",
         logging_steps=20,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=2,
         load_best_model_at_end=True,
@@ -228,7 +222,7 @@ def main() -> None:
         fp16=fp16,
         bf16=not fp16,
         gradient_checkpointing=True,
-        optim="paged_adamw_8bit",
+        optim="adamw_torch",
         report_to="none",
         remove_unused_columns=False,
         seed=20261017,
@@ -243,7 +237,7 @@ def main() -> None:
         tokenizer=tokenizer,
     )
 
-    print("\nStarting isolated evaluation-supervisor QLoRA training.")
+    print("\nStarting isolated evaluation-supervisor FP16 LoRA training.")
     print("Do not interrupt the runtime or rerun this training cell while it is running.")
     started_at = datetime.now(timezone.utc).isoformat()
     train_result = trainer.train()
@@ -254,7 +248,7 @@ def main() -> None:
     manifest = {
         "model_role": "CA Exam Checker AI evaluation-integrity supervisor",
         "base_model": args.base_model,
-        "training_method": "4-bit QLoRA adapter; base model weights not overwritten",
+        "training_method": "FP16 LoRA adapter with standard PyTorch AdamW; no 4-bit quantization; base model weights not overwritten",
         "dataset_kind": "synthetic_only",
         "real_student_answer_sheets_used": False,
         "epochs_requested": args.epochs,

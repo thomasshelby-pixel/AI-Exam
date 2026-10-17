@@ -14,7 +14,7 @@ from typing import Any
 import torch
 from peft import PeftModel
 from sklearn.metrics import classification_report
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 SYSTEM_MESSAGE = (
     "You are the CA Exam Checker AI evaluation-integrity supervisor, not the primary examiner. "
@@ -96,15 +96,10 @@ def issue_codes(obj: dict[str, Any] | None) -> set[str]:
 
 
 def load_model(base_model: str, adapter_dir: str | None):
-    quant = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-    )
+    # The supervisor base is small enough for FP16 inference on a T4.
+    # Avoid optional bitsandbytes/Triton quantization imports in hosted runtimes.
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
-        quantization_config=quant,
         device_map="auto",
         torch_dtype=torch.float16,
     )

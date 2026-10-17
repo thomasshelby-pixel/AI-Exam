@@ -25,7 +25,7 @@ jobs:
 
       - name: Evaluation supervisor training-pipeline regression
         run: |
-          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_qlora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py
+          python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_lora.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py
           python3 research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py --output-dir /tmp/ca-evaluation-supervisor-test-data --train-per-category 3 --validation-per-category 2 --test-per-category 2 --seed 123
           python3 - <<'PY'
           import json
@@ -89,6 +89,20 @@ jobs:
           print("✅ Supervisor synthetic dataset shape, labels, and split isolation passed.")
           PY
 
+      - name: Hosted GPU training avoids legacy bitsandbytes/Triton path
+        run: |
+            python3 - <<'PY'
+            from pathlib import Path
+            trainer = Path("research/ca-evaluation-supervisor-ai/train_supervisor_lora.py").read_text()
+            evaluator = Path("research/ca-evaluation-supervisor-ai/evaluate_supervisor.py").read_text()
+            assert "BitsAndBytesConfig" not in trainer + evaluator
+            assert "prepare_model_for_kbit_training" not in trainer
+            assert "paged_adamw_8bit" not in trainer
+            assert 'optim="adamw_torch"' in trainer
+            print("✅ Hosted trainer/evaluator use FP16 LoRA without bitsandbytes/Triton quantization.")
+            PY
+          
+          
       - name: Training notebook code-cell syntax check
         run: |
           python3 - <<'PY'

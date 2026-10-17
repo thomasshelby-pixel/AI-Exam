@@ -1,6 +1,6 @@
 # CA Exam Checker AI — Evaluation Supervisor Model (Research)
 
-This folder contains an isolated QLoRA fine-tuning pipeline for a small supervisor model. It does **not** retrain or overwrite the existing CA Study Planner model.
+This folder contains an isolated FP16 LoRA fine-tuning pipeline for a small evaluation supervisor model. It deliberately avoids bitsandbytes/4-bit quantization so hosted Python 3.13 GPU runtimes do not depend on the legacy `triton.ops` import path. It does **not** retrain or overwrite the existing CA Study Planner model.
 
 ## What the adapter is intended to do
 
@@ -23,7 +23,7 @@ The supervisor prompt explicitly distinguishes the three existing modes:
 
 ## Foundation + Intermediate source archive (May 2024–September 2026)
 
-The [Colab notebook](https://colab.research.google.com/github/thomasshelby-pixel/AI-Exam/blob/main/research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_colab.ipynb) builds a source catalogue for **CA Foundation and CA Intermediate** from May 2024 through September 2026. If Colab has exhausted the user's GPU quota, use the [Kaggle GPU notebook](https://github.com/thomasshelby-pixel/AI-Exam/blob/main/research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_kaggle.ipynb) to run the QLoRA training and download a single adapter ZIP. The Colab notebook remains useful on CPU for source discovery and synthetic dataset generation. It automatically reuses the latest existing date-window archive in Drive, skips PDF links whose files are already saved, and checkpoints the manifest after every attempted download. This archive targets Categories include MTP/mock tests (Series I and II), matching Suggested Answers/marking guidance, RTPs, actual exam question papers, MCQ keys, applicable study material, amendments and applicability notices.
+The [Colab notebook](https://colab.research.google.com/github/thomasshelby-pixel/AI-Exam/blob/main/research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_colab.ipynb) builds a source catalogue for **CA Foundation and CA Intermediate** from May 2024 through September 2026. If Colab has exhausted the user's GPU quota, use the [Kaggle GPU notebook](https://github.com/thomasshelby-pixel/AI-Exam/blob/main/research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_kaggle.ipynb) to run FP16 LoRA training and download a single adapter ZIP. The Colab notebook remains useful on CPU for source discovery and synthetic dataset generation. It automatically reuses the latest existing date-window archive in Drive, skips PDF links whose files are already saved, and checkpoints the manifest after every attempted download. This archive targets Categories include MTP/mock tests (Series I and II), matching Suggested Answers/marking guidance, RTPs, actual exam question papers, MCQ keys, applicable study material, amendments and applicability notices.
 
 Discovery is **ICAI/BoS first**. If a resource is not found there, the notebook also checks secondary archive pages including CAprep, CA Study Web, VSI Jaipur, CAWizard, OpenMock, Jobaaj, Careers360, Zeroinfy, CA Test Series and Capital Trainers. Those are secondary and unverified, not official ICAI endorsements. The catalogue captures the source URL, course, attempt, series, type, source tier and date confidence. The link classifier gives each PDF type precedence to its own link/row/section context instead of copying a generic archive page title (which can mention MTP, RTP and Suggested Answers together); regression tests now guard this behavior and ambiguous courses remain UNKNOWN for review. Dates outside the range are marked out-of-scope; unknown dates need review; syllabus/applicability documents are retained as curriculum-reference candidates.
 
@@ -56,18 +56,19 @@ This caps supervisor correction invocations, **not necessarily the exact provide
 ## Files
 
 - generate_supervisor_dataset.py — reproducibly generates synthetic train/validation/test JSONL files.
-- train_supervisor_qlora.py — QLoRA fine-tuning, requires a CUDA GPU (Colab T4 recommended).
+- train_supervisor_lora.py — FP16 LoRA fine-tuning with standard PyTorch AdamW; requires a CUDA GPU (T4 recommended), but not bitsandbytes/Triton.
 - evaluate_supervisor.py — evaluates the untouched base model optionally and the trained adapter on held-out synthetic examples.
-- requirements-colab.txt — pinned libraries.
+- requirements-colab.txt — Colab dependencies without bitsandbytes.
+- requirements-kaggle.txt — modern package ranges for Kaggle's hosted Python runtime; excludes bitsandbytes.
 - train_evaluation_supervisor_colab.ipynb — cell-by-cell Google Colab workflow.
 
 ## Intended Colab workflow
 
-1. Open the notebook and select Runtime → Change runtime type → T4 GPU.
-2. Run the notebook from top to bottom. It mounts Drive, installs the pinned requirements, generates a synthetic dataset, trains a separate adapter, and measures held-out synthetic metrics.
+1. For Colab, select Runtime → Change runtime type → T4 GPU. If GPU quota is exhausted, source discovery and synthetic dataset preparation can still run on CPU; actual training will skip cleanly.
+2. For Kaggle, enable Accelerator → GPU and import the current repository notebook. The Kaggle notebook uses FP16 LoRA without bitsandbytes, installs the Kaggle-specific dependencies, generates a synthetic dataset, trains a separate adapter, and measures held-out synthetic metrics.
 3. The adapter is saved to a new versioned directory under MyDrive/CA_Exam_Checker_AI/training_runs/. It never writes to model_checkpoint_v1, model_weights, or ca_study_ai.joblib.
-4. Review the JSON parse rate, issue-code F1, and false-pass rate. Keep the adapter in research if outputs are malformed or the synthetic benchmark is weak.
-5. Only after separate human-reviewed test cases pass should an inference service be built and connected to the website. The current Vercel/Firebase production path must not be pointed at an unvalidated adapter.
+5. Review the JSON parse rate, issue-code F1, and false-pass rate. Keep the adapter in research if outputs are malformed or the synthetic benchmark is weak.
+6. Only after separate human-reviewed test cases pass should an inference service be built and connected to the website. The current Vercel/Firebase production path must not be pointed at an unvalidated adapter.
 
 ## Deployment gate
 
