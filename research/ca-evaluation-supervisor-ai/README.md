@@ -33,6 +33,12 @@ Attempt-dated PDFs inside the requested window are placed under `in_date_window/
 
 Downloaded material is **reference-only**, not supervised training labels. Real-material fine-tuning still requires human-verified student answers, per-component awarded marks, reasons, selected checking mode and adjudicated target outcomes. Synthetic examples spanning both curricula only test the pipeline's integrity logic; they do not prove CA subject-grading accuracy.
 
+## Eight evaluated answer copies (May 2026)
+
+The [CPU-safe preparation notebook](https://colab.research.google.com/github/thomasshelby-pixel/AI-Exam/blob/main/research/ca-evaluation-supervisor-ai/train_evaluation_supervisor_prepare_checked_copies.ipynb) accepts the single `CA_Inter_May2026_Evaluated_Copies_Pack.zip` upload and stages the eight PDFs privately in Drive. The preparation script extracts structured question/subquestion mark candidates and selectable overlay marks, inventories all pages, and verifies whether top-level question totals sum to each copy's overall awarded score. It outputs `question_mark_candidates.csv`, `step_mark_candidates.csv`, `human_review_template.csv`, `pdf_page_inventory.csv`, `copy_integrity_audit.csv`, and a manifest.
+
+**It deliberately emits zero training examples.** These PDFs have image-based handwritten answer pages; the current SmolLM2 evaluation supervisor is text-only and audits integrity flags rather than directly grading images. Summary marks alone do not contain the candidate's answer evidence or the matched rubric. To use them for real supervised grading, first pair exact May 2026 question papers and Suggested Answers, transcribe/visually verify answer evidence and step marks, and mark each reviewed record as human-verified. Keep the source PDFs private and out of GitHub.
+
 ## Re-check cost control
 
 The production supervisor now caps targeted correction invocations at **4 per answer-sheet evaluation** across no more than 2 correction rounds. If issues remain after the budget is used, the evaluation fails closed to human review instead of sending more questions to the model. Parallelism is limited to 2 correction calls at a time.
