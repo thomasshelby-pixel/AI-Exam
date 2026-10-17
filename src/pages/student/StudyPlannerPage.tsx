@@ -51,6 +51,53 @@ const STARTER_PROMPTS = [
   'Make a 90-minute revision plan for Law tomorrow.',
 ];
 
+const revisionProgressKey = (roundKey: string, subject: string, chapter: string) =>
+  [roundKey, subject, chapter].join('::');
+
+function getAdjustedRevisionChapters(round: any, progress: Record<string, boolean>, dailyHours: number) {
+  const chapters = Array.isArray(round.chapters) ? round.chapters : [];
+  const remaining = chapters.filter((chapter: any) => !progress[revisionProgressKey(round.key, chapter.subject, chapter.chapter)]);
+  if (!remaining.length) {
+    return chapters.map((chapter: any) => ({ ...chapter, completed: true }));
+  }
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const todayText = today.toISOString().slice(0, 10);
+  const startText = round.start_date > todayText ? round.start_date : todayText;
+  const start = new Date(startText + 'T00:00:00.000Z');
+  const roundEnd = new Date(round.end_date + 'T00:00:00.000Z');
+  const end = roundEnd >= start ? roundEnd : start;
+  const availableDays = Math.max(1, Math.floor((end.getTime() - start.getTime()) / 86400000) + 1);
+  const weightOf = (chapter: any) => chapter.strength === 'WEAK' ? 3 : chapter.strength === 'STRONG' ? 1 : 2;
+  const totalWeight = remaining.reduce((sum: number, chapter: any) => sum + weightOf(chapter), 0) || 1;
+  let cumulative = 0;
+  const adjusted = new Map<string, any>();
+  remaining.forEach((chapter: any) => {
+    const weight = weightOf(chapter);
+    const fromOffset = Math.min(availableDays - 1, Math.floor(cumulative / totalWeight * availableDays));
+    cumulative += weight;
+    const toOffset = Math.min(availableDays - 1, Math.max(fromOffset, Math.ceil(cumulative / totalWeight * availableDays) - 1));
+    const chapterStart = new Date(start);
+    chapterStart.setUTCDate(chapterStart.getUTCDate() + fromOffset);
+    const chapterEnd = new Date(start);
+    chapterEnd.setUTCDate(chapterEnd.getUTCDate() + toOffset);
+    adjusted.set(revisionProgressKey(round.key, chapter.subject, chapter.chapter), {
+      ...chapter,
+      start_date: chapterStart.toISOString().slice(0, 10),
+      end_date: chapterEnd.toISOString().slice(0, 10),
+      estimated_hours: Math.max(0.5, Math.round((availableDays * dailyHours * weight / totalWeight) * 10) / 10),
+      completed: false,
+      rescheduled: chapter.start_date !== chapterStart.toISOString().slice(0, 10) || chapter.end_date !== chapterEnd.toISOString().slice(0, 10),
+    });
+  });
+  return chapters.map((chapter: any) => {
+    const key = revisionProgressKey(round.key, chapter.subject, chapter.chapter);
+    return progress[key]
+      ? { ...chapter, completed: true }
+      : adjusted.get(key) || { ...chapter, completed: false };
+  });
+}
+
 export const StudyPlannerPage: React.FC = () => {
   const navigate = useNavigate();
   const [request, setRequest] = useState('');
@@ -79,6 +126,8 @@ export const StudyPlannerPage: React.FC = () => {
   const [attemptRoadmap, setAttemptRoadmap] = useState<any>(null);
   const [revisionRounds, setRevisionRounds] = useState<any[]>([]);
   const [expandedRevisionRounds, setExpandedRevisionRounds] = useState<Record<string, boolean>>({});
+  const [revisionProgress, setRevisionProgress] = useState<Record<string, boolean>>({});
+  const [revisionProgressBusy, setRevisionProgressBusy] = useState('');
   const [roadmapCompletion, setRoadmapCompletion] = useState('40');
   const [roadmapBusy, setRoadmapBusy] = useState(false);
   const [roadmapMessage, setRoadmapMessage] = useState('');
@@ -190,9 +239,28 @@ export const StudyPlannerPage: React.FC = () => {
     setRoadmapBusy(true); setRoadmapMessage('');
     try {
       const response = await apiRequest<{ success: boolean; roadmap: any[]; revision_rounds?: any[]; chapter_ratings_used?: number; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion, daily_study_hours: Number(dailyMinutes) || 4 }) });
-      setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []); setRoadmapMessage('Exam roadmap generated. ' + (response.chapter_ratings_used ? response.chapter_ratings_used + ' saved chapter ratings used.' : 'Rate chapters to personalise revision priorities.') + ' Weekly timetable remains your daily execution view.');
+      setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []);
+      const savedProgress = await apiRequest<{ success: boolean; progress: Array<{ round_key: string; subject: string; chapter: string; completed: number }> }>('/api/student/study-planner/revision-progress?course=CA_INTERMEDIATE&exam_date=' + encodeURIComponent(exactExamDate));
+      const restoredProgress: Record<string, boolean> = {};
+      for (const item of savedProgress.progress || []) restoredProgress[revisionProgressKey(item.round_key, item.subject, item.chapter)] = Boolean(item.completed);
+      setRevisionProgress(restoredProgress);
+      setRoadmapMessage('Exam roadmap generated. ' + (response.chapter_ratings_used ? response.chapter_ratings_used + ' saved chapter ratings used.' : 'Rate chapters to personalise revision priorities.') + ' Chapter completion is saved and unfinished work will be rescheduled automatically.');
     } catch (err: any) { setAttemptRoadmap(null); setRoadmapMessage(err?.message || 'Could not generate attempt roadmap.'); }
     finally { setRoadmapBusy(false); }
+  };
+
+  const toggleRevisionChapter = async (round: any, chapter: any) => {
+    if (!exactExamDate) { setRoadmapMessage('Set the exact exam date before tracking revision progress.'); return; }
+    const key = revisionProgressKey(round.key, chapter.subject, chapter.chapter);
+    const completed = !revisionProgress[key];
+    setRevisionProgressBusy(key);
+    setRoadmapMessage('');
+    try {
+      await apiRequest('/api/student/study-planner/revision-progress', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', exam_date: exactExamDate, round_key: round.key, subject: chapter.subject, chapter: chapter.chapter, completed }) });
+      setRevisionProgress((current) => ({ ...current, [key]: completed }));
+      setRoadmapMessage(completed ? 'Chapter marked complete. Remaining chapters in this round have been rescheduled.' : 'Chapter marked incomplete. The remaining schedule has been recalculated.');
+    } catch (err: any) { setRoadmapMessage(err?.message || 'Could not save chapter progress.'); }
+    finally { setRevisionProgressBusy(''); }
   };
 
   const generateDailyPlan = async () => {
@@ -302,7 +370,33 @@ export const StudyPlannerPage: React.FC = () => {
         </div>
         <button type="button" disabled={roadmapBusy} onClick={()=>void generateAttemptRoadmap()} className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{roadmapBusy ? 'Building roadmap…' : 'Build exam roadmap'}</button>
         {roadmapMessage && <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">{roadmapMessage}</p>}
-        {attemptRoadmap && <div className="mt-4 space-y-3">{attemptRoadmap.map((phase:any)=><div key={phase.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900 dark:text-white">{phase.title}</h3><span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">{phase.goals.map((goal:string)=><li key={goal}>{goal}</li>)}</ul></div>)}</div>}{revisionRounds.length > 0 && <div className="mt-4"><h3 className="mb-2 text-sm font-extrabold text-slate-900 dark:text-white">Your adaptive revision rounds</h3><p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Tap a round to see which subject and chapter to study, the planned dates, estimated time and a step-by-step method.</p><div className="space-y-2">{revisionRounds.map((round:any)=><div key={round.key} className="overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-900 dark:bg-indigo-950/20"><button type="button" aria-expanded={!!expandedRevisionRounds[round.key]} onClick={()=>setExpandedRevisionRounds((current)=>({...current,[round.key]:!current[round.key]}))} className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left"><div><h4 className="font-bold text-slate-900 dark:text-white">{round.title}</h4><p className="mt-1 text-xs text-slate-500">{round.start_date} – {round.end_date}</p></div><span className="flex items-center gap-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{round.days} days <span aria-hidden="true">{expandedRevisionRounds[round.key] ? '−' : '+'}</span></span><p className="w-full text-sm text-slate-600 dark:text-slate-300">{round.focus}</p><p className="w-full text-xs text-slate-500">{round.chapters?.length || 0} chapters planned · Tap to {expandedRevisionRounds[round.key] ? 'hide details' : 'view subject-wise plan'}</p></button>{expandedRevisionRounds[round.key] && <div className="space-y-3 border-t border-indigo-200 p-3 dark:border-indigo-900">{(round.chapters || []).length === 0 ? <p className="text-sm text-slate-600 dark:text-slate-300">No chapter ratings found yet. Rate your chapters first, then rebuild the roadmap to get a personalised subject-wise plan.</p> : (round.chapters || []).map((chapter:any,index:number)=><article key={round.key+'-'+chapter.subject+'-'+chapter.chapter} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">{chapter.subject}</p><h5 className="mt-1 text-sm font-extrabold text-slate-900 dark:text-white">{chapter.chapter}</h5></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{chapter.strength}</span></div><div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2"><p><strong>When:</strong> {chapter.start_date} – {chapter.end_date}</p><p><strong>Estimated study time:</strong> {chapter.estimated_hours} hours</p></div><p className="mt-2 text-sm text-slate-700 dark:text-slate-200"><strong>How to study:</strong> {chapter.method}</p><ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">{(chapter.steps || []).map((step:string,stepIndex:number)=><li key={stepIndex}>{step}</li>)}</ol></article>)}</div>}</div>)}</div></div>}
+        {attemptRoadmap && <div className="mt-4 space-y-3">{attemptRoadmap.map((phase:any)=><div key={phase.key} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900 dark:text-white">{phase.title}</h3><span className="text-xs font-bold text-indigo-600 dark:text-indigo-300">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-2 list-disc pl-5 text-sm text-slate-600 dark:text-slate-300">{phase.goals.map((goal:string)=><li key={goal}>{goal}</li>)}</ul></div>)}</div>}{revisionRounds.length > 0 && <div className="mt-4">
+        <h3 className="mb-2 text-sm font-extrabold text-slate-900 dark:text-white">Your adaptive revision rounds</h3>
+        <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Mark each chapter complete. Progress is saved to your account; unfinished chapters are rescheduled across the remaining days in that round.</p>
+        <div className="space-y-2">{revisionRounds.map((round:any)=>{const chapters=getAdjustedRevisionChapters(round,revisionProgress,Number(dailyMinutes)||4);const done=chapters.filter((chapter:any)=>chapter.completed).length;return <div key={round.key} className="overflow-hidden rounded-xl border border-indigo-200 bg-indigo-50/50 dark:border-indigo-900 dark:bg-indigo-950/20">
+          <button type="button" aria-expanded={!!expandedRevisionRounds[round.key]} onClick={()=>setExpandedRevisionRounds((current)=>({...current,[round.key]:!current[round.key]}))} className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left">
+            <div><h4 className="font-bold text-slate-900 dark:text-white">{round.title}</h4><p className="mt-1 text-xs text-slate-500">{round.start_date} – {round.end_date}</p></div>
+            <span className="flex items-center gap-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{done}/{chapters.length} complete · {round.days} days <span aria-hidden="true">{expandedRevisionRounds[round.key] ? '−' : '+'}</span></span>
+            <p className="w-full text-sm text-slate-600 dark:text-slate-300">{round.focus}</p>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-600" style={{width:(chapters.length ? done/chapters.length*100 : 0)+'%'}} /></div>
+            <p className="w-full text-xs text-slate-500">{chapters.length} chapters planned · Tap to {expandedRevisionRounds[round.key] ? 'hide details' : 'view and track chapters'}</p>
+          </button>
+          {expandedRevisionRounds[round.key] && <div className="space-y-3 border-t border-indigo-200 p-3 dark:border-indigo-900">
+            {chapters.length === 0 ? <p className="text-sm text-slate-600 dark:text-slate-300">No chapter ratings found yet. Rate your chapters first, then rebuild the roadmap to get a personalised subject-wise plan.</p> : chapters.map((chapter:any)=>{const key=revisionProgressKey(round.key,chapter.subject,chapter.chapter);return <article key={key} className={'rounded-lg border p-3 '+(chapter.completed?'border-emerald-300 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20':'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950')}>
+              <div className="flex items-start gap-3">
+                <input type="checkbox" checked={!!chapter.completed} disabled={revisionProgressBusy===key} onChange={()=>void toggleRevisionChapter(round,chapter)} aria-label={'Mark '+chapter.chapter+' '+(chapter.completed?'incomplete':'complete')} className="mt-1 h-4 w-4 accent-indigo-600 disabled:opacity-50" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">{chapter.subject}</p><h5 className={'mt-1 text-sm font-extrabold '+(chapter.completed?'text-emerald-800 line-through dark:text-emerald-300':'text-slate-900 dark:text-white')}>{chapter.chapter}</h5></div><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{chapter.strength}</span></div>
+                  <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2"><p><strong>When:</strong> {chapter.start_date} – {chapter.end_date} {chapter.rescheduled && !chapter.completed ? <span className="font-semibold text-indigo-600 dark:text-indigo-300">(updated)</span> : null}</p><p><strong>Estimated study time:</strong> {chapter.estimated_hours} hours</p></div>
+                  <p className="mt-2 text-sm text-slate-700 dark:text-slate-200"><strong>How to study:</strong> {chapter.method}</p>
+                  <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">{(chapter.steps || []).map((step:string,stepIndex:number)=><li key={stepIndex}>{step}</li>)}</ol>
+                </div>
+              </div>
+            </article>})}
+          </div>}
+        </div>})}</div>
+        {roadmapMessage && <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">{roadmapMessage}</p>}
+      </div>}
       </section>
 
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
