@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createStudyPlanDraft,
   parseStudyPlannerRequest,
+  parseStudyPlannerConversationRequest,
   STUDY_PLANNER_SUBJECTS,
 } from '../services/studyPlannerEngine.js';
 
@@ -196,4 +197,39 @@ test('Generated draft allocations sum to the requested duration and are explicit
 test('Subject registry includes Foundation and Intermediate subjects', () => {
   assert.equal(STUDY_PLANNER_SUBJECTS.CA_FOUNDATION.length, 4);
   assert.equal(STUDY_PLANNER_SUBJECTS.CA_INTERMEDIATE.length, 6);
+});
+
+
+test('Hinglish marks goal asks for study time instead of repeating the subject prompt', () => {
+  const parsed = parseStudyPlannerRequest(
+    'Taxation goal hai ki 60 plus laana hai',
+    'CA_INTERMEDIATE',
+  );
+  assert.equal(parsed.intent, 'clarify');
+  assert.deepEqual(parsed.subjects, ['Taxation']);
+  assert.deepEqual(parsed.missing_info, ['available study time']);
+  assert.equal(parsed.should_call_planner, false);
+});
+
+test('chat follow-up resolves previously supplied subject and goal', () => {
+  const parsed = parseStudyPlannerConversationRequest(
+    'kya missing hai?',
+    ['bhai aap hineng me bol skte ho ?', 'taxation goal hai ki 60 plus laana hai'],
+    'CA_INTERMEDIATE',
+  );
+  assert.equal(parsed.intent, 'clarify');
+  assert.deepEqual(parsed.subjects, ['Taxation']);
+  assert.deepEqual(parsed.missing_info, ['available study time']);
+  assert.equal(parsed.should_call_planner, false);
+});
+
+test('an independently complete new request is not polluted by prior chat turns', () => {
+  const parsed = parseStudyPlannerConversationRequest(
+    'Costing 2 hours revision today',
+    ['Taxation goal hai ki 60 plus laana hai'],
+    'CA_INTERMEDIATE',
+  );
+  assert.equal(parsed.intent, 'create_study_plan');
+  assert.deepEqual(parsed.subjects, ['Cost and Management Accounting']);
+  assert.equal(parsed.duration_minutes, 120);
 });

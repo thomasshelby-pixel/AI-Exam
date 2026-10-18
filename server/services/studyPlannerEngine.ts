@@ -300,8 +300,13 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
     && result.duration_minutes
     && /\b(detailed|in detail|study|studying|revision|revise|review|practice|questions|prepare|preparation|learn|cover|finish)\b/i.test(raw)
   );
+  const goalStudyRequest = result.subjects.length > 0 && (
+    /\b(?:goal|target)\b.{0,70}\b(?:\d{1,3}\s*(?:\+|plus)|marks?|score|laana|lana|bring|achieve)\b/i.test(raw)
+    || /\b(?:\d{1,3}\s*\+|\d{1,3}\s+plus)\b.{0,50}\b(?:marks?|score|laana|lana|bring|achieve)\b/i.test(raw)
+  );
   const revisionAction = /\b(study|studying|revision|revise|review|timetable|study plan|study schedule|plan my study|plan my revision)\b/i.test(raw)
-    || implicitStudyPlan;
+    || implicitStudyPlan
+    || goalStudyRequest;
 
   if (classRequest) {
     result.intent = 'update_class_schedule';
@@ -385,6 +390,42 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
   if (!result.subjects.length) result.missing_info.push('subject or study goal');
   return result;
 }
+
+/**
+ * Parses a chat turn with limited prior user context. New, actionable requests stand alone;
+ * clarification/follow-up turns may reuse details already supplied in the same conversation.
+ */
+export function parseStudyPlannerConversationRequest(
+  message: string,
+  history: string[] = [],
+  selectedCourse?: unknown,
+): ParsedStudyPlannerRequest {
+  const current = parseStudyPlannerRequest(message, selectedCourse);
+  const prior = history
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(-6);
+  if (!prior.length) return current;
+  if (current.should_call_planner || current.intent === 'out_of_scope') return current;
+
+  const raw = String(message || '').trim();
+  const followUp = /^(?:and\s+)?(?:kya\s+missing\s+hai\??|what(?:'s| is) missing\??|what do you need\??|aur kya\??|continue\.?|same\.?|yes\.?|haan\.?|ok(?:ay)?\.?|for that\.?|uske liye\.?|goal hai.*|target hai.*)$/i.test(raw)
+    || /\b(?:kya missing hai|what(?:'s| is) missing|what do you need|uske liye|for that)\b/i.test(raw);
+  // Goal statements with an explicit subject are self-contained; history is needed only
+  // to understand brief follow-ups and fill a subject omitted in the latest turn.
+  if (current.subjects.length > 0 && !followUp) return current;
+
+  const combined = [...prior, raw].join('. ').slice(-MAX_CHAT_CONTEXT_CHARS);
+  const contextual = parseStudyPlannerRequest(combined, selectedCourse);
+  if (current.subjects.length > 0) contextual.subjects = current.subjects;
+  if (current.duration_minutes) contextual.duration_minutes = current.duration_minutes;
+  if (current.date_text) contextual.date_text = current.date_text;
+  if (current.focus_text) contextual.focus_text = current.focus_text;
+  return contextual;
+}
+
+const MAX_CHAT_CONTEXT_CHARS = 1800;
 
 function splitMinutes(total: number, parts: number): number[] {
   const base = Math.floor(total / parts);
