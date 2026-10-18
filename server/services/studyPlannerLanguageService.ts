@@ -25,8 +25,8 @@ export function buildGeneralStudyAnswer(
 
   if (language === 'hindi') {
     const answer = isRevision
-      ? `Effective revision ke liye ${subjectLabel} ko is tarah padho:\n\n1. **Active recall:** Notes band karke main concepts, provisions ya formulas yaad se likho.\n2. **Question practice:** ICAI module ke questions pehle khud solve karo; phir suggested answer se compare karo.\n3. **Error log:** Galtiyon ko concept, presentation aur calculation mein divide karo.\n4. **Spaced revision:** Aaj padhne ke baad 1 din, 3 din aur 7 din baad short recall karo.\n5. **Self-test:** Session ke end mein 10–15 minute bina notes ke test do.\n\nAgar tum subject ya chapter ka naam bataoge, main uske hisaab se steps aur specific bana dunga.`
-      : `Main tumhari CA study mein help kar sakta hoon. Topic ka naam ya exact question bhejo; main concept ko simple steps, example aur exam-oriented points mein samjhaunga. Agar tum revision plan chahte ho, subject/chapter aur available time batao.`;
+      ? `प्रभावी revision के लिए ${subjectLabel} को इस तरह पढ़ो:\n\n1. **Active recall:** Notes बंद करके मुख्य concepts, provisions या formulas याद से लिखो।\n2. **Question practice:** ICAI module के questions पहले खुद solve करो, फिर suggested answer से compare करो।\n3. **Error log:** गलतियों को concept, presentation और calculation में बाँटो।\n4. **Spaced revision:** आज पढ़ने के बाद 1 दिन, 3 दिन और 7 दिन बाद दोबारा recall करो।\n5. **Self-test:** Session के आखिरी 10–15 मिनट बिना notes देखे test दो।\n\nSubject या chapter का नाम बताओ, तो मैं उसी के हिसाब से specific strategy दूँगा।`
+      : `मैं CA की पढ़ाई में मदद कर सकता हूँ। Topic या exact question भेजो; मैं concept को आसान steps, example और exam-oriented points के साथ समझाऊँगा। Revision plan चाहिए तो subject/chapter और available time बताओ।`;
     return { language, answer };
   }
 
