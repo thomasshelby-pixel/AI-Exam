@@ -338,6 +338,7 @@ export const StudyPlannerPage: React.FC = () => {
           message: text,
           course: 'CA_INTERMEDIATE',
           conversation_history: messages.filter((item) => item.role === 'user').slice(-6).map((item) => item.text),
+          default_duration_minutes: Math.round((Number(dailyMinutes) || 4) * 60),
         }),
       });
       setMessages((current) => [...current, {
