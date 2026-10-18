@@ -12,6 +12,7 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
+import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -584,7 +585,14 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       : [];
     const contextualText = [...history, message].join(' ');
     const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
-    const prefersHinglish = /hinglish|hindi|hineng|हिंदी|हिंग्लिश|bhai|batao|btao|kaise|kru|karu|hai|mein|main/i.test(contextualText);
+    const replyLanguage = detectStudyReplyLanguage(message);
+    const prefersHinglish = replyLanguage === 'hinglish';
+    // A study question should receive an answer, not be forced through the timetable form.
+    if (parsed.intent === 'clarify' && isGeneralStudyQuestion(message)) {
+      parsed.intent = 'general_guidance';
+      parsed.missing_info = [];
+      parsed.should_call_planner = false;
+    }
     const usedDefaultDuration = applyDefaultStudyDuration(parsed, body.default_duration_minutes);
     const plan = createStudyPlanDraft(parsed);
 
@@ -596,32 +604,58 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       responseMessage = 'CA Final is not supported by this planner beta yet. Your request was not executed.';
     } else if (parsed.intent === 'clarify') {
       status = 'needs_clarification';
-      if (prefersHinglish && parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
-        responseMessage = 'Haan bhai, Hinglish mein baat karte hain. ' + parsed.subjects.join(' aur ') + ' mein tumhara target achieve karne ke liye roz kitne ghante padh sakte ho?';
-      } else if (prefersHinglish && parsed.missing_info.includes('subject or study goal')) {
-        responseMessage = 'Bilkul bhai, Hinglish mein baat kar sakte hain. Kis subject ka plan banana hai aur roz kitna time padh sakte ho?';
+      if (parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
+        responseMessage = replyLanguage === 'hinglish'
+          ? 'Bhai, ' + parsed.subjects.join(' aur ') + ' ke liye roz kitne ghante de sakte ho? Main usi ke hisaab se plan bana dunga.'
+          : replyLanguage === 'hindi'
+            ? 'तुम ' + parsed.subjects.join(' और ') + ' के लिए रोज़ कितने घंटे दे सकते हो? मैं उसी हिसाब से plan बना दूँगा।'
+            : 'How much time can you study each day for ' + parsed.subjects.join(' and ') + '? I’ll build the plan around that.';
+      } else if (parsed.missing_info.includes('subject or study goal')) {
+        responseMessage = replyLanguage === 'hinglish'
+          ? 'Bhai, kis subject ya topic par help chahiye? Main explanation, revision strategy ya timetable mein help kar sakta hoon.'
+          : replyLanguage === 'hindi'
+            ? 'किस subject या topic पर मदद चाहिए? मैं concept समझाने, revision strategy या timetable में मदद कर सकता हूँ।'
+            : 'Which subject or topic do you need help with? I can explain concepts, suggest revision strategies, or build a timetable.';
       } else if (parsed.missing_info.length > 0) {
-        responseMessage = prefersHinglish
-          ? 'Bhai, bas ye detail bata de: ' + parsed.missing_info.join(', ') + '. Phir main plan bana dunga.'
-          : 'To build the study-plan draft, please provide: ' + parsed.missing_info.join(', ') + '.';
+        responseMessage = replyLanguage === 'hinglish'
+          ? 'Bhai, bas ye detail bata de: ' + parsed.missing_info.join(', ') + '.'
+          : replyLanguage === 'hindi'
+            ? 'कृपया यह detail बता दें: ' + parsed.missing_info.join(', ') + '।'
+            : 'Please provide this detail: ' + parsed.missing_info.join(', ') + '.';
       } else {
-        responseMessage = prefersHinglish
-          ? 'Bhai, apna subject/study goal aur available study time bata de, phir main plan bana dunga.'
-          : 'Please provide the missing details before a study-plan draft can be created.';
+        responseMessage = replyLanguage === 'hinglish'
+          ? 'Bhai, apna subject/topic bata de, main help karta hoon.'
+          : replyLanguage === 'hindi'
+            ? 'अपना subject/topic बताइए, मैं मदद करता हूँ।'
+            : 'Please share your subject or topic so I can help.';
       }
     } else if (parsed.intent === 'create_study_plan' && plan) {
       status = 'plan_draft_ready';
-      responseMessage = prefersHinglish
-        ? 'Bhai, ' + parsed.subjects.join(' aur ') + ' ka ' + (parsed.duration_minutes || 0) + ' minute ka revision draft ready hai' + (usedDefaultDuration ? ' — tumhare planner ke daily study-hours setting ke basis par.' : '.') + ' Ye abhi draft hai; account/calendar mein save nahi hua.'
-        : 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
+      responseMessage = replyLanguage === 'hinglish'
+        ? 'Bhai, ' + parsed.subjects.join(' aur ') + ' ka ' + (parsed.duration_minutes || 0) + ' minute ka revision draft ready hai' + (usedDefaultDuration ? ' — tumhari daily study-hours setting ke basis par.' : '.') + ' Ye abhi draft hai; account/calendar mein save nahi hua.'
+        : replyLanguage === 'hindi'
+          ? parsed.subjects.join(' और ') + ' का ' + (parsed.duration_minutes || 0) + ' मिनट का revision draft तैयार है। यह अभी account/calendar में save नहीं हुआ है।'
+          : 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
     } else if (parsed.intent === 'general_guidance') {
-      responseMessage = 'General-guidance request recognised. This beta parses requests but does not generate general advice text.';
+      responseMessage = buildGeneralStudyAnswer(message, parsed).answer;
     } else if (parsed.intent === 'prioritize_chapters') {
-      responseMessage = 'Priority request parsed. Chapter ranking is not calculated or saved in this beta yet.';
+      responseMessage = replyLanguage === 'hinglish'
+        ? 'Bhai, pehle weak chapters ko priority de. Har chapter ke liye mock score, confidence aur pending questions compare kar; phir weak chapters par concept revision + timed practice kar. Main abhi sirf is chat se ranking calculate/save nahi kar raha—chapter ratings ya mock marks add karoge toh planner unhe use kar sakta hai.'
+        : replyLanguage === 'hindi'
+          ? 'पहले weak chapters को priority दें। हर chapter के mock score, confidence और pending questions compare करें; फिर weak chapters पर concept revision और timed practice करें। इस chat से ranking अपने-आप save नहीं हुई है।'
+          : 'Prioritise weak chapters first. Compare mock scores, confidence and pending questions, then use concept revision plus timed practice for weak areas. This chat has not saved a ranking; add chapter ratings or mock marks for the planner to use.';
     } else if (parsed.intent === 'update_class_schedule') {
-      responseMessage = 'Class-schedule details parsed. No class was changed or saved.';
+      responseMessage = replyLanguage === 'hinglish'
+        ? 'Class timing request samajh aayi, bhai. Is chat se schedule save nahi hua; weekly class schedule section mein timings add karke save/plan generate karo.'
+        : replyLanguage === 'hindi'
+          ? 'Class timing request समझ आ गई। इस chat से schedule save नहीं हुआ; weekly class schedule section में timings add करें।'
+          : 'I understood the class timing request. It was not saved from this chat; add the timings in the weekly class schedule section.';
     } else if (parsed.intent === 'log_study_progress') {
-      responseMessage = 'Study-progress details parsed. No progress entry was saved.';
+      responseMessage = replyLanguage === 'hinglish'
+        ? 'Progress note samajh aa gaya, bhai, lekin is chat se progress entry save nahi hui. Study progress section mein session log karo.'
+        : replyLanguage === 'hindi'
+          ? 'Progress note समझ आ गया, लेकिन इस chat से entry save नहीं हुई। Study progress section में session log करें।'
+          : 'I understood the progress note, but it was not saved from this chat. Log the session in Study Progress.';
     }
 
     return res.status(200).json({
