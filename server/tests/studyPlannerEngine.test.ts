@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyDefaultStudyDuration,
   createStudyPlanDraft,
   parseStudyPlannerRequest,
   parseStudyPlannerConversationRequest,
@@ -40,6 +41,30 @@ test('GST is normalized to Intermediate Taxation', () => {
   assert.equal(parsed.intent, 'create_study_plan');
   assert.deepEqual(parsed.subjects, ['Taxation']);
   assert.equal(parsed.duration_minutes, 90);
+});
+
+test('Hinglish GST detailed revision uses the existing daily-hours setting when duration is omitted', () => {
+  const parsed = parseStudyPlannerRequest('Gst detailed revision', 'CA_INTERMEDIATE');
+  assert.equal(parsed.intent, 'clarify');
+  assert.deepEqual(parsed.subjects, ['Taxation']);
+  assert.deepEqual(parsed.missing_info, ['available study time']);
+
+  assert.equal(applyDefaultStudyDuration(parsed, 240), true);
+  assert.equal(parsed.intent, 'create_study_plan');
+  assert.equal(parsed.duration_minutes, 240);
+  assert.equal(parsed.should_call_planner, true);
+  assert.deepEqual(parsed.missing_info, []);
+  const draft = createStudyPlanDraft(parsed);
+  assert.equal(draft?.total_minutes, 240);
+  assert.equal(draft?.sessions.reduce((sum, session) => sum + session.minutes, 0), 240);
+});
+
+test('Default study duration is not applied to an unknown subject or invalid duration', () => {
+  const missingSubject = parseStudyPlannerRequest('effective revision kaise karu', 'CA_INTERMEDIATE');
+  assert.equal(applyDefaultStudyDuration(missingSubject, 240), false);
+  const gst = parseStudyPlannerRequest('GST detailed revision', 'CA_INTERMEDIATE');
+  assert.equal(applyDefaultStudyDuration(gst, 0), false);
+  assert.equal(applyDefaultStudyDuration(gst, 241), false);
 });
 
 test('Natural shorthand request creates a draft without requiring the word plan', () => {
