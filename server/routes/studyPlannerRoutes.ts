@@ -583,10 +583,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const history = Array.isArray(body.conversation_history)
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
-    const contextualText = [...history, message].join(' ');
     const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
     const replyLanguage = detectStudyReplyLanguage(message);
-    const prefersHinglish = replyLanguage === 'hinglish';
     // A study question should receive an answer, not be forced through the timetable form.
     if (parsed.intent === 'clarify' && isGeneralStudyQuestion(message)) {
       parsed.intent = 'general_guidance';
