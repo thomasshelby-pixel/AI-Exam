@@ -5,7 +5,7 @@ import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import {
   createStudyPlanDraft,
-  parseStudyPlannerRequest,
+  parseStudyPlannerConversationRequest,
 } from '../services/studyPlannerEngine.js';
 import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.js';
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
@@ -578,7 +578,12 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    const parsed = parseStudyPlannerRequest(message, course || null);
+    const history = Array.isArray(body.conversation_history)
+      ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
+      : [];
+    const contextualText = [...history, message].join(' ');
+    const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
+    const prefersHinglish = /hinglish|hindi|hineng|हिंदी|हिंग्लिश/i.test(contextualText);
     const plan = createStudyPlanDraft(parsed);
 
     let status = 'request_parsed';
@@ -589,7 +594,19 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       responseMessage = 'CA Final is not supported by this planner beta yet. Your request was not executed.';
     } else if (parsed.intent === 'clarify') {
       status = 'needs_clarification';
-      responseMessage = 'Please provide the missing details before a study-plan draft can be created.';
+      if (prefersHinglish && parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
+        responseMessage = 'Haan bhai, Hinglish mein baat karte hain. ' + parsed.subjects.join(' aur ') + ' mein tumhara target achieve karne ke liye roz kitne ghante padh sakte ho?';
+      } else if (prefersHinglish && parsed.missing_info.includes('subject or study goal')) {
+        responseMessage = 'Bilkul bhai, Hinglish mein baat kar sakte hain. Kis subject ka plan banana hai aur roz kitna time padh sakte ho?';
+      } else if (parsed.missing_info.length > 0) {
+        responseMessage = prefersHinglish
+          ? 'Bhai, bas ye detail bata de: ' + parsed.missing_info.join(', ') + '. Phir main plan bana dunga.'
+          : 'To build the study-plan draft, please provide: ' + parsed.missing_info.join(', ') + '.';
+      } else {
+        responseMessage = prefersHinglish
+          ? 'Bhai, apna subject/study goal aur available study time bata de, phir main plan bana dunga.'
+          : 'Please provide the missing details before a study-plan draft can be created.';
+      }
     } else if (parsed.intent === 'create_study_plan' && plan) {
       status = 'plan_draft_ready';
       responseMessage = 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
