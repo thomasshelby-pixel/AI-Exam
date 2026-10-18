@@ -119,8 +119,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Readability Optimized Hero Subtext */}
         <p className="text-sm sm:text-base text-slate-600 dark:text-slate-300 max-w-xl mx-auto leading-relaxed">
-          Stop waiting 2 weeks for test series checking. Upload your handwritten mock answers and get rigorous, line-by-line
-          examination-style step marking, working notes evaluation, and examiner deduction remarks in under 60 seconds.
+          Stop waiting weeks for test series checking. Upload your handwritten mock answers and receive detailed, examination-style evaluation with line-by-line step marking, working-notes assessment, and examiner deduction remarks. Processing time varies depending on answer-sheet length and complexity.
         </p>
 
         {/* Standardized Primary & Secondary CTA Buttons */}
