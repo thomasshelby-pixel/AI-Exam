@@ -334,7 +334,11 @@ export const StudyPlannerPage: React.FC = () => {
     try {
       const response = await apiRequest<PlannerResponse>('/api/student/study-planner', {
         method: 'POST',
-        body: JSON.stringify({ message: text, course: 'CA_INTERMEDIATE' }),
+        body: JSON.stringify({
+          message: text,
+          course: 'CA_INTERMEDIATE',
+          conversation_history: messages.filter((item) => item.role === 'user').slice(-6).map((item) => item.text),
+        }),
       });
       setMessages((current) => [...current, {
         id: nextId.current++,
