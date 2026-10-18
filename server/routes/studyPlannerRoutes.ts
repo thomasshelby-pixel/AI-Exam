@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import {
+  applyDefaultStudyDuration,
   createStudyPlanDraft,
   parseStudyPlannerConversationRequest,
 } from '../services/studyPlannerEngine.js';
@@ -583,7 +584,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       : [];
     const contextualText = [...history, message].join(' ');
     const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
-    const prefersHinglish = /hinglish|hindi|hineng|हिंदी|हिंग्लिश/i.test(contextualText);
+    const prefersHinglish = /hinglish|hindi|hineng|हिंदी|हिंग्लिश|bhai|batao|btao|kaise|kru|karu|hai|mein|main/i.test(contextualText);
+    const usedDefaultDuration = applyDefaultStudyDuration(parsed, body.default_duration_minutes);
     const plan = createStudyPlanDraft(parsed);
 
     let status = 'request_parsed';
@@ -609,7 +611,9 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       }
     } else if (parsed.intent === 'create_study_plan' && plan) {
       status = 'plan_draft_ready';
-      responseMessage = 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
+      responseMessage = prefersHinglish
+        ? 'Bhai, ' + parsed.subjects.join(' aur ') + ' ka ' + (parsed.duration_minutes || 0) + ' minute ka revision draft ready hai' + (usedDefaultDuration ? ' — tumhare planner ke daily study-hours setting ke basis par.' : '.') + ' Ye abhi draft hai; account/calendar mein save nahi hua.'
+        : 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
     } else if (parsed.intent === 'general_guidance') {
       responseMessage = 'General-guidance request recognised. This beta parses requests but does not generate general advice text.';
     } else if (parsed.intent === 'prioritize_chapters') {

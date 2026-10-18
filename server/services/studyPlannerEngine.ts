@@ -425,6 +425,33 @@ export function parseStudyPlannerConversationRequest(
   return contextual;
 }
 
+/**
+ * Apply the student's already-selected daily study window when a chat revision request
+ * omits a duration. This avoids asking for the same availability again in the chat.
+ */
+export function applyDefaultStudyDuration(
+  parsed: ParsedStudyPlannerRequest,
+  defaultDurationMinutes: unknown,
+): boolean {
+  const minutes = Number(defaultDurationMinutes);
+  if (
+    parsed.intent !== 'clarify'
+    || !parsed.subjects.length
+    || !parsed.missing_info.includes('available study time')
+    || !Number.isInteger(minutes)
+    || minutes < 15
+    || minutes > 720
+    || minutes % 15 !== 0
+  ) return false;
+
+  parsed.duration_minutes = minutes;
+  parsed.intent = 'create_study_plan';
+  parsed.schedule_mode = 'one_time';
+  parsed.missing_info = [];
+  parsed.should_call_planner = true;
+  return true;
+}
+
 const MAX_CHAT_CONTEXT_CHARS = 1800;
 
 function splitMinutes(total: number, parts: number): number[] {
