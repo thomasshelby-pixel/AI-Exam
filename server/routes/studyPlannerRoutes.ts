@@ -535,17 +535,6 @@ router.patch('/plans/:planId/complete', authenticateToken, (req: AuthRequest, re
   return res.json({ success: true, status: 'COMPLETED' });
 });
 
-const ALLOWED_COURSES = new Set([
-  '',
-  'CA_FOUNDATION',
-  'CA_INTERMEDIATE',
-  'CA_FINAL',
-  'foundation',
-  'intermediate',
-  'inter',
-  'final',
-]);
-
 router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
