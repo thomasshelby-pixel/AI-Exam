@@ -621,7 +621,7 @@ export const StudyPlannerPage: React.FC = () => {
                           await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: studentCourse, subject: selectedStrengthSubject, chapter: selectedStrengthChapter, strength: selectedStrength }) });
                           const key = selectedStrengthSubject + '::' + selectedStrengthChapter;
                           setStrengths((current) => ({ ...current, [key]: selectedStrength }));
-                          const updatedPriorities = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
+                          const updatedPriorities = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(studentCourse));
                           setPriorities(updatedPriorities.priorities || []);
                           setStrengthSaveState('Saved: ' + selectedStrengthChapter + ' · ' + selectedStrength.toLowerCase() + '. Priorities refreshed.');
                         } catch (err: any) { setStrengthSaveState(err?.message || 'Could not save this chapter rating.'); }
@@ -669,7 +669,7 @@ export const StudyPlannerPage: React.FC = () => {
                   event.preventDefault(); setMockBusy(true); setMockSaveState('');
                   try {
                     await apiRequest('/api/student/study-planner/mock-results', { method: 'POST', body: JSON.stringify({ course: studentCourse, subject: mockSubject, score: Number(mockScore), max_score: Number(mockMaxScore), source: 'MOCK_TEST' }) });
-                    const result = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
+                    const result = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(studentCourse));
                     setPriorities(result.priorities || []);
                     setMockSaveState('Mock result saved. Chapter priorities updated.');
                     setMockScore('');
