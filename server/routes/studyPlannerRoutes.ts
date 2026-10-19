@@ -30,16 +30,15 @@ function getStudentPlannerCourse(userId: string): 'CA_FOUNDATION' | 'CA_INTERMED
 }
 
 function isOneDayPlanChoice(text: string): boolean {
-  return /\\b(one[- ]day|single day|just one day|only today|today only|tomorrow only|today|tomorrow|sirf ek din|bas ek din|aaj ke liye|kal ke liye)\\b/i.test(text);
+  return /\b(one[- ]day|single day|just one day|only today|today only|tomorrow only|today|tomorrow|sirf ek din|bas ek din|aaj ke liye|kal ke liye)\b/i.test(text);
 }
 function isMultiDayPlanChoice(text: string): boolean {
-  return /\\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|har din|roz|poore hafte|pure hafte)\\b/i.test(text);
+  return /\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|har din|roz|poore hafte|pure hafte)\b/i.test(text);
 }
 function isExplicitStudyPlanRequest(text: string): boolean {
-  return /\\b(plan|planner|timetable|schedule|routine|day[- ]wise|daywise|detailed revision|revision plan|study plan|daily plan|weekly plan)\\b/i.test(text)
-    || /\\b(?:make|create|build|generate|banao|bana do|bana de|bna do|bna de)\\b.{0,55}\\b(?:revision|study|schedule|day|routine)\\b/i.test(text);
+  return /\b(plan|planner|timetable|schedule|routine|day[- ]wise|daywise|detailed revision|revision plan|study plan|daily plan|weekly plan)\b/i.test(text)
+    || /\b(?:make|create|build|generate|banao|bana do|bana de|bna do|bna de)\b.{0,55}\b(?:revision|study|schedule|day|routine)\b/i.test(text);
 }
-
 
 // Chapter labels are maintained against the current shared CA Intermediate subject registry.
  // More granular chapter names are used where the shared registry currently stores only broad areas.
