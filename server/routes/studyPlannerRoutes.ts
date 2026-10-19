@@ -627,10 +627,14 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         ON CONFLICT(user_id, course, subject, chapter)
         DO UPDATE SET strength = excluded.strength, updated_at = CURRENT_TIMESTAMP
       `);
-      const persistRatings = db.transaction(() => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
         for (const item of ratings) saveStrength.run(randomUUID(), req.user!.id, assessmentTarget.storageSubject, item.chapter, item.strength);
-      });
-      persistRatings();
+        db.exec('COMMIT');
+      } catch (persistError) {
+        db.exec('ROLLBACK');
+        throw persistError;
+      }
 
       const weights = ratings.map((item) => item.strength === 'WEAK' ? 1.6 : item.strength === 'MODERATE' ? 1 : 0.6);
       const allocations = ratings.map(() => 1);
