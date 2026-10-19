@@ -182,7 +182,7 @@ export const StudyPlannerPage: React.FC = () => {
         const course = selected.course;
         setStudentCourse(course);
         const profilePromise = apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(course));
-        if (course !== 'CA_INTERMEDIATE') {
+        if (course === 'CA_FINAL') {
           const profile = await profilePromise;
           if (cancelled) return;
           const restored: Record<string, string> = {};
@@ -205,6 +205,7 @@ export const StudyPlannerPage: React.FC = () => {
         const options = curriculum.subjects || [];
         setCurriculumSubjects(options);
         if (options.length) {
+          setMockSubject(options[0].name);
           setSelectedStrengthSubject((current) => current || options[0].name);
           setSelectedStrengthChapter((current) => current || options[0].chapters[0] || '');
         }
@@ -278,9 +279,9 @@ export const StudyPlannerPage: React.FC = () => {
     if (!Number.isFinite(completion) || completion < 0 || completion > 100) { setRoadmapMessage('Syllabus completion must be between 0 and 100%.'); setAttemptRoadmap(null); return; }
     setRoadmapBusy(true); setRoadmapMessage('');
     try {
-      const response = await apiRequest<{ success: boolean; roadmap: any[]; revision_rounds?: any[]; chapter_ratings_used?: number; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion, daily_study_hours: Number(dailyMinutes) || 4 }) });
+      const response = await apiRequest<{ success: boolean; roadmap: any[]; revision_rounds?: any[]; chapter_ratings_used?: number; error?: string }>('/api/student/study-planner/attempt-roadmap', { method: 'POST', body: JSON.stringify({ course: studentCourse, start_date: dailyDate, exact_exam_date: exactExamDate, syllabus_completion_percent: completion, daily_study_hours: Number(dailyMinutes) || 4 }) });
       setAttemptRoadmap(response.roadmap); setRevisionRounds(response.revision_rounds || []);
-      const savedProgress = await apiRequest<{ success: boolean; progress: Array<{ round_key: string; subject: string; chapter: string; completed: number }> }>('/api/student/study-planner/revision-progress?course=CA_INTERMEDIATE&exam_date=' + encodeURIComponent(exactExamDate));
+      const savedProgress = await apiRequest<{ success: boolean; progress: Array<{ round_key: string; subject: string; chapter: string; completed: number }> }>('/api/student/study-planner/revision-progress?course=' + encodeURIComponent(studentCourse) + '&exam_date=' + encodeURIComponent(exactExamDate));
       const restoredProgress: Record<string, boolean> = {};
       for (const item of savedProgress.progress || []) restoredProgress[revisionProgressKey(item.round_key, item.subject, item.chapter)] = Boolean(item.completed);
       setRevisionProgress(restoredProgress);
@@ -296,7 +297,7 @@ export const StudyPlannerPage: React.FC = () => {
     setRevisionProgressBusy(key);
     setRoadmapMessage('');
     try {
-      await apiRequest('/api/student/study-planner/revision-progress', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', exam_date: exactExamDate, round_key: round.key, subject: chapter.subject, chapter: chapter.chapter, completed }) });
+      await apiRequest('/api/student/study-planner/revision-progress', { method: 'PUT', body: JSON.stringify({ course: studentCourse, exam_date: exactExamDate, round_key: round.key, subject: chapter.subject, chapter: chapter.chapter, completed }) });
       setRevisionProgress((current) => ({ ...current, [key]: completed }));
       setRoadmapMessage(completed ? 'Chapter marked complete. Remaining chapters in this round have been rescheduled.' : 'Chapter marked incomplete. The remaining schedule has been recalculated.');
     } catch (err: any) { setRoadmapMessage(err?.message || 'Could not save chapter progress.'); }
@@ -324,7 +325,7 @@ export const StudyPlannerPage: React.FC = () => {
         {
           method: 'POST',
           body: JSON.stringify({
-            course: 'CA_INTERMEDIATE',
+            course: studentCourse,
             start_date: dailyDate,
             daily_study_hours: hours,
             study_start_time: studyStartTime,
@@ -352,7 +353,7 @@ export const StudyPlannerPage: React.FC = () => {
       setDailyPlanState(schedule.sessions.length
         ? '7-day draft ready. Review the subject rotation and session times before saving.'
         : 'Rate at least one chapter first. The planner will not guess which chapters are weak.');
-      await apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE')
+      await apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(studentCourse))
         .then((data) => setPriorities(data.priorities || []))
         .catch(() => undefined);
     } catch (err: any) {
@@ -361,7 +362,7 @@ export const StudyPlannerPage: React.FC = () => {
       setDailyPlanBusy(false);
     }
   };
-  const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
+  const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: studentCourse, plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
   const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number; chapter_assessment_subject?: string; plan_scope?: 'one_day' | 'exam_roadmap'; reply_language?: 'english' | 'hinglish' | 'hindi' }) => {
     const text = (rawText ?? request).trim();
@@ -475,7 +476,7 @@ export const StudyPlannerPage: React.FC = () => {
       </button>
 
 
-      {studentCourse === 'CA_INTERMEDIATE' ? (<>
+      {studentCourse !== 'CA_FINAL' ? (<>
       <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
         <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
@@ -536,7 +537,7 @@ export const StudyPlannerPage: React.FC = () => {
           <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Plan starts on</span><input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
           <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Study start time</span><input type="time" value={studyStartTime} onChange={(e) => setStudyStartTime(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
           <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Preferred end time</span><input type="time" value={preferredEndTime} onChange={(e) => setPreferredEndTime(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
-          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">CA Inter attempt</span><select value={examAttempt} onChange={(e) => setExamAttempt(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>January 2027</option><option>May 2027</option><option>September 2027</option><option>January 2028</option><option>May 2028</option><option>September 2028</option></select></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">CA exam attempt</span><select value={examAttempt} onChange={(e) => setExamAttempt(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>January 2027</option><option>May 2027</option><option>September 2027</option><option>January 2028</option><option>May 2028</option><option>September 2028</option></select></label>
           <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Exact exam date (required for adaptive revision rounds)</span><input type="date" value={exactExamDate} min={dailyDate} onChange={(e) => setExactExamDate(e.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
           <div className="sm:col-span-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
             <p className="text-sm font-bold text-slate-900 dark:text-white">Coaching / class schedule</p>
@@ -617,7 +618,7 @@ export const StudyPlannerPage: React.FC = () => {
                       <button type="button" disabled={strengthBusy || !selectedStrengthSubject || !selectedStrengthChapter} onClick={async () => {
                         setStrengthBusy(true); setStrengthSaveState('');
                         try {
-                          await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject: selectedStrengthSubject, chapter: selectedStrengthChapter, strength: selectedStrength }) });
+                          await apiRequest('/api/student/study-planner/strengths', { method: 'PUT', body: JSON.stringify({ course: studentCourse, subject: selectedStrengthSubject, chapter: selectedStrengthChapter, strength: selectedStrength }) });
                           const key = selectedStrengthSubject + '::' + selectedStrengthChapter;
                           setStrengths((current) => ({ ...current, [key]: selectedStrength }));
                           const updatedPriorities = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
@@ -667,7 +668,7 @@ export const StudyPlannerPage: React.FC = () => {
                 <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={async (event) => {
                   event.preventDefault(); setMockBusy(true); setMockSaveState('');
                   try {
-                    await apiRequest('/api/student/study-planner/mock-results', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', subject: mockSubject, score: Number(mockScore), max_score: Number(mockMaxScore), source: 'MOCK_TEST' }) });
+                    await apiRequest('/api/student/study-planner/mock-results', { method: 'POST', body: JSON.stringify({ course: studentCourse, subject: mockSubject, score: Number(mockScore), max_score: Number(mockMaxScore), source: 'MOCK_TEST' }) });
                     const result = await apiRequest<{ priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE');
                     setPriorities(result.priorities || []);
                     setMockSaveState('Mock result saved. Chapter priorities updated.');
