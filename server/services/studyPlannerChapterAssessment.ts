@@ -34,14 +34,14 @@ export function resolveChapterAssessmentTarget(
   if (/\b(taxation|tax paper)\b/i.test(value)) {
     return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
   }
-  if (/\b(advanced accounting|accounts|accounting)\b/i.test(value)) {
-    return { label: 'Advanced Accounting', storageSubject: 'Advanced Accounting', chapters: accounting };
+  if (/\b(costing|cost and management accounting|cost accounting)\b/i.test(value)) {
+    return { label: 'Cost and Management Accounting', storageSubject: 'Cost and Management Accounting', chapters: costing };
   }
   if (/\b(corporate and other laws|corporate law|company law|law|laws)\b/i.test(value)) {
     return { label: 'Corporate and Other Laws', storageSubject: 'Corporate and Other Laws', chapters: laws };
   }
-  if (/\b(costing|cost and management accounting|cost accounting)\b/i.test(value)) {
-    return { label: 'Cost and Management Accounting', storageSubject: 'Cost and Management Accounting', chapters: costing };
+  if (/\b(advanced accounting|accounts|accounting)\b/i.test(value)) {
+    return { label: 'Advanced Accounting', storageSubject: 'Advanced Accounting', chapters: accounting };
   }
   if (/\b(audit|auditing|ethics)\b/i.test(value)) {
     return { label: 'Auditing and Ethics', storageSubject: 'Auditing and Ethics', chapters: audit };
