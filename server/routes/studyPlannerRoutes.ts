@@ -221,7 +221,7 @@ router.get('/priorities', authenticateToken, (req: AuthRequest, res: Response) =
     const aliases = getCanonicalStrengthSubject(item.subject, course);
     const matchingSubject = subjects.find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
-    const mock = [...latestBySubject.values()].find((result) => canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias)));
+    const mock = [...latestBySubject.values()].find((result) => canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias)));
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
     const score = mockRisk === null ? strengthRisk : Math.round(strengthRisk * 0.6 + mockRisk * 0.4);
@@ -275,11 +275,11 @@ router.post('/daily-schedule', authenticateToken, (req: AuthRequest, res: Respon
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
 
   const priorities = strengths.map((item) => {
-    const aliases = getCanonicalStrengthSubject(item.subject);
+    const aliases = getCanonicalStrengthSubject(item.subject, course);
     const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
     const mock = [...latestBySubject.values()].find((result) =>
-      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
+      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias))
     );
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
@@ -313,11 +313,11 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
   const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string }>();
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
   const priorities = strengths.map((item) => {
-    const aliases = getCanonicalStrengthSubject(item.subject);
+    const aliases = getCanonicalStrengthSubject(item.subject, course);
     const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
     const mock = [...latestBySubject.values()].find((result) =>
-      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
+      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias))
     );
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
