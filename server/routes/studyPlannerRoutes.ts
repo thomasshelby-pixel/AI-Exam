@@ -615,6 +615,39 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const replyLanguage = detectStudyReplyLanguage(message);
     const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, history, course);
 
+    // Explain unsupported course abbreviations instead of implying the student never
+    // supplied a subject. “SM” belongs to the CA Intermediate FM-SM context, not CA Final.
+    const shortTopic = normalizedMessage.trim();
+    if (course === 'CA_FINAL' && /^(?:sm|strategic management|fm\s*[-&/]\s*sm)$/i.test(shortTopic)) {
+      parsedProbe.intent = 'clarify';
+      parsedProbe.subjects = [];
+      parsedProbe.missing_info = ['confirm your CA course or choose a CA Final subject'];
+      parsedProbe.should_call_planner = false;
+      return res.json({
+        success: true,
+        status: 'course_topic_mismatch',
+        message: 'Your planner profile is set to CA Final, so “SM” is not being recognised as one of its current planner subjects. If you meant CA Intermediate Strategic Management (FM-SM), update your CA level in your student profile to CA Intermediate; the planner follows your saved profile course. Otherwise, enter the CA Final subject or chapter you want to study.',
+        parsed: parsedProbe,
+        plan: null,
+        metadata: { version: 'planner-course-topic-clarity-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+    if (course === 'CA_INTERMEDIATE' && /^(?:sm|strategic management|fm\s*[-&/]\s*sm)$/i.test(shortTopic)) {
+      parsedProbe.intent = 'general_guidance';
+      parsedProbe.subjects = ['Financial Management and Strategic Management'];
+      parsedProbe.missing_info = [];
+      parsedProbe.should_call_planner = false;
+      return res.json({
+        success: true,
+        status: 'topic_clarification',
+        message: 'SM / FM-SM samajh gaya bhai. Kya chahiye: (1) concept explanation, (2) effective revision strategy, ya (3) study plan? Study plan ke liye time bata de, ya planner settings mein apne daily study hours use kar.',
+        parsed: parsedProbe,
+        plan: null,
+        follow_up_options: ['SM effective revision strategy', 'Explain an SM concept', 'SM study plan'],
+        metadata: { version: 'planner-topic-clarification-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
     const guidanceQuestion = isGeneralStudyQuestion(message) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
@@ -638,11 +671,22 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|sirf ek din|daily\/weekly/i.test(item));
     const oneDayChoice = isOneDayPlanChoice(message);
     const multiDayChoice = isMultiDayPlanChoice(message);
+
+    // Assess chapter-wise revision requests before asking about plan scope. Otherwise
+    // “GST detailed revision” gets routed to the generic 1-day/7-day prompt and skips
+    // the chapter-strength workflow entirely.
+    const assessmentTarget = course === 'CA_INTERMEDIATE'
+      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
+      : null;
+    const assessmentRequest = !priorScopeQuestion
+      && Boolean(assessmentTarget)
+      && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
+
     const requestForPlan = explicitPlan || parsedProbe.intent === 'create_study_plan'
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
 
     // Ask about the scope only if the student did not already specify one day or several days.
-    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
+    if (requestForPlan && !assessmentRequest && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
       return res.json({
         success: true, status: 'choose_plan_scope',
         message: replyLanguage === 'hindi'
@@ -658,7 +702,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // A multi-day selection generates an actual dated schedule, rather than just describing one.
-    if (multiDayChoice && (priorScopeQuestion || requestForPlan)) {
+    if (multiDayChoice && (priorScopeQuestion || requestForPlan) && !assessmentRequest) {
       const userTurns = history.filter((item) => /^Student:\s*/i.test(item)).map((item) => item.replace(/^Student:\s*/i, ''));
       userTurns.push(message);
       const parsed = parseStudyPlannerConversationRequest(userTurns.join('. '), [], course);
@@ -719,15 +763,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Detailed chapter assessments remain an Intermediate-specific workflow.
-    const assessmentTarget = course === 'CA_INTERMEDIATE'
-      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
-      : null;
-    const assessmentRequest = !oneDayChoice && !multiDayChoice && !priorScopeQuestion
-      && Boolean(assessmentTarget)
-      && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
-
-    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
+    // Detailed chapter assessments remain an Intermediate-specific workflow.\n    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
       return res.json({
         success: true,
         status: 'needs_chapter_assessment',
