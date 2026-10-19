@@ -33,6 +33,18 @@ test('Foundation Business Economics timetable is supported', () => {
   assert.equal(parsed.date_text, 'today');
 });
 
+test('Foundation Business Laws and Quantitative Aptitude are recognised as Foundation subjects', () => {
+  const law = parseStudyPlannerRequest('Business Laws 90 minutes detailed revision', 'CA_FOUNDATION');
+  assert.equal(law.intent, 'create_study_plan');
+  assert.deepEqual(law.subjects, ['Business Laws']);
+  assert.equal(law.duration_minutes, 90);
+
+  const aptitude = parseStudyPlannerRequest('QA 1 hour practice', 'CA_FOUNDATION');
+  assert.equal(aptitude.course, 'CA_FOUNDATION');
+  assert.deepEqual(aptitude.subjects, ['Quantitative Aptitude']);
+  assert.equal(aptitude.duration_minutes, 60);
+});
+
 test('GST is normalized to Intermediate Taxation', () => {
   const parsed = parseStudyPlannerRequest(
     'I would like 1.5 hours of GST revision today.',
