@@ -1,7 +1,6 @@
 import { Router, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import {
   applyDefaultStudyDuration,
@@ -15,6 +14,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -155,32 +155,26 @@ const INTERMEDIATE_CHAPTERS: Record<string, string[]> = {
   ],
 };
 
-function getIntermediateChapterOptions() {
-  return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
-    key: subject.key,
-    name: subject.name,
-    paperNumber: subject.paperNumber,
-    group: subject.group || null,
-    chapters: INTERMEDIATE_CHAPTERS[subject.name]
-      || [...(subject.keyProvisions || []), ...(subject.accountingStandards || [])],
-  }));
+function resolveCourseAssessmentTarget(text: string, course: PlannerCourse | 'CA_FINAL') {
+  if (course === 'CA_FINAL') return null;
+  if (course === 'CA_INTERMEDIATE') return resolveChapterAssessmentTarget(text, INTERMEDIATE_CHAPTERS);
+  const value = String(text || '').toLowerCase();
+  const aliases: Record<string, string[]> = {
+    'Accounting': ['accounting', 'accounts'],
+    'Business Laws': ['business laws', 'business law', 'law'],
+    'Quantitative Aptitude': ['quantitative aptitude', 'quantitative', 'logical reasoning', 'statistics', 'business mathematics', 'qa'],
+    'Business Economics': ['business economics', 'economics'],
+  };
+  const options = getPlannerSubjects('CA_FOUNDATION')
+    .sort((a, b) => b.name.length - a.name.length);
+  const match = options.find((subject) => [subject.name, ...(aliases[subject.name] || [])]
+    .some((label) => label.toLowerCase() === 'qa' ? /\bqa\b/i.test(value) : value.includes(label.toLowerCase())));
+  if (!match) return null;
+  return { label: match.name, storageSubject: match.name, chapters: match.chapters };
 }
 
-
-const PRIORITY_SUBJECT_ALIASES: Record<string, string[]> = {
-  'Taxation': ['Taxation (Income Tax & GST)', 'Taxation'],
-  'Costing': ['Cost and Management Accounting', 'Costing'],
-  'Cost and Management Accounting': ['Cost and Management Accounting', 'Costing'],
-  'Law': ['Corporate and Other Laws', 'Law'],
-  'Corporate and Other Laws': ['Corporate and Other Laws', 'Law'],
-  'Audit': ['Auditing and Ethics', 'Audit'],
-  'Auditing and Ethics': ['Auditing and Ethics', 'Audit'],
-  'Advanced Accounting': ['Advanced Accounting'],
-  'Financial Management and Strategic Management': ['Financial Management and Strategic Management', 'FM and SM'],
-};
-
-function getCanonicalStrengthSubject(subject: string): string[] {
-  return PRIORITY_SUBJECT_ALIASES[subject] || [subject];
+function getCanonicalStrengthSubject(subject: string, course: PlannerCourse): string[] {
+  return getPlannerSubjectAliases(subject, course);
 }
 
 router.post('/mock-results', authenticateToken, (req: AuthRequest, res: Response) => {
@@ -196,9 +190,8 @@ router.post('/mock-results', authenticateToken, (req: AuthRequest, res: Response
   const examDate = typeof body.exam_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.exam_date)
     ? body.exam_date
     : new Date().toISOString().slice(0, 10);
-  const allowedSubjects = CA_CURRICULUM.INTERMEDIATE.subjects.map((item) => item.name);
-  const validSubject = allowedSubjects.includes(subject) || ['Taxation', 'Costing', 'Law', 'Audit', 'FM and SM'].includes(subject);
-  if (course !== 'CA_INTERMEDIATE' || !validSubject || !Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0 || score < 0 || score > maxScore || maxScore > 1000 || !['SELF_REPORTED', 'MOCK_TEST', 'PAST_PAPER'].includes(source)) {
+  const validSubject = isSupportedPlannerCourse(course) && (isValidPlannerSubject(course, subject) || (course === 'CA_INTERMEDIATE' && ['Taxation', 'Costing', 'Law', 'Audit', 'FM and SM'].includes(subject)));
+  if (!isSupportedPlannerCourse(course) || !validSubject || !Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0 || score < 0 || score > maxScore || maxScore > 1000 || !['SELF_REPORTED', 'MOCK_TEST', 'PAST_PAPER'].includes(source)) {
     return res.status(400).json({ success: false, error: 'Provide a valid subject, score, maximum marks and source.' });
   }
   const id = randomUUID();
@@ -212,8 +205,8 @@ router.get('/priorities', authenticateToken, (req: AuthRequest, res: Response) =
     return res.status(403).json({ success: false, error: 'Student account required.' });
   }
   const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
-  if (course !== 'CA_INTERMEDIATE') {
-    return res.status(400).json({ success: false, error: 'Adaptive priorities are currently available for CA Intermediate only.' });
+  if (!isSupportedPlannerCourse(course)) {
+    return res.status(400).json({ success: false, error: 'Adaptive priorities are available for CA Foundation and CA Intermediate only.' });
   }
   const strengths = db.prepare('SELECT subject, chapter, strength, updated_at FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?')
     .all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string; updated_at: string }>;
@@ -223,12 +216,12 @@ router.get('/priorities', authenticateToken, (req: AuthRequest, res: Response) =
   for (const result of results) {
     if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
   }
-  const subjects = CA_CURRICULUM.INTERMEDIATE.subjects;
+  const subjects = getPlannerSubjects(course);
   const priorities = strengths.map((item) => {
-    const aliases = getCanonicalStrengthSubject(item.subject);
+    const aliases = getCanonicalStrengthSubject(item.subject, course);
     const matchingSubject = subjects.find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
-    const mock = [...latestBySubject.values()].find((result) => canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias)));
+    const mock = [...latestBySubject.values()].find((result) => canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias)));
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
     const score = mockRisk === null ? strengthRisk : Math.round(strengthRisk * 0.6 + mockRisk * 0.4);
@@ -262,8 +255,8 @@ router.post('/daily-schedule', authenticateToken, (req: AuthRequest, res: Respon
   const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
   const date = typeof body.date === 'string' ? body.date : '';
   const availableMinutes = Number(body.available_minutes);
-  if (course !== 'CA_INTERMEDIATE') {
-    return res.status(400).json({ success: false, error: 'Daily schedules are currently available for CA Intermediate only.' });
+  if (!isSupportedPlannerCourse(course)) {
+    return res.status(400).json({ success: false, error: 'Daily schedules are available for CA Foundation and CA Intermediate only.' });
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date)) || new Date(date + 'T00:00:00.000Z').toISOString().slice(0, 10) !== date) {
     return res.status(400).json({ success: false, error: 'Provide a valid date in YYYY-MM-DD format.' });
@@ -282,11 +275,11 @@ router.post('/daily-schedule', authenticateToken, (req: AuthRequest, res: Respon
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
 
   const priorities = strengths.map((item) => {
-    const aliases = getCanonicalStrengthSubject(item.subject);
-    const matchingSubject = CA_CURRICULUM.INTERMEDIATE.subjects.find((subject) => aliases.includes(subject.name));
+    const aliases = getCanonicalStrengthSubject(item.subject, course);
+    const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
     const mock = [...latestBySubject.values()].find((result) =>
-      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
+      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias))
     );
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
@@ -308,8 +301,8 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
   }
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
-  if (course !== 'CA_INTERMEDIATE') {
-    return res.status(400).json({ success: false, error: 'Multi-day schedules are currently available for CA Intermediate only.' });
+  if (!isSupportedPlannerCourse(course)) {
+    return res.status(400).json({ success: false, error: 'Multi-day schedules are available for CA Foundation and CA Intermediate only.' });
   }
   const strengths = db.prepare(
     'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
@@ -320,11 +313,11 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
   const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string }>();
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
   const priorities = strengths.map((item) => {
-    const aliases = getCanonicalStrengthSubject(item.subject);
-    const matchingSubject = CA_CURRICULUM.INTERMEDIATE.subjects.find((subject) => aliases.includes(subject.name));
+    const aliases = getCanonicalStrengthSubject(item.subject, course);
+    const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
     const mock = [...latestBySubject.values()].find((result) =>
-      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
+      canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject, course).some((alias) => canonicalNames.has(alias))
     );
     const strengthRisk = item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15;
     const mockRisk = mock ? Math.max(0, Math.min(100, 100 - (mock.score / mock.max_score) * 100)) : null;
@@ -355,7 +348,7 @@ router.post('/attempt-roadmap', authenticateToken, (req: AuthRequest, res: Respo
   }
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const course = String(body.course || 'CA_INTERMEDIATE').toUpperCase();
-  if (course !== 'CA_INTERMEDIATE') return res.status(400).json({ success: false, error: 'Attempt roadmaps are currently available for CA Intermediate only.' });
+  if (!isSupportedPlannerCourse(course)) return res.status(400).json({ success: false, error: 'Attempt roadmaps are available for CA Foundation and CA Intermediate only.' });
   try {
     const startDate = String(body.start_date || '');
     const examDate = String(body.exact_exam_date || '');
@@ -385,7 +378,7 @@ router.get('/revision-progress', authenticateToken, (req: AuthRequest, res: Resp
   }
   const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
   const examDate = String(req.query.exam_date || '');
-  if (course !== 'CA_INTERMEDIATE' || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
+  if (!isSupportedPlannerCourse(course) || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
       Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
       new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate) {
     return res.status(400).json({ success: false, error: 'A valid CA Intermediate exam date is required.' });
@@ -406,7 +399,7 @@ router.put('/revision-progress', authenticateToken, (req: AuthRequest, res: Resp
   const roundKey = String(body.round_key || '').toUpperCase();
   const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
   const chapter = typeof body.chapter === 'string' ? body.chapter.trim() : '';
-  if (course !== 'CA_INTERMEDIATE' || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
+  if (!isSupportedPlannerCourse(course) || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
       Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
       new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate ||
       !['R1', 'R2', 'R3', 'R4'].includes(roundKey) || !subject || subject.length > 160 ||
@@ -429,15 +422,10 @@ router.get('/curriculum', authenticateToken, (req: AuthRequest, res: Response) =
     return res.status(403).json({ success: false, error: 'Student account required.' });
   }
   const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
-  if (course !== 'CA_INTERMEDIATE') {
-    return res.status(400).json({ success: false, error: 'Chapter-level assessment is currently available for CA Intermediate only.' });
+  if (!isSupportedPlannerCourse(course)) {
+    return res.status(400).json({ success: false, error: 'Chapter-level assessment is available for CA Foundation and CA Intermediate only.' });
   }
-  return res.json({
-    success: true,
-    course,
-    source: 'CA_CURRICULUM',
-    subjects: getIntermediateChapterOptions(),
-  });
+  return res.json({ success: true, course, source: 'CA_CURRICULUM', subjects: getPlannerSubjects(course) });
 });
 
 router.get('/profile', authenticateToken, (req: AuthRequest, res: Response) => {
@@ -474,26 +462,18 @@ router.put('/strengths', authenticateToken, (req: AuthRequest, res: Response) =>
   const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
   const chapter = typeof body.chapter === 'string' ? body.chapter.trim() : '';
   const strength = String(body.strength || '').toUpperCase();
-  const allowedSubject = course === 'CA_INTERMEDIATE'
-    ? CA_CURRICULUM.INTERMEDIATE.subjects.find((item) => item.name === subject)
-    : undefined;
-  const allowedTopics = allowedSubject
-    ? (INTERMEDIATE_CHAPTERS[allowedSubject.name]
-      || [...(allowedSubject.keyProvisions || []), ...(allowedSubject.accountingStandards || [])])
-    : [];
-  const validLegacySubjectRating = chapter === '__SUBJECT_LEVEL__'
-    && course === 'CA_INTERMEDIATE'
-    && Boolean(allowedSubject);
+  const allowedSubject = isSupportedPlannerCourse(course) && isValidPlannerSubject(course, subject);
+  const validChapter = isSupportedPlannerCourse(course) && isValidPlannerChapter(course, subject, chapter);
   if (
-    course !== 'CA_INTERMEDIATE'
+    !isSupportedPlannerCourse(course)
     || !allowedSubject
     || subject.length > 160
     || !chapter
     || chapter.length > 200
-    || (!validLegacySubjectRating && !allowedTopics.includes(chapter))
+    || !validChapter
     || !ALLOWED_STRENGTHS.has(strength)
   ) {
-    return res.status(400).json({ success: false, error: 'Choose a subject and chapter from the supported CA Intermediate curriculum.' });
+    return res.status(400).json({ success: false, error: 'Choose a subject and chapter from the supported CA Foundation or CA Intermediate curriculum.' });
   }
   db.prepare(`
     INSERT INTO student_chapter_strengths (id, user_id, course, subject, chapter, strength, updated_at)
@@ -567,7 +547,7 @@ router.get('/course', authenticateToken, (req: AuthRequest, res: Response) => {
   const course = getStudentPlannerCourse(req.user.id);
   if (!course) return res.status(400).json({ success: false, error: 'Your CA course is missing from your student profile. Please update your profile.' });
   const labels = { CA_FOUNDATION: 'CA Foundation', CA_INTERMEDIATE: 'CA Intermediate', CA_FINAL: 'CA Final' };
-  return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: course === 'CA_INTERMEDIATE' });
+  return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: isSupportedPlannerCourse(course) });
 });
 
 router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
@@ -700,9 +680,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // Assess chapter-wise revision requests before asking about plan scope. Otherwise
     // “GST detailed revision” gets routed to the generic 1-day/7-day prompt and skips
     // the chapter-strength workflow entirely.
-    const assessmentTarget = course === 'CA_INTERMEDIATE'
-      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || (priorScopeQuestion ? resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS) : null))
-      : null;
+    const assessmentTarget = resolveCourseAssessmentTarget(normalizedMessage, course as PlannerCourse | 'CA_FINAL')
+      || (priorScopeQuestion ? resolveCourseAssessmentTarget(conversationText, course as PlannerCourse | 'CA_FINAL') : null);
     const assessmentRequest = shouldPrioritizeChapterAssessment({
       course,
       hasTarget: Boolean(assessmentTarget),
@@ -714,7 +693,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
 
     // Ask about the scope only if the student did not already specify one day or several days.
-    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
+    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion && !assessmentRequest && !assessmentTarget) {
       return res.json({
         success: true, status: 'choose_plan_scope',
         message: replyLanguage === 'hindi'

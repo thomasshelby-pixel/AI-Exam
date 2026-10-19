@@ -25,7 +25,7 @@ export function shouldPrioritizeChapterAssessment(input: {
   conversationText: string;
   priorScopeQuestion: boolean;
 }): boolean {
-  return input.course === 'CA_INTERMEDIATE'
+  return (input.course === 'CA_INTERMEDIATE' || input.course === 'CA_FOUNDATION')
     && input.hasTarget
     && !input.priorScopeQuestion
     && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(input.conversationText);

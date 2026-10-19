@@ -33,6 +33,18 @@ test('Foundation Business Economics timetable is supported', () => {
   assert.equal(parsed.date_text, 'today');
 });
 
+test('Foundation Business Laws and Quantitative Aptitude are recognised as Foundation subjects', () => {
+  const law = parseStudyPlannerRequest('Business Laws 90 minutes detailed revision', 'CA_FOUNDATION');
+  assert.equal(law.intent, 'create_study_plan');
+  assert.deepEqual(law.subjects, ['Business Laws']);
+  assert.equal(law.duration_minutes, 90);
+
+  const aptitude = parseStudyPlannerRequest('QA 1 hour practice', 'CA_FOUNDATION');
+  assert.equal(aptitude.course, 'CA_FOUNDATION');
+  assert.deepEqual(aptitude.subjects, ['Quantitative Aptitude']);
+  assert.equal(aptitude.duration_minutes, 60);
+});
+
 test('GST is normalized to Intermediate Taxation', () => {
   const parsed = parseStudyPlannerRequest(
     'I would like 1.5 hours of GST revision today.',
@@ -143,16 +155,15 @@ test('Missing course and subject never call the planner', () => {
   assert.equal(parsed.should_call_planner, false);
 });
 
-test('CA Final profile supports a subject-specific one-time study plan', () => {
+test('CA Final is deliberately outside the supported planner scope', () => {
   const parsed = parseStudyPlannerRequest(
     'I am preparing for CA Final. Make a 3-hour Audit revision plan.',
   );
-  assert.equal(parsed.intent, 'create_study_plan');
-  assert.equal(parsed.course, 'CA_FINAL');
-  assert.deepEqual(parsed.subjects, ['Advanced Auditing, Assurance and Professional Ethics']);
-  assert.equal(parsed.duration_minutes, 180);
-  assert.equal(parsed.should_call_planner, true);
-  assert.equal(createStudyPlanDraft(parsed)?.total_minutes, 180);
+  assert.equal(parsed.intent, 'clarify');
+  assert.equal(parsed.course, null);
+  assert.deepEqual(parsed.subjects, []);
+  assert.equal(parsed.should_call_planner, false);
+  assert.equal(createStudyPlanDraft(parsed), null);
 });
 
 test('General advice request does not create a timetable', () => {
@@ -268,11 +279,11 @@ test('Common Hinglish concatenation typo still identifies GST for subject-specif
   assert.deepEqual(parsed.missing_info, ['available study time']);
 });
 
-test('CA Final GST query resolves to the Final indirect-tax paper and asks for time if needed', () => {
+test('CA Final GST query remains outside the supported planner scope', () => {
   const parsed = parseStudyPlannerRequest('GST detailed revision', 'CA_FINAL');
   assert.equal(parsed.intent, 'clarify');
-  assert.equal(parsed.course, 'CA_FINAL');
-  assert.deepEqual(parsed.subjects, ['Indirect Tax Laws (GST and Customs)']);
-  assert.deepEqual(parsed.missing_info, ['available study time']);
+  assert.equal(parsed.course, null);
+  assert.deepEqual(parsed.subjects, []);
   assert.equal(parsed.should_call_planner, false);
+  assert.equal(createStudyPlanDraft(parsed), null);
 });
