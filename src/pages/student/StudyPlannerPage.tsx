@@ -477,7 +477,7 @@ export const StudyPlannerPage: React.FC = () => {
 
 
       {studentCourse !== 'CA_FINAL' ? (<>
-      <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
+      <section id="planner-roadmap" className="mb-4 scroll-mt-6 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
         <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -565,7 +565,7 @@ export const StudyPlannerPage: React.FC = () => {
       </section>
 
             {plannerWorkflow === 'strength' ? (
-              <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+              <section id="planner-chapter-strength" className="mb-4 scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><BookOpen className="h-5 w-5" /></div>
                   <div className="min-w-0 flex-1">
@@ -758,174 +758,55 @@ export const StudyPlannerPage: React.FC = () => {
         )}
       </section>
 
-      <section className="flex min-h-[68vh] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <header className="flex items-center gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-950 via-slate-900 to-blue-950 px-4 py-4 text-white sm:px-6">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
-            <Sparkles className="h-5 w-5 text-indigo-200" />
+      <section className="mb-5 overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-blue-950 p-5 text-white shadow-lg sm:p-7 lg:p-9">
+        <div className="mx-auto flex max-w-5xl flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-indigo-300/30 bg-white/10 px-3 py-1.5 text-xs font-bold text-indigo-100"><Sparkles className="h-4 w-4" /> YOUR PERSONAL STUDY SYSTEM</div>
+            <h1 className="text-2xl font-black tracking-tight sm:text-3xl lg:text-4xl">Your exam. Your strategy.</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Build an exam-date roadmap, adapt revision around weak chapters, and turn your available hours into a practical timetable. No generic chat screen.</p>
           </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-base font-extrabold sm:text-lg">AI Study Planner</h1>
-            <p className="mt-0.5 text-xs text-slate-300">{courseLabel} · Study planning assistant</p>
+          <div className="w-full rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur sm:p-5 lg:max-w-xs">
+            <label className="block text-xs font-bold uppercase tracking-wide text-indigo-100">Your CA course</label>
+            <select value={studentCourse} onChange={(e) => setStudentCourse(e.target.value as 'CA_FOUNDATION' | 'CA_INTERMEDIATE')} className="mt-2 w-full rounded-xl border border-white/20 bg-slate-900 px-3 py-3 text-sm font-bold text-white outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="CA_FOUNDATION">CA Foundation</option>
+              <option value="CA_INTERMEDIATE">CA Intermediate</option>
+            </select>
+            <p className="mt-2 text-xs leading-5 text-slate-300">Curriculum and planner actions follow your selected course.</p>
           </div>
-          <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-200">Beta</span>
-        </header>
-
-        <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
-          <CalendarClock className="h-4 w-4 text-indigo-500" />
-          Your plan is drafted from your request; it is not saved to your calendar yet.
         </div>
+      </section>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-3 py-5 sm:px-6">
-          {messages.map((message) => (
-            <div key={message.id} className={'flex items-start gap-2.5 ' + (message.role === 'user' ? 'flex-row-reverse' : '')}>
-              <div className={'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ' + (message.role === 'assistant' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200')}>
-                {message.role === 'assistant' ? <Bot className="h-4 w-4" /> : <UserRound className="h-4 w-4" />}
-              </div>
-              <div className={'min-w-0 max-w-[92%] sm:max-w-[86%] ' + (message.role === 'user' ? 'text-right' : '')}>
-                <div className={'inline-block rounded-2xl px-4 py-3 text-left text-sm leading-6 ' + (message.role === 'assistant' ? 'rounded-tl-md bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100' : 'rounded-tr-md bg-indigo-600 text-white')}>
-                  {message.text}
-                </div>
-                {message.result?.follow_up_options && message.result.follow_up_options.length > 0 && <div className="mt-3 flex flex-wrap gap-2 text-left">{message.result.follow_up_options.map((option) => <button key={option} type="button" disabled={loading} onClick={() => void sendRequest(option)} className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200">{option}</button>)}</div>}
-                {message.result?.parsed && (
-                  <div className="mt-3 space-y-3 text-left">
-                    {message.result.parsed.missing_info.length > 0 && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                        <p className="mb-1 font-bold">Tell me a little more</p>
-                        <ul className="list-inside list-disc space-y-0.5">
-                          {message.result.parsed.missing_info.map((item) => <li key={item}>{item}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {message.result.chapter_assessment && (
-                      <div className="w-full rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950">
-                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.chapter_assessment.subject} chapter strength assessment</h3>
-                        <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{message.result.reply_language === 'hindi' ? 'हर chapter की अपनी strength चुनें। Weak chapters को plan में अधिक समय मिलेगा। कोई rating पहले से select नहीं है।' : message.result.reply_language === 'hinglish' ? 'Har chapter ki apni strength select karo. Weak chapters ko plan mein zyada time milega. Koi rating pehle se selected nahi hai.' : 'Choose a strength for every chapter. Weak chapters will receive more time. No rating is preselected.'}</p>
-                        <div className="mt-3 space-y-2">
-                          {message.result.chapter_assessment.chapters.map((chapter) => (
-                            <div key={chapter} className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^(GST|Income Tax|FM|SM):\s*/, '')}</span>
-                              <div className="grid grid-cols-3 gap-1.5 sm:w-[240px]">
-                                {(['WEAK', 'MODERATE', 'STRONG'] as const).map((strength) => (
-                                  <button key={strength} type="button" aria-pressed={chatChapterRatings[chapter] === strength} onClick={() => setChatChapterRatings((current) => ({ ...current, [chapter]: strength }))} className={'rounded-lg border px-2 py-2 text-[11px] font-bold transition ' + (chatChapterRatings[chapter] === strength ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300')}>{strength.charAt(0) + strength.slice(1).toLowerCase()}</button>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {message.result.plan_scope === 'exam_roadmap' ? (
-                          <>
-                            <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'दैनिक study hours' : message.result.reply_language === 'hinglish' ? 'Daily study hours' : 'Daily study hours'}
-                              <input type="number" min="1" max="12" step="0.25" value={dailyMinutes} onChange={(event) => setDailyMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
-                              <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? 'दिन के कुल study hours चुनें।' : message.result.reply_language === 'hinglish' ? 'Roz kitne ghante padhoge, woh set karo.' : 'Choose the total study hours you can commit per day.'}</span>
-                            </label>
-                            <label className="mt-3 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'Exact exam date' : message.result.reply_language === 'hinglish' ? 'Exact exam date' : 'Exact exam date'}
-                              <input type="date" min={dailyDate} value={exactExamDate} onChange={(event) => setExactExamDate(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
-                              <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? 'Exam date start date से कम से कम 14 दिन बाद होनी चाहिए।' : message.result.reply_language === 'hinglish' ? 'Exam date plan start se kam se kam 14 din baad honi chahiye.' : 'The exact exam date must be at least 14 days after the plan start date.'}</span>
-                            </label>
-                          </>
-                        ) : (
-                          <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'एक दिन का revision time (minutes)' : message.result.reply_language === 'hinglish' ? 'Available revision time (minutes)' : 'Available revision time (minutes)'}
-                            <input type="number" min="30" max="720" step="15" value={chatAssessmentMinutes} onChange={(event) => setChatAssessmentMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
-                            <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? '30–720 मिनट, 15 मिनट के अंतर से।' : message.result.reply_language === 'hinglish' ? 'Example: 180 minutes = 3 hours. 15-minute increments use karo.' : 'Example: 180 minutes = 3 hours. Use 15-minute increments.'}</span>
-                          </label>
-                        )}
-                        <button type="button" disabled={loading
-                          || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter])
-                          || (message.result.plan_scope === 'exam_roadmap'
-                            ? (!exactExamDate || exactExamDate < dailyDate || (Date.parse(exactExamDate + 'T00:00:00.000Z') - Date.parse(dailyDate + 'T00:00:00.000Z')) / 86400000 < 13 || !Number.isFinite(Number(dailyMinutes)) || Number(dailyMinutes) < 1 || Number(dailyMinutes) > 12)
-                            : (!Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0))}
-                          onClick={() => void sendRequest(message.result!.chapter_assessment!.subject + ' detailed revision', {
-                            chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })),
-                            available_minutes: message.result!.plan_scope === 'exam_roadmap' ? Math.round((Number(dailyMinutes) || 4) * 60) : Number(chatAssessmentMinutes),
-                            chapter_assessment_subject: message.result!.chapter_assessment!.subject,
-                            plan_scope: message.result!.plan_scope || 'one_day',
-                            reply_language: message.result!.reply_language || 'english',
-                          })}
-                          className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">{message.result.plan_scope === 'exam_roadmap' ? (message.result.reply_language === 'hindi' ? 'Exam roadmap बनाएँ' : message.result.reply_language === 'hinglish' ? 'Exam roadmap banao' : 'Build exam roadmap + weekly timetable') : (message.result.reply_language === 'hindi' ? 'Revision plan बनाएँ' : message.result.reply_language === 'hinglish' ? 'Revision plan banao' : 'Build my revision plan')}</button>
-                      </div>
-                    )}
-                    {(message.result.roadmap?.length || message.result.revision_rounds?.length) ? (
-                      <div className="space-y-3 rounded-xl border border-indigo-200 p-3 dark:border-indigo-900">
-                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Exam roadmap</h3>
-                        {(message.result.roadmap || []).map((phase) => <div key={phase.key} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-900"><div className="flex justify-between gap-2"><span className="text-sm font-bold text-slate-900 dark:text-white">{phase.title}</span><span className="text-xs font-bold text-indigo-600">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-1 list-disc pl-4 text-xs text-slate-600 dark:text-slate-300">{phase.goals.map((goal) => <li key={goal}>{goal}</li>)}</ul></div>)}
-                        <h3 className="pt-1 text-sm font-extrabold text-slate-900 dark:text-white">Adaptive revision rounds</h3>
-                        {(message.result.revision_rounds || []).map((round) => <div key={round.key} className="rounded-lg border border-indigo-200 p-3 dark:border-indigo-900"><div className="flex justify-between gap-2"><span className="text-sm font-bold text-slate-900 dark:text-white">{round.title}</span><span className="text-xs font-bold text-indigo-600">{round.days} days</span></div><p className="mt-1 text-xs text-slate-500">{round.start_date} – {round.end_date}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{round.focus}</p><p className="mt-1 text-xs text-slate-500">{round.chapters.length} rated chapters prioritized</p></div>)}
-                      </div>
-                    ) : null}
-                    {message.result.plan && (
-                      <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-white dark:border-indigo-900 dark:bg-slate-950">
-                        <div className="flex items-center gap-3 bg-indigo-50 px-4 py-3 dark:bg-indigo-950/50">
-                          <CheckCircle2 className="h-5 w-5 text-indigo-600 dark:text-indigo-300" />
-                          <div className="min-w-0 flex-1">
-                            <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.plan.title}</h2>
-                            <p className="text-xs text-slate-600 dark:text-slate-300">{message.result.plan.subjects.join(' · ')}</p>
-                          </div>
-                          <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 dark:bg-slate-900 dark:text-indigo-200">{message.result.plan.total_minutes} min</span>
-                        </div>
-                        <ol className="divide-y divide-slate-100 dark:divide-slate-800">
-                          {message.result.plan.sessions.map((session) => (
-                            <li key={session.order} className="flex gap-3 px-4 py-3">
-                              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{session.order}</div>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="text-sm font-bold text-slate-900 dark:text-white">{session.label}</p>
-                                  <span className="text-xs font-bold text-slate-500">{session.minutes} min</span>
-                                </div>
-                                <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{session.subject}</p>
-                                <p className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-300">{session.instruction}</p>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
-                          <p className="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{message.result.plan.note}</p>
-                          <button type="button" disabled={pdfBusyId === message.id} onClick={() => void downloadPlanPdf(message.result!.plan!, message.id)} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-indigo-300 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50 dark:border-indigo-700 dark:text-indigo-300"><BookOpen className="h-4 w-4" />{pdfBusyId === message.id ? 'Creating PDF…' : 'Download PDF'}</button>
-                          <button type="button" disabled={savingPlanId === message.id || savedPlanIds.includes(message.id)} onClick={async () => {
-                            setSavingPlanId(message.id); setError('');
-                            try {
-                              await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: studentCourse, plan: message.result?.plan }) });
-                              setSavedPlanIds((ids) => [...ids, message.id]); await refreshSavedPlans();
-                            } catch (err: any) { setError(err?.message || 'Could not save this plan.'); }
-                            finally { setSavingPlanId(null); }
-                          }} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
-                            <BookmarkCheck className="h-4 w-4" />{savedPlanIds.includes(message.id) ? 'Saved' : savingPlanId === message.id ? 'Saving…' : 'Save plan'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><Bot className="h-4 w-4" /></div>
-              <div className="rounded-2xl rounded-tl-md bg-slate-100 px-4 py-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300"><Clock3 className="mr-2 inline h-4 w-4 animate-spin" />Thinking through your study plan…</div>
-            </div>
-          )}
-          <div ref={bottomRef} />
+      <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button type="button" onClick={() => { document.getElementById('planner-roadmap')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><CalendarClock className="h-5 w-5" /></span>
+          <span className="block text-base font-extrabold text-slate-900 dark:text-white">Exam roadmap</span><span className="mt-1 block text-sm leading-5 text-slate-500 dark:text-slate-400">Plan syllabus completion and revision rounds up to your exam.</span>
+        </button>
+        <button type="button" onClick={() => { document.getElementById('planner-chapter-strength')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"><BookOpen className="h-5 w-5" /></span>
+          <span className="block text-base font-extrabold text-slate-900 dark:text-white">Rate your chapters</span><span className="mt-1 block text-sm leading-5 text-slate-500 dark:text-slate-400">Mark topics weak, moderate or strong to personalise revision.</span>
+        </button>
+        <button type="button" onClick={() => { document.getElementById('planner-daily-timetable')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Clock3 className="h-5 w-5" /></span>
+          <span className="block text-base font-extrabold text-slate-900 dark:text-white">Daily timetable</span><span className="mt-1 block text-sm leading-5 text-slate-500 dark:text-slate-400">Arrange study blocks around available hours and class timings.</span>
+        </button>
+      </section>
+
+      <section id="planner-daily-timetable" className="mb-5 scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Your planner workspace</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Set your dates and study capacity below, then generate a structured plan.</p></div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /> {courseLabel} selected</span>
         </div>
-
-        {messages.length === 1 && (
-          <div className="border-t border-slate-100 px-3 py-3 dark:border-slate-800 sm:px-5">
-            <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Try asking</p>
-            <div className="flex flex-wrap gap-2">
-              {STARTER_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" disabled={loading} onClick={() => void sendRequest(prompt)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/50">{prompt}</button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <form onSubmit={(event) => { event.preventDefault(); void sendRequest(); }} className="border-t border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 sm:p-4">
-          {error && <p role="alert" className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{error}</p>}
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-slate-50 p-2 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/15 dark:border-slate-700 dark:bg-slate-900">
-            <textarea value={request} onChange={(event) => setRequest(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendRequest(); } }} rows={2} maxLength={1200} placeholder="Tell me what you want to study and how much time you have…" className="max-h-36 min-h-[48px] flex-1 resize-y bg-transparent px-2 py-2 text-sm leading-5 text-slate-900 outline-none placeholder:text-slate-400 dark:text-white" />
-            <button type="submit" disabled={loading || !request.trim()} aria-label="Send message" className="mb-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Send className="h-4 w-4" /></button>
-          </div>
-          <p className="mt-2 px-1 text-[10px] text-slate-500">Enter to send · Shift + Enter for a new line</p>
-        </form>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Plan start date<input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Daily study hours<input type="number" min="1" max="12" step="0.25" value={dailyMinutes} onChange={(e) => setDailyMinutes(e.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Study starts<input type="time" value={studyStartTime} onChange={(e) => setStudyStartTime(e.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-300">Preferred finish<input type="time" value={preferredEndTime} onChange={(e) => setPreferredEndTime(e.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <button type="button" disabled={dailyPlanBusy} onClick={() => void generateDailyPlan()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"><CalendarClock className="h-4 w-4" />{dailyPlanBusy ? 'Building timetable…' : 'Generate daily timetable'}</button>
+          <button type="button" disabled={roadmapBusy} onClick={() => void generateAttemptRoadmap()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-3 text-sm font-extrabold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"><Sparkles className="h-4 w-4" />{roadmapBusy ? 'Building roadmap…' : 'Generate exam roadmap'}</button>
+        </div>
+        {(dailyPlanState || roadmapMessage) && <p role="status" className="mt-3 text-sm text-slate-600 dark:text-slate-300">{dailyPlanState || roadmapMessage}</p>}
       </section>
     </div>
   );
