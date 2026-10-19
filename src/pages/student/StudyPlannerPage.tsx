@@ -361,6 +361,74 @@ export const StudyPlannerPage: React.FC = () => {
     }
   };
 
+  const downloadPlanPdf = async (plan: StudyPlanDraft, messageId: number) => {
+    setPdfBusyId(messageId);
+    try {
+      const pdf = await PDFDocument.create();
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+      const pageWidth = 595.28;
+      const pageHeight = 841.89;
+      const margin = 44;
+      let page = pdf.addPage([pageWidth, pageHeight]);
+      let y = pageHeight - margin;
+      const safe = (value: unknown) => String(value ?? '').replace(/[^\\x20-\\x7E]/g, '-');
+      const drawLine = (value: string, size = 10, isBold = false, indent = 0) => {
+        const activeFont = isBold ? bold : font;
+        const maxWidth = pageWidth - margin * 2 - indent;
+        const words = safe(value).split(/\\s+/);
+        let line = '';
+        const lines: string[] = [];
+        for (const word of words) {
+          const next = line ? line + ' ' + word : word;
+          if (activeFont.widthOfTextAtSize(next, size) > maxWidth && line) {
+            lines.push(line);
+            line = word;
+          } else line = next;
+        }
+        if (line) lines.push(line);
+        for (const text of lines) {
+          if (y < margin + 24) { page = pdf.addPage([pageWidth, pageHeight]); y = pageHeight - margin; }
+          page.drawText(text, { x: margin + indent, y, size, font: activeFont, color: rgb(0.12, 0.16, 0.28) });
+          y -= size + 5;
+        }
+      };
+      drawLine(plan.title || 'CA Study Plan', 18, true);
+      y -= 4;
+      drawLine('Course: CA Intermediate', 10);
+      drawLine('Focus: ' + (plan.subjects || []).join(', '), 10);
+      drawLine('Total study time: ' + plan.total_minutes + ' minutes (' + (Number(plan.total_minutes) / 60).toFixed(2) + ' hours)', 10);
+      drawLine('Generated: ' + new Date().toLocaleDateString(), 10);
+      y -= 10;
+      page.drawLine({ start: { x: margin, y }, end: { x: pageWidth - margin, y }, thickness: 1, color: rgb(0.35, 0.31, 0.85) });
+      y -= 18;
+      drawLine('Chapter-wise sessions', 13, true);
+      for (const session of plan.sessions || []) {
+        y -= 4;
+        drawLine(session.order + '. ' + session.label + ' - ' + session.minutes + ' minutes', 11, true);
+        drawLine('Subject: ' + session.subject + ((session as any).chapter ? ' | Chapter: ' + (session as any).chapter : ''), 9, false, 10);
+        if ((session as any).strength) drawLine('Self-rated strength: ' + (session as any).strength, 9, false, 10);
+        drawLine(session.instruction, 9, false, 10);
+      }
+      y -= 8;
+      drawLine('Study approach: complete the session, check mistakes, and mark progress in your planner.', 9);
+      const bytes = await pdf.save();
+      const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (plan.title || 'CA-study-plan').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err?.message || 'Could not create the PDF. Please try again.');
+    } finally {
+      setPdfBusyId(null);
+    }
+  };
+
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-9rem)] w-full max-w-4xl flex-col px-3 py-4 sm:px-6 sm:py-6">
       <button
