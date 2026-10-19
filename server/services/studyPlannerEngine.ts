@@ -46,7 +46,7 @@ export interface StudyPlanDraft {
   note: string;
 }
 
-export const STUDY_PLANNER_SUBJECTS: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE', string[]> = {
+export const STUDY_PLANNER_SUBJECTS: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL', string[]> = {
   CA_FOUNDATION: [
     'Accounting',
     'Business Laws',
@@ -60,6 +60,14 @@ export const STUDY_PLANNER_SUBJECTS: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE',
     'Cost and Management Accounting',
     'Auditing and Ethics',
     'Financial Management and Strategic Management',
+  ],
+  CA_FINAL: [
+    'Financial Reporting',
+    'Advanced Financial Management',
+    'Advanced Auditing, Assurance and Professional Ethics',
+    'Direct Tax Laws and International Taxation',
+    'Indirect Tax Laws (GST and Customs)',
+    'Integrated Business Solutions',
   ],
 };
 
@@ -166,7 +174,7 @@ interface SubjectAlias {
   subject: string;
 }
 
-const SUBJECT_ALIASES: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE', SubjectAlias[]> = {
+const SUBJECT_ALIASES: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL', SubjectAlias[]> = {
   CA_FOUNDATION: [
     { pattern: '\\bquantitative aptitude\\b', subject: 'Quantitative Aptitude' },
     { pattern: '\\bratio and proportion(?:s)?\\b', subject: 'Quantitative Aptitude' },
@@ -185,10 +193,18 @@ const SUBJECT_ALIASES: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE', SubjectAlias[
     { pattern: '\\btaxation\\b|\\btax\\b|\\bgst\\b', subject: 'Taxation' },
     { pattern: '\\baccounting\\b', subject: 'Advanced Accounting' },
   ],
+  CA_FINAL: [
+    { pattern: '\\bintegrated business solutions?\\b|\\bibs\\b', subject: 'Integrated Business Solutions' },
+    { pattern: '\\bfinancial reporting\\b|\\bfr\\b', subject: 'Financial Reporting' },
+    { pattern: '\\badvanced financial management\\b|\\bafm\\b', subject: 'Advanced Financial Management' },
+    { pattern: '\\badvanced auditing(?:,? assurance)?(?: and| &) professional ethics\\b|\\bprofessional ethics\\b|\\bauditing\\b|\\baudit\\b', subject: 'Advanced Auditing, Assurance and Professional Ethics' },
+    { pattern: '\\bdirect tax laws?(?: and| &) international taxation\\b|\\binternational taxation\\b|\\bdirect tax\\b|\\bincome tax\\b', subject: 'Direct Tax Laws and International Taxation' },
+    { pattern: '\\bindirect tax laws?(?: \\(gst(?: and| &) customs\\))?\\b|\\bgst\\b|\\bcustoms\\b|\\bindirect tax\\b', subject: 'Indirect Tax Laws (GST and Customs)' },
+  ],
 };
 
 function detectSubjectMentions(text: string, course: PlannerCourse): string[] {
-  if (course !== 'CA_FOUNDATION' && course !== 'CA_INTERMEDIATE') return [];
+  if (course !== 'CA_FOUNDATION' && course !== 'CA_INTERMEDIATE' && course !== 'CA_FINAL') return [];
   const matches: Array<{ start: number; end: number; subject: string }> = [];
 
   for (const alias of SUBJECT_ALIASES[course]) {
@@ -258,12 +274,6 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
   const explicitCourse = detectExplicitCourse(raw);
   const selected = normalizeCourse(selectedCourse);
 
-  if (explicitCourse === 'CA_FINAL' || selected === 'CA_FINAL') {
-    const result = emptyResult('CA_FINAL');
-    result.intent = 'out_of_scope';
-    return result;
-  }
-
   if (explicitCourse && selected && explicitCourse !== selected) {
     const result = emptyResult(explicitCourse);
     result.missing_info = ['confirm the selected CA course'];
@@ -323,11 +333,11 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
       result.duration_minutes = timeRange.duration;
     }
 
-    if (!course || !STUDY_PLANNER_SUBJECTS[course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE']) result.missing_info.push('CA course');
+    if (!course || !STUDY_PLANNER_SUBJECTS[course]) result.missing_info.push('CA course');
     if (!result.subjects.length) result.missing_info.push('class subject');
     if (!result.class_time_text || result.schedule_mode === 'none') result.missing_info.push('class days and time');
     result.should_call_planner = Boolean(
-      course && STUDY_PLANNER_SUBJECTS[course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE']
+      course && STUDY_PLANNER_SUBJECTS[course]
       && result.subjects.length && result.class_time_text && result.schedule_mode !== 'none'
     );
     if (!result.should_call_planner) result.intent = 'clarify';
@@ -342,7 +352,7 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
 
   if (progressRequest) {
     result.intent = 'log_study_progress';
-    if (!course || !STUDY_PLANNER_SUBJECTS[course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE']) result.missing_info.push('CA course');
+    if (!course || !STUDY_PLANNER_SUBJECTS[course]) result.missing_info.push('CA course');
     if (!result.subjects.length) result.missing_info.push('subject');
     if (!result.duration_minutes) result.missing_info.push('study duration');
     result.should_call_planner = result.missing_info.length === 0;
