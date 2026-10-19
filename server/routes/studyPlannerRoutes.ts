@@ -535,17 +535,6 @@ router.patch('/plans/:planId/complete', authenticateToken, (req: AuthRequest, re
   return res.json({ success: true, status: 'COMPLETED' });
 });
 
-const ALLOWED_COURSES = new Set([
-  '',
-  'CA_FOUNDATION',
-  'CA_INTERMEDIATE',
-  'CA_FINAL',
-  'foundation',
-  'intermediate',
-  'inter',
-  'final',
-]);
-
 router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
@@ -557,7 +546,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const message = typeof body.message === 'string' ? body.message.trim() : '';
-    const course = typeof body.course === 'string' ? body.course.trim() : '';
 
     if (!message) {
       return res.status(400).json({
@@ -573,10 +561,24 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (!ALLOWED_COURSES.has(course)) {
+    // Course is authoritative from the authenticated student's saved profile.
+    // Never trust a client-supplied course: this prevents students being routed to
+    // a planner that is not available for their registered CA level.
+    const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user.id) as { ca_level?: string } | undefined;
+    const profileLevel = String(profile?.ca_level || '').trim().toUpperCase().replace(/^CA_/, '');
+    const course = profileLevel === 'FOUNDATION'
+      ? 'CA_FOUNDATION'
+      : profileLevel === 'INTERMEDIATE' || profileLevel === 'INTER'
+        ? 'CA_INTERMEDIATE'
+        : profileLevel === 'FINAL'
+          ? 'CA_FINAL'
+          : '';
+
+    if (!course) {
       return res.status(400).json({
         success: false,
-        error: 'Select a valid CA level.',
+        status: 'profile_course_missing',
+        error: 'Your CA course is missing from your student profile. Please update your profile before using AI Planner.',
       });
     }
 
@@ -622,15 +624,31 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
     const replyLanguage = detectStudyReplyLanguage(message);
+    if (course === 'CA_FINAL') {
+      const parsed = parseStudyPlannerConversationRequest(message, history, 'CA_FINAL');
+      return res.status(200).json({
+        success: true,
+        status: 'unsupported_course',
+        message: replyLanguage === 'hindi'
+          ? 'CA Final AI Planner jald aa raha hai. Filhaal AI Planner CA Foundation aur CA Intermediate students ke liye available hai.'
+          : replyLanguage === 'hinglish'
+            ? 'Bhai, CA Final AI Planner coming soon hai. Abhi AI Planner CA Foundation aur CA Intermediate students ke liye available hai.'
+            : 'The CA Final AI Planner is coming soon. The current planner is available for CA Foundation and CA Intermediate students.',
+        parsed,
+        plan: null,
+        metadata: { version: 'planner-profile-course-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
+    const parsed = parseStudyPlannerConversationRequest(message, history, course);
     // A study question should receive an answer, not be forced through the timetable form.
     if (parsed.intent === 'clarify' && isGeneralStudyQuestion(message)) {
       parsed.intent = 'general_guidance';
       parsed.missing_info = [];
       parsed.should_call_planner = false;
     }
-    const usedDefaultDuration = applyDefaultStudyDuration(parsed, body.default_duration_minutes);
+    const usedDefaultDuration = applyDefaultStudyDuration(parsed, body.default_duration_minutes ?? 240);
     const plan = createStudyPlanDraft(parsed);
 
     let status = 'request_parsed';
