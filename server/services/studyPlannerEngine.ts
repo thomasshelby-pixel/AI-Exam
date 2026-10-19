@@ -174,7 +174,7 @@ interface SubjectAlias {
 
 const SUBJECT_ALIASES: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL', SubjectAlias[]> = {
   CA_FOUNDATION: [
-    { pattern: '\\bquantitative aptitude\\b', subject: 'Quantitative Aptitude' },
+    { pattern: '\\bquantitative aptitude\\b|\\bqa\\b|\\bbusiness mathematics\\b', subject: 'Quantitative Aptitude' },
     { pattern: '\\bratio and proportion(?:s)?\\b', subject: 'Quantitative Aptitude' },
     { pattern: '\\bstatistics\\b', subject: 'Quantitative Aptitude' },
     { pattern: '\\bbusiness laws?\\b', subject: 'Business Laws' },
