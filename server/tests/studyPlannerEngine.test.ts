@@ -279,11 +279,11 @@ test('Common Hinglish concatenation typo still identifies GST for subject-specif
   assert.deepEqual(parsed.missing_info, ['available study time']);
 });
 
-test('CA Final GST query resolves to the Final indirect-tax paper and asks for time if needed', () => {
+test('CA Final GST query remains outside the supported planner scope', () => {
   const parsed = parseStudyPlannerRequest('GST detailed revision', 'CA_FINAL');
   assert.equal(parsed.intent, 'clarify');
-  assert.equal(parsed.course, 'CA_FINAL');
-  assert.deepEqual(parsed.subjects, ['Indirect Tax Laws (GST and Customs)']);
-  assert.deepEqual(parsed.missing_info, ['available study time']);
+  assert.equal(parsed.course, null);
+  assert.deepEqual(parsed.subjects, []);
   assert.equal(parsed.should_call_planner, false);
+  assert.equal(createStudyPlanDraft(parsed), null);
 });
