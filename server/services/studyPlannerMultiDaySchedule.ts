@@ -65,6 +65,7 @@ export function createMultiDayStudyPlan(input: {
   preferred_end_time: string;
   attempt: string;
   exact_exam_date?: string | null;
+  schedule_through_exam?: boolean;
   class_mode?: 'none' | 'fixed' | 'flexible';
   class_blocks?: ClassBlock[];
   priorities: MultiDayPriority[];
@@ -107,10 +108,10 @@ export function createMultiDayStudyPlan(input: {
   }
   const chapters = [...unique.values()].sort((a,b) => b.priority_score - a.priority_score || a.subject.localeCompare(b.subject) || a.chapter.localeCompare(b.chapter));
   const endDate = addDaysISO(input.start_date, 6);
-  if (examDate && examDate < endDate) {
-    // The requested window is shortened to avoid scheduling beyond the exact exam date.
-  }
-  const lastDate = examDate && examDate < endDate ? examDate : endDate;
+  const lastDate = input.schedule_through_exam && examDate ? examDate : (examDate && examDate < endDate ? examDate : endDate);
+  const dayCount = Math.floor((Date.parse(lastDate + 'T00:00:00.000Z') - Date.parse(input.start_date + 'T00:00:00.000Z')) / 86400000) + 1;
+  if (input.schedule_through_exam && !examDate) throw new Error('An exact exam date is required for a full exam roadmap.');
+  if (dayCount > 370) throw new Error('The exam roadmap cannot exceed 370 days.');
   const sessions: MultiDaySession[] = [];
   const activityList = [
     { activity: 'CONCEPT_REVIEW' as const, label: 'Concept review', instruction: 'Review notes and understand the core rule, provision or formula.' },
@@ -118,7 +119,7 @@ export function createMultiDayStudyPlan(input: {
     { activity: 'ACTIVE_RECALL' as const, label: 'Active recall', instruction: 'Recall key points without notes and record mistakes for revision.' },
   ];
   let chapterCursor = 0;
-  for (let day = 0; day < 7; day++) {
+  for (let day = 0; day < dayCount; day++) {
     const date = addDaysISO(input.start_date, day);
     if (date > lastDate) break;
     if (!chapters.length) continue;
@@ -161,7 +162,7 @@ export function createMultiDayStudyPlan(input: {
     class_mode: classMode,
     sessions,
     assumptions: chapters.length
-      ? ['This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
+      ? [input.schedule_through_exam ? 'This is a dated study schedule from the start date through the exact exam date.' : 'This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
         classMode === 'none' ? 'No class time was supplied; all selected study windows are treated as available.' : classMode === 'fixed' ? 'Recurring fixed class blocks are excluded from study windows.' : 'Flexible class hours selected: enter your actual unavailable windows by adjusting start/end times before following the plan.', 'Exact exam date is optional. Without it, the selected attempt month is a target label, not an assumed exam date.']
       : ['Rate at least one chapter first. The planner will not guess which chapters are weak.'],
   };
