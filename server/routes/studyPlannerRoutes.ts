@@ -403,7 +403,7 @@ router.get('/revision-progress', authenticateToken, (req: AuthRequest, res: Resp
   }
   const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
   const examDate = String(req.query.exam_date || '');
-  if (course !== 'CA_INTERMEDIATE' || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
+  if (!isSupportedPlannerCourse(course) || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
       Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
       new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate) {
     return res.status(400).json({ success: false, error: 'A valid CA Intermediate exam date is required.' });
@@ -424,7 +424,7 @@ router.put('/revision-progress', authenticateToken, (req: AuthRequest, res: Resp
   const roundKey = String(body.round_key || '').toUpperCase();
   const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
   const chapter = typeof body.chapter === 'string' ? body.chapter.trim() : '';
-  if (course !== 'CA_INTERMEDIATE' || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
+  if (!isSupportedPlannerCourse(course) || !/^\d{4}-\d{2}-\d{2}$/.test(examDate) ||
       Number.isNaN(new Date(examDate + 'T00:00:00.000Z').getTime()) ||
       new Date(examDate + 'T00:00:00.000Z').toISOString().slice(0, 10) !== examDate ||
       !['R1', 'R2', 'R3', 'R4'].includes(roundKey) || !subject || subject.length > 160 ||
