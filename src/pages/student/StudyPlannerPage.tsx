@@ -471,6 +471,7 @@ export const StudyPlannerPage: React.FC = () => {
       </button>
 
 
+      {studentCourse === 'CA_INTERMEDIATE' ? (<>
       <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
         <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
@@ -701,6 +702,12 @@ export const StudyPlannerPage: React.FC = () => {
                 </div>
               </section>
         
+      </>
+      ) : (
+        <div className="mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100">
+          <p className="font-extrabold">{courseLabel} study chat is ready.</p>
+          <p className="mt-1">Ask study-related questions or request a one-day or next-7-day plan in chat. Chapter-by-chapter adaptive roadmap tools are currently enabled only for CA Intermediate.</p>
+        </div>
       )}
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-white p-4 dark:border-emerald-900 dark:bg-slate-950 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
