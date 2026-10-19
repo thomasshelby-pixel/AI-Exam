@@ -579,7 +579,7 @@ export const StudyPlannerPage: React.FC = () => {
                   <>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <label className="block">
-                        <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">CA Intermediate subject</span>
+                        <span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">{courseLabel} subject</span>
                         <select value={selectedStrengthSubject} onChange={(e) => {
                           const subject = curriculumSubjects.find((item) => item.name === e.target.value);
                           setSelectedStrengthSubject(e.target.value);
@@ -712,7 +712,7 @@ export const StudyPlannerPage: React.FC = () => {
       ) : (
         <div className="mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100">
           <p className="font-extrabold">{courseLabel} study chat is ready.</p>
-          <p className="mt-1">Ask study-related questions or request a one-day or next-7-day plan in chat. Chapter-by-chapter adaptive roadmap tools are currently enabled only for CA Intermediate.</p>
+          <p className="mt-1">Ask study-related questions or request a one-day or next-7-day plan in chat. Chapter-by-chapter adaptive roadmap tools are available for CA Foundation and CA Intermediate.</p>
         </div>
       )}
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-white p-4 dark:border-emerald-900 dark:bg-slate-950 sm:p-5">
