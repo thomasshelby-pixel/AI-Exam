@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
@@ -80,4 +80,32 @@ test('answers subject-specific revision questions across Foundation and Intermed
     assert.match(result.answer, /revision|revise|Revision/i);
     assert.doesNotMatch(result.answer, /please provide the missing details/i);
   }
+});
+
+
+test('keeps English revision wording in English instead of mistaking it for Hinglish', () => {
+  assert.equal(detectStudyReplyLanguage('revision plan for SM'), 'english');
+  assert.equal(detectStudyReplyLanguage('SM detailed revision'), 'english');
+  assert.equal(detectStudyReplyLanguage('How should I revise GST?'), 'english');
+  assert.equal(detectStudyReplyLanguage('Bhai, SM ke liye revision kaise karu?'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('SM के लिए revision plan बनाइए'), 'hindi');
+});
+
+test('chapter assessment prompts, completion replies and options preserve the detected language', () => {
+  const englishPrompt = buildChapterAssessmentPrompt('english', 'Strategic Management');
+  assert.match(englishPrompt, /^For Strategic Management/);
+  assert.doesNotMatch(englishPrompt, /Bhai|select kar|bata de/i);
+  const hinglishPrompt = buildChapterAssessmentPrompt('hinglish', 'Strategic Management');
+  assert.match(hinglishPrompt, /^Bhai,/);
+  const hindiPrompt = buildChapterAssessmentPrompt('hindi', 'Strategic Management');
+  assert.match(hindiPrompt, /चुनें/);
+
+  assert.match(buildChapterAssessmentReadyMessage('english', 'Strategic Management'), /^Your Strategic Management/);
+  assert.match(buildChapterAssessmentReadyMessage('hinglish', 'Strategic Management'), /^Bhai,/);
+  assert.match(buildChapterAssessmentReadyMessage('hindi', 'Strategic Management'), /तैयार है/);
+
+  assert.deepEqual(buildPlanScopeOptions('english'), ['One-day plan only', 'Daily/weekly plan (next 7 days)']);
+  assert.deepEqual(buildPlanScopeOptions('hinglish'), ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)']);
+  assert.match(buildIntermediateSMClarification('english'), /^I understand/);
+  assert.match(buildIntermediateSMClarification('hinglish'), /samajh gaya bhai/);
 });

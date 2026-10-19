@@ -12,7 +12,7 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
-import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 
@@ -659,7 +659,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.json({
         success: true,
         status: 'topic_clarification',
-        message: 'SM / FM-SM samajh gaya bhai. Kya chahiye: (1) concept explanation, (2) effective revision strategy, ya (3) study plan? Study plan ke liye time bata de, ya planner settings mein apne daily study hours use kar.',
+        message: buildIntermediateSMClarification(replyLanguage),
         parsed: parsedProbe,
         plan: null,
         follow_up_options: ['SM effective revision strategy', 'Explain an SM concept', 'SM study plan'],
@@ -718,7 +718,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             : 'Which plan would you like: one day only, or a day-wise plan for the next 7 days?',
         parsed: { ...parsedProbe, intent: 'clarify', missing_info: [], should_call_planner: false },
         plan: null,
-        follow_up_options: ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)'],
+        follow_up_options: buildPlanScopeOptions(replyLanguage),
         metadata: { version: 'planner-scope-clarification-v1', modelUsed: false, persistentStorage: false },
       });
     }
@@ -732,7 +732,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed.intent = 'clarify'; parsed.missing_info = ['subject or study goal']; parsed.should_call_planner = false;
         return res.json({
           success: true, status: 'needs_clarification',
-          message: replyLanguage === 'hinglish' ? 'Bhai, kis subject ya topic ka day-wise plan banaun?' : 'Which subject or topic should I build the day-wise plan for?',
+          message: replyLanguage === 'hindi' ? 'किस subject या topic का day-wise plan बनाऊँ?' : replyLanguage === 'hinglish' ? 'Bhai, kis subject ya topic ka day-wise plan banaun?' : 'Which subject or topic should I build the day-wise plan for?',
           parsed, plan: null, metadata: { version: 'planner-scope-clarification-v1', modelUsed: false, persistentStorage: false },
         });
       }
@@ -790,7 +790,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.json({
         success: true,
         status: 'needs_chapter_assessment',
-        message: 'Bhai, ' + assessmentTarget.label + ' ke liye pehle har listed chapter ki strength select kar. Main ratings guess nahi karunga. Available revision time bhi choose kar; phir chapter-wise plan bana dunga.',
+        message: buildChapterAssessmentPrompt(replyLanguage, assessmentTarget.label),
         parsed: { intent: 'clarify', course, subjects: [assessmentTarget.label], duration_minutes: null, focus_text: assessmentTarget.label + ' chapter-wise revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [assessmentTarget.label + ' chapter strengths', 'available study time'], should_call_planner: false },
         plan: null,
         chapter_assessment: { subject: assessmentTarget.label, storage_subject: assessmentTarget.storageSubject, chapters: assessmentTarget.chapters },
@@ -859,7 +859,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.json({
         success: true,
         status: 'plan_draft_ready',
-        message: 'Bhai, ' + assessmentTarget.label + ' ka chapter-wise revision plan ready hai. Weak chapters ko zyada time diya hai, aur ratings tumhare planner profile mein save ho gayi hain.',
+        message: buildChapterAssessmentReadyMessage(replyLanguage, assessmentTarget.label),
         parsed: { intent: 'create_study_plan', course, subjects: [assessmentTarget.label], duration_minutes: minutes, focus_text: assessmentTarget.label + ' chapter-wise detailed revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
         plan,
         metadata: { version: 'planner-chapter-revision-v2', modelUsed: false, persistentStorage: true },
