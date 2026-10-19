@@ -139,20 +139,23 @@ function resolveChapterAssessmentTarget(text: string): ChapterAssessmentTarget |
   const costing = INTERMEDIATE_CHAPTERS['Cost and Management Accounting'] || [];
   const audit = INTERMEDIATE_CHAPTERS['Auditing and Ethics'] || [];
 
+  if (/\b(income tax\s*(?:and|&)\s*gst|taxation\s*\(\s*income tax\s*(?:and|&)\s*gst\s*\))\b/i.test(value)) {
+    return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
+  }
   if (/\b(gst|goods and services tax)\b/i.test(value)) {
     return { label: 'GST', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => chapter.startsWith('GST:')) };
   }
   if (/\b(income tax|direct tax|income-tax)\b/i.test(value)) {
-    return { label: 'Income Tax', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => !chapter.startsWith('GST:')).map((chapter) => 'Income Tax: ' + chapter) };
+    return { label: 'Income Tax', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => !chapter.startsWith('GST:')) };
   }
   if (/\b(fm\s*(?:and|&)\s*sm|financial management and strategic management|fm and sm|both fm and sm)\b/i.test(value)) {
     return { label: 'FM and SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs };
   }
   if (/\b(financial management|\bfm\b)\b/i.test(value)) {
-    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9).map((chapter) => 'FM: ' + chapter) };
+    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9) };
   }
   if (/\b(strategic management|\bsm\b)\b/i.test(value)) {
-    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9).map((chapter) => 'SM: ' + chapter) };
+    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9) };
   }
   if (/\b(taxation|tax paper|income tax and gst|income tax & gst)\b/i.test(value)) {
     return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
