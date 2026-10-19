@@ -583,6 +583,45 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const history = Array.isArray(body.conversation_history)
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
+
+    // Resolve follow-ups about units/duration from the most recent structured draft.
+    // The UI may send the prior draft even if a later assistant reply was only a clarification.
+    const previousPlan = body.previous_plan && typeof body.previous_plan === 'object'
+      ? body.previous_plan as { title?: unknown; total_minutes?: unknown; subjects?: unknown; sessions?: unknown }
+      : null;
+    const asksDurationConversion = /\b(hour|hours|hrs|minute|minutes|min|mins)\b/i.test(message)
+      && /\b(kitne|how many|convert|minutes? ke jagah|hours? me|hours? mein|time diya|duration|total time)\b/i.test(message);
+    if (previousPlan && asksDurationConversion && Number.isFinite(Number(previousPlan.total_minutes)) && Number(previousPlan.total_minutes) > 0) {
+      const totalMinutes = Math.round(Number(previousPlan.total_minutes));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      const subjects = Array.isArray(previousPlan.subjects)
+        ? previousPlan.subjects.filter((item: unknown): item is string => typeof item === 'string').slice(0, 4)
+        : [];
+      const sessions = Array.isArray(previousPlan.sessions)
+        ? previousPlan.sessions.filter((item: any) => item && typeof item === 'object' && Number.isFinite(Number(item.minutes)) && typeof item.label === 'string').slice(0, 8)
+        : [];
+      const durationText = hours ? hours + ' hour' + (hours === 1 ? '' : 's') + (minutes ? ' ' + minutes + ' minutes' : '') : totalMinutes + ' minutes';
+      const sessionText = sessions.map((item: any) => {
+        const m = Math.round(Number(item.minutes));
+        const h = Math.floor(m / 60);
+        const rem = m % 60;
+        const label = String(item.label);
+        const duration = h ? h + 'h' + (rem ? ' ' + rem + 'm' : '') : rem + 'm';
+        return label + ': ' + duration;
+      }).join('; ');
+      const subjectText = subjects.length ? subjects.join(' / ') : 'your study';
+      const reply = 'Bhai, tumhara ' + subjectText + ' plan total ' + durationText + ' ka tha (' + totalMinutes + ' minutes).' + (sessionText ? ' Breakdown: ' + sessionText + '.' : '');
+      return res.json({
+        success: true,
+        status: 'plan_followup_answered',
+        message: reply,
+        parsed: { intent: 'general_guidance', course: course || null, subjects, duration_minutes: totalMinutes, focus_text: 'Explain the duration of the previous study-plan draft.', date_text: null, schedule_mode: 'follow_up', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: false },
+        plan: null,
+        metadata: { version: 'planner-followup-context-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
     const parsed = parseStudyPlannerConversationRequest(message, history, course || null);
     const replyLanguage = detectStudyReplyLanguage(message);
     // A study question should receive an answer, not be forced through the timetable form.
