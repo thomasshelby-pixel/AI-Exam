@@ -168,7 +168,7 @@ function resolveCourseAssessmentTarget(text: string, course: PlannerCourse | 'CA
   const options = getPlannerSubjects('CA_FOUNDATION')
     .sort((a, b) => b.name.length - a.name.length);
   const match = options.find((subject) => [subject.name, ...(aliases[subject.name] || [])]
-    .some((label) => label.toLowerCase() === 'qa' ? /\\bqa\\b/i.test(value) : value.includes(label.toLowerCase())));
+    .some((label) => label.toLowerCase() === 'qa' ? /\bqa\b/i.test(value) : value.includes(label.toLowerCase())));
   if (!match) return null;
   return { label: match.name, storageSubject: match.name, chapters: match.chapters };
 }
