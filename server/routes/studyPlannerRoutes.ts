@@ -807,7 +807,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (assessmentRequest && assessmentTarget && Array.isArray(body.chapter_ratings)) {
+    if (assessmentTarget && Array.isArray(body.chapter_ratings)) {
       const submitted = body.chapter_ratings as Array<{ chapter?: unknown; strength?: unknown }>;
       const allowed = new Set(assessmentTarget.chapters);
       const ratings = submitted.map((item) => ({
@@ -815,6 +815,27 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         strength: typeof item?.strength === 'string' ? item.strength.toUpperCase() : '',
       }));
       const minutes = Number(body.available_minutes);
+      const requestedPlanScope = body.plan_scope === 'exam_roadmap' ? 'exam_roadmap' : 'one_day';
+      const plannerSettings = body.planner_settings && typeof body.planner_settings === 'object' ? body.planner_settings as Record<string, unknown> : {};
+      const roadmapStartDate = typeof plannerSettings.start_date === 'string' ? plannerSettings.start_date : new Date().toISOString().slice(0, 10);
+      const exactExamDate = typeof plannerSettings.exact_exam_date === 'string' ? plannerSettings.exact_exam_date : '';
+      const validISODate = (value: string) => /^\\d{4}-\\d{2}-\\d{2}$/.test(value)
+        && !Number.isNaN(new Date(value + 'T00:00:00.000Z').getTime())
+        && new Date(value + 'T00:00:00.000Z').toISOString().slice(0, 10) === value;
+      const dailyStudyHours = Number(plannerSettings.daily_study_hours || 4);
+      if (requestedPlanScope === 'exam_roadmap' && (
+        !validISODate(roadmapStartDate)
+        || !validISODate(exactExamDate)
+        || exactExamDate < roadmapStartDate
+        || (Date.parse(exactExamDate + 'T00:00:00.000Z') - Date.parse(roadmapStartDate + 'T00:00:00.000Z')) / 86400000 < 13
+        || !Number.isFinite(dailyStudyHours) || dailyStudyHours < 1 || dailyStudyHours > 12
+      )) {
+        return res.status(400).json({ success: false, error: replyLanguage === 'hindi'
+          ? 'Exam roadmap के लिए settings में सही exam date (कम से कम 14 दिन आगे) और daily study hours चुनें।'
+          : replyLanguage === 'hinglish'
+            ? 'Exam roadmap ke liye settings mein exact exam date (kam se kam 14 din baad) aur daily study hours set karo.'
+            : 'For an exam roadmap, set a valid exact exam date at least 14 days away and choose daily study hours in the planner settings.' });
+      }
       if (String(body.chapter_assessment_subject || '') !== assessmentTarget.label
         || ratings.length !== assessmentTarget.chapters.length
         || ratings.some((item) => !allowed.has(item.chapter) || !ALLOWED_STRENGTHS.has(item.strength))
@@ -836,6 +857,72 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       } catch (persistError) {
         db.exec('ROLLBACK');
         throw persistError;
+      }
+
+      if (requestedPlanScope === 'exam_roadmap') {
+        try {
+          const syllabusCompletion = Number(plannerSettings.syllabus_completion_percent ?? 40);
+          const roadmap = createAttemptStudyPhases({
+            start_date: roadmapStartDate,
+            exact_exam_date: exactExamDate,
+            syllabus_completion_percent: syllabusCompletion,
+          });
+          const allRatedChapters = db.prepare(
+            'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
+          ).all(req.user!.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string }>;
+          const priorities = allRatedChapters.map((item) => ({
+            ...item,
+            priority_score: item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15,
+          }));
+          const revisionRounds = createAdaptiveRevisionRounds({
+            start_date: roadmapStartDate,
+            exact_exam_date: exactExamDate,
+            daily_study_hours: dailyStudyHours,
+            chapters: priorities,
+          });
+          const schedule = createMultiDayStudyPlan({
+            start_date: roadmapStartDate,
+            daily_study_hours: dailyStudyHours,
+            study_start_time: typeof plannerSettings.study_start_time === 'string' ? plannerSettings.study_start_time : '06:00',
+            preferred_end_time: typeof plannerSettings.preferred_end_time === 'string' ? plannerSettings.preferred_end_time : '22:00',
+            attempt: typeof plannerSettings.attempt === 'string' ? plannerSettings.attempt : 'May 2027',
+            exact_exam_date: exactExamDate,
+            class_mode: plannerSettings.class_mode === 'fixed' || plannerSettings.class_mode === 'flexible' ? plannerSettings.class_mode : 'none',
+            class_blocks: Array.isArray(plannerSettings.class_blocks) ? plannerSettings.class_blocks as Array<{ day_of_week: number; start_time: string; end_time: string; label?: string }> : [],
+            priorities,
+          });
+          const scheduleSessions = schedule.sessions.map((session, index) => ({
+            order: index + 1, subject: session.subject, chapter: session.chapter, label: session.label,
+            minutes: session.minutes, instruction: session.instruction, date: session.date,
+            start_time: session.start_time, end_time: session.end_time,
+          }));
+          const plan = {
+            title: 'Weekly timetable · ' + schedule.attempt,
+            total_minutes: scheduleSessions.reduce((sum, session) => sum + session.minutes, 0),
+            subjects: Array.from(new Set(scheduleSessions.map((session) => session.subject))),
+            sessions: scheduleSessions,
+            saved: false as const,
+            note: 'This is the next 7-day execution view. The exam roadmap and R1–R4 rounds cover the full period to your exact exam date; regenerate the weekly view as progress changes.',
+          };
+          return res.json({
+            success: true,
+            status: 'exam_roadmap_draft_ready',
+            message: replyLanguage === 'hindi'
+              ? 'Exam तक का roadmap और आपकी अगली weekly timetable तैयार है। R1–R4 की अवधि chapter ratings, exam date और daily study hours के आधार पर तय की गई है।'
+              : replyLanguage === 'hinglish'
+                ? 'Exam tak ka roadmap aur agle 7 din ki weekly timetable ready hai. R1–R4 ki duration chapter ratings, exam date aur daily study hours ke hisaab se calculate hui hai.'
+                : 'Your exam-till-date roadmap and next weekly timetable are ready. R1–R4 durations use your chapter ratings, exact exam date, and daily study hours.',
+            reply_language: replyLanguage,
+            plan_scope: 'exam_roadmap',
+            parsed: { intent: 'create_study_plan', course, subjects: plan.subjects, duration_minutes: plan.total_minutes, focus_text: 'Adaptive revision rounds and weekly timetable through the exam', date_text: null, schedule_mode: 'weekly_recurring', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
+            plan,
+            roadmap,
+            revision_rounds: revisionRounds,
+            metadata: { version: 'planner-exam-roadmap-chat-v1', modelUsed: false, persistentStorage: true },
+          });
+        } catch (error) {
+          return res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'Could not build the exam roadmap.' });
+        }
       }
 
       const weights = ratings.map((item) => item.strength === 'WEAK' ? 1.6 : item.strength === 'MODERATE' ? 1 : 0.6);
@@ -871,7 +958,9 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         message: buildChapterAssessmentReadyMessage(replyLanguage, assessmentTarget.label),
         parsed: { intent: 'create_study_plan', course, subjects: [assessmentTarget.label], duration_minutes: minutes, focus_text: assessmentTarget.label + ' chapter-wise detailed revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
         plan,
-        metadata: { version: 'planner-chapter-revision-v2', modelUsed: false, persistentStorage: true },
+        reply_language: replyLanguage,
+        plan_scope: 'one_day',
+        metadata: { version: 'planner-chapter-revision-v3', modelUsed: false, persistentStorage: true },
       });
     }
 
