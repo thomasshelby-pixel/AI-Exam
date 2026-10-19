@@ -16,6 +16,8 @@ test('Foundation curriculum exposes all four papers with chapter options', () =>
   ]);
   assert.ok(subjects.every((subject) => subject.chapters.length > 0));
   assert.ok(subjects.find((subject) => subject.name === 'Accounting')?.chapters.includes('Bank Reconciliation Statement'));
+  assert.ok(subjects.find((subject) => subject.name === 'Quantitative Aptitude')?.chapters.includes('Blood Relations'));
+  assert.ok(subjects.find((subject) => subject.name === 'Quantitative Aptitude')?.chapters.includes('Statistical Description of Data and Sampling'));
 });
 
 test('Intermediate curriculum preserves all six subjects and detailed chapter options', () => {
