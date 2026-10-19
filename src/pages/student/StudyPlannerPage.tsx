@@ -477,7 +477,7 @@ export const StudyPlannerPage: React.FC = () => {
 
 
       {studentCourse !== 'CA_FINAL' ? (<>
-      <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
+      <section id="planner-roadmap" className="mb-4 scroll-mt-6 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
         <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -565,7 +565,7 @@ export const StudyPlannerPage: React.FC = () => {
       </section>
 
             {plannerWorkflow === 'strength' ? (
-              <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+              <section id="planner-chapter-strength" className="mb-4 scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"><BookOpen className="h-5 w-5" /></div>
                   <div className="min-w-0 flex-1">
@@ -791,7 +791,7 @@ export const StudyPlannerPage: React.FC = () => {
         </button>
       </section>
 
-      <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-6">
+      <section id="planner-daily-timetable" className="mb-5 scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Your planner workspace</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Set your dates and study capacity below, then generate a structured plan.</p></div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /> {courseLabel} selected</span>
