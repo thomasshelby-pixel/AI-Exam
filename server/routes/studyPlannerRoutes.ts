@@ -819,7 +819,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       const plannerSettings = body.planner_settings && typeof body.planner_settings === 'object' ? body.planner_settings as Record<string, unknown> : {};
       const roadmapStartDate = typeof plannerSettings.start_date === 'string' ? plannerSettings.start_date : new Date().toISOString().slice(0, 10);
       const exactExamDate = typeof plannerSettings.exact_exam_date === 'string' ? plannerSettings.exact_exam_date : '';
-      const validISODate = (value: string) => /^\\d{4}-\\d{2}-\\d{2}$/.test(value)
+      const validISODate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
         && !Number.isNaN(new Date(value + 'T00:00:00.000Z').getTime())
         && new Date(value + 'T00:00:00.000Z').toISOString().slice(0, 10) === value;
       const dailyStudyHours = Number(plannerSettings.daily_study_hours || 4);
