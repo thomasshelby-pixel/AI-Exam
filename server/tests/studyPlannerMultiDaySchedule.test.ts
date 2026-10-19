@@ -69,3 +69,22 @@ test('no-class and flexible class modes are supported without inventing fixed bl
     assert.equal(plan.class_mode, class_mode);
   }
 });
+
+test('builds a dated schedule through the exact exam date when explicitly requested', () => {
+  const plan = createMultiDayStudyPlan({
+    start_date: '2026-10-17', daily_study_hours: 2, study_start_time: '06:00',
+    preferred_end_time: '22:00', attempt: 'May 2027', exact_exam_date: '2026-11-02',
+    schedule_through_exam: true, priorities,
+  });
+  assert.equal(plan.end_date, '2026-11-02');
+  assert.ok(plan.sessions.some(s => s.date === '2026-10-18'));
+  assert.ok(plan.sessions.some(s => s.date === '2026-11-02'));
+  assert.ok(plan.sessions.every(s => s.date >= '2026-10-17' && s.date <= '2026-11-02'));
+});
+
+test('requires an exact exam date for a full exam schedule', () => {
+  assert.throws(() => createMultiDayStudyPlan({
+    start_date: '2026-10-17', daily_study_hours: 2, study_start_time: '06:00',
+    preferred_end_time: '22:00', attempt: 'May 2027', schedule_through_exam: true, priorities,
+  }), /exact exam date is required/);
+});

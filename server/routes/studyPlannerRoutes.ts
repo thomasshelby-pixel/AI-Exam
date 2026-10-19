@@ -701,7 +701,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // “GST detailed revision” gets routed to the generic 1-day/7-day prompt and skips
     // the chapter-strength workflow entirely.
     const assessmentTarget = course === 'CA_INTERMEDIATE'
-      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
+      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || (priorScopeQuestion ? resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS) : null))
       : null;
     const assessmentRequest = shouldPrioritizeChapterAssessment({
       course,
@@ -784,7 +784,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed.schedule_mode = 'weekly_recurring'; parsed.missing_info = []; parsed.should_call_planner = true;
         return res.json({
           success: true, status: 'plan_draft_ready',
-          message: replyLanguage === 'hinglish' ? 'Bhai, agle 7 din ka day-wise plan ready hai. Har session ki date/time di hai; review karke Save plan kar sakta hai.' : 'Your day-wise study plan for the next 7 days is ready. Review the session dates and times, then save it.',
+          message: replyLanguage === 'hinglish' ? 'Bhai, exam date tak ka day-wise roadmap ready hai. Har session mein date, time aur revision round (R1/R2/R3/R4) diya hai; review karke Save plan kar sakta hai.' : 'Your day-wise study roadmap through the exact exam date is ready. Each session includes a date, time, and revision-round label; review it before saving.',
           parsed, plan, metadata: { version: 'planner-chat-weekly-v1', modelUsed: false, persistentStorage: true },
         });
       } catch (error) {
@@ -887,22 +887,28 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             preferred_end_time: typeof plannerSettings.preferred_end_time === 'string' ? plannerSettings.preferred_end_time : '22:00',
             attempt: typeof plannerSettings.attempt === 'string' ? plannerSettings.attempt : 'May 2027',
             exact_exam_date: exactExamDate,
+            schedule_through_exam: true,
             class_mode: plannerSettings.class_mode === 'fixed' || plannerSettings.class_mode === 'flexible' ? plannerSettings.class_mode : 'none',
             class_blocks: Array.isArray(plannerSettings.class_blocks) ? plannerSettings.class_blocks as Array<{ day_of_week: number; start_time: string; end_time: string; label?: string }> : [],
             priorities,
           });
-          const scheduleSessions = schedule.sessions.map((session, index) => ({
-            order: index + 1, subject: session.subject, chapter: session.chapter, label: session.label,
-            minutes: session.minutes, instruction: session.instruction, date: session.date,
-            start_time: session.start_time, end_time: session.end_time,
-          }));
+          const scheduleSessions = schedule.sessions.map((session, index) => {
+            const round = revisionRounds.find((item) => session.date >= item.start_date && session.date <= item.end_date);
+            return {
+              order: index + 1, subject: session.subject, chapter: session.chapter,
+              label: (round ? round.key + ' · ' : '') + session.label,
+              round_key: round?.key || null, round_title: round?.title || null,
+              minutes: session.minutes, instruction: session.instruction, date: session.date,
+              start_time: session.start_time, end_time: session.end_time,
+            };
+          });
           const plan = {
-            title: 'Weekly timetable · ' + schedule.attempt,
+            title: 'Exam roadmap timetable · ' + schedule.attempt,
             total_minutes: scheduleSessions.reduce((sum, session) => sum + session.minutes, 0),
             subjects: Array.from(new Set(scheduleSessions.map((session) => session.subject))),
             sessions: scheduleSessions,
             saved: false as const,
-            note: 'This is the next 7-day execution view. The exam roadmap and R1–R4 rounds cover the full period to your exact exam date; regenerate the weekly view as progress changes.',
+            note: 'Full dated schedule from ' + schedule.start_date + ' through the exact exam date ' + schedule.end_date + ', grouped into revision rounds. Check round labels and dates before following the plan.',
           };
           return res.json({
             success: true,
