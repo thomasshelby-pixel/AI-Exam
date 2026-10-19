@@ -14,7 +14,7 @@ import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
 import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
-import { resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -603,6 +603,24 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         success: false,
         status: 'profile_course_missing',
         error: 'Your CA course is missing from your student profile. Please update your profile before using AI Planner.',
+      });
+    }
+
+    // CA Final chat is intentionally unavailable for now: answer consistently before
+    // subject parsing or clarification, so it never asks Final students for missing details.
+    const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
+    if (courseUnderDevelopmentReply) {
+      return res.json({
+        success: true,
+        status: 'course_under_development',
+        message: courseUnderDevelopmentReply,
+        parsed: {
+          intent: 'out_of_scope', course, subjects: [], duration_minutes: null, focus_text: '',
+          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
+          missing_info: [], should_call_planner: false,
+        },
+        plan: null,
+        metadata: { version: 'planner-course-availability-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
