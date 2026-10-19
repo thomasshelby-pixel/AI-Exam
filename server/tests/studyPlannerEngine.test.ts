@@ -145,7 +145,7 @@ test('Missing course and subject never call the planner', () => {
 
 test('CA Final profile supports a subject-specific one-time study plan', () => {
   const parsed = parseStudyPlannerRequest(
-    'I am preparing for CA Final. Make a three-hour Audit revision plan.',
+    'I am preparing for CA Final. Make a 3-hour Audit revision plan.',
   );
   assert.equal(parsed.intent, 'create_study_plan');
   assert.equal(parsed.course, 'CA_FINAL');
