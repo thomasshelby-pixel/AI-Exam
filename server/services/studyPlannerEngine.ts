@@ -363,7 +363,7 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
   if (priorityAction) {
     result.intent = 'prioritize_chapters';
     result.performance_data = detectPerformanceData(raw, result.subjects);
-    if (!course || !STUDY_PLANNER_SUBJECTS[course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE']) result.missing_info.push('CA course');
+    if (!course || !STUDY_PLANNER_SUBJECTS[course]) result.missing_info.push('CA course');
     if (!result.subjects.length) result.missing_info.push('subject');
     if (!result.performance_data.length && !result.focus_text) result.missing_info.push('mock score or self-assessed weak chapters');
     result.should_call_planner = result.missing_info.length === 0;
@@ -372,7 +372,7 @@ export function parseStudyPlannerRequest(message: string, selectedCourse?: unkno
   }
 
   if (revisionAction || /\bplan\b/i.test(raw)) {
-    if (!course || !STUDY_PLANNER_SUBJECTS[course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE']) {
+    if (!course || !STUDY_PLANNER_SUBJECTS[course]) {
       result.missing_info = ['CA course', 'subject or study goal'];
       return result;
     }
