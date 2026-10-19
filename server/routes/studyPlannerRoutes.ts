@@ -14,6 +14,7 @@ import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
 import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
+import { resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -617,8 +618,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     // Explain unsupported course abbreviations instead of implying the student never
     // supplied a subject. “SM” belongs to the CA Intermediate FM-SM context, not CA Final.
-    const shortTopic = normalizedMessage.trim();
-    if (course === 'CA_FINAL' && /^(?:sm|strategic management|fm\s*[-&/]\s*sm)$/i.test(shortTopic)) {
+    const topicClarification = resolveBareTopicClarification(course, normalizedMessage);
+    if (topicClarification === 'FINAL_SM_MISMATCH') {
       parsedProbe.intent = 'clarify';
       parsedProbe.subjects = [];
       parsedProbe.missing_info = ['confirm your CA course or choose a CA Final subject'];
@@ -632,7 +633,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         metadata: { version: 'planner-course-topic-clarity-v1', modelUsed: false, persistentStorage: false },
       });
     }
-    if (course === 'CA_INTERMEDIATE' && /^(?:sm|strategic management|fm\s*[-&/]\s*sm)$/i.test(shortTopic)) {
+    if (topicClarification === 'INTERMEDIATE_SM') {
       parsedProbe.intent = 'general_guidance';
       parsedProbe.subjects = ['Financial Management and Strategic Management'];
       parsedProbe.missing_info = [];
@@ -678,9 +679,12 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const assessmentTarget = course === 'CA_INTERMEDIATE'
       ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
       : null;
-    const assessmentRequest = !priorScopeQuestion
-      && Boolean(assessmentTarget)
-      && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
+    const assessmentRequest = shouldPrioritizeChapterAssessment({
+      course,
+      hasTarget: Boolean(assessmentTarget),
+      conversationText,
+      priorScopeQuestion,
+    });
 
     const requestForPlan = explicitPlan || parsedProbe.intent === 'create_study_plan'
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
