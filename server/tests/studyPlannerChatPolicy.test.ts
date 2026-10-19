@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 
 test('explains when SM shorthand conflicts with a CA Final planner profile', () => {
   assert.equal(resolveBareTopicClarification('CA_FINAL', 'sm'), 'FINAL_SM_MISMATCH');
@@ -44,4 +44,11 @@ test('chapter assessment remains limited to Intermediate and needs a matching to
     conversationText: 'study plan',
     priorScopeQuestion: false,
   }), false);
+});
+
+
+test('returns the fixed coming-soon response for CA Final only', () => {
+  assert.match(getCourseUnderDevelopmentReply('CA_FINAL') || '', /Coming soon for CA Final — under development/);
+  assert.equal(getCourseUnderDevelopmentReply('CA_FOUNDATION'), null);
+  assert.equal(getCourseUnderDevelopmentReply('CA_INTERMEDIATE'), null);
 });
