@@ -34,7 +34,10 @@ function isOneDayPlanChoice(text: string): boolean {
   return /\b(one[- ]day|single day|just one day|only today|today only|tomorrow only|today|tomorrow|sirf ek din|bas ek din|aaj ke liye|kal ke liye)\b/i.test(text);
 }
 function isMultiDayPlanChoice(text: string): boolean {
-  return /\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|har din|roz|poore hafte|pure hafte)\b/i.test(text);
+  return /\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|exam roadmap|har din|roz|poore hafte|pure hafte|exam tak)\b/i.test(text);
+}
+function isExamRoadmapChoice(text: string): boolean {
+  return /\b(?:full exam roadmap|exam roadmap|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|weekly timetable until exam|exam tak roadmap|exam tak weekly)\b/i.test(text);
 }
 function isExplicitStudyPlanRequest(text: string): boolean {
   const value = text.trim();
@@ -631,7 +634,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // Normalize common Hinglish concatenation before both intent and chapter matching.
     const normalizedMessage = message.replace(/\bmain(?=gst\b)/i, 'main ');
     const conversationText = [normalizedMessage, ...history].join(' ');
-    const replyLanguage = detectStudyReplyLanguage(message);
+    const requestedReplyLanguage = body.reply_language;
+    const replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
+      ? requestedReplyLanguage
+      : detectStudyReplyLanguage(message);
     const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, history, course);
 
     // Explain unsupported course abbreviations instead of implying the student never
@@ -687,7 +693,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const explicitPlan = isExplicitStudyPlanRequest(message)
       || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
-    const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|sirf ek din|daily\/weekly/i.test(item));
+    const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|which plan would you like|one-day revision plan|exam roadmap.*weekly timetable|sirf ek din|daily\/weekly/i.test(item));
     const oneDayChoice = isOneDayPlanChoice(message);
     const multiDayChoice = isMultiDayPlanChoice(message);
 
@@ -708,23 +714,24 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
 
     // Ask about the scope only if the student did not already specify one day or several days.
-    if (requestForPlan && !assessmentRequest && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
+    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
       return res.json({
         success: true, status: 'choose_plan_scope',
         message: replyLanguage === 'hindi'
-          ? 'तुम्हें किस तरह का plan चाहिए—सिर्फ एक दिन के लिए या अगले 7 दिनों का day-wise plan?'
+          ? 'आपको कौन-सा plan चाहिए—सिर्फ एक दिन का revision plan या exam तक का roadmap और weekly timetable?'
           : replyLanguage === 'hinglish'
-            ? 'Bhai, kis type ka plan banaun—sirf ek din ke liye, ya agle 7 din ka day-wise plan?'
-            : 'Which plan would you like: one day only, or a day-wise plan for the next 7 days?',
+            ? 'Kis type ka plan chahiye—sirf ek din ka revision plan ya exam tak roadmap aur weekly timetable?'
+            : 'Which plan would you like: a one-day revision plan, or a full exam roadmap with a rolling weekly timetable until your exam?',
         parsed: { ...parsedProbe, intent: 'clarify', missing_info: [], should_call_planner: false },
         plan: null,
         follow_up_options: buildPlanScopeOptions(replyLanguage),
-        metadata: { version: 'planner-scope-clarification-v1', modelUsed: false, persistentStorage: false },
+        reply_language: replyLanguage,
+        metadata: { version: 'planner-scope-clarification-v2', modelUsed: false, persistentStorage: false },
       });
     }
 
     // A multi-day selection generates an actual dated schedule, rather than just describing one.
-    if (multiDayChoice && (priorScopeQuestion || requestForPlan) && !assessmentRequest) {
+    if (multiDayChoice && (priorScopeQuestion || requestForPlan) && !assessmentRequest && !assessmentTarget) {
       const userTurns = history.filter((item) => /^Student:\s*/i.test(item)).map((item) => item.replace(/^Student:\s*/i, ''));
       userTurns.push(message);
       const parsed = parseStudyPlannerConversationRequest(userTurns.join('. '), [], course);
@@ -786,7 +793,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Detailed chapter assessments remain an Intermediate-specific workflow.
-    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
+    if (assessmentTarget && !Array.isArray(body.chapter_ratings) && (assessmentRequest || priorScopeQuestion)) {
       return res.json({
         success: true,
         status: 'needs_chapter_assessment',
@@ -794,7 +801,9 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed: { intent: 'clarify', course, subjects: [assessmentTarget.label], duration_minutes: null, focus_text: assessmentTarget.label + ' chapter-wise revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [assessmentTarget.label + ' chapter strengths', 'available study time'], should_call_planner: false },
         plan: null,
         chapter_assessment: { subject: assessmentTarget.label, storage_subject: assessmentTarget.storageSubject, chapters: assessmentTarget.chapters },
-        metadata: { version: 'planner-chapter-assessment-v2', modelUsed: false, persistentStorage: true },
+        plan_scope: body.plan_scope === 'one_day' || oneDayChoice ? 'one_day' : (body.plan_scope === 'exam_roadmap' || isExamRoadmapChoice(message) || multiDayChoice ? 'exam_roadmap' : 'one_day'),
+        reply_language: replyLanguage,
+        metadata: { version: 'planner-chapter-assessment-v3', modelUsed: false, persistentStorage: true },
       });
     }
 
