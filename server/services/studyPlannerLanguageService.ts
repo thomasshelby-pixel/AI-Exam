@@ -2,7 +2,7 @@ import type { ParsedStudyPlannerRequest } from './studyPlannerEngine.js';
 
 export type StudyReplyLanguage = 'english' | 'hinglish' | 'hindi';
 
-const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|hai|hain|hoon|hu|mujhe|mera|meri|mere|mein|main|kya|kyu|kyun|samjhao|samjha|padhai|padhu|padna|revision|ka|ki|ke|nahi|nahin|accha|acha|bta|btao|kri|kriya|kro|chahiye|kitna|kitne|ghante|marks|laane|lana)\b/i;
+const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|hai|hain|hoon|hu|mujhe|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|padhai|padhu|padna|nahi|nahin|accha|acha|bta|kri|kriya|kro|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye)\b/i;
 
 export function detectStudyReplyLanguage(text: string): StudyReplyLanguage {
   if (/[\u0900-\u097F]/.test(text)) return 'hindi';
@@ -63,4 +63,41 @@ export function buildGeneralStudyAnswer(
           ? `A strong exam-oriented explanation should cover the rule or definition, applicability, conditions, exceptions, a short example and a clear conclusion. Verify exact statutory wording for Law/Tax and show formula and workings for numerical subjects. Paste the exact question for a focused walkthrough.`
           : `I can help with CA study questions, concepts, revision methods, question practice and exam preparation. I’ll structure the explanation into steps, examples and exam-oriented points rather than ask for timetable details unless you request a plan.`;
   return { language, answer };
+}
+
+
+export function buildChapterAssessmentPrompt(language: StudyReplyLanguage, subject: string): string {
+  if (language === 'hindi') {
+    return subject + ' के लिए पहले सूचीबद्ध हर chapter की strength चुनें। मैं ratings का अनुमान नहीं लगाऊँगा। उपलब्ध revision time भी चुनें; फिर मैं chapter-wise plan बनाऊँगा।';
+  }
+  if (language === 'hinglish') {
+    return 'Bhai, ' + subject + ' ke liye pehle listed har chapter ki strength select kar. Main ratings guess nahi karunga. Available revision time bhi choose kar; phir chapter-wise plan bana dunga.';
+  }
+  return 'For ' + subject + ', select a strength rating for each listed chapter. I will not guess your ratings. Also choose your available revision time, and I will build a chapter-wise plan.';
+}
+
+export function buildChapterAssessmentReadyMessage(language: StudyReplyLanguage, subject: string): string {
+  if (language === 'hindi') {
+    return subject + ' का chapter-wise revision plan तैयार है। कमजोर chapters को अधिक समय दिया गया है और आपकी ratings planner profile में save हो गई हैं।';
+  }
+  if (language === 'hinglish') {
+    return 'Bhai, ' + subject + ' ka chapter-wise revision plan ready hai. Weak chapters ko zyada time diya hai, aur ratings tumhare planner profile mein save ho gayi hain.';
+  }
+  return 'Your ' + subject + ' chapter-wise revision plan is ready. Weak chapters have been allocated more time, and your ratings have been saved to your planner profile.';
+}
+
+export function buildIntermediateSMClarification(language: StudyReplyLanguage): string {
+  if (language === 'hindi') {
+    return 'SM / FM-SM समझ गया। आपको क्या चाहिए: (1) concept explanation, (2) effective revision strategy, या (3) study plan? Study plan के लिए अपना available time बताएं या planner settings में daily study hours चुनें।';
+  }
+  if (language === 'hinglish') {
+    return 'SM / FM-SM samajh gaya bhai. Kya chahiye: (1) concept explanation, (2) effective revision strategy, ya (3) study plan? Study plan ke liye time bata de, ya planner settings mein apne daily study hours use kar.';
+  }
+  return 'I understand you mean Strategic Management (SM) / FM-SM. What do you need: (1) a concept explanation, (2) an effective revision strategy, or (3) a study plan? For a study plan, share your available time or use your daily study-hours setting.';
+}
+
+export function buildPlanScopeOptions(language: StudyReplyLanguage): string[] {
+  if (language === 'hindi') return ['सिर्फ एक दिन का plan', 'अगले 7 दिनों का day-wise plan'];
+  if (language === 'hinglish') return ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)'];
+  return ['One-day plan only', 'Daily/weekly plan (next 7 days)'];
 }
