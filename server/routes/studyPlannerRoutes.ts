@@ -139,34 +139,34 @@ function resolveChapterAssessmentTarget(text: string): ChapterAssessmentTarget |
   const costing = INTERMEDIATE_CHAPTERS['Cost and Management Accounting'] || [];
   const audit = INTERMEDIATE_CHAPTERS['Auditing and Ethics'] || [];
 
-  if (/\\b(gst|goods and services tax)\\b/i.test(value)) {
+  if (/\b(gst|goods and services tax)\b/i.test(value)) {
     return { label: 'GST', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => chapter.startsWith('GST:')) };
   }
-  if (/\\b(income tax|direct tax|income-tax)\\b/i.test(value)) {
+  if (/\b(income tax|direct tax|income-tax)\b/i.test(value)) {
     return { label: 'Income Tax', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => !chapter.startsWith('GST:')).map((chapter) => 'Income Tax: ' + chapter) };
   }
-  if (/\\b(fm\\s*(?:and|&)\\s*sm|financial management and strategic management|fm and sm|both fm and sm)\\b/i.test(value)) {
+  if (/\b(fm\s*(?:and|&)\s*sm|financial management and strategic management|fm and sm|both fm and sm)\b/i.test(value)) {
     return { label: 'FM and SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs };
   }
-  if (/\\b(financial management|\\bfm\\b)\\b/i.test(value)) {
+  if (/\b(financial management|\bfm\b)\b/i.test(value)) {
     return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9).map((chapter) => 'FM: ' + chapter) };
   }
-  if (/\\b(strategic management|\\bsm\\b)\\b/i.test(value)) {
+  if (/\b(strategic management|\bsm\b)\b/i.test(value)) {
     return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9).map((chapter) => 'SM: ' + chapter) };
   }
-  if (/\\b(taxation|tax paper|income tax and gst|income tax & gst)\\b/i.test(value)) {
+  if (/\b(taxation|tax paper|income tax and gst|income tax & gst)\b/i.test(value)) {
     return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
   }
-  if (/\\b(advanced accounting|accounts|accounting)\\b/i.test(value)) {
+  if (/\b(advanced accounting|accounts|accounting)\b/i.test(value)) {
     return { label: 'Advanced Accounting', storageSubject: 'Advanced Accounting', chapters: accounting };
   }
-  if (/\\b(corporate and other laws|corporate law|company law|law|laws)\\b/i.test(value)) {
+  if (/\b(corporate and other laws|corporate law|company law|law|laws)\b/i.test(value)) {
     return { label: 'Corporate and Other Laws', storageSubject: 'Corporate and Other Laws', chapters: laws };
   }
-  if (/\\b(costing|cost and management accounting|cost accounting)\\b/i.test(value)) {
+  if (/\b(costing|cost and management accounting|cost accounting)\b/i.test(value)) {
     return { label: 'Cost and Management Accounting', storageSubject: 'Cost and Management Accounting', chapters: costing };
   }
-  if (/\\b(audit|auditing|ethics)\\b/i.test(value)) {
+  if (/\b(audit|auditing|ethics)\b/i.test(value)) {
     return { label: 'Auditing and Ethics', storageSubject: 'Auditing and Ethics', chapters: audit };
   }
   return null;
@@ -690,7 +690,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         subject: assessmentTarget.label,
         label: item.strength === 'WEAK' ? 'Concept revision + extra practice' : item.strength === 'MODERATE' ? 'Revision + question practice' : 'Quick recall + self-test',
         minutes: allocations[index],
-        instruction: item.chapter.replace(/^(GST|Income Tax|FM|SM):\\s*/i, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions/formulas, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions/formulas and solve a short timed set.'),
+        instruction: item.chapter.replace(/^(GST|Income Tax|FM|SM):\s*/i, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions/formulas, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions/formulas and solve a short timed set.'),
         chapter: item.chapter,
         strength: item.strength,
       }));
