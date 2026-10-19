@@ -439,7 +439,7 @@ router.get('/profile', authenticateToken, (req: AuthRequest, res: Response) => {
     return res.status(403).json({ success: false, error: 'Student account required.' });
   }
   const course = String(req.query.course || 'CA_INTERMEDIATE').toUpperCase();
-  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE'].includes(course)) {
+  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL'].includes(course)) {
     return res.status(400).json({ success: false, error: 'Unsupported CA course.' });
   }
   const strengths = db.prepare(
@@ -505,7 +505,7 @@ router.post('/plans', authenticateToken, (req: AuthRequest, res: Response) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const course = String(body.course || '').toUpperCase();
   const plan = body.plan;
-  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE'].includes(course) || !plan || typeof plan !== 'object' || !Array.isArray(plan.sessions) || plan.sessions.length < 1 || plan.sessions.length > 100) {
+  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL'].includes(course) || !plan || typeof plan !== 'object' || !Array.isArray(plan.sessions) || plan.sessions.length < 1 || plan.sessions.length > 100) {
     return res.status(400).json({ success: false, error: 'Provide a valid study-plan draft.' });
   }
   const total = Number(plan.total_minutes);
@@ -532,7 +532,7 @@ router.post('/progress', authenticateToken, (req: AuthRequest, res: Response) =>
   const duration = Number(body.duration_minutes);
   const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 1000) : null;
   const studiedOn = typeof body.studied_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.studied_on) ? body.studied_on : new Date().toISOString().slice(0, 10);
-  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE'].includes(course) || !subject || subject.length > 160 || !activity || activity.length > 120 || !Number.isInteger(duration) || duration < 1 || duration > 1440) {
+  if (!['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL'].includes(course) || !subject || subject.length > 160 || !activity || activity.length > 120 || !Number.isInteger(duration) || duration < 1 || duration > 1440) {
     return res.status(400).json({ success: false, error: 'Provide valid study progress details.' });
   }
   const planId = typeof body.plan_id === 'string' ? body.plan_id : null;
@@ -607,13 +607,122 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
 
-    // Any supported CA Intermediate subject can request an explicit chapter assessment.
-    // A focused request (GST, Income Tax, FM or SM) uses only that component; a combined
-    // subject request uses the full combined chapter registry.
-    const conversationText = [message, ...history].join(' ');
-    const assessmentTarget = resolveChapterAssessmentTarget(message, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS);
+    // Normalize common Hinglish concatenation before both intent and chapter matching.
+    const normalizedMessage = message.replace(/\bmain(?=gst\b)/i, 'main ');
+    const conversationText = [normalizedMessage, ...history].join(' ');
+    const replyLanguage = detectStudyReplyLanguage(message);
+    const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, history, course);
+
+    // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
+    const guidanceQuestion = isGeneralStudyQuestion(message) && !isExplicitStudyPlanRequest(message)
+      && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
+    if (guidanceQuestion) {
+      const parsed = parsedProbe;
+      parsed.intent = 'general_guidance';
+      parsed.missing_info = [];
+      parsed.should_call_planner = false;
+      if (/\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
+        parsed.subjects = [course === 'CA_FINAL' ? 'Indirect Tax Laws (GST and Customs)' : 'GST'];
+      }
+      const guidance = buildGeneralStudyAnswer(message, parsed);
+      return res.json({
+        success: true, status: 'general_guidance_answered', message: guidance.answer, parsed, plan: null,
+        metadata: { version: 'study-chat-guidance-v2', modelUsed: false, persistentStorage: false },
+      });
+    }
+
+    const explicitPlan = isExplicitStudyPlanRequest(message)
+      || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
+    const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|sirf ek din|daily\/weekly/i.test(item));
+    const oneDayChoice = isOneDayPlanChoice(message);
+    const multiDayChoice = isMultiDayPlanChoice(message);
+    const requestForPlan = explicitPlan || parsedProbe.intent === 'create_study_plan'
+      || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
+
+    // Ask about the scope only if the student did not already specify one day or several days.
+    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
+      return res.json({
+        success: true, status: 'choose_plan_scope',
+        message: replyLanguage === 'hindi'
+          ? 'तुम्हें किस तरह का plan चाहिए—सिर्फ एक दिन के लिए या अगले 7 दिनों का day-wise plan?'
+          : replyLanguage === 'hinglish'
+            ? 'Bhai, kis type ka plan banaun—sirf ek din ke liye, ya agle 7 din ka day-wise plan?'
+            : 'Which plan would you like: one day only, or a day-wise plan for the next 7 days?',
+        parsed: { ...parsedProbe, intent: 'clarify', missing_info: [], should_call_planner: false },
+        plan: null,
+        follow_up_options: ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)'],
+        metadata: { version: 'planner-scope-clarification-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
+    // A multi-day selection generates an actual dated schedule, rather than just describing one.
+    if (multiDayChoice && (priorScopeQuestion || requestForPlan)) {
+      const userTurns = history.filter((item) => /^Student:\s*/i.test(item)).map((item) => item.replace(/^Student:\s*/i, ''));
+      userTurns.push(message);
+      const parsed = parseStudyPlannerConversationRequest(userTurns.join('. '), [], course);
+      if (!parsed.subjects.length) {
+        parsed.intent = 'clarify'; parsed.missing_info = ['subject or study goal']; parsed.should_call_planner = false;
+        return res.json({
+          success: true, status: 'needs_clarification',
+          message: replyLanguage === 'hinglish' ? 'Bhai, kis subject ya topic ka day-wise plan banaun?' : 'Which subject or topic should I build the day-wise plan for?',
+          parsed, plan: null, metadata: { version: 'planner-scope-clarification-v1', modelUsed: false, persistentStorage: false },
+        });
+      }
+      const settings = body.planner_settings && typeof body.planner_settings === 'object' ? body.planner_settings as Record<string, unknown> : {};
+      const startDate = typeof settings.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(settings.start_date)
+        ? settings.start_date : new Date().toISOString().slice(0, 10);
+      const configuredHours = Number(settings.daily_study_hours || (Number(body.default_duration_minutes) || 240) / 60);
+      const studyStart = typeof settings.study_start_time === 'string' ? settings.study_start_time : '06:00';
+      const preferredEnd = typeof settings.preferred_end_time === 'string' ? settings.preferred_end_time : '22:00';
+      const attempt = typeof settings.attempt === 'string' ? settings.attempt : 'May 2027';
+      const exactExamDate = typeof settings.exact_exam_date === 'string' && settings.exact_exam_date ? settings.exact_exam_date : null;
+      const savedChapters = db.prepare(
+        'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
+      ).all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string }>;
+      const priorities: Array<{ subject: string; chapter: string; strength: string; priority_score: number }> = savedChapters.map((item) => ({
+        ...item, priority_score: item.strength === 'WEAK' ? 100 : item.strength === 'MODERATE' ? 55 : 15,
+      }));
+      if (!priorities.length) {
+        for (const subject of parsed.subjects) priorities.push({ subject, chapter: 'General revision', strength: 'MODERATE', priority_score: 55 });
+      }
+      try {
+        const schedule = createMultiDayStudyPlan({
+          start_date: startDate, daily_study_hours: configuredHours, study_start_time: studyStart,
+          preferred_end_time: preferredEnd, attempt, exact_exam_date: exactExamDate,
+          class_mode: settings.class_mode === 'fixed' || settings.class_mode === 'flexible' ? settings.class_mode : 'none',
+          class_blocks: Array.isArray(settings.class_blocks) ? settings.class_blocks as Array<{ day_of_week: number; start_time: string; end_time: string; label?: string }> : [],
+          priorities,
+        });
+        const sessions = schedule.sessions.map((session, index) => ({
+          order: index + 1, subject: session.subject, chapter: session.chapter, label: session.label,
+          minutes: session.minutes, instruction: session.instruction, date: session.date,
+          start_time: session.start_time, end_time: session.end_time,
+        }));
+        const plan = {
+          title: '7-day study plan · ' + schedule.attempt,
+          total_minutes: sessions.reduce((sum, session) => sum + session.minutes, 0),
+          subjects: Array.from(new Set(sessions.map((session) => session.subject))),
+          sessions, saved: false as const,
+          note: 'Draft for ' + schedule.start_date + ' to ' + schedule.end_date + '. Not saved yet; review it and choose Save plan.',
+        };
+        parsed.intent = 'create_study_plan'; parsed.duration_minutes = plan.total_minutes;
+        parsed.schedule_mode = 'weekly_recurring'; parsed.missing_info = []; parsed.should_call_planner = true;
+        return res.json({
+          success: true, status: 'plan_draft_ready',
+          message: replyLanguage === 'hinglish' ? 'Bhai, agle 7 din ka day-wise plan ready hai. Har session ki date/time di hai; review karke Save plan kar sakta hai.' : 'Your day-wise study plan for the next 7 days is ready. Review the session dates and times, then save it.',
+          parsed, plan, metadata: { version: 'planner-chat-weekly-v1', modelUsed: false, persistentStorage: true },
+        });
+      } catch (error) {
+        return res.status(400).json({ success: false, status: 'plan_generation_failed', error: error instanceof Error ? error.message : 'Could not create weekly plan.' });
+      }
+    }
+
+    // Detailed chapter assessments remain an Intermediate-specific workflow.
+    const assessmentTarget = course === 'CA_INTERMEDIATE'
+      ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
+      : null;
     const assessmentRequest = Boolean(assessmentTarget)
-      && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
+      && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
 
     if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
       return res.json({
@@ -730,23 +839,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed: { intent: 'general_guidance', course: course || null, subjects, duration_minutes: totalMinutes, focus_text: 'Explain the duration of the previous study-plan draft.', date_text: null, schedule_mode: 'follow_up', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: false },
         plan: null,
         metadata: { version: 'planner-followup-context-v1', modelUsed: false, persistentStorage: false },
-      });
-    }
-
-    const replyLanguage = detectStudyReplyLanguage(message);
-    if (course === 'CA_FINAL') {
-      const parsed = parseStudyPlannerConversationRequest(message, history, 'CA_FINAL');
-      return res.status(200).json({
-        success: true,
-        status: 'unsupported_course',
-        message: replyLanguage === 'hindi'
-          ? 'CA Final AI Planner jald aa raha hai. Filhaal AI Planner CA Foundation aur CA Intermediate students ke liye available hai.'
-          : replyLanguage === 'hinglish'
-            ? 'Bhai, CA Final AI Planner coming soon hai. Abhi AI Planner CA Foundation aur CA Intermediate students ke liye available hai.'
-            : 'The CA Final AI Planner is coming soon. The current planner is available for CA Foundation and CA Intermediate students.',
-        parsed,
-        plan: null,
-        metadata: { version: 'planner-profile-course-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
