@@ -337,7 +337,8 @@ export const StudyPlannerPage: React.FC = () => {
         body: JSON.stringify({
           message: text,
           course: 'CA_INTERMEDIATE',
-          conversation_history: messages.filter((item) => item.role === 'user').slice(-6).map((item) => item.text),
+          conversation_history: messages.slice(-12).map((item) => (item.role === 'user' ? 'Student: ' : 'Planner: ') + item.text).slice(-6),
+          previous_plan: [...messages].reverse().find((item) => item.role === 'assistant' && item.result?.plan)?.result?.plan || null,
           default_duration_minutes: Math.round((Number(dailyMinutes) || 4) * 60),
         }),
       });
