@@ -751,6 +751,29 @@ export const StudyPlannerPage: React.FC = () => {
                         </ul>
                       </div>
                     )}
+                    {message.result.chapter_assessment && (
+                      <div className="w-full rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950">
+                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">GST chapter strength assessment</h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Har chapter ke liye apni strength select karo. Weak chapters ko plan mein zyada time milega. Koi rating pre-selected nahi hai.</p>
+                        <div className="mt-3 space-y-2">
+                          {message.result.chapter_assessment.chapters.map((chapter) => (
+                            <div key={chapter} className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^GST:\\s*/, '')}</span>
+                              <div className="grid grid-cols-3 gap-1.5 sm:w-[240px]">
+                                {(['WEAK', 'MODERATE', 'STRONG'] as const).map((strength) => (
+                                  <button key={strength} type="button" aria-pressed={chatChapterRatings[chapter] === strength} onClick={() => setChatChapterRatings((current) => ({ ...current, [chapter]: strength }))} className={'rounded-lg border px-2 py-2 text-[11px] font-bold transition ' + (chatChapterRatings[chapter] === strength ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300')}>{strength.charAt(0) + strength.slice(1).toLowerCase()}</button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">Available revision time (minutes)
+                          <input type="number" min="30" max="720" step="15" value={chatAssessmentMinutes} onChange={(event) => setChatAssessmentMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                          <span className="mt-1 block font-normal text-slate-500">Example: 180 minutes = 3 hours. Use 15-minute increments.</span>
+                        </label>
+                        <button type="button" disabled={loading || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter]) || !Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0} onClick={() => void sendRequest('GST detailed revision', { chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })), available_minutes: Number(chatAssessmentMinutes) })} className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">Build my GST revision plan</button>
+                      </div>
+                    )}
                     {message.result.plan && (
                       <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-white dark:border-indigo-900 dark:bg-slate-950">
                         <div className="flex items-center gap-3 bg-indigo-50 px-4 py-3 dark:bg-indigo-950/50">
@@ -778,6 +801,7 @@ export const StudyPlannerPage: React.FC = () => {
                         </ol>
                         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
                           <p className="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{message.result.plan.note}</p>
+                          <button type="button" disabled={pdfBusyId === message.id} onClick={() => void downloadPlanPdf(message.result!.plan!, message.id)} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-indigo-300 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50 dark:border-indigo-700 dark:text-indigo-300"><BookOpen className="h-4 w-4" />{pdfBusyId === message.id ? 'Creating PDF…' : 'Download PDF'}</button>
                           <button type="button" disabled={savingPlanId === message.id || savedPlanIds.includes(message.id)} onClick={async () => {
                             setSavingPlanId(message.id); setError('');
                             try {
