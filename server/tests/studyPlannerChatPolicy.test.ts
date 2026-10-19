@@ -31,13 +31,19 @@ test('a reply to an already displayed plan-scope prompt is not treated as a fres
   }), false);
 });
 
-test('chapter assessment remains limited to Intermediate and needs a matching topic', () => {
+test('chapter assessment supports Foundation and Intermediate, but needs a matching topic', () => {
   assert.equal(shouldPrioritizeChapterAssessment({
     course: 'CA_FINAL',
     hasTarget: true,
     conversationText: 'GST detailed revision',
     priorScopeQuestion: false,
   }), false);
+  assert.equal(shouldPrioritizeChapterAssessment({
+    course: 'CA_FOUNDATION',
+    hasTarget: true,
+    conversationText: 'Accounting detailed revision',
+    priorScopeQuestion: false,
+  }), true);
   assert.equal(shouldPrioritizeChapterAssessment({
     course: 'CA_INTERMEDIATE',
     hasTarget: false,
