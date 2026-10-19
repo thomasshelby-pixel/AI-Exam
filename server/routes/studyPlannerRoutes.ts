@@ -36,8 +36,11 @@ function isMultiDayPlanChoice(text: string): boolean {
   return /\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|har din|roz|poore hafte|pure hafte)\b/i.test(text);
 }
 function isExplicitStudyPlanRequest(text: string): boolean {
-  return /\b(plan|planner|timetable|schedule|routine|day[- ]wise|daywise|detailed revision|revision plan|study plan|daily plan|weekly plan)\b/i.test(text)
-    || /\b(?:make|create|build|generate|banao|bana do|bana de|bna do|bna de)\b.{0,55}\b(?:revision|study|schedule|day|routine)\b/i.test(text);
+  const value = text.trim();
+  return /^(?:please\s+)?(?:make|create|build|generate|prepare|draft|plan|schedule|set up|banao|bana do|bana de|bna do|bna de)\b/i.test(value)
+    || /\b(?:i need|i want|give me|can you make|please make|mujhe|mere liye)\b.{0,80}\b(?:plan|planner|timetable|schedule|routine)\b/i.test(value)
+    || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(value)
+    || /\b(?:daily|weekly|day[- ]wise|daywise)\s+(?:study\s+)?(?:plan|timetable|schedule|routine)\b/i.test(value);
 }
 
 // Chapter labels are maintained against the current shared CA Intermediate subject registry.
