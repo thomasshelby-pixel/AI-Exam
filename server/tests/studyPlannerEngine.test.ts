@@ -143,16 +143,15 @@ test('Missing course and subject never call the planner', () => {
   assert.equal(parsed.should_call_planner, false);
 });
 
-test('CA Final profile supports a subject-specific one-time study plan', () => {
+test('CA Final is deliberately outside the supported planner scope', () => {
   const parsed = parseStudyPlannerRequest(
     'I am preparing for CA Final. Make a 3-hour Audit revision plan.',
   );
-  assert.equal(parsed.intent, 'create_study_plan');
-  assert.equal(parsed.course, 'CA_FINAL');
-  assert.deepEqual(parsed.subjects, ['Advanced Auditing, Assurance and Professional Ethics']);
-  assert.equal(parsed.duration_minutes, 180);
-  assert.equal(parsed.should_call_planner, true);
-  assert.equal(createStudyPlanDraft(parsed)?.total_minutes, 180);
+  assert.equal(parsed.intent, 'clarify');
+  assert.equal(parsed.course, null);
+  assert.deepEqual(parsed.subjects, []);
+  assert.equal(parsed.should_call_planner, false);
+  assert.equal(createStudyPlanDraft(parsed), null);
 });
 
 test('General advice request does not create a timetable', () => {
