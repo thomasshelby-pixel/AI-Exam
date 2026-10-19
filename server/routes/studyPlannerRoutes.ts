@@ -20,6 +20,26 @@ const MAX_MESSAGE_LENGTH = 1200;
 
 const ALLOWED_STRENGTHS = new Set(['STRONG', 'MODERATE', 'WEAK']);
 
+function getStudentPlannerCourse(userId: string): 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL' | null {
+  const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(userId) as { ca_level?: string } | undefined;
+  const level = String(profile?.ca_level || '').trim().toUpperCase().replace(/^CA[ _-]*/, '').replace(/[ -]+/g, '_');
+  if (level === 'FOUNDATION' || level === 'FOUND') return 'CA_FOUNDATION';
+  if (level === 'INTERMEDIATE' || level === 'INTER') return 'CA_INTERMEDIATE';
+  if (level === 'FINAL') return 'CA_FINAL';
+  return null;
+}
+
+function isOneDayPlanChoice(text: string): boolean {
+  return /\\b(one[- ]day|single day|just one day|only today|today only|tomorrow only|today|tomorrow|sirf ek din|bas ek din|aaj ke liye|kal ke liye)\\b/i.test(text);
+}
+function isMultiDayPlanChoice(text: string): boolean {
+  return /\\b(daily|weekly|day[- ]wise|daywise|next 7 days|next seven days|multi[- ]day|every day|each day|till (?:the )?exam|until (?:the )?exam|through (?:the )?exam|har din|roz|poore hafte|pure hafte)\\b/i.test(text);
+}
+function isExplicitStudyPlanRequest(text: string): boolean {
+  return /\\b(plan|planner|timetable|schedule|routine|day[- ]wise|daywise|detailed revision|revision plan|study plan|daily plan|weekly plan)\\b/i.test(text)
+    || /\\b(?:make|create|build|generate|banao|bana do|bana de|bna do|bna de)\\b.{0,55}\\b(?:revision|study|schedule|day|routine)\\b/i.test(text);
+}
+
 
 // Chapter labels are maintained against the current shared CA Intermediate subject registry.
  // More granular chapter names are used where the shared registry currently stores only broad areas.
@@ -536,6 +556,14 @@ router.patch('/plans/:planId/complete', authenticateToken, (req: AuthRequest, re
   return res.json({ success: true, status: 'COMPLETED' });
 });
 
+router.get('/course', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') return res.status(403).json({ success: false, error: 'Student account required.' });
+  const course = getStudentPlannerCourse(req.user.id);
+  if (!course) return res.status(400).json({ success: false, error: 'Your CA course is missing from your student profile. Please update your profile.' });
+  const labels = { CA_FOUNDATION: 'CA Foundation', CA_INTERMEDIATE: 'CA Intermediate', CA_FINAL: 'CA Final' };
+  return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: course === 'CA_INTERMEDIATE' });
+});
+
 router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
@@ -565,15 +593,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // Course is authoritative from the authenticated student's saved profile.
     // Never trust a client-supplied course: this prevents students being routed to
     // a planner that is not available for their registered CA level.
-    const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user.id) as { ca_level?: string } | undefined;
-    const profileLevel = String(profile?.ca_level || '').trim().toUpperCase().replace(/^CA_/, '');
-    const course = profileLevel === 'FOUNDATION'
-      ? 'CA_FOUNDATION'
-      : profileLevel === 'INTERMEDIATE' || profileLevel === 'INTER'
-        ? 'CA_INTERMEDIATE'
-        : profileLevel === 'FINAL'
-          ? 'CA_FINAL'
-          : '';
+    const course = getStudentPlannerCourse(req.user.id) || '';
 
     if (!course) {
       return res.status(400).json({
