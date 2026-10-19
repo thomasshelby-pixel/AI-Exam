@@ -1,7 +1,6 @@
 import { Router, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import {
   applyDefaultStudyDuration,
@@ -174,30 +173,6 @@ function resolveCourseAssessmentTarget(text: string, course: PlannerCourse | 'CA
   return { label: match.name, storageSubject: match.name, chapters: match.chapters };
 }
 
-function getIntermediateChapterOptions() {
-  return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
-    key: subject.key,
-    name: subject.name,
-    paperNumber: subject.paperNumber,
-    group: subject.group || null,
-    chapters: INTERMEDIATE_CHAPTERS[subject.name]
-      || [...(subject.keyProvisions || []), ...(subject.accountingStandards || [])],
-  }));
-}
-
-
-const PRIORITY_SUBJECT_ALIASES: Record<string, string[]> = {
-  'Taxation': ['Taxation (Income Tax & GST)', 'Taxation'],
-  'Costing': ['Cost and Management Accounting', 'Costing'],
-  'Cost and Management Accounting': ['Cost and Management Accounting', 'Costing'],
-  'Law': ['Corporate and Other Laws', 'Law'],
-  'Corporate and Other Laws': ['Corporate and Other Laws', 'Law'],
-  'Audit': ['Auditing and Ethics', 'Audit'],
-  'Auditing and Ethics': ['Auditing and Ethics', 'Audit'],
-  'Advanced Accounting': ['Advanced Accounting'],
-  'Financial Management and Strategic Management': ['Financial Management and Strategic Management', 'FM and SM'],
-};
-
 function getCanonicalStrengthSubject(subject: string, course: PlannerCourse): string[] {
   return getPlannerSubjectAliases(subject, course);
 }
@@ -339,7 +314,7 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
   const priorities = strengths.map((item) => {
     const aliases = getCanonicalStrengthSubject(item.subject);
-    const matchingSubject = CA_CURRICULUM.INTERMEDIATE.subjects.find((subject) => aliases.includes(subject.name));
+    const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
     const mock = [...latestBySubject.values()].find((result) =>
       canonicalNames.has(result.subject) || getCanonicalStrengthSubject(result.subject).some((alias) => canonicalNames.has(alias))
