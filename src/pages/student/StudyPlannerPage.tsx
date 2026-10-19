@@ -372,11 +372,11 @@ export const StudyPlannerPage: React.FC = () => {
       const margin = 44;
       let page = pdf.addPage([pageWidth, pageHeight]);
       let y = pageHeight - margin;
-      const safe = (value: unknown) => String(value ?? '').replace(/[^\\x20-\\x7E]/g, '-');
+      const safe = (value: unknown) => String(value ?? '').replace(/[^\x20-\x7E]/g, '-');
       const drawLine = (value: string, size = 10, isBold = false, indent = 0) => {
         const activeFont = isBold ? bold : font;
         const maxWidth = pageWidth - margin * 2 - indent;
-        const words = safe(value).split(/\\s+/);
+        const words = safe(value).split(/\s+/);
         let line = '';
         const lines: string[] = [];
         for (const word of words) {
@@ -758,7 +758,7 @@ export const StudyPlannerPage: React.FC = () => {
                         <div className="mt-3 space-y-2">
                           {message.result.chapter_assessment.chapters.map((chapter) => (
                             <div key={chapter} className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^GST:\\s*/, '')}</span>
+                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^GST:\s*/, '')}</span>
                               <div className="grid grid-cols-3 gap-1.5 sm:w-[240px]">
                                 {(['WEAK', 'MODERATE', 'STRONG'] as const).map((strength) => (
                                   <button key={strength} type="button" aria-pressed={chatChapterRatings[chapter] === strength} onClick={() => setChatChapterRatings((current) => ({ ...current, [chapter]: strength }))} className={'rounded-lg border px-2 py-2 text-[11px] font-bold transition ' + (chatChapterRatings[chapter] === strength ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300')}>{strength.charAt(0) + strength.slice(1).toLowerCase()}</button>
