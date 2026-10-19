@@ -723,7 +723,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const assessmentTarget = course === 'CA_INTERMEDIATE'
       ? (resolveChapterAssessmentTarget(normalizedMessage, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS))
       : null;
-    const assessmentRequest = Boolean(assessmentTarget)
+    const assessmentRequest = !oneDayChoice && !multiDayChoice && !priorScopeQuestion
+      && Boolean(assessmentTarget)
       && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
 
     if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
