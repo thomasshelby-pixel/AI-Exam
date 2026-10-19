@@ -702,6 +702,7 @@ export const StudyPlannerPage: React.FC = () => {
                 </div>
               </section>
         
+      )}
       </>
       ) : (
         <div className="mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100">
