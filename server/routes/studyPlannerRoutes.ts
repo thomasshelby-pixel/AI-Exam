@@ -13,6 +13,7 @@ import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedul
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
 import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -585,6 +586,94 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const history = Array.isArray(body.conversation_history)
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
+
+    // Any supported CA Intermediate subject can request an explicit chapter assessment.
+    // A focused request (GST, Income Tax, FM or SM) uses only that component; a combined
+    // subject request uses the full combined chapter registry.
+    const conversationText = [message, ...history].join(' ');
+    const assessmentTarget = resolveChapterAssessmentTarget(message, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS);
+    const assessmentRequest = Boolean(assessmentTarget)
+      && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
+
+    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
+      return res.json({
+        success: true,
+        status: 'needs_chapter_assessment',
+        message: 'Bhai, ' + assessmentTarget.label + ' ke liye pehle har listed chapter ki strength select kar. Main ratings guess nahi karunga. Available revision time bhi choose kar; phir chapter-wise plan bana dunga.',
+        parsed: { intent: 'clarify', course, subjects: [assessmentTarget.label], duration_minutes: null, focus_text: assessmentTarget.label + ' chapter-wise revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [assessmentTarget.label + ' chapter strengths', 'available study time'], should_call_planner: false },
+        plan: null,
+        chapter_assessment: { subject: assessmentTarget.label, storage_subject: assessmentTarget.storageSubject, chapters: assessmentTarget.chapters },
+        metadata: { version: 'planner-chapter-assessment-v2', modelUsed: false, persistentStorage: true },
+      });
+    }
+
+    if (assessmentRequest && assessmentTarget && Array.isArray(body.chapter_ratings)) {
+      const submitted = body.chapter_ratings as Array<{ chapter?: unknown; strength?: unknown }>;
+      const allowed = new Set(assessmentTarget.chapters);
+      const ratings = submitted.map((item) => ({
+        chapter: typeof item?.chapter === 'string' ? item.chapter : '',
+        strength: typeof item?.strength === 'string' ? item.strength.toUpperCase() : '',
+      }));
+      const minutes = Number(body.available_minutes);
+      if (String(body.chapter_assessment_subject || '') !== assessmentTarget.label
+        || ratings.length !== assessmentTarget.chapters.length
+        || ratings.some((item) => !allowed.has(item.chapter) || !ALLOWED_STRENGTHS.has(item.strength))
+        || new Set(ratings.map((item) => item.chapter)).size !== assessmentTarget.chapters.length
+        || !Number.isInteger(minutes) || minutes < 30 || minutes > 720 || minutes % 15 !== 0) {
+        return res.status(400).json({ success: false, error: 'Rate every ' + assessmentTarget.label + ' chapter as Weak, Moderate, or Strong and choose 30–720 minutes in 15-minute increments.' });
+      }
+
+      const saveStrength = db.prepare(`
+        INSERT INTO student_chapter_strengths (id, user_id, course, subject, chapter, strength, updated_at)
+        VALUES (?, ?, 'CA_INTERMEDIATE', ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, course, subject, chapter)
+        DO UPDATE SET strength = excluded.strength, updated_at = CURRENT_TIMESTAMP
+      `);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const item of ratings) saveStrength.run(randomUUID(), req.user!.id, assessmentTarget.storageSubject, item.chapter, item.strength);
+        db.exec('COMMIT');
+      } catch (persistError) {
+        db.exec('ROLLBACK');
+        throw persistError;
+      }
+
+      const weights = ratings.map((item) => item.strength === 'WEAK' ? 1.6 : item.strength === 'MODERATE' ? 1 : 0.6);
+      const allocations = ratings.map(() => 1);
+      let remaining = minutes - allocations.length;
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      const fractional = weights.map((weight, index) => ({ index, raw: remaining * weight / totalWeight }));
+      for (const item of fractional) allocations[item.index] += Math.floor(item.raw);
+      let leftover = minutes - allocations.reduce((sum, value) => sum + value, 0);
+      fractional.sort((a, b) => (b.raw - Math.floor(b.raw)) - (a.raw - Math.floor(a.raw)));
+      for (let i = 0; leftover > 0; i++, leftover--) allocations[fractional[i % fractional.length].index] += 1;
+
+      const sessions = ratings.map((item, index) => ({
+        order: index + 1,
+        subject: assessmentTarget.label,
+        label: item.strength === 'WEAK' ? 'Concept revision + extra practice' : item.strength === 'MODERATE' ? 'Revision + question practice' : 'Quick recall + self-test',
+        minutes: allocations[index],
+        instruction: item.chapter.replace(/^(GST|Income Tax|FM|SM):\s*/i, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions/formulas, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions/formulas and solve a short timed set.'),
+        chapter: item.chapter,
+        strength: item.strength,
+      }));
+      const plan = {
+        title: assessmentTarget.label + ' detailed revision plan',
+        total_minutes: minutes,
+        subjects: [assessmentTarget.label],
+        sessions,
+        saved: false as const,
+        note: 'Chapter strengths saved to your planner. Weak chapters receive more time; save this plan to track progress.',
+      };
+      return res.json({
+        success: true,
+        status: 'plan_draft_ready',
+        message: 'Bhai, ' + assessmentTarget.label + ' ka chapter-wise revision plan ready hai. Weak chapters ko zyada time diya hai, aur ratings tumhare planner profile mein save ho gayi hain.',
+        parsed: { intent: 'create_study_plan', course, subjects: [assessmentTarget.label], duration_minutes: minutes, focus_text: assessmentTarget.label + ' chapter-wise detailed revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
+        plan,
+        metadata: { version: 'planner-chapter-revision-v2', modelUsed: false, persistentStorage: true },
+      });
+    }
 
     // Resolve follow-ups about units/duration from the most recent structured draft.
     // The UI may send the prior draft even if a later assistant reply was only a clarification.
