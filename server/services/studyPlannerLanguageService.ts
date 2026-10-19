@@ -97,7 +97,7 @@ export function buildIntermediateSMClarification(language: StudyReplyLanguage): 
 }
 
 export function buildPlanScopeOptions(language: StudyReplyLanguage): string[] {
-  if (language === 'hindi') return ['सिर्फ एक दिन का plan', 'अगले 7 दिनों का day-wise plan'];
-  if (language === 'hinglish') return ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)'];
-  return ['One-day plan only', 'Daily/weekly plan (next 7 days)'];
+  if (language === 'hindi') return ['सिर्फ एक दिन का revision plan', 'Exam तक roadmap + weekly timetable'];
+  if (language === 'hinglish') return ['Sirf ek din ka revision plan', 'Exam tak roadmap + weekly timetable'];
+  return ['One-day revision plan', 'Full exam roadmap + weekly timetable until exam'];
 }

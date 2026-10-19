@@ -45,6 +45,10 @@ interface PlannerResponse {
   metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
   chapter_assessment?: { subject: string; storage_subject?: string; chapters: string[] };
   follow_up_options?: string[];
+  reply_language?: 'english' | 'hinglish' | 'hindi';
+  plan_scope?: 'one_day' | 'exam_roadmap';
+  roadmap?: Array<{ key: string; title: string; start_date: string; end_date: string; percentage: number; goals: string[] }>;
+  revision_rounds?: Array<{ key: string; title: string; start_date: string; end_date: string; days: number; focus: string; chapters: Array<{ subject: string; chapter: string; strength: string; priority_score: number }> }>;
 }
 interface ChatMessage {
   id: number;
@@ -359,7 +363,7 @@ export const StudyPlannerPage: React.FC = () => {
   };
   const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
-  const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number; chapter_assessment_subject?: string }) => {
+  const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number; chapter_assessment_subject?: string; plan_scope?: 'one_day' | 'exam_roadmap'; reply_language?: 'english' | 'hinglish' | 'hindi' }) => {
     const text = (rawText ?? request).trim();
     if (!text || loading) return;
     setError('');
@@ -375,7 +379,7 @@ export const StudyPlannerPage: React.FC = () => {
           conversation_history: messages.slice(-12).map((item) => (item.role === 'user' ? 'Student: ' : 'Planner: ') + item.text).slice(-6),
           previous_plan: [...messages].reverse().find((item) => item.role === 'assistant' && item.result?.plan)?.result?.plan || null,
           default_duration_minutes: Math.round((Number(dailyMinutes) || 4) * 60),
-          planner_settings: { daily_study_hours: Number(dailyMinutes) || 4, start_date: dailyDate, study_start_time: studyStartTime, preferred_end_time: preferredEndTime, attempt: examAttempt, exact_exam_date: exactExamDate || null, class_mode: classMode, class_blocks: classMode === 'fixed' ? classBlocks : [] },
+          planner_settings: { daily_study_hours: Number(dailyMinutes) || 4, start_date: dailyDate, study_start_time: studyStartTime, preferred_end_time: preferredEndTime, attempt: examAttempt, exact_exam_date: exactExamDate || null, syllabus_completion_percent: Number(roadmapCompletion) || 40, class_mode: classMode, class_blocks: classMode === 'fixed' ? classBlocks : [] },
           ...(extras || {}),
         }),
       });
@@ -794,7 +798,7 @@ export const StudyPlannerPage: React.FC = () => {
                     {message.result.chapter_assessment && (
                       <div className="w-full rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950">
                         <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.chapter_assessment.subject} chapter strength assessment</h3>
-                        <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Har chapter ke liye apni strength select karo. Weak chapters ko plan mein zyada time milega. Koi rating pre-selected nahi hai.</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">{message.result.reply_language === 'hindi' ? 'हर chapter की अपनी strength चुनें। Weak chapters को plan में अधिक समय मिलेगा। कोई rating पहले से select नहीं है।' : message.result.reply_language === 'hinglish' ? 'Har chapter ki apni strength select karo. Weak chapters ko plan mein zyada time milega. Koi rating pehle se selected nahi hai.' : 'Choose a strength for every chapter. Weak chapters will receive more time. No rating is preselected.'}</p>
                         <div className="mt-3 space-y-2">
                           {message.result.chapter_assessment.chapters.map((chapter) => (
                             <div key={chapter} className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
@@ -807,13 +811,46 @@ export const StudyPlannerPage: React.FC = () => {
                             </div>
                           ))}
                         </div>
-                        <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">Available revision time (minutes)
-                          <input type="number" min="30" max="720" step="15" value={chatAssessmentMinutes} onChange={(event) => setChatAssessmentMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
-                          <span className="mt-1 block font-normal text-slate-500">Example: 180 minutes = 3 hours. Use 15-minute increments.</span>
-                        </label>
-                        <button type="button" disabled={loading || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter]) || !Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0} onClick={() => void sendRequest(message.result!.chapter_assessment!.subject + ' detailed revision', { chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })), available_minutes: Number(chatAssessmentMinutes), chapter_assessment_subject: message.result!.chapter_assessment!.subject })} className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">Build my {message.result.chapter_assessment.subject} revision plan</button>
+                        {message.result.plan_scope === 'exam_roadmap' ? (
+                          <>
+                            <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'दैनिक study hours' : message.result.reply_language === 'hinglish' ? 'Daily study hours' : 'Daily study hours'}
+                              <input type="number" min="1" max="12" step="0.25" value={dailyMinutes} onChange={(event) => setDailyMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                              <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? 'दिन के कुल study hours चुनें।' : message.result.reply_language === 'hinglish' ? 'Roz kitne ghante padhoge, woh set karo.' : 'Choose the total study hours you can commit per day.'}</span>
+                            </label>
+                            <label className="mt-3 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'Exact exam date' : message.result.reply_language === 'hinglish' ? 'Exact exam date' : 'Exact exam date'}
+                              <input type="date" min={dailyDate} value={exactExamDate} onChange={(event) => setExactExamDate(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                              <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? 'Exam date start date से कम से कम 14 दिन बाद होनी चाहिए।' : message.result.reply_language === 'hinglish' ? 'Exam date plan start se kam se kam 14 din baad honi chahiye.' : 'The exact exam date must be at least 14 days after the plan start date.'}</span>
+                            </label>
+                          </>
+                        ) : (
+                          <label className="mt-4 block text-xs font-bold text-slate-700 dark:text-slate-200">{message.result.reply_language === 'hindi' ? 'एक दिन का revision time (minutes)' : message.result.reply_language === 'hinglish' ? 'Available revision time (minutes)' : 'Available revision time (minutes)'}
+                            <input type="number" min="30" max="720" step="15" value={chatAssessmentMinutes} onChange={(event) => setChatAssessmentMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
+                            <span className="mt-1 block font-normal text-slate-500">{message.result.reply_language === 'hindi' ? '30–720 मिनट, 15 मिनट के अंतर से।' : message.result.reply_language === 'hinglish' ? 'Example: 180 minutes = 3 hours. 15-minute increments use karo.' : 'Example: 180 minutes = 3 hours. Use 15-minute increments.'}</span>
+                          </label>
+                        )}
+                        <button type="button" disabled={loading
+                          || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter])
+                          || (message.result.plan_scope === 'exam_roadmap'
+                            ? (!exactExamDate || exactExamDate < dailyDate || (Date.parse(exactExamDate + 'T00:00:00.000Z') - Date.parse(dailyDate + 'T00:00:00.000Z')) / 86400000 < 13 || !Number.isFinite(Number(dailyMinutes)) || Number(dailyMinutes) < 1 || Number(dailyMinutes) > 12)
+                            : (!Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0))}
+                          onClick={() => void sendRequest(message.result!.chapter_assessment!.subject + ' detailed revision', {
+                            chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })),
+                            available_minutes: message.result!.plan_scope === 'exam_roadmap' ? Math.round((Number(dailyMinutes) || 4) * 60) : Number(chatAssessmentMinutes),
+                            chapter_assessment_subject: message.result!.chapter_assessment!.subject,
+                            plan_scope: message.result!.plan_scope || 'one_day',
+                            reply_language: message.result!.reply_language || 'english',
+                          })}
+                          className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">{message.result.plan_scope === 'exam_roadmap' ? (message.result.reply_language === 'hindi' ? 'Exam roadmap बनाएँ' : message.result.reply_language === 'hinglish' ? 'Exam roadmap banao' : 'Build exam roadmap + weekly timetable') : (message.result.reply_language === 'hindi' ? 'Revision plan बनाएँ' : message.result.reply_language === 'hinglish' ? 'Revision plan banao' : 'Build my revision plan')}</button>
                       </div>
                     )}
+                    {(message.result.roadmap?.length || message.result.revision_rounds?.length) ? (
+                      <div className="space-y-3 rounded-xl border border-indigo-200 p-3 dark:border-indigo-900">
+                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Exam roadmap</h3>
+                        {(message.result.roadmap || []).map((phase) => <div key={phase.key} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-900"><div className="flex justify-between gap-2"><span className="text-sm font-bold text-slate-900 dark:text-white">{phase.title}</span><span className="text-xs font-bold text-indigo-600">{phase.percentage}%</span></div><p className="mt-1 text-xs text-slate-500">{phase.start_date} – {phase.end_date}</p><ul className="mt-1 list-disc pl-4 text-xs text-slate-600 dark:text-slate-300">{phase.goals.map((goal) => <li key={goal}>{goal}</li>)}</ul></div>)}
+                        <h3 className="pt-1 text-sm font-extrabold text-slate-900 dark:text-white">Adaptive revision rounds</h3>
+                        {(message.result.revision_rounds || []).map((round) => <div key={round.key} className="rounded-lg border border-indigo-200 p-3 dark:border-indigo-900"><div className="flex justify-between gap-2"><span className="text-sm font-bold text-slate-900 dark:text-white">{round.title}</span><span className="text-xs font-bold text-indigo-600">{round.days} days</span></div><p className="mt-1 text-xs text-slate-500">{round.start_date} – {round.end_date}</p><p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{round.focus}</p><p className="mt-1 text-xs text-slate-500">{round.chapters.length} rated chapters prioritized</p></div>)}
+                      </div>
+                    ) : null}
                     {message.result.plan && (
                       <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-white dark:border-indigo-900 dark:bg-slate-950">
                         <div className="flex items-center gap-3 bg-indigo-50 px-4 py-3 dark:bg-indigo-950/50">

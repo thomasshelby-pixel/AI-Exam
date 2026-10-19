@@ -104,8 +104,9 @@ test('chapter assessment prompts, completion replies and options preserve the de
   assert.match(buildChapterAssessmentReadyMessage('hinglish', 'Strategic Management'), /^Bhai,/);
   assert.match(buildChapterAssessmentReadyMessage('hindi', 'Strategic Management'), /तैयार है/);
 
-  assert.deepEqual(buildPlanScopeOptions('english'), ['One-day plan only', 'Daily/weekly plan (next 7 days)']);
-  assert.deepEqual(buildPlanScopeOptions('hinglish'), ['Sirf ek din ka plan', 'Daily/weekly plan (next 7 days)']);
+  assert.deepEqual(buildPlanScopeOptions('english'), ['One-day revision plan', 'Full exam roadmap + weekly timetable until exam']);
+  assert.deepEqual(buildPlanScopeOptions('hinglish'), ['Sirf ek din ka revision plan', 'Exam tak roadmap + weekly timetable']);
+  assert.deepEqual(buildPlanScopeOptions('hindi'), ['सिर्फ एक दिन का revision plan', 'Exam तक roadmap + weekly timetable']);
   assert.match(buildIntermediateSMClarification('english'), /^I understand/);
   assert.match(buildIntermediateSMClarification('hinglish'), /samajh gaya bhai/);
 });
