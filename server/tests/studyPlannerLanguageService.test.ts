@@ -57,3 +57,23 @@ test('answers broader concept, memory and exam-strategy queries with study guida
   const exam = buildGeneralStudyAnswer('How should I manage time in mock papers?', parsed);
   assert.match(exam.answer, /allocate time/i);
 });
+
+
+test('answers subject-specific revision questions across Foundation and Intermediate subjects without asking for duration', () => {
+  const cases = [
+    { course: 'CA_FOUNDATION', message: 'How do I revise Business Economics effectively?', expected: 'Business Economics' },
+    { course: 'CA_FOUNDATION', message: 'How do I revise Quantitative Aptitude effectively?', expected: 'Quantitative Aptitude' },
+    { course: 'CA_FOUNDATION', message: 'How do I revise Business Laws effectively?', expected: 'Business Laws' },
+    { course: 'CA_INTERMEDIATE', message: 'Btao GST ka effective revision kaise karu', expected: 'Taxation' },
+    { course: 'CA_INTERMEDIATE', message: 'How do I revise Costing effectively?', expected: 'Cost and Management Accounting' },
+    { course: 'CA_INTERMEDIATE', message: 'How do I revise Auditing and Ethics effectively?', expected: 'Auditing and Ethics' },
+    { course: 'CA_INTERMEDIATE', message: 'How do I revise Financial Management and Strategic Management effectively?', expected: 'Financial Management and Strategic Management' },
+  ];
+  for (const item of cases) {
+    const parsed = parseStudyPlannerRequest(item.message, item.course);
+    assert.ok(parsed.subjects.includes(item.expected), item.course + ' should recognise ' + item.expected);
+    const result = buildGeneralStudyAnswer(item.message, parsed);
+    assert.match(result.answer, /revision|revise|Revision/i);
+    assert.doesNotMatch(result.answer, /please provide the missing details/i);
+  }
+});
