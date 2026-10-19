@@ -258,3 +258,17 @@ test('an independently complete new request is not polluted by prior chat turns'
   assert.deepEqual(parsed.subjects, ['Cost and Management Accounting']);
   assert.equal(parsed.duration_minutes, 120);
 });
+
+test('Common Hinglish concatenation typo still identifies GST for subject-specific revision help', () => {
+  const parsed = parseStudyPlannerRequest('Btao maingst ka effective revision kaise kru', 'CA_INTERMEDIATE');
+  assert.deepEqual(parsed.subjects, ['Taxation']);
+  assert.equal(parsed.intent, 'clarify');
+  assert.deepEqual(parsed.missing_info, ['available study time']);
+});
+
+test('CA Final is always out of scope even when the student asks for a specific subject', () => {
+  const parsed = parseStudyPlannerRequest('GST detailed revision', 'CA_FINAL');
+  assert.equal(parsed.intent, 'out_of_scope');
+  assert.equal(parsed.course, 'CA_FINAL');
+  assert.equal(parsed.should_call_planner, false);
+});
