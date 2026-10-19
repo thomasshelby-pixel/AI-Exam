@@ -245,7 +245,9 @@ function isPlannerNegated(message: string): boolean {
 }
 
 export function parseStudyPlannerRequest(message: string, selectedCourse?: unknown): ParsedStudyPlannerRequest {
-  const raw = String(message || '').trim();
+  // Normalize common Hinglish concatenation typo (e.g. "maingst" -> "main gst")
+  // before subject detection so the planner can answer subject-specific revision questions.
+  const raw = String(message || '').trim().replace(/\bmain(?=gst\b)/i, 'main ');
   const text = raw.toLowerCase();
   if (!raw) {
     const empty = emptyResult(normalizeCourse(selectedCourse));
