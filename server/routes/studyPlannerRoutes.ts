@@ -693,7 +693,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
 
     // Ask about the scope only if the student did not already specify one day or several days.
-    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion) {
+    if (requestForPlan && !oneDayChoice && !multiDayChoice && !priorScopeQuestion && !assessmentRequest && !assessmentTarget) {
       return res.json({
         success: true, status: 'choose_plan_scope',
         message: replyLanguage === 'hindi'
