@@ -30,3 +30,10 @@ export function shouldPrioritizeChapterAssessment(input: {
     && !input.priorScopeQuestion
     && /\b(?:revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(input.conversationText);
 }
+
+
+/** Keep CA Final chat explicitly gated until its planner curriculum is ready. */
+export function getCourseUnderDevelopmentReply(course: PlannerChatCourse): string | null {
+  if (course !== 'CA_FINAL') return null;
+  return 'Coming soon for CA Final — under development. The CA Final AI Study Planner is being built and will be available in a future release.';
+}
