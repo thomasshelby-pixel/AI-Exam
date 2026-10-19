@@ -13,6 +13,7 @@ import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedul
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
 import { buildGeneralStudyAnswer, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -127,53 +128,6 @@ const INTERMEDIATE_CHAPTERS: Record<string, string[]> = {
     'Strategy Implementation and Evaluation',
   ],
 };
-
-type ChapterAssessmentTarget = { label: string; storageSubject: string; chapters: string[] };
-
-function resolveChapterAssessmentTarget(text: string): ChapterAssessmentTarget | null {
-  const value = text.toLowerCase();
-  const taxonomy = INTERMEDIATE_CHAPTERS['Taxation (Income Tax & GST)'] || [];
-  const combinedFs = INTERMEDIATE_CHAPTERS['Financial Management and Strategic Management'] || [];
-  const accounting = INTERMEDIATE_CHAPTERS['Advanced Accounting'] || [];
-  const laws = INTERMEDIATE_CHAPTERS['Corporate and Other Laws'] || [];
-  const costing = INTERMEDIATE_CHAPTERS['Cost and Management Accounting'] || [];
-  const audit = INTERMEDIATE_CHAPTERS['Auditing and Ethics'] || [];
-
-  if (/\b(income tax\s*(?:and|&)\s*gst|taxation\s*\(\s*income tax\s*(?:and|&)\s*gst\s*\))\b/i.test(value)) {
-    return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
-  }
-  if (/\b(gst|goods and services tax)\b/i.test(value)) {
-    return { label: 'GST', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => chapter.startsWith('GST:')) };
-  }
-  if (/\b(income tax|direct tax|income-tax)\b/i.test(value)) {
-    return { label: 'Income Tax', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => !chapter.startsWith('GST:')) };
-  }
-  if (/\b(fm\s*(?:and|&)\s*sm|financial management and strategic management|fm and sm|both fm and sm)\b/i.test(value)) {
-    return { label: 'FM and SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs };
-  }
-  if (/\b(financial management|\bfm\b)\b/i.test(value)) {
-    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9) };
-  }
-  if (/\b(strategic management|\bsm\b)\b/i.test(value)) {
-    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9) };
-  }
-  if (/\b(taxation|tax paper|income tax and gst|income tax & gst)\b/i.test(value)) {
-    return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
-  }
-  if (/\b(advanced accounting|accounts|accounting)\b/i.test(value)) {
-    return { label: 'Advanced Accounting', storageSubject: 'Advanced Accounting', chapters: accounting };
-  }
-  if (/\b(corporate and other laws|corporate law|company law|law|laws)\b/i.test(value)) {
-    return { label: 'Corporate and Other Laws', storageSubject: 'Corporate and Other Laws', chapters: laws };
-  }
-  if (/\b(costing|cost and management accounting|cost accounting)\b/i.test(value)) {
-    return { label: 'Cost and Management Accounting', storageSubject: 'Cost and Management Accounting', chapters: costing };
-  }
-  if (/\b(audit|auditing|ethics)\b/i.test(value)) {
-    return { label: 'Auditing and Ethics', storageSubject: 'Auditing and Ethics', chapters: audit };
-  }
-  return null;
-}
 
 function getIntermediateChapterOptions() {
   return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
@@ -635,7 +589,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // A focused request (GST, Income Tax, FM or SM) uses only that component; a combined
     // subject request uses the full combined chapter registry.
     const conversationText = [message, ...history].join(' ');
-    const assessmentTarget = resolveChapterAssessmentTarget(message) || resolveChapterAssessmentTarget(conversationText);
+    const assessmentTarget = resolveChapterAssessmentTarget(message, INTERMEDIATE_CHAPTERS) || resolveChapterAssessmentTarget(conversationText, INTERMEDIATE_CHAPTERS);
     const assessmentRequest = Boolean(assessmentTarget)
       && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
 
