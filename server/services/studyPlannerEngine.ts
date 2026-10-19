@@ -93,12 +93,10 @@ function normalizeCourse(value: unknown): PlannerCourse {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['ca_foundation', 'foundation', 'found'].includes(normalized)) return 'CA_FOUNDATION';
   if (['ca_intermediate', 'intermediate', 'inter', 'ca_inter'].includes(normalized)) return 'CA_INTERMEDIATE';
-  if (['ca_final', 'final'].includes(normalized)) return 'CA_FINAL';
   return null;
 }
 
 function detectExplicitCourse(text: string): PlannerCourse {
-  if (/\bca\s*final\b|\bca final preparation\b/i.test(text)) return 'CA_FINAL';
   if (/\bca\s*foundation\b|\bfoundation student\b|\bfoundation exam\b/i.test(text)) return 'CA_FOUNDATION';
   if (/\bca\s*(?:intermediate|inter)\b|\bintermediate student\b|\bintermediate exam\b/i.test(text)) return 'CA_INTERMEDIATE';
   return null;
@@ -204,7 +202,7 @@ const SUBJECT_ALIASES: Record<'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL', 
 };
 
 function detectSubjectMentions(text: string, course: PlannerCourse): string[] {
-  if (course !== 'CA_FOUNDATION' && course !== 'CA_INTERMEDIATE' && course !== 'CA_FINAL') return [];
+  if (course !== 'CA_FOUNDATION' && course !== 'CA_INTERMEDIATE') return [];
   const matches: Array<{ start: number; end: number; subject: string }> = [];
 
   for (const alias of SUBJECT_ALIASES[course]) {
