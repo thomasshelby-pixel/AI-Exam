@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Bot, CalendarClock, CheckCircle2, Clock3, Send, Sparkles, UserRound, BookmarkCheck, BookOpen, Save } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 interface ParsedRequest {
   intent: string;
@@ -38,6 +39,7 @@ interface PlannerResponse {
   parsed: ParsedRequest;
   plan: StudyPlanDraft | null;
   metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
+  chapter_assessment?: { subject: string; chapters: string[] };
 }
 interface ChatMessage {
   id: number;
@@ -145,6 +147,9 @@ export const StudyPlannerPage: React.FC = () => {
   const [mockBusy, setMockBusy] = useState(false);
   const [priorities, setPriorities] = useState<Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }>>([]);
   const [strengthBusy, setStrengthBusy] = useState(false);
+  const [chatChapterRatings, setChatChapterRatings] = useState<Record<string, string>>({});
+  const [chatAssessmentMinutes, setChatAssessmentMinutes] = useState('180');
+  const [pdfBusyId, setPdfBusyId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 1,
     role: 'assistant',
@@ -323,7 +328,7 @@ export const StudyPlannerPage: React.FC = () => {
   };
   const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
-  const sendRequest = async (rawText?: string) => {
+  const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number }) => {
     const text = (rawText ?? request).trim();
     if (!text || loading) return;
     setError('');
@@ -340,6 +345,7 @@ export const StudyPlannerPage: React.FC = () => {
           conversation_history: messages.slice(-12).map((item) => (item.role === 'user' ? 'Student: ' : 'Planner: ') + item.text).slice(-6),
           previous_plan: [...messages].reverse().find((item) => item.role === 'assistant' && item.result?.plan)?.result?.plan || null,
           default_duration_minutes: Math.round((Number(dailyMinutes) || 4) * 60),
+          ...(extras || {}),
         }),
       });
       setMessages((current) => [...current, {
