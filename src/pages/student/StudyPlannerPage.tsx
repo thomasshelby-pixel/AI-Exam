@@ -440,7 +440,7 @@ export const StudyPlannerPage: React.FC = () => {
       drawLine('Chapter-wise sessions', 13, true);
       for (const session of plan.sessions || []) {
         y -= 4;
-        drawLine(session.order + '. ' + session.label + ' - ' + session.minutes + ' minutes', 11, true);
+        drawLine(session.order + '. ' + ((session as any).date ? (session as any).date + ' ' + ((session as any).start_time || '') + (((session as any).end_time) ? '–' + (session as any).end_time : '') + ' | ' : '') + ((session as any).round_key ? (session as any).round_key + ' | ' : '') + session.label + ' - ' + session.minutes + ' minutes', 11, true);
         drawLine('Subject: ' + session.subject + ((session as any).chapter ? ' | Chapter: ' + (session as any).chapter : ''), 9, false, 10);
         if ((session as any).strength) drawLine('Self-rated strength: ' + (session as any).strength, 9, false, 10);
         drawLine(session.instruction, 9, false, 10);
