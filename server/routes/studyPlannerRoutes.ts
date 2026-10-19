@@ -15,7 +15,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
-import { getPlannerSubjects, getPlannerChapterRegistry, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
+import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -155,6 +155,24 @@ const INTERMEDIATE_CHAPTERS: Record<string, string[]> = {
     'Strategy Implementation and Evaluation',
   ],
 };
+
+function resolveCourseAssessmentTarget(text: string, course: PlannerCourse | 'CA_FINAL') {
+  if (course === 'CA_FINAL') return null;
+  if (course === 'CA_INTERMEDIATE') return resolveChapterAssessmentTarget(text, INTERMEDIATE_CHAPTERS);
+  const value = String(text || '').toLowerCase();
+  const aliases: Record<string, string[]> = {
+    'Accounting': ['accounting', 'accounts'],
+    'Business Laws': ['business laws', 'business law', 'law'],
+    'Quantitative Aptitude': ['quantitative aptitude', 'quantitative', 'logical reasoning', 'statistics', 'business mathematics', 'qa'],
+    'Business Economics': ['business economics', 'economics'],
+  };
+  const options = getPlannerSubjects('CA_FOUNDATION')
+    .sort((a, b) => b.name.length - a.name.length);
+  const match = options.find((subject) => [subject.name, ...(aliases[subject.name] || [])]
+    .some((label) => value.includes(label.toLowerCase())));
+  if (!match) return null;
+  return { label: match.name, storageSubject: match.name, chapters: match.chapters };
+}
 
 function getIntermediateChapterOptions() {
   return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
