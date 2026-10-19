@@ -61,9 +61,12 @@ test('answers broader concept, memory and exam-strategy queries with study guida
 
 test('answers subject-specific revision questions across Foundation and Intermediate subjects without asking for duration', () => {
   const cases = [
-    { course: 'CA_FOUNDATION', message: 'How do I revise Business Economics effectively?', expected: 'Business Economics' },
-    { course: 'CA_FOUNDATION', message: 'How do I revise Quantitative Aptitude effectively?', expected: 'Quantitative Aptitude' },
+    { course: 'CA_FOUNDATION', message: 'How do I revise Accounting effectively?', expected: 'Accounting' },
     { course: 'CA_FOUNDATION', message: 'How do I revise Business Laws effectively?', expected: 'Business Laws' },
+    { course: 'CA_FOUNDATION', message: 'How do I revise Quantitative Aptitude effectively?', expected: 'Quantitative Aptitude' },
+    { course: 'CA_FOUNDATION', message: 'How do I revise Business Economics effectively?', expected: 'Business Economics' },
+    { course: 'CA_INTERMEDIATE', message: 'How do I revise Advanced Accounting effectively?', expected: 'Advanced Accounting' },
+    { course: 'CA_INTERMEDIATE', message: 'How do I revise Corporate and Other Laws effectively?', expected: 'Corporate and Other Laws' },
     { course: 'CA_INTERMEDIATE', message: 'Btao GST ka effective revision kaise karu', expected: 'Taxation' },
     { course: 'CA_INTERMEDIATE', message: 'How do I revise Costing effectively?', expected: 'Cost and Management Accounting' },
     { course: 'CA_INTERMEDIATE', message: 'How do I revise Auditing and Ethics effectively?', expected: 'Auditing and Ethics' },
