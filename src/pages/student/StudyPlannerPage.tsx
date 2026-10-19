@@ -23,6 +23,10 @@ interface StudyPlanSession {
   label: string;
   minutes: number;
   instruction: string;
+  chapter?: string;
+  date?: string;
+  start_time?: string;
+  end_time?: string;
 }
 interface StudyPlanDraft {
   title: string;
@@ -40,6 +44,7 @@ interface PlannerResponse {
   plan: StudyPlanDraft | null;
   metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
   chapter_assessment?: { subject: string; storage_subject?: string; chapters: string[] };
+  follow_up_options?: string[];
 }
 interface ChatMessage {
   id: number;
@@ -102,6 +107,8 @@ function getAdjustedRevisionChapters(round: any, progress: Record<string, boolea
 
 export const StudyPlannerPage: React.FC = () => {
   const navigate = useNavigate();
+  const [studentCourse, setStudentCourse] = useState<'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL'>('CA_INTERMEDIATE');
+  const courseLabel = studentCourse === 'CA_FINAL' ? 'CA Final' : studentCourse === 'CA_FOUNDATION' ? 'CA Foundation' : 'CA Intermediate';
   const [request, setRequest] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -153,7 +160,7 @@ export const StudyPlannerPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 1,
     role: 'assistant',
-    text: 'Hi! I’m your CA Intermediate study planner. Tell me what you need to study and how much time you have. I’ll help break it into concept revision, question practice and active recall.',
+    text: 'Hi! I’m your CA study assistant. Ask a study-related question, request an explanation or revision strategy, or ask me to build a study plan.',
   }]);
   const nextId = useRef(2);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -164,34 +171,58 @@ export const StudyPlannerPage: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=CA_INTERMEDIATE'),
-      apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE'),
-      apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=CA_INTERMEDIATE'),
-    ]).then(([curriculum, profile, priorityData]) => {
-      if (cancelled) return;
-      const options = curriculum.subjects || [];
-      setCurriculumSubjects(options);
-      if (options.length) {
-        setSelectedStrengthSubject((current) => current || options[0].name);
-        setSelectedStrengthChapter((current) => current || options[0].chapters[0] || '');
+    const loadPlannerProfile = async () => {
+      try {
+        const selected = await apiRequest<{ success: boolean; course: 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL'; label: string }>('/api/student/study-planner/course');
+        if (cancelled) return;
+        const course = selected.course;
+        setStudentCourse(course);
+        const profilePromise = apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(course));
+        if (course !== 'CA_INTERMEDIATE') {
+          const profile = await profilePromise;
+          if (cancelled) return;
+          const restored: Record<string, string> = {};
+          for (const item of profile.strengths || []) {
+            if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
+          }
+          setCurriculumSubjects([]);
+          setStrengths(restored);
+          setPriorities([]);
+          setSavedPlans(profile.plans || []);
+          setProgressLogs(profile.progress || []);
+          return;
+        }
+        const [curriculum, profile, priorityData] = await Promise.all([
+          apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=' + encodeURIComponent(course)),
+          profilePromise,
+          apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(course)),
+        ]);
+        if (cancelled) return;
+        const options = curriculum.subjects || [];
+        setCurriculumSubjects(options);
+        if (options.length) {
+          setSelectedStrengthSubject((current) => current || options[0].name);
+          setSelectedStrengthChapter((current) => current || options[0].chapters[0] || '');
+        }
+        const restored: Record<string, string> = {};
+        for (const item of profile.strengths || []) {
+          if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
+        }
+        setStrengths(restored);
+        setPriorities(priorityData.priorities || []);
+        setSavedPlans(profile.plans || []);
+        setProgressLogs(profile.progress || []);
+      } catch {
+        // Keep the study chat available even if optional planner data cannot load.
       }
-      const restored: Record<string, string> = {};
-      for (const item of profile.strengths || []) {
-        if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
-      }
-      setStrengths(restored);
-      setPriorities(priorityData.priorities || []);
-      setSavedPlans(profile.plans || []);
-      setProgressLogs(profile.progress || []);
-    }).catch(() => { /* Keep chat usable if profile or curriculum is temporarily unavailable. */ });
-
-
-  return () => { cancelled = true; };
+    };
+    void loadPlannerProfile();
+    return () => { cancelled = true; };
   }, []);
 
+
   const refreshSavedPlans = async () => {
-    const profile = await apiRequest<{ plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=CA_INTERMEDIATE');
+    const profile = await apiRequest<{ plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(studentCourse));
     setSavedPlans(profile.plans || []);
     setProgressLogs(profile.progress || []);
   };
@@ -204,9 +235,9 @@ export const StudyPlannerPage: React.FC = () => {
       await apiRequest('/api/student/study-planner/progress', {
         method: 'POST',
         body: JSON.stringify({
-          course: 'CA_INTERMEDIATE',
+          course: studentCourse,
           plan_id: planId,
-          subject: String(session.subject || 'CA Intermediate'),
+          subject: String(session.subject || courseLabel),
           chapter: typeof session.chapter === 'string' ? session.chapter : '',
           activity: String(session.activity || session.label || 'Study session'),
           duration_minutes: Number(session.minutes),
@@ -344,6 +375,7 @@ export const StudyPlannerPage: React.FC = () => {
           conversation_history: messages.slice(-12).map((item) => (item.role === 'user' ? 'Student: ' : 'Planner: ') + item.text).slice(-6),
           previous_plan: [...messages].reverse().find((item) => item.role === 'assistant' && item.result?.plan)?.result?.plan || null,
           default_duration_minutes: Math.round((Number(dailyMinutes) || 4) * 60),
+          planner_settings: { daily_study_hours: Number(dailyMinutes) || 4, start_date: dailyDate, study_start_time: studyStartTime, preferred_end_time: preferredEndTime, attempt: examAttempt, exact_exam_date: exactExamDate || null, class_mode: classMode, class_blocks: classMode === 'fixed' ? classBlocks : [] },
           ...(extras || {}),
         }),
       });
@@ -394,7 +426,7 @@ export const StudyPlannerPage: React.FC = () => {
       };
       drawLine(plan.title || 'CA Study Plan', 18, true);
       y -= 4;
-      drawLine('Course: CA Intermediate', 10);
+      drawLine('Course: ' + courseLabel, 10);
       drawLine('Focus: ' + (plan.subjects || []).join(', '), 10);
       drawLine('Total study time: ' + plan.total_minutes + ' minutes (' + (Number(plan.total_minutes) / 60).toFixed(2) + ' hours)', 10);
       drawLine('Generated: ' + new Date().toLocaleDateString(), 10);
@@ -439,6 +471,7 @@ export const StudyPlannerPage: React.FC = () => {
       </button>
 
 
+      {studentCourse === 'CA_INTERMEDIATE' ? (<>
       <section className="mb-4 rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950 sm:p-5">
         <div className="mb-3 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-indigo-600" /><h2 className="text-base font-extrabold text-slate-900 dark:text-white">CA attempt roadmap</h2></div>
         <p className="mb-4 text-sm text-slate-600 dark:text-slate-300">Timeline: syllabus completion, first revision, RTP/MTP, mock tests and final revision. Use the weekly timetable for individual study sessions.</p>
@@ -670,6 +703,13 @@ export const StudyPlannerPage: React.FC = () => {
               </section>
         
       )}
+      </>
+      ) : (
+        <div className="mb-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 text-sm leading-6 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-100">
+          <p className="font-extrabold">{courseLabel} study chat is ready.</p>
+          <p className="mt-1">Ask study-related questions or request a one-day or next-7-day plan in chat. Chapter-by-chapter adaptive roadmap tools are currently enabled only for CA Intermediate.</p>
+        </div>
+      )}
       <section className="mb-4 rounded-2xl border border-emerald-200 bg-white p-4 dark:border-emerald-900 dark:bg-slate-950 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -720,7 +760,7 @@ export const StudyPlannerPage: React.FC = () => {
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-extrabold sm:text-lg">AI Study Planner</h1>
-            <p className="mt-0.5 text-xs text-slate-300">CA Intermediate · Study planning assistant</p>
+            <p className="mt-0.5 text-xs text-slate-300">{courseLabel} · Study planning assistant</p>
           </div>
           <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-200">Beta</span>
         </header>
@@ -740,6 +780,7 @@ export const StudyPlannerPage: React.FC = () => {
                 <div className={'inline-block rounded-2xl px-4 py-3 text-left text-sm leading-6 ' + (message.role === 'assistant' ? 'rounded-tl-md bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100' : 'rounded-tr-md bg-indigo-600 text-white')}>
                   {message.text}
                 </div>
+                {message.result?.follow_up_options && message.result.follow_up_options.length > 0 && <div className="mt-3 flex flex-wrap gap-2 text-left">{message.result.follow_up_options.map((option) => <button key={option} type="button" disabled={loading} onClick={() => void sendRequest(option)} className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200">{option}</button>)}</div>}
                 {message.result?.parsed && (
                   <div className="mt-3 space-y-3 text-left">
                     {message.result.parsed.missing_info.length > 0 && (
@@ -804,7 +845,7 @@ export const StudyPlannerPage: React.FC = () => {
                           <button type="button" disabled={savingPlanId === message.id || savedPlanIds.includes(message.id)} onClick={async () => {
                             setSavingPlanId(message.id); setError('');
                             try {
-                              await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan: message.result?.plan }) });
+                              await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: studentCourse, plan: message.result?.plan }) });
                               setSavedPlanIds((ids) => [...ids, message.id]); await refreshSavedPlans();
                             } catch (err: any) { setError(err?.message || 'Could not save this plan.'); }
                             finally { setSavingPlanId(null); }

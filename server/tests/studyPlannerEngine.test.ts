@@ -143,14 +143,16 @@ test('Missing course and subject never call the planner', () => {
   assert.equal(parsed.should_call_planner, false);
 });
 
-test('CA Final is explicitly out of scope', () => {
+test('CA Final profile supports a subject-specific one-time study plan', () => {
   const parsed = parseStudyPlannerRequest(
-    'I am preparing for CA Final. Make a three-hour Audit revision plan.',
+    'I am preparing for CA Final. Make a 3-hour Audit revision plan.',
   );
-  assert.equal(parsed.intent, 'out_of_scope');
+  assert.equal(parsed.intent, 'create_study_plan');
   assert.equal(parsed.course, 'CA_FINAL');
-  assert.equal(parsed.should_call_planner, false);
-  assert.equal(createStudyPlanDraft(parsed), null);
+  assert.deepEqual(parsed.subjects, ['Advanced Auditing, Assurance and Professional Ethics']);
+  assert.equal(parsed.duration_minutes, 180);
+  assert.equal(parsed.should_call_planner, true);
+  assert.equal(createStudyPlanDraft(parsed)?.total_minutes, 180);
 });
 
 test('General advice request does not create a timetable', () => {
@@ -266,9 +268,11 @@ test('Common Hinglish concatenation typo still identifies GST for subject-specif
   assert.deepEqual(parsed.missing_info, ['available study time']);
 });
 
-test('CA Final is always out of scope even when the student asks for a specific subject', () => {
+test('CA Final GST query resolves to the Final indirect-tax paper and asks for time if needed', () => {
   const parsed = parseStudyPlannerRequest('GST detailed revision', 'CA_FINAL');
-  assert.equal(parsed.intent, 'out_of_scope');
+  assert.equal(parsed.intent, 'clarify');
   assert.equal(parsed.course, 'CA_FINAL');
+  assert.deepEqual(parsed.subjects, ['Indirect Tax Laws (GST and Customs)']);
+  assert.deepEqual(parsed.missing_info, ['available study time']);
   assert.equal(parsed.should_call_planner, false);
 });
