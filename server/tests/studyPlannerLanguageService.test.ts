@@ -70,6 +70,7 @@ test('answers subject-specific revision questions across Foundation and Intermed
     { course: 'CA_INTERMEDIATE', message: 'How do I revise Financial Management and Strategic Management effectively?', expected: 'Financial Management and Strategic Management' },
   ];
   for (const item of cases) {
+    assert.equal(isGeneralStudyQuestion(item.message), true, item.message + ' should be handled as a study question');
     const parsed = parseStudyPlannerRequest(item.message, item.course);
     assert.ok(parsed.subjects.includes(item.expected), item.course + ' should recognise ' + item.expected);
     const result = buildGeneralStudyAnswer(item.message, parsed);
