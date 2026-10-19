@@ -39,7 +39,7 @@ interface PlannerResponse {
   parsed: ParsedRequest;
   plan: StudyPlanDraft | null;
   metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
-  chapter_assessment?: { subject: string; chapters: string[] };
+  chapter_assessment?: { subject: string; storage_subject?: string; chapters: string[] };
 }
 interface ChatMessage {
   id: number;
@@ -328,7 +328,7 @@ export const StudyPlannerPage: React.FC = () => {
   };
   const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: 'CA_INTERMEDIATE', plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
-  const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number }) => {
+  const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number; chapter_assessment_subject?: string }) => {
     const text = (rawText ?? request).trim();
     if (!text || loading) return;
     setError('');
@@ -753,12 +753,12 @@ export const StudyPlannerPage: React.FC = () => {
                     )}
                     {message.result.chapter_assessment && (
                       <div className="w-full rounded-2xl border border-indigo-200 bg-white p-4 dark:border-indigo-900 dark:bg-slate-950">
-                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">GST chapter strength assessment</h3>
+                        <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.chapter_assessment.subject} chapter strength assessment</h3>
                         <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">Har chapter ke liye apni strength select karo. Weak chapters ko plan mein zyada time milega. Koi rating pre-selected nahi hai.</p>
                         <div className="mt-3 space-y-2">
                           {message.result.chapter_assessment.chapters.map((chapter) => (
                             <div key={chapter} className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^GST:\s*/, '')}</span>
+                              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{chapter.replace(/^(GST|Income Tax|FM|SM):\s*/, '')}</span>
                               <div className="grid grid-cols-3 gap-1.5 sm:w-[240px]">
                                 {(['WEAK', 'MODERATE', 'STRONG'] as const).map((strength) => (
                                   <button key={strength} type="button" aria-pressed={chatChapterRatings[chapter] === strength} onClick={() => setChatChapterRatings((current) => ({ ...current, [chapter]: strength }))} className={'rounded-lg border px-2 py-2 text-[11px] font-bold transition ' + (chatChapterRatings[chapter] === strength ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300')}>{strength.charAt(0) + strength.slice(1).toLowerCase()}</button>
@@ -771,7 +771,7 @@ export const StudyPlannerPage: React.FC = () => {
                           <input type="number" min="30" max="720" step="15" value={chatAssessmentMinutes} onChange={(event) => setChatAssessmentMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
                           <span className="mt-1 block font-normal text-slate-500">Example: 180 minutes = 3 hours. Use 15-minute increments.</span>
                         </label>
-                        <button type="button" disabled={loading || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter]) || !Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0} onClick={() => void sendRequest('GST detailed revision', { chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })), available_minutes: Number(chatAssessmentMinutes) })} className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">Build my GST revision plan</button>
+                        <button type="button" disabled={loading || message.result.chapter_assessment.chapters.some((chapter) => !chatChapterRatings[chapter]) || !Number.isInteger(Number(chatAssessmentMinutes)) || Number(chatAssessmentMinutes) < 30 || Number(chatAssessmentMinutes) > 720 || Number(chatAssessmentMinutes) % 15 !== 0} onClick={() => void sendRequest(message.result!.chapter_assessment!.subject + ' detailed revision', { chapter_ratings: message.result!.chapter_assessment!.chapters.map((chapter) => ({ chapter, strength: chatChapterRatings[chapter] })), available_minutes: Number(chatAssessmentMinutes), chapter_assessment_subject: message.result!.chapter_assessment!.subject })} className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-40">Build my {message.result.chapter_assessment.subject} revision plan</button>
                       </div>
                     )}
                     {message.result.plan && (
