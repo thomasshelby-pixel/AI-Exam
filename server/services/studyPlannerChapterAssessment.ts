@@ -25,11 +25,17 @@ export function resolveChapterAssessmentTarget(
   if (/\b(fm\s*(?:and|&)\s*sm|financial management and strategic management|both fm and sm)\b/i.test(value)) {
     return { label: 'FM and SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs };
   }
+  // Split FM/SM by the curriculum's chapter names, not a magic index. This also
+  // keeps small test registries and future curriculum changes working correctly.
+  const smStart = combinedFs.findIndex((chapter) =>
+    /strategic management|strategic intent|environment analysis|strategic choices|strategy implementation/i.test(chapter)
+  );
+  const splitAt = smStart >= 0 ? smStart : Math.ceil(combinedFs.length * 0.6);
   if (/\b(financial management|fm)\b/i.test(value)) {
-    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9) };
+    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, splitAt) };
   }
   if (/\b(strategic management|sm)\b/i.test(value)) {
-    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9) };
+    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(splitAt) };
   }
   if (/\b(taxation|tax paper)\b/i.test(value)) {
     return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
