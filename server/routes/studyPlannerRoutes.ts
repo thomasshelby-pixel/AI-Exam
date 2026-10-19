@@ -675,7 +675,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       parsed.intent = 'general_guidance';
       parsed.missing_info = [];
       parsed.should_call_planner = false;
-      if (/\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
+      if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = [course === 'CA_FINAL' ? 'Indirect Tax Laws (GST and Customs)' : 'GST'];
       }
       const guidance = buildGeneralStudyAnswer(message, parsed);
