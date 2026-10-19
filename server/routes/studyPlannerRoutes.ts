@@ -128,6 +128,50 @@ const INTERMEDIATE_CHAPTERS: Record<string, string[]> = {
   ],
 };
 
+type ChapterAssessmentTarget = { label: string; storageSubject: string; chapters: string[] };
+
+function resolveChapterAssessmentTarget(text: string): ChapterAssessmentTarget | null {
+  const value = text.toLowerCase();
+  const taxonomy = INTERMEDIATE_CHAPTERS['Taxation (Income Tax & GST)'] || [];
+  const combinedFs = INTERMEDIATE_CHAPTERS['Financial Management and Strategic Management'] || [];
+  const accounting = INTERMEDIATE_CHAPTERS['Advanced Accounting'] || [];
+  const laws = INTERMEDIATE_CHAPTERS['Corporate and Other Laws'] || [];
+  const costing = INTERMEDIATE_CHAPTERS['Cost and Management Accounting'] || [];
+  const audit = INTERMEDIATE_CHAPTERS['Auditing and Ethics'] || [];
+
+  if (/\\b(gst|goods and services tax)\\b/i.test(value)) {
+    return { label: 'GST', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => chapter.startsWith('GST:')) };
+  }
+  if (/\\b(income tax|direct tax|income-tax)\\b/i.test(value)) {
+    return { label: 'Income Tax', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy.filter((chapter) => !chapter.startsWith('GST:')).map((chapter) => 'Income Tax: ' + chapter) };
+  }
+  if (/\\b(fm\\s*(?:and|&)\\s*sm|financial management and strategic management|fm and sm|both fm and sm)\\b/i.test(value)) {
+    return { label: 'FM and SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs };
+  }
+  if (/\\b(financial management|\\bfm\\b)\\b/i.test(value)) {
+    return { label: 'FM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(0, 9).map((chapter) => 'FM: ' + chapter) };
+  }
+  if (/\\b(strategic management|\\bsm\\b)\\b/i.test(value)) {
+    return { label: 'SM', storageSubject: 'Financial Management and Strategic Management', chapters: combinedFs.slice(9).map((chapter) => 'SM: ' + chapter) };
+  }
+  if (/\\b(taxation|tax paper|income tax and gst|income tax & gst)\\b/i.test(value)) {
+    return { label: 'Taxation', storageSubject: 'Taxation (Income Tax & GST)', chapters: taxonomy };
+  }
+  if (/\\b(advanced accounting|accounts|accounting)\\b/i.test(value)) {
+    return { label: 'Advanced Accounting', storageSubject: 'Advanced Accounting', chapters: accounting };
+  }
+  if (/\\b(corporate and other laws|corporate law|company law|law|laws)\\b/i.test(value)) {
+    return { label: 'Corporate and Other Laws', storageSubject: 'Corporate and Other Laws', chapters: laws };
+  }
+  if (/\\b(costing|cost and management accounting|cost accounting)\\b/i.test(value)) {
+    return { label: 'Cost and Management Accounting', storageSubject: 'Cost and Management Accounting', chapters: costing };
+  }
+  if (/\\b(audit|auditing|ethics)\\b/i.test(value)) {
+    return { label: 'Auditing and Ethics', storageSubject: 'Auditing and Ethics', chapters: audit };
+  }
+  return null;
+}
+
 function getIntermediateChapterOptions() {
   return CA_CURRICULUM.INTERMEDIATE.subjects.map((subject) => ({
     key: subject.key,
@@ -584,73 +628,76 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
 
-    // GST is a focused module within the combined Taxation paper. Keep the student-facing plan
-    // scoped to GST and collect explicit chapter-strength ratings before creating a revision plan.
+    // Any supported CA Intermediate subject can request an explicit chapter assessment.
+    // A focused request (GST, Income Tax, FM or SM) uses only that component; a combined
+    // subject request uses the full combined chapter registry.
     const conversationText = [message, ...history].join(' ');
-    const gstRevisionRequest = /\bgst\b/i.test(conversationText)
-      && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round)\b/i.test(conversationText);
-    const gstChapters = (INTERMEDIATE_CHAPTERS['Taxation (Income Tax & GST)'] || [])
-      .filter((chapter) => chapter.startsWith('GST:'));
+    const assessmentTarget = resolveChapterAssessmentTarget(message) || resolveChapterAssessmentTarget(conversationText);
+    const assessmentRequest = Boolean(assessmentTarget)
+      && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round|practice)\b/i.test(conversationText);
 
-    if (gstRevisionRequest && !Array.isArray(body.chapter_ratings)) {
+    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
       return res.json({
         success: true,
         status: 'needs_chapter_assessment',
-        message: 'Bhai, GST ke liye pehle har chapter ki strength select kar. Main ratings guess nahi karunga. Saath mein available revision time choose kar; phir chapter-wise plan bana dunga.',
-        parsed: { intent: 'clarify', course, subjects: ['GST'], duration_minutes: null, focus_text: 'GST chapter-wise revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: ['GST chapter strengths', 'available study time'], should_call_planner: false },
+        message: 'Bhai, ' + assessmentTarget.label + ' ke liye pehle har listed chapter ki strength select kar. Main ratings guess nahi karunga. Available revision time bhi choose kar; phir chapter-wise plan bana dunga.',
+        parsed: { intent: 'clarify', course, subjects: [assessmentTarget.label], duration_minutes: null, focus_text: assessmentTarget.label + ' chapter-wise revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [assessmentTarget.label + ' chapter strengths', 'available study time'], should_call_planner: false },
         plan: null,
-        chapter_assessment: { subject: 'GST', chapters: gstChapters },
-        metadata: { version: 'planner-gst-assessment-v1', modelUsed: false, persistentStorage: true },
+        chapter_assessment: { subject: assessmentTarget.label, storage_subject: assessmentTarget.storageSubject, chapters: assessmentTarget.chapters },
+        metadata: { version: 'planner-chapter-assessment-v2', modelUsed: false, persistentStorage: true },
       });
     }
 
-    if (gstRevisionRequest && Array.isArray(body.chapter_ratings)) {
+    if (assessmentRequest && assessmentTarget && Array.isArray(body.chapter_ratings)) {
       const submitted = body.chapter_ratings as Array<{ chapter?: unknown; strength?: unknown }>;
-      const allowed = new Set(gstChapters);
+      const allowed = new Set(assessmentTarget.chapters);
       const ratings = submitted.map((item) => ({
         chapter: typeof item?.chapter === 'string' ? item.chapter : '',
         strength: typeof item?.strength === 'string' ? item.strength.toUpperCase() : '',
       }));
       const minutes = Number(body.available_minutes);
-      if (ratings.length !== gstChapters.length
+      if (String(body.chapter_assessment_subject || '') !== assessmentTarget.label
+        || ratings.length !== assessmentTarget.chapters.length
         || ratings.some((item) => !allowed.has(item.chapter) || !ALLOWED_STRENGTHS.has(item.strength))
-        || new Set(ratings.map((item) => item.chapter)).size !== gstChapters.length
+        || new Set(ratings.map((item) => item.chapter)).size !== assessmentTarget.chapters.length
         || !Number.isInteger(minutes) || minutes < 30 || minutes > 720 || minutes % 15 !== 0) {
-        return res.status(400).json({ success: false, error: 'Rate every GST chapter as Weak, Moderate, or Strong and choose 30–720 minutes in 15-minute increments.' });
+        return res.status(400).json({ success: false, error: 'Rate every ' + assessmentTarget.label + ' chapter as Weak, Moderate, or Strong and choose 30–720 minutes in 15-minute increments.' });
       }
 
       const saveStrength = db.prepare(`
         INSERT INTO student_chapter_strengths (id, user_id, course, subject, chapter, strength, updated_at)
-        VALUES (?, ?, 'CA_INTERMEDIATE', 'Taxation (Income Tax & GST)', ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, 'CA_INTERMEDIATE', ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id, course, subject, chapter)
         DO UPDATE SET strength = excluded.strength, updated_at = CURRENT_TIMESTAMP
       `);
       const persistRatings = db.transaction(() => {
-        for (const item of ratings) saveStrength.run(randomUUID(), req.user!.id, item.chapter, item.strength);
+        for (const item of ratings) saveStrength.run(randomUUID(), req.user!.id, assessmentTarget.storageSubject, item.chapter, item.strength);
       });
       persistRatings();
 
       const weights = ratings.map((item) => item.strength === 'WEAK' ? 1.6 : item.strength === 'MODERATE' ? 1 : 0.6);
+      const allocations = ratings.map(() => 1);
+      let remaining = minutes - allocations.length;
       const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-      const allocations = weights.map((weight) => Math.floor(minutes * weight / totalWeight));
-      let remaining = minutes - allocations.reduce((sum, value) => sum + value, 0);
-      for (let i = 0; remaining > 0; i = (i + 1) % allocations.length) {
-        allocations[i] += 1;
-        remaining -= 1;
-      }
+      const fractional = weights.map((weight, index) => ({ index, raw: remaining * weight / totalWeight }));
+      for (const item of fractional) allocations[item.index] += Math.floor(item.raw);
+      let leftover = minutes - allocations.reduce((sum, value) => sum + value, 0);
+      fractional.sort((a, b) => (b.raw - Math.floor(b.raw)) - (a.raw - Math.floor(a.raw)));
+      for (let i = 0; leftover > 0; i++, leftover--) allocations[fractional[i % fractional.length].index] += 1;
+
       const sessions = ratings.map((item, index) => ({
         order: index + 1,
-        subject: 'GST',
+        subject: assessmentTarget.label,
         label: item.strength === 'WEAK' ? 'Concept revision + extra practice' : item.strength === 'MODERATE' ? 'Revision + question practice' : 'Quick recall + self-test',
         minutes: allocations[index],
-        instruction: item.chapter.replace(/^GST:\s*/, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions and solve a short timed set.'),
+        instruction: item.chapter.replace(/^(GST|Income Tax|FM|SM):\\s*/i, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions/formulas, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions/formulas and solve a short timed set.'),
         chapter: item.chapter,
         strength: item.strength,
       }));
       const plan = {
-        title: 'GST detailed revision plan',
+        title: assessmentTarget.label + ' detailed revision plan',
         total_minutes: minutes,
-        subjects: ['GST'],
+        subjects: [assessmentTarget.label],
         sessions,
         saved: false as const,
         note: 'Chapter strengths saved to your planner. Weak chapters receive more time; save this plan to track progress.',
@@ -658,10 +705,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.json({
         success: true,
         status: 'plan_draft_ready',
-        message: 'Bhai, GST ka chapter-wise revision plan ready hai. Weak chapters ko zyada time diya hai, aur ratings tumhare planner profile mein save ho gayi hain.',
-        parsed: { intent: 'create_study_plan', course, subjects: ['GST'], duration_minutes: minutes, focus_text: 'GST chapter-wise detailed revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
+        message: 'Bhai, ' + assessmentTarget.label + ' ka chapter-wise revision plan ready hai. Weak chapters ko zyada time diya hai, aur ratings tumhare planner profile mein save ho gayi hain.',
+        parsed: { intent: 'create_study_plan', course, subjects: [assessmentTarget.label], duration_minutes: minutes, focus_text: assessmentTarget.label + ' chapter-wise detailed revision', date_text: null, schedule_mode: 'one_time', class_time_text: null, performance_data: [], missing_info: [], should_call_planner: true },
         plan,
-        metadata: { version: 'planner-gst-revision-v1', modelUsed: false, persistentStorage: true },
+        metadata: { version: 'planner-chapter-revision-v2', modelUsed: false, persistentStorage: true },
       });
     }
 
