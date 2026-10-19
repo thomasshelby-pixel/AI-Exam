@@ -767,7 +767,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Detailed chapter assessments remain an Intermediate-specific workflow.\n    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
+    // Detailed chapter assessments remain an Intermediate-specific workflow.
+    if (assessmentRequest && assessmentTarget && !Array.isArray(body.chapter_ratings)) {
       return res.json({
         success: true,
         status: 'needs_chapter_assessment',
