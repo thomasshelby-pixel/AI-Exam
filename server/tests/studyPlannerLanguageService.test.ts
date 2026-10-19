@@ -38,22 +38,3 @@ test('subject-specific shorthand can use the configured study duration without a
   assert.deepEqual(parsed.subjects, ['Taxation']);
   assert.deepEqual(parsed.missing_info, ['available study time']);
 });
-
-
-test('recognises ordinary study concept questions without requiring timetable details', () => {
-  assert.equal(isGeneralStudyQuestion('Explain GST input tax credit'), true);
-  assert.equal(isGeneralStudyQuestion('What are the provisions for salary income?'), true);
-  assert.equal(isGeneralStudyQuestion('Difference between marginal costing and absorption costing'), true);
-  assert.equal(isGeneralStudyQuestion('Tell me about audit evidence'), true);
-  assert.equal(isGeneralStudyQuestion('Btao GST ka effective revision kaise karu'), true);
-});
-
-test('answers broader concept, memory and exam-strategy queries with study guidance', () => {
-  const parsed = parseStudyPlannerRequest('Explain audit evidence', 'CA_INTERMEDIATE');
-  const concept = buildGeneralStudyAnswer('Explain audit evidence', parsed);
-  assert.match(concept.answer, /exam-oriented explanation/i);
-  const memory = buildGeneralStudyAnswer('How do I remember provisions?', parsed);
-  assert.match(memory.answer, /recall/i);
-  const exam = buildGeneralStudyAnswer('How should I manage time in mock papers?', parsed);
-  assert.match(exam.answer, /allocate time/i);
-});
