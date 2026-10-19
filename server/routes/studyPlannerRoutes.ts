@@ -587,8 +587,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // GST is a focused module within the combined Taxation paper. Keep the student-facing plan
     // scoped to GST and collect explicit chapter-strength ratings before creating a revision plan.
     const conversationText = [message, ...history].join(' ');
-    const gstRevisionRequest = /\\bgst\\b/i.test(conversationText)
-      && /\\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round)\\b/i.test(conversationText);
+    const gstRevisionRequest = /\bgst\b/i.test(conversationText)
+      && /\b(revision|revise|study|plan|prepare|preparation|detailed|effective|repeat|round)\b/i.test(conversationText);
     const gstChapters = (INTERMEDIATE_CHAPTERS['Taxation (Income Tax & GST)'] || [])
       .filter((chapter) => chapter.startsWith('GST:'));
 
@@ -643,7 +643,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         subject: 'GST',
         label: item.strength === 'WEAK' ? 'Concept revision + extra practice' : item.strength === 'MODERATE' ? 'Revision + question practice' : 'Quick recall + self-test',
         minutes: allocations[index],
-        instruction: item.chapter.replace(/^GST:\\s*/, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions and solve a short timed set.'),
+        instruction: item.chapter.replace(/^GST:\s*/, '') + ' — ' + item.strength.toLowerCase() + ' chapter. ' + (item.strength === 'WEAK' ? 'Review concepts and provisions, then solve worked examples and exam-style questions.' : item.strength === 'MODERATE' ? 'Revise key rules and solve representative questions, then check mistakes.' : 'Use active recall, revise key exceptions and solve a short timed set.'),
         chapter: item.chapter,
         strength: item.strength,
       }));
