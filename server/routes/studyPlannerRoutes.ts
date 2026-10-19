@@ -855,8 +855,12 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     let responseMessage = 'Request parsed. This beta does not save class changes, study progress, or chapter priorities.';
 
     if (parsed.intent === 'out_of_scope') {
-      status = 'unsupported_course';
-      responseMessage = 'CA Final is not supported by this planner beta yet. Your request was not executed.';
+      status = 'out_of_scope';
+      responseMessage = replyLanguage === 'hinglish'
+        ? 'Bhai, main CA study-related topics mein help karta hoon. CA level/subject clear karke question dobara bhej de.'
+        : replyLanguage === 'hindi'
+          ? 'मैं CA की पढ़ाई से जुड़े topics में मदद करता हूँ। CA level या subject स्पष्ट करके question दोबारा भेजें।'
+          : 'I focus on CA study-related questions. Please clarify the CA level or subject and try again.';
     } else if (parsed.intent === 'clarify') {
       status = 'needs_clarification';
       if (parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
