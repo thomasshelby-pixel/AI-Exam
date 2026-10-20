@@ -168,7 +168,7 @@ const UNIT_RANGES: Record<string, Array<{ name: string; from: number; to: number
   ],
 };
 
-function makePlannerUnits(course: PlannerCourse, subjectName: string, chapters: string[]): PlannerUnitOption[] {
+function makePlannerUnits(subjectName: string, chapters: string[]): PlannerUnitOption[] {
   const ranges = UNIT_RANGES[subjectName] || [];
   const units = ranges.map((range, index) => ({
     key: subjectName.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-unit-' + (index + 1),
@@ -205,7 +205,7 @@ export function getPlannerSubjects(course: PlannerCourse): PlannerSubjectOption[
       paperNumber: subject.paperNumber,
       group: subject.group || null,
       chapters: subjectChapters,
-      units: makePlannerUnits(course, subject.name, subjectChapters),
+      units: makePlannerUnits(subject.name, subjectChapters),
     };
   });
 }
