@@ -48,3 +48,17 @@ test('Foundation subject aliases do not cross-map into Intermediate subjects', (
   assert.deepEqual(getPlannerSubjectAliases('Costing', 'CA_INTERMEDIATE'), ['Cost and Management Accounting', 'Costing']);
   assert.ok(getPlannerChapterRegistry('CA_FOUNDATION')['Business Laws'].length > 0);
 });
+
+
+test('every Foundation and Intermediate chapter belongs to exactly one selectable unit', () => {
+  for (const course of ['CA_FOUNDATION', 'CA_INTERMEDIATE'] as const) {
+    const subjects = getPlannerSubjects(course);
+    for (const subject of subjects) {
+      assert.ok(subject.units.length > 0, course + ' / ' + subject.name + ' should expose units');
+      const grouped = subject.units.flatMap((unit) => unit.chapters);
+      assert.deepEqual([...grouped].sort(), [...subject.chapters].sort(), course + ' / ' + subject.name + ' unit coverage');
+      assert.equal(new Set(grouped).size, grouped.length, course + ' / ' + subject.name + ' must not duplicate a chapter across units');
+      assert.ok(subject.units.every((unit) => unit.name.trim().length > 0 && unit.chapters.length > 0));
+    }
+  }
+});

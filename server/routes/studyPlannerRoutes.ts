@@ -307,12 +307,38 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
   const strengths = db.prepare(
     'SELECT subject, chapter, strength FROM student_chapter_strengths WHERE user_id = ? AND course = ? AND chapter != ?'
   ).all(req.user.id, course, '__SUBJECT_LEVEL__') as Array<{ subject: string; chapter: string; strength: string }>;
+
+  // When the UI sends an explicit chapter selection, validate it against the supported
+  // curriculum and build the schedule from that selection only. Legacy callers that do
+  // not send selected_chapters keep their existing saved-strength behaviour.
+  let selectedChapters: Array<{ subject: string; chapter: string }> | null = null;
+  if (Object.prototype.hasOwnProperty.call(body, 'selected_chapters')) {
+    if (!Array.isArray(body.selected_chapters) || body.selected_chapters.length === 0) {
+      return res.status(400).json({ success: false, error: 'Select at least one chapter before generating your timetable.' });
+    }
+    const unique = new Map<string, { subject: string; chapter: string }>();
+    for (const item of body.selected_chapters as Array<{ subject?: unknown; chapter?: unknown }>) {
+      const subject = typeof item?.subject === 'string' ? item.subject.trim() : '';
+      const chapter = typeof item?.chapter === 'string' ? item.chapter.trim() : '';
+      if (!subject || !chapter || !isValidPlannerChapter(course, subject, chapter)) {
+        return res.status(400).json({ success: false, error: 'One or more selected chapters are not in the CA Foundation / CA Intermediate curriculum.' });
+      }
+      unique.set(subject + '::' + chapter, { subject, chapter });
+    }
+    selectedChapters = [...unique.values()];
+  }
+  const sourceStrengths = selectedChapters
+    ? selectedChapters.map((selected) => {
+        const saved = strengths.find((item) => item.subject === selected.subject && item.chapter === selected.chapter);
+        return { ...selected, strength: saved?.strength || 'MODERATE' };
+      })
+    : strengths;
   const results = db.prepare(
     'SELECT subject, score, max_score, exam_date FROM student_mock_results WHERE user_id = ? AND course = ? ORDER BY exam_date DESC, created_at DESC LIMIT 200'
   ).all(req.user.id, course) as Array<{ subject: string; score: number; max_score: number; exam_date: string }>;
   const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string }>();
   for (const result of results) if (!latestBySubject.has(result.subject)) latestBySubject.set(result.subject, result);
-  const priorities = strengths.map((item) => {
+  const priorities = sourceStrengths.map((item) => {
     const aliases = getCanonicalStrengthSubject(item.subject, course);
     const matchingSubject = getPlannerSubjects(course).find((subject) => aliases.includes(subject.name));
     const canonicalNames = new Set([item.subject, matchingSubject?.name || '', ...aliases]);
@@ -325,13 +351,17 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
     return { subject: item.subject, chapter: item.chapter, strength: item.strength, priority_score: score };
   });
   try {
+    const startDate = typeof body.start_date === 'string' ? body.start_date : new Date().toISOString().slice(0, 10);
+    const revisionMode = body.revision_mode === 'single_day' ? 'single_day' : 'bulk_group';
+    const suppliedExamDate = typeof body.exact_exam_date === 'string' && body.exact_exam_date ? body.exact_exam_date : null;
     const plan = createMultiDayStudyPlan({
-      start_date: typeof body.start_date === 'string' ? body.start_date : new Date().toISOString().slice(0, 10),
+      start_date: startDate,
       daily_study_hours: Number(body.daily_study_hours),
       study_start_time: String(body.study_start_time || ''),
       preferred_end_time: String(body.preferred_end_time || ''),
       attempt: String(body.attempt || ''),
-      exact_exam_date: typeof body.exact_exam_date === 'string' && body.exact_exam_date ? body.exact_exam_date : null,
+      exact_exam_date: revisionMode === 'single_day' ? startDate : suppliedExamDate,
+      schedule_through_exam: revisionMode === 'single_day',
       class_mode: body.class_mode === 'fixed' || body.class_mode === 'flexible' ? body.class_mode : 'none',
       class_blocks: Array.isArray(body.class_blocks) ? body.class_blocks : [],
       priorities,
