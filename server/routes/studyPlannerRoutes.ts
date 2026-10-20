@@ -332,7 +332,8 @@ router.post('/multi-day-schedule', authenticateToken, (req: AuthRequest, res: Re
         const saved = strengths.find((item) => item.subject === selected.subject && item.chapter === selected.chapter);
         return { ...selected, strength: saved?.strength || 'MODERATE' };
       })
-    : strengths;  const results = db.prepare(
+    : strengths;
+  const results = db.prepare(
     'SELECT subject, score, max_score, exam_date FROM student_mock_results WHERE user_id = ? AND course = ? ORDER BY exam_date DESC, created_at DESC LIMIT 200'
   ).all(req.user.id, course) as Array<{ subject: string; score: number; max_score: number; exam_date: string }>;
   const latestBySubject = new Map<string, { subject: string; score: number; max_score: number; exam_date: string }>();
