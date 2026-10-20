@@ -392,7 +392,7 @@ export const StudyPlannerPage: React.FC = () => {
       setDailyPlanBusy(false);
     }
   };
-  const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: studentCourse, plan }) }); setDailyPlanState('Saved to your study planner.'); await refreshSavedPlans(); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
+  const saveDailyPlan = async () => { if (!dailyPlan || !dailyPlan.sessions?.length) return; setDailyPlanBusy(true); setDailyPlanState(''); try { const plan = { title: dailyPlan.title + ' · ' + dailyPlan.date, total_minutes: dailyPlan.total_minutes, date: dailyPlan.date, sessions: dailyPlan.sessions, note: 'Generated from saved chapter priorities. Breaks are not included in study minutes.' }; await apiRequest('/api/student/study-planner/plans', { method: 'POST', body: JSON.stringify({ course: studentCourse, plan }) }); setDailyPlanState('Saved timetable to your study planner.'); } catch (err: any) { setDailyPlanState(err?.message || 'Could not save this plan.'); } finally { setDailyPlanBusy(false); } };
 
   const sendRequest = async (rawText?: string, extras?: { chapter_ratings?: Array<{ chapter: string; strength: string }>; available_minutes?: number; chapter_assessment_subject?: string; plan_scope?: 'one_day' | 'exam_roadmap'; reply_language?: 'english' | 'hinglish' | 'hindi' }) => {
     const text = (rawText ?? request).trim();
@@ -649,7 +649,6 @@ export const StudyPlannerPage: React.FC = () => {
                                           <label className="flex cursor-pointer items-start gap-3">
                                             <input type="checkbox" checked={isSelected} onChange={(event) => setSelectedChapters((current) => ({ ...current, [ratingKey]: event.target.checked }))} className="mt-0.5 h-4 w-4 shrink-0 accent-indigo-600" />
                                             <span className="min-w-0 flex-1 text-sm font-semibold leading-5 text-slate-800 dark:text-slate-100">{chapter}</span>
-                                            {strengths[ratingKey] && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">Saved: {String(strengths[ratingKey]).toLowerCase()}</span>}
                                           </label>
                                           {isSelected && (
                                             <div className="mt-3 pl-7">
@@ -684,7 +683,7 @@ export const StudyPlannerPage: React.FC = () => {
               </div>
             )}
             <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">Selected chapter ratings are saved to your account. Unrated selections start as Moderate unless you change them.</p>
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">Save ratings here, or generate a timetable to save them automatically. Unrated selections start as Moderate unless you change them.</p>
               <button type="button" disabled={strengthBusy || selectedChapterEntries.length === 0} onClick={() => void saveSelectedRatings()} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-indigo-300 px-4 py-2.5 text-sm font-bold text-indigo-700 disabled:opacity-50 dark:border-indigo-800 dark:text-indigo-200">
                 <Save className="h-4 w-4" /> {strengthBusy ? 'Saving ratings…' : 'Save selected ratings'}
               </button>
