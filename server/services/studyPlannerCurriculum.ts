@@ -135,10 +135,10 @@ const UNIT_RANGES: Record<string, Array<{ name: string; from: number; to: number
     { name: 'Macroeconomics and Indian economy', from: 5, to: 9 },
   ],
   'Advanced Accounting': [
-    { name: 'Accounting Standards — Unit 1', from: 0, to: 0 },
-    { name: 'Accounting Standards — Unit 2', from: 1, to: 1 },
-    { name: 'Accounting Standards — Unit 3', from: 2, to: 2 },
-    { name: 'Accounting Standards — Unit 4', from: 3, to: 3 },
+    { name: 'Accounting Standards (AS 1, AS 2, AS 3, AS 4, AS 5)', from: 0, to: 0 },
+    { name: 'Accounting Standards (AS 7, AS 9, AS 10, AS 11, AS 12)', from: 1, to: 1 },
+    { name: 'Accounting Standards (AS 13, AS 14, AS 16, AS 17, AS 18)', from: 2, to: 2 },
+    { name: 'Accounting Standards (AS 19, AS 20, AS 22, AS 24, AS 26, AS 28, AS 29)', from: 3, to: 3 },
     { name: 'Company and specialised accounts', from: 4, to: 8 },
   ],
   'Corporate and Other Laws': [
