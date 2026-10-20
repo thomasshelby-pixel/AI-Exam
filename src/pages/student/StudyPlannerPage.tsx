@@ -632,7 +632,7 @@ export const StudyPlannerPage: React.FC = () => {
                                   }} className="h-4 w-4 shrink-0 accent-indigo-600" />
                                   <button type="button" aria-expanded={unitOpen} onClick={() => setExpandedUnits((current) => ({ ...current, [unitKey]: !unitOpen }))} className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left">
                                     <span className="min-w-0">
-                                      <span className="block text-sm font-bold text-slate-900 dark:text-white">{unit.name}</span>
+                                      <span className="block text-sm font-bold text-slate-900 dark:text-white">Unit {unitIndex + 1} · {unit.name}</span>
                                       <span className="mt-0.5 block text-xs text-slate-500">{chosenCount}/{unit.chapters.length} selected · select the checkbox to toggle the whole unit</span>
                                     </span>
                                     <span className="shrink-0 text-lg text-slate-500" aria-hidden="true">{unitOpen ? '−' : '+'}</span>
