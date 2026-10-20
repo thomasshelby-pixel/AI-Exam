@@ -318,7 +318,12 @@ export const StudyPlannerPage: React.FC = () => {
       return;
     }
     if (!dailyDate || Number.isNaN(new Date(dailyDate + 'T00:00:00').getTime())) {
-      setDailyPlanState('Choose a valid date.');
+      setDailyPlanState('Choose a valid plan start date.');
+      setDailyPlan(null);
+      return;
+    }
+    if (!selectedChapterEntries.length) {
+      setDailyPlanState('Select at least one chapter from a unit before generating the timetable.');
       setDailyPlan(null);
       return;
     }
@@ -326,12 +331,29 @@ export const StudyPlannerPage: React.FC = () => {
     setDailyPlanState('');
     setDailyPlan(null);
     try {
+      // Persist the visible Weak / Moderate / Strong choice for every selected chapter.
+      const ratingsToSave = selectedChapterEntries.map((item) => ({
+        ...item,
+        strength: strengths[item.key] || 'MODERATE',
+      }));
+      await Promise.all(ratingsToSave.map((item) => apiRequest('/api/student/study-planner/strengths', {
+        method: 'PUT',
+        body: JSON.stringify({ course: studentCourse, subject: item.subject, chapter: item.chapter, strength: item.strength }),
+      })));
+      setStrengths((current) => {
+        const next = { ...current };
+        ratingsToSave.forEach((item) => { next[item.key] = item.strength; });
+        return next;
+      });
+
       const response = await apiRequest<{ success: boolean; plan: { start_date: string; end_date: string; attempt: string; exact_exam_date: string | null; daily_study_minutes: number; sessions: any[]; assumptions: string[] }; error?: string }>(
         '/api/student/study-planner/multi-day-schedule',
         {
           method: 'POST',
           body: JSON.stringify({
             course: studentCourse,
+            revision_mode: revisionMode,
+            selected_chapters: selectedChapterEntries.map(({ subject, chapter }) => ({ subject, chapter })),
             start_date: dailyDate,
             daily_study_hours: hours,
             study_start_time: studyStartTime,
@@ -345,7 +367,7 @@ export const StudyPlannerPage: React.FC = () => {
       );
       const schedule = response.plan;
       setDailyPlan({
-        title: 'Weekly timetable · ' + schedule.attempt,
+        title: (revisionMode === 'single_day' ? 'Single-day revision · ' : 'Bulk / group revision · ') + schedule.attempt,
         total_minutes: schedule.sessions.reduce((sum: number, session: any) => sum + Number(session.minutes || 0), 0),
         daily_minutes: schedule.daily_study_minutes,
         available_minutes: schedule.daily_study_minutes,
@@ -357,13 +379,15 @@ export const StudyPlannerPage: React.FC = () => {
         assumptions: schedule.assumptions,
       });
       setDailyPlanState(schedule.sessions.length
-        ? '7-day draft ready. Review the subject rotation and session times before saving.'
-        : 'Rate at least one chapter first. The planner will not guess which chapters are weak.');
+        ? (revisionMode === 'single_day'
+          ? 'Single-day revision plan is ready. Review the chapter sessions below.'
+          : 'Your next 7 days are ready using only the chapters you selected. Review the sessions below.')
+        : 'No sessions fit the selected time window. Increase daily hours or adjust your study times / class blocks.');
       await apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(studentCourse))
         .then((data) => setPriorities(data.priorities || []))
         .catch(() => undefined);
     } catch (err: any) {
-      setDailyPlanState(err?.message || 'Could not generate the daily timetable.');
+      setDailyPlanState(err?.message || 'Could not generate the timetable.');
     } finally {
       setDailyPlanBusy(false);
     }
