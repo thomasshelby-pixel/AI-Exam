@@ -119,7 +119,11 @@ export const StudyPlannerPage: React.FC = () => {
   const [savingPlanId, setSavingPlanId] = useState<number | null>(null);
   const [savedPlanIds, setSavedPlanIds] = useState<number[]>([]);
   const [strengths, setStrengths] = useState<Record<string, string>>({});
-  const [curriculumSubjects, setCurriculumSubjects] = useState<Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }>>([]);
+  const [curriculumSubjects, setCurriculumSubjects] = useState<Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[]; units?: Array<{ key: string; name: string; chapters: string[] }> }>>([]);
+  const [revisionMode, setRevisionMode] = useState<'bulk_group' | 'single_day'>('bulk_group');
+  const [selectedChapters, setSelectedChapters] = useState<Record<string, boolean>>({});
+  const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({});
+  const [expandedUnits, setExpandedUnits] = useState<Record<string, boolean>>({});
   const [selectedStrengthSubject, setSelectedStrengthSubject] = useState('');
   const [selectedStrengthChapter, setSelectedStrengthChapter] = useState('');
   const [selectedStrength, setSelectedStrength] = useState('MODERATE');
@@ -175,56 +179,58 @@ export const StudyPlannerPage: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const loadPlannerProfile = async () => {
+    apiRequest<{ success: boolean; course: 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL' }>('/api/student/study-planner/course')
+      .then((selected) => {
+        if (!cancelled) setStudentCourse(selected.course);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCourseData = async () => {
+      if (studentCourse === 'CA_FINAL') {
+        setCurriculumSubjects([]);
+        setSelectedChapters({});
+        return;
+      }
       try {
-        const selected = await apiRequest<{ success: boolean; course: 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL'; label: string }>('/api/student/study-planner/course');
-        if (cancelled) return;
-        const course = selected.course;
-        setStudentCourse(course);
-        const profilePromise = apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(course));
-        if (course === 'CA_FINAL') {
-          const profile = await profilePromise;
-          if (cancelled) return;
-          const restored: Record<string, string> = {};
-          for (const item of profile.strengths || []) {
-            if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
-          }
-          setCurriculumSubjects([]);
-          setStrengths(restored);
-          setPriorities([]);
-          setSavedPlans(profile.plans || []);
-          setProgressLogs(profile.progress || []);
-          return;
-        }
         const [curriculum, profile, priorityData] = await Promise.all([
-          apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[] }> }>('/api/student/study-planner/curriculum?course=' + encodeURIComponent(course)),
-          profilePromise,
-          apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(course)),
+          apiRequest<{ success: boolean; subjects: Array<{ key: string; name: string; paperNumber: number; group: string | null; chapters: string[]; units?: Array<{ key: string; name: string; chapters: string[] }> }> }>('/api/student/study-planner/curriculum?course=' + encodeURIComponent(studentCourse)),
+          apiRequest<{ success: boolean; strengths: Array<{ subject: string; chapter: string; strength: string }>; plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(studentCourse)),
+          apiRequest<{ success: boolean; priorities: Array<{ subject: string; chapter: string; strength: string; mock_percentage: number | null; priority_score: number; priority: string; rationale: string }> }>('/api/student/study-planner/priorities?course=' + encodeURIComponent(studentCourse)),
         ]);
         if (cancelled) return;
         const options = curriculum.subjects || [];
-        setCurriculumSubjects(options);
-        if (options.length) {
-          setMockSubject(options[0].name);
-          setSelectedStrengthSubject((current) => current || options[0].name);
-          setSelectedStrengthChapter((current) => current || options[0].chapters[0] || '');
-        }
         const restored: Record<string, string> = {};
         for (const item of profile.strengths || []) {
           if (item.chapter !== '__SUBJECT_LEVEL__') restored[item.subject + '::' + item.chapter] = item.strength;
         }
+        setCurriculumSubjects(options);
+        setMockSubject(options[0]?.name || '');
+        setSelectedStrengthSubject(options[0]?.name || '');
+        setSelectedStrengthChapter(options[0]?.chapters[0] || '');
+        setSelectedStrength(restored[(options[0]?.name || '') + '::' + (options[0]?.chapters[0] || '')] || 'MODERATE');
+        setSelectedChapters({});
+        setExpandedSubjects({});
+        setExpandedUnits({});
         setStrengths(restored);
         setPriorities(priorityData.priorities || []);
         setSavedPlans(profile.plans || []);
         setProgressLogs(profile.progress || []);
       } catch {
-        // Keep the study chat available even if optional planner data cannot load.
+        if (!cancelled) setCurriculumSubjects([]);
       }
     };
-    void loadPlannerProfile();
+    void loadCourseData();
     return () => { cancelled = true; };
-  }, []);
+  }, [studentCourse]);
 
+  const selectedChapterEntries = curriculumSubjects.flatMap((subject) =>
+    subject.chapters.filter((chapter) => selectedChapters[subject.name + '::' + chapter])
+      .map((chapter) => ({ subject: subject.name, chapter, key: subject.name + '::' + chapter })),
+  );
 
   const refreshSavedPlans = async () => {
     const profile = await apiRequest<{ plans?: Array<any>; progress?: Array<any> }>('/api/student/study-planner/profile?course=' + encodeURIComponent(studentCourse));
