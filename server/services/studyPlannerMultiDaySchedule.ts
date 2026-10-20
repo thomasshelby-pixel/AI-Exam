@@ -162,7 +162,7 @@ export function createMultiDayStudyPlan(input: {
     class_mode: classMode,
     sessions,
     assumptions: chapters.length
-      ? [input.schedule_through_exam ? 'This is a dated study schedule from the start date through the exact exam date.' : 'This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only saved chapter ratings and available performance data are used; unrated chapters are not guessed.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
+      ? [input.schedule_through_exam ? 'This is a dated study schedule from the start date through the exact exam date.' : 'This is a rolling 7-day timetable toward the selected attempt; regenerate it weekly as progress changes.', 'Only chapters supplied to this plan are scheduled; no extra curriculum chapters are added.', 'Subjects and chapters rotate across days; a 10-minute break is inserted between sessions and does not count as study time.',
         classMode === 'none' ? 'No class time was supplied; all selected study windows are treated as available.' : classMode === 'fixed' ? 'Recurring fixed class blocks are excluded from study windows.' : 'Flexible class hours selected: enter your actual unavailable windows by adjusting start/end times before following the plan.', 'Exact exam date is optional. Without it, the selected attempt month is a target label, not an assumed exam date.']
       : ['Rate at least one chapter first. The planner will not guess which chapters are weak.'],
   };
