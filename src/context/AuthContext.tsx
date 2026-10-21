@@ -66,7 +66,7 @@ interface AuthContextType {
   verifyMfaEnroll: (phone: string, otpCode?: string, verificationId?: string, idToken?: string) => Promise<User>;
   syncMfaFactor: (phone?: string) => Promise<User>;
   disableMfa: () => Promise<void>;
-  login: (email: string, password: string) => Promise<User>;
+  login: (email: string, password: string, portalScope?: 'STUDENT' | 'SUPER_ADMIN') => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
   instituteRegister: (data: {
     instituteName: string;
@@ -593,7 +593,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [refreshUser]);
 
-  const login = async (email: string, password: string): Promise<User> => {
+  const login = async (email: string, password: string, portalScope?: 'STUDENT' | 'SUPER_ADMIN'): Promise<User> => {
     try {
       const deviceId = getOrCreateDeviceId();
       const trustToken = getScopedTrustToken(email);
@@ -612,7 +612,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deviceTrusted?: boolean;
       }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, deviceId, trustToken }),
+        body: JSON.stringify({ email, password, deviceId, trustToken, portalScope }),
       });
 
       if (res.mfaRequired && res.mfaSessionToken) {
