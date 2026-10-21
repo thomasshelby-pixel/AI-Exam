@@ -2827,9 +2827,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
 
     const hasResult = Boolean(result && Array.isArray(result.questions) && result.questions.length > 0);
     const hasDurablePackage = Boolean(runPackage && runPackage.scoreLedger && runPackage.reconciliation);
-    if (hasResult && hasDurablePackage) {
+    if (hasResult || hasDurablePackage) {
       return res.status(409).json({
-        error: 'A saved result and durable run package exist. This record needs artifact finalization, not a fresh AI evaluation; automatic finalization is not enabled by this recovery action yet.',
+        error: 'A saved result or durable run package already exists. This recovery action will not rerun AI scoring or overwrite a potentially valid result; artifact finalization needs separate handling.',
         code: 'SAVED_RESULT_NEEDS_ARTIFACT_FINALIZATION',
         evaluationId,
         hasResult,
