@@ -22,7 +22,7 @@ test('portal scope only narrows login to an existing role', () => {
 
 test('login source contains no hard-coded or environment password bypass', () => {
   const source = readFileSync(new URL('../routes/authRoutes.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /process\\.env\\.ADMIN_PASSWORD/);
+  assert.equal(source.includes('ADMIN_PASSWORD'), false);
   assert.equal(source.includes('envAdminPass'), false);
   assert.equal(source.includes('BgMi@2006'), false);
 });
@@ -38,5 +38,5 @@ test('private back-office route is registered but has no public navigation entry
   const publicAuthSource = readFileSync(new URL('../../src/pages/auth/UnifiedAuthPage.tsx', import.meta.url), 'utf8');
   assert.equal(appSource.includes('path="/ops-gate-73e1b4"'), true);
   assert.doesNotMatch(publicAuthSource, /ops-gate-73e1b4|PrivateAdminAccessPage/i);
-  assert.doesNotMatch(appSource, /Navigate to="\\/login\\?redirect=\\/admin\\/dashboard"/);
+  assert.equal(appSource.includes('Navigate to="/login?redirect=/admin/dashboard"'), false);
 });
