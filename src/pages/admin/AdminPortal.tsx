@@ -3067,6 +3067,29 @@ export const AdminPortal: React.FC = () => {
                                         </button>
                                       )}
 
+                                      {/* Recovery preflight for stalled evaluations */}
+                                      {['QUEUED', 'PROCESSING', 'FAILED', 'PERSISTENCE_FAILED'].includes(String(ev.status || '').toUpperCase()) && (
+                                        <button
+                                          onClick={async () => {
+                                            const confirmed = window.confirm(
+                                              'Check whether this evaluation can be safely recovered? This check will not start a new AI evaluation or deduct credits.'
+                                            );
+                                            if (!confirmed) return;
+                                            try {
+                                              const result = await apiRequest<any>(`/api/admin/evaluations/${ev.id}/recover`, { method: 'POST' });
+                                              window.alert(result?.message || result?.status || 'Recovery preflight finished. Check the returned details.');
+                                            } catch (error: any) {
+                                              window.alert(error?.message || 'Recovery preflight failed. No retry was started.');
+                                            }
+                                          }}
+                                          className="px-2 py-1 rounded-md border border-amber-300 hover:bg-amber-50 text-amber-800 font-semibold transition cursor-pointer flex items-center gap-1 text-[11px]"
+                                          title="Check safe recovery options for this stalled evaluation"
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5" />
+                                          Recover
+                                        </button>
+                                      )}
+
                                       {/* View Details Action */}
                                       <button
                                         onClick={() => handleViewEvaluationDetails(ev.id)}
