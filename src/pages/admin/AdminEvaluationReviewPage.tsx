@@ -150,6 +150,24 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
   const [selectedVersionForCopy, setSelectedVersionForCopy] = useState<'current' | 'v1' | 'v2'>('current');
   const [showHistory, setShowHistory] = useState<boolean>(false);
 
+  const runRecoveryPreflight = async () => {
+    const confirmed = window.confirm(
+      'Run a safe recovery check? This will not change marks, deduct credits, or start a new AI evaluation unless required inputs can be verified.'
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setActionError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/recover`, { method: 'POST' });
+      setSuccessMessage(result.message || 'Recovery check completed.');
+    } catch (err: any) {
+      setActionError(err.message || 'Recovery check could not safely proceed. No evaluation or credit changes were made.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const fetchReviewDetails = async () => {
     try {
       setLoading(true);
@@ -401,7 +419,18 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {['QUEUED', 'PROCESSING', 'FAILED', 'PERSISTENCE_FAILED'].includes(String(evaluation.status || '').toUpperCase()) && (
+            <button
+              onClick={runRecoveryPreflight}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              title="Check whether this evaluation can be safely recovered"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${saving ? 'animate-spin' : ''}`} />
+              {saving ? 'Checking...' : 'Recover Evaluation'}
+            </button>
+          )}
           {versions.length > 0 && (
             <button
               onClick={() => setShowHistory(!showHistory)}
