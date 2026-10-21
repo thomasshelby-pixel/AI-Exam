@@ -85,7 +85,7 @@ export async function evaluateMfaRequirementForLogin(
   const authState = await getAuthoritativeUserMfaState(user.id);
   const mfaState = authState.state;
   const isEnrolled = mfaState === 'MFA_ENROLLED';
-  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || user.role === 'ADMIN';
+  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
 
   const candidateTokens = [
     deviceContext?.trustToken,
@@ -1086,7 +1086,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       VALUES (?, ?, 'USER_LOGIN', 'USER', ?, 'User successfully logged in')
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, user.id, user.id);
 
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || user.role === 'ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
     const resolvedTrustToken = mfaCheck.trustToken || trustToken;
 
@@ -1657,7 +1657,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       profileData = { institute };
     }
 
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || user.role === 'ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
 
     // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes
     const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);
