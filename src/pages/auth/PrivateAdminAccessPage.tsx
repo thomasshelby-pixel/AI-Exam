@@ -4,7 +4,7 @@ import { KeyRound, Lock, ShieldCheck, Eye, EyeOff, AlertCircle } from 'lucide-re
 import { useAuth } from '../../context/AuthContext.js';
 
 const isSuperAdmin = (role: unknown) => {
-  const normalized = String(role || '').trim().toUpperCase().replace(/\\s+/g, '_');
+  const normalized = String(role || '').trim().toUpperCase().replaceAll(' ', '_');
   return normalized === 'SUPER_ADMIN' || normalized === 'ADMIN';
 };
 
