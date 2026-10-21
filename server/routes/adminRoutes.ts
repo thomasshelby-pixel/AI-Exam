@@ -2787,6 +2787,22 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const status = String(evaluation.status || '').toUpperCase();
+    if (status === 'FAILED' || status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
+      return res.status(409).json({
+        error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations. Failed evaluations are not eligible.',
+        code: 'FAILED_EVALUATION_NOT_RECOVERABLE',
+        evaluationId,
+        status,
+      });
+    }
+    if (status !== 'QUEUED' && status !== 'PROCESSING') {
+      return res.status(409).json({
+        error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations.',
+        code: 'EVALUATION_STATUS_NOT_RECOVERABLE',
+        evaluationId,
+        status,
+      });
+    }
     if (status === 'COMPLETED') {
       return res.status(409).json({
         error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
