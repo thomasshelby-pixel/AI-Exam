@@ -903,10 +903,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    let lookupEmail = normalizedEmail;
-    if (normalizedEmail === 'support@caexamcheckerai.com' || normalizedEmail === 'caexamchecker.support@gmail.com') {
-      lookupEmail = 'admin@caexamchecker.ai';
-    }
+    const lookupEmail = normalizedEmail;
     let user = db.prepare(`
       SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
     `).get(lookupEmail) as {
