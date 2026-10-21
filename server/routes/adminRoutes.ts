@@ -2837,7 +2837,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       });
     }
 
-    const original = await getPersistentFile(evaluationId, `${evaluationId}_original.pdf`);
+    const original = await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`);
     if (!original?.buffer?.length) {
       return res.status(409).json({
         error: 'The original answer-sheet PDF could not be restored from persistent storage. No retry was started and no credits were changed.',
