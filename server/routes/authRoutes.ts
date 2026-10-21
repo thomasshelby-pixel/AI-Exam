@@ -5,6 +5,7 @@ import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
+import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -246,13 +247,7 @@ async function authenticateWithFirestoreFallback(
     const fHash = fUserDoc.password_hash || fUserDoc.passwordHash || fUserDoc.password;
     if (!fHash || typeof fHash !== 'string') return null;
 
-    let isPassValid = verifyPassword(rawPassword, fHash);
-    if (!isPassValid && (fUserDoc.role === 'SUPER_ADMIN' || normalizedEmail === 'admin@caexamchecker.ai')) {
-      const envAdminPass = process.env.ADMIN_PASSWORD || 'BgMi@2006';
-      if (rawPassword === envAdminPass || verifyPassword(rawPassword, hashPassword(envAdminPass))) {
-        isPassValid = true;
-      }
-    }
+    const isPassValid = verifyPassword(rawPassword, fHash);
     if (!isPassValid) {
       return null;
     }
@@ -898,9 +893,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    const portalScope = parseAuthPortalScope(req.body?.portalScope);
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
+    }
+    if (portalScope === 'INVALID') {
+      return res.status(400).json({ error: 'Invalid sign-in context.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -923,14 +922,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
 
     let isAuthenticated = false;
     if (user) {
-      if (verifyPassword(password, user.password_hash)) {
-        isAuthenticated = true;
-      } else if (user.role === 'SUPER_ADMIN') {
-        const envAdminPass = process.env.ADMIN_PASSWORD || 'BgMi@2006';
-        if (password === envAdminPass || verifyPassword(password, hashPassword(envAdminPass))) {
-          isAuthenticated = true;
-        }
-      }
+      isAuthenticated = verifyPassword(password, user.password_hash);
     }
 
     if (!isAuthenticated) {
@@ -943,6 +935,16 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     }
 
     if (!user || !isAuthenticated) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Portal scope narrows sign-in only; it never changes or grants an account role.
+    // The role is read from the authoritative account record, including the MCQ-admin
+    // identity override, before privileged MFA is challenged.
+    const roleForPortalCheck = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
+      ? 'MCQ_ADMIN'
+      : user.role;
+    if (!isAuthPortalRoleAllowed(roleForPortalCheck, portalScope)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
