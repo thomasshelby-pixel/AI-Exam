@@ -7,6 +7,7 @@ import {
   getEvaluationModelRegistry,
   determineModelRouting,
   clearModelCooldown,
+  buildOpenAIUserContent,
 } from '../models/modelRegistry.js';
 import {
   getSupportedThinkingLevel,
@@ -99,6 +100,34 @@ async function runTests() {
   }
 
   console.log('  ✓ Strict inventory validated: 3 Gemini, 3 OpenAI, 2 Claude. Unapproved models rejected.');
+  // Verify provider-specific PDF transport. This is a pure unit test; no live API calls.
+  const pdfContent = buildOpenAIUserContent({
+    pdfBase64: 'JVBERi0xLjQ=',
+    mimeType: 'application/pdf',
+    userPrompt: 'Evaluate this answer sheet.',
+  });
+  assert.deepStrictEqual(pdfContent[0], {
+    type: 'file',
+    file: {
+      filename: 'answer-sheet.pdf',
+      file_data: 'data:application/pdf;base64,JVBERi0xLjQ=',
+    },
+  }, 'PDFs must use the OpenAI file content part, not image_url');
+  assert.deepStrictEqual(pdfContent[1], {
+    type: 'text',
+    text: 'Evaluate this answer sheet.',
+  });
+
+  const imageContent = buildOpenAIUserContent({
+    pdfBase64: 'aW1hZ2U=',
+    mimeType: 'image/jpeg',
+    userPrompt: 'Inspect this image.',
+  });
+  assert.strictEqual(imageContent[0].type, 'image_url', 'Non-PDF image uploads must retain image_url transport');
+  assert.strictEqual(imageContent[1].type, 'text');
+
+  console.log('  ✓ OpenAI PDF and image content-part formats validated without live API calls.');
+
 
   // ---------------------------------------------------------------------------
   // TEST 2: SERVER-SIDE VALIDATION & REJECTION LOGIC

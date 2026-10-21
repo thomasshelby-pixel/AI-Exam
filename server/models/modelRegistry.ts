@@ -961,6 +961,41 @@ async function callGemini(
 }
 
 /**
+ * Build provider-valid OpenAI Chat Completions content parts.
+ * PDFs must use the API's `file` content part; `image_url` is only for images.
+ * Keep this helper pure so the wire format can be regression-tested without API calls.
+ */
+export function buildOpenAIUserContent(
+  params: Pick<ModelExecutionParams, 'pdfBase64' | 'mimeType' | 'userPrompt'>
+): any[] {
+  const userContent: any[] = [];
+  if (params.pdfBase64) {
+    const mime = params.mimeType || 'application/pdf';
+    if (mime === 'application/pdf') {
+      userContent.push({
+        type: 'file',
+        file: {
+          filename: 'answer-sheet.pdf',
+          file_data: `data:application/pdf;base64,${params.pdfBase64}`,
+        },
+      });
+    } else {
+      userContent.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${mime};base64,${params.pdfBase64}`,
+        },
+      });
+    }
+  }
+  userContent.push({
+    type: 'text',
+    text: params.userPrompt,
+  });
+  return userContent;
+}
+
+/**
  * Execute evaluation prompt against OpenAI provider
  * Supports GPT-5.6 Sol (Deep Reasoning) and GPT-5.6 Terra (Fast Multimodal)
  */
@@ -979,20 +1014,7 @@ async function callOpenAI(
     });
   }
 
-  const userContent: any[] = [];
-  if (params.pdfBase64) {
-    const mime = params.mimeType || 'application/pdf';
-    userContent.push({
-      type: 'image_url',
-      image_url: {
-        url: `data:${mime};base64,${params.pdfBase64}`,
-      },
-    });
-  }
-  userContent.push({
-    type: 'text',
-    text: params.userPrompt,
-  });
+  const userContent = buildOpenAIUserContent(params);
 
   messages.push({
     role: 'user',
