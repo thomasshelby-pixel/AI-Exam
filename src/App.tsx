@@ -714,7 +714,7 @@ const AppRoutes: React.FC = () => {
     <>
       <Routes>
         {/* Private, unlinked back-office entry. Do not expose through public navigation. */}
-        <Route path="/ops-gate-73e1b4" element={<PrivateAdminAccessPage />} />
+        <Route path="/admin-login" element={<PrivateAdminAccessPage />} />
 
         {/* ============================================================ */}
         {/* SUPER ADMIN PORTAL ROUTES — Dedicated Full Screen Backoffice */}
