@@ -87,7 +87,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsLoading(true);
 
     try {
-      const loggedInUser = await login(email, password);
+      const loggedInUser = await login(email, password, 'STUDENT');
       onSuccess(loggedInUser);
     } catch (err: any) {
       if (
