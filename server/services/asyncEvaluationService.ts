@@ -19,7 +19,6 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
-import { runEvaluationSupervisor } from './evaluationSupervisorService.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
@@ -69,6 +68,10 @@ export interface EvaluationJobData {
   personalEntitlement?: any;
   creditAlreadyConsumed?: boolean;
 }
+
+// Keep the supervisor correction loop opt-in until its model/pipeline is validated.
+// This prevents extra model calls on the normal evaluation path by default.
+const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED === 'true';
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId
 const activeJobs = new Map<string, Promise<void>>();
@@ -275,24 +278,28 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
     }
 
-    // Stage 4B: Supervisor audit + bounded targeted correction loop.
-    // This runs BEFORE PDFs are generated so the report reflects the audited result.
-    evaluationResult = await runEvaluationSupervisor({
-      evaluationResult,
-      pdfBuffer: job.pdfBuf,
-      paperStructure: paperStruct,
-      questionPaperText: job.referenceQuestionPaperText || '',
-      suggestedAnswersText: job.referenceSuggestedAnswersText || '',
-      markingSchemeText: job.markingSchemeText || '',
-      checkingMode: (job.checkingMode as any) || 'standard',
-      level: job.level,
-      subjectName: job.subjectName,
-      officialPaperMaxMarks: job.officialPaperMaxMarks || 100,
-      paper: job.paper,
-      subjectKey: job.subjectKey,
-      materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
-      coverageMap: evaluationResult.coverageMap || null,
-    });
+    // Stage 4B is opt-in while the supervisor correction pipeline is being validated.
+    // Main CA evaluation, deterministic integrity checks, PDF extraction, and report
+    // generation remain active when the flag is unset (the production-safe default).
+    if (ENABLE_EVALUATION_SUPERVISOR) {
+      const { runEvaluationSupervisor } = await import('./evaluationSupervisorService.js');
+      evaluationResult = await runEvaluationSupervisor({
+        evaluationResult,
+        pdfBuffer: job.pdfBuf,
+        paperStructure: paperStruct,
+        questionPaperText: job.referenceQuestionPaperText || '',
+        suggestedAnswersText: job.referenceSuggestedAnswersText || '',
+        markingSchemeText: job.markingSchemeText || '',
+        checkingMode: (job.checkingMode as any) || 'standard',
+        level: job.level,
+        subjectName: job.subjectName,
+        officialPaperMaxMarks: job.officialPaperMaxMarks || 100,
+        paper: job.paper,
+        subjectKey: job.subjectKey,
+        materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        coverageMap: evaluationResult.coverageMap || null,
+      });
+    }
 
     // Stage 5: Artifact Generation (Checked Copy & Detailed Report PDFs)
     updateEvaluationProgress(
@@ -474,12 +481,15 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const hasValidQuestions = Array.isArray(evaluationResult.questions) && evaluationResult.questions.length > 0;
     const isMathConsistent = consistencyReport.isValid && (!runPackage?.scoreLedger || runPackage.scoreLedger.isReconciled);
     const supervisorAuditStatus = (evaluationResult.integrityAudit as any)?.supervisor?.status;
-    const supervisorApproved = supervisorAuditStatus === undefined || supervisorAuditStatus === 'PASS';
+    const supervisorApproved =
+      !ENABLE_EVALUATION_SUPERVISOR ||
+      supervisorAuditStatus === undefined ||
+      supervisorAuditStatus === 'PASS';
     const criticalIntegrityPassed =
       hasValidQuestions &&
       isMathConsistent &&
       (evaluationResult.validationStatus as string) !== 'VALIDATION_FAILED' &&
-      (evaluationResult.validationStatus as string) !== 'NEEDS_REVIEW' &&
+      (!ENABLE_EVALUATION_SUPERVISOR || (evaluationResult.validationStatus as string) !== 'NEEDS_REVIEW') &&
       supervisorApproved;
 
     let durablePackagePersisted = false;
