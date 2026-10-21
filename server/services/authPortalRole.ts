@@ -16,7 +16,7 @@ export function parseAuthPortalScope(value: unknown): ParsedAuthPortalScope {
 
 export function isAuthPortalRoleAllowed(actualRole: unknown, portalScope: AuthPortalScope | null): boolean {
   if (!portalScope) return true;
-  const role = String(actualRole || '').trim().toUpperCase().replace(/\\s+/g, '_');
+  const role = String(actualRole || '').trim().toUpperCase().replaceAll(' ', '_');
   if (portalScope === 'STUDENT') return role === 'STUDENT';
   return role === 'SUPER_ADMIN' || role === 'ADMIN';
 }
