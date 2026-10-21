@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { getServerPort } from '../config/serverPort.js';
-import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal } from '../db.js';
+import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal, loadEvaluationRunPackage } from '../db.js';
 import {
   getAllFeatures,
   getFeatureByKey,
@@ -63,6 +63,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
+import { isEvaluationJobActive } from '../services/asyncEvaluationService.js';
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
@@ -2757,6 +2758,101 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get evaluations error:', error);
     return res.status(500).json({ error: 'Failed to load evaluations' });
+  }
+});
+
+/**
+ * Safe evaluation recovery preflight.
+ * Never marks an evaluation completed or starts a second AI run without the
+ * durable inputs required to do so safely.
+ */
+router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) => {
+  const requestedId = String(req.params.id || '').trim();
+  try {
+    const evaluation = db.prepare(
+      'SELECT * FROM evaluations WHERE id = ? OR display_id = ? LIMIT 1'
+    ).get(requestedId, requestedId) as any;
+
+    if (!evaluation) {
+      return res.status(404).json({ error: 'Evaluation not found', code: 'EVALUATION_NOT_FOUND' });
+    }
+
+    const evaluationId = String(evaluation.id);
+    if (isEvaluationJobActive(evaluationId)) {
+      return res.status(409).json({
+        error: 'This evaluation is already running. Wait for its status to update before retrying.',
+        code: 'EVALUATION_ALREADY_ACTIVE',
+        evaluationId,
+      });
+    }
+
+    const status = String(evaluation.status || '').toUpperCase();
+    if (status === 'COMPLETED') {
+      return res.status(409).json({
+        error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
+        code: 'EVALUATION_ALREADY_COMPLETED',
+        evaluationId,
+      });
+    }
+
+    let result: any = null;
+    try {
+      result = evaluation.result_json ? JSON.parse(evaluation.result_json) : null;
+    } catch {
+      result = null;
+    }
+
+    let runPackage: any = null;
+    try {
+      runPackage = loadEvaluationRunPackage(evaluationId);
+    } catch {
+      runPackage = null;
+    }
+
+    const hasResult = Boolean(result && Array.isArray(result.questions) && result.questions.length > 0);
+    const hasDurablePackage = Boolean(runPackage && runPackage.scoreLedger && runPackage.reconciliation);
+    if (hasResult && hasDurablePackage) {
+      return res.status(409).json({
+        error: 'A saved result and durable run package exist. This record needs artifact finalization, not a fresh AI evaluation; automatic finalization is not enabled by this recovery action yet.',
+        code: 'SAVED_RESULT_NEEDS_ARTIFACT_FINALIZATION',
+        evaluationId,
+        hasResult,
+        hasDurablePackage,
+      });
+    }
+
+    const original = await getPersistentFile(evaluationId, `${evaluationId}_original.pdf`);
+    if (!original?.buffer?.length) {
+      return res.status(409).json({
+        error: 'The original answer-sheet PDF could not be restored from persistent storage. No retry was started and no credits were changed.',
+        code: 'ORIGINAL_PDF_UNAVAILABLE',
+        evaluationId,
+        hasResult,
+        hasDurablePackage,
+      });
+    }
+
+    // An original PDF alone is insufficient to repeat an ICAI-style evaluation:
+    // the exact paper, suggested answers, marking scheme, attempt and entitlement
+    // context must also be reconstructed. Never silently substitute other materials.
+    return res.status(409).json({
+      error: hasResult
+        ? 'The saved result is incomplete or inconsistent with its durable run package. No retry was started.'
+        : 'Original PDF is available, but a saved result and complete immutable reference-input bundle are not available. Automatic retry was blocked to prevent evaluation against the wrong paper or marking scheme.',
+      code: hasResult ? 'SAVED_RESULT_INCOMPLETE' : 'DURABLE_EVALUATION_INPUTS_MISSING',
+      evaluationId,
+      originalPdfAvailable: true,
+      hasResult,
+      hasDurablePackage,
+      status,
+      safeToRetry: false,
+    });
+  } catch (error: any) {
+    console.error('[AdminRecovery] Recovery preflight failed:', error);
+    return res.status(500).json({
+      error: 'Recovery preflight failed without changing evaluation status or credits.',
+      code: 'RECOVERY_PREFLIGHT_FAILED',
+    });
   }
 });
 
