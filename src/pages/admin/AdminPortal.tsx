@@ -3068,7 +3068,7 @@ export const AdminPortal: React.FC = () => {
                                       )}
 
                                       {/* Recovery preflight for stalled evaluations */}
-                                      {['QUEUED', 'PROCESSING', 'FAILED', 'PERSISTENCE_FAILED'].includes(String(ev.status || '').toUpperCase()) && (
+                                      {['QUEUED', 'PROCESSING'].includes(String(ev.status || '').toUpperCase()) && (
                                         <button
                                           onClick={async () => {
                                             const confirmed = window.confirm(
