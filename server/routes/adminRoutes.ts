@@ -2971,6 +2971,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         // Recovery must never charge another personal credit. Institute usage ledger is
         // idempotent by evaluation ID in the evaluator's completion path.
         creditAlreadyConsumed: true,
+        isRecoveryRetry: true,
       } as any);
 
       try {
