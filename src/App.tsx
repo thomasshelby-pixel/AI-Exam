@@ -621,7 +621,7 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
   // When a session is locked, validate the saved account role before preserving
   // the workspace. A student's locked session must never render the admin shell.
   if (isSessionLocked && lockedUser) {
-    const lockedRoleUpper = (lockedUser.role || '').toUpperCase().replace(/\\s+/g, '_');
+    const lockedRoleUpper = (lockedUser.role || '').toUpperCase().replaceAll(' ', '_');
     const lockedEmail = (lockedUser.email || '').toLowerCase().trim();
     if (lockedRoleUpper === 'SUPER_ADMIN' || lockedRoleUpper === 'ADMIN') return <>{children}</>;
     if (lockedRoleUpper === 'MCQ_ADMIN' || lockedEmail === 'priyatca15@gmail.com') {
@@ -637,7 +637,7 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
     return <Navigate to="/" replace />;
   }
 
-  const roleUpper = (user.role || '').toUpperCase().replace(/\\s+/g, '_');
+  const roleUpper = (user.role || '').toUpperCase().replaceAll(' ', '_');
   const normEmail = (user.email || '').toLowerCase().trim();
 
   if (roleUpper === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com') {
