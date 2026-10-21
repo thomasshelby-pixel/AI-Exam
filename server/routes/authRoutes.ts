@@ -5,6 +5,7 @@ import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
+import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -84,7 +85,7 @@ export async function evaluateMfaRequirementForLogin(
   const authState = await getAuthoritativeUserMfaState(user.id);
   const mfaState = authState.state;
   const isEnrolled = mfaState === 'MFA_ENROLLED';
-  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
+  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
 
   const candidateTokens = [
     deviceContext?.trustToken,
@@ -121,7 +122,7 @@ export async function evaluateMfaRequirementForLogin(
     };
   }
 
-  // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
+  // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, legacy ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
     if (mfaState === 'MFA_RECOVERY_REQUIRED') {
       // Fail closed without clearing enrollment or issuing a new authenticator
@@ -246,13 +247,7 @@ async function authenticateWithFirestoreFallback(
     const fHash = fUserDoc.password_hash || fUserDoc.passwordHash || fUserDoc.password;
     if (!fHash || typeof fHash !== 'string') return null;
 
-    let isPassValid = verifyPassword(rawPassword, fHash);
-    if (!isPassValid && (fUserDoc.role === 'SUPER_ADMIN' || normalizedEmail === 'admin@caexamchecker.ai')) {
-      const envAdminPass = process.env.ADMIN_PASSWORD || 'BgMi@2006';
-      if (rawPassword === envAdminPass || verifyPassword(rawPassword, hashPassword(envAdminPass))) {
-        isPassValid = true;
-      }
-    }
+    const isPassValid = verifyPassword(rawPassword, fHash);
     if (!isPassValid) {
       return null;
     }
@@ -898,16 +893,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    const portalScope = parseAuthPortalScope(req.body?.portalScope);
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
+    if (portalScope === 'INVALID') {
+      return res.status(400).json({ error: 'Invalid sign-in context.' });
+    }
 
     const normalizedEmail = email.trim().toLowerCase();
-    let lookupEmail = normalizedEmail;
-    if (normalizedEmail === 'support@caexamcheckerai.com' || normalizedEmail === 'caexamchecker.support@gmail.com') {
-      lookupEmail = 'admin@caexamchecker.ai';
-    }
+    const lookupEmail = normalizedEmail;
     let user = db.prepare(`
       SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
     `).get(lookupEmail) as {
@@ -923,14 +919,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
 
     let isAuthenticated = false;
     if (user) {
-      if (verifyPassword(password, user.password_hash)) {
-        isAuthenticated = true;
-      } else if (user.role === 'SUPER_ADMIN') {
-        const envAdminPass = process.env.ADMIN_PASSWORD || 'BgMi@2006';
-        if (password === envAdminPass || verifyPassword(password, hashPassword(envAdminPass))) {
-          isAuthenticated = true;
-        }
-      }
+      isAuthenticated = verifyPassword(password, user.password_hash);
     }
 
     if (!isAuthenticated) {
@@ -943,6 +932,16 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     }
 
     if (!user || !isAuthenticated) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Portal scope narrows sign-in only; it never changes or grants an account role.
+    // The role is read from the authoritative account record, including the MCQ-admin
+    // identity override, before privileged MFA is challenged.
+    const roleForPortalCheck = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
+      ? 'MCQ_ADMIN'
+      : user.role;
+    if (!isAuthPortalRoleAllowed(roleForPortalCheck, portalScope)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -1087,7 +1086,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       VALUES (?, ?, 'USER_LOGIN', 'USER', ?, 'User successfully logged in')
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, user.id, user.id);
 
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
     const resolvedTrustToken = mfaCheck.trustToken || trustToken;
 
@@ -1658,7 +1657,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       profileData = { institute };
     }
 
-    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
+    const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
 
     // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes
     const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);

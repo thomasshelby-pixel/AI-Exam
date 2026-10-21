@@ -27,6 +27,7 @@ import { ReviewsPage } from './pages/public/ReviewsPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
 import { UnifiedAuthPage } from './pages/auth/UnifiedAuthPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
+import { PrivateAdminAccessPage } from './pages/auth/PrivateAdminAccessPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
 import { StudyPlannerPage } from './pages/student/StudyPlannerPage.js';
@@ -617,30 +618,38 @@ const ProtectedSuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }
 
-  // Preserve workspace state when session is locked for quick resume
+  // When a session is locked, validate the saved account role before preserving
+  // the workspace. A student's locked session must never render the admin shell.
   if (isSessionLocked && lockedUser) {
-    return <>{children}</>;
+    const lockedRoleUpper = (lockedUser.role || '').toUpperCase().replaceAll(' ', '_');
+    const lockedEmail = (lockedUser.email || '').toLowerCase().trim();
+    if (lockedRoleUpper === 'SUPER_ADMIN' || lockedRoleUpper === 'ADMIN') return <>{children}</>;
+    if (lockedRoleUpper === 'MCQ_ADMIN' || lockedEmail === 'priyatca15@gmail.com') {
+      return <Navigate to="/mcq-admin" replace />;
+    }
+    if (lockedRoleUpper === 'INSTITUTE_ADMIN' || lockedRoleUpper === 'INSTITUTE') {
+      return <Navigate to="/institute/dashboard" replace />;
+    }
+    return <Navigate to="/" replace />;
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login?redirect=/admin/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
-  const roleUpper = (user.role || '').toUpperCase().replace(/\s+/g, '_');
+  const roleUpper = (user.role || '').toUpperCase().replaceAll(' ', '_');
   const normEmail = (user.email || '').toLowerCase().trim();
 
-  // Redirect MCQ Admin to MCQ Admin Portal
   if (roleUpper === 'MCQ_ADMIN' || normEmail === 'priyatca15@gmail.com') {
     return <Navigate to="/mcq-admin" replace />;
   }
 
-  // Redirect Institute Admin cleanly to Institute Dashboard
   if (roleUpper === 'INSTITUTE_ADMIN' || roleUpper === 'INSTITUTE') {
     return <Navigate to="/institute/dashboard" replace />;
   }
 
   if (roleUpper !== 'SUPER_ADMIN' && roleUpper !== 'ADMIN') {
-    return <Navigate to="/student/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -704,6 +713,9 @@ const AppRoutes: React.FC = () => {
   return (
     <>
       <Routes>
+        {/* Private, unlinked back-office entry. Do not expose through public navigation. */}
+        <Route path="/ops-gate-73e1b4" element={<PrivateAdminAccessPage />} />
+
         {/* ============================================================ */}
         {/* SUPER ADMIN PORTAL ROUTES — Dedicated Full Screen Backoffice */}
         {/* ============================================================ */}
