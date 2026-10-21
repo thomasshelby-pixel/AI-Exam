@@ -85,7 +85,7 @@ export async function evaluateMfaRequirementForLogin(
   const authState = await getAuthoritativeUserMfaState(user.id);
   const mfaState = authState.state;
   const isEnrolled = mfaState === 'MFA_ENROLLED';
-  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN';
+  const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || user.role === 'ADMIN';
 
   const candidateTokens = [
     deviceContext?.trustToken,
@@ -122,7 +122,7 @@ export async function evaluateMfaRequirementForLogin(
     };
   }
 
-  // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
+  // Administrative roles: MCQ_ADMIN, SUPER_ADMIN, legacy ADMIN, INSTITUTE_ADMIN -> MFA is strictly MANDATORY
   if (isMandatoryRole) {
     if (mfaState === 'MFA_RECOVERY_REQUIRED') {
       // Fail closed without clearing enrollment or issuing a new authenticator
