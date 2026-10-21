@@ -63,7 +63,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
-import { isEvaluationJobActive } from '../services/asyncEvaluationService.js';
+import { enqueueEvaluation, isEvaluationJobActive } from '../services/asyncEvaluationService.js';
 import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
@@ -2848,21 +2848,165 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       });
     }
 
-    // An original PDF alone is insufficient to repeat an ICAI-style evaluation:
-    // the exact paper, suggested answers, marking scheme, attempt and entitlement
-    // context must also be reconstructed. Never silently substitute other materials.
-    return res.status(409).json({
-      error: hasResult
-        ? 'The saved result is incomplete or inconsistent with its durable run package. No retry was started.'
-        : 'Original PDF is available, but a saved result and complete immutable reference-input bundle are not available. Automatic retry was blocked to prevent evaluation against the wrong paper or marking scheme.',
-      code: hasResult ? 'SAVED_RESULT_INCOMPLETE' : 'DURABLE_EVALUATION_INPUTS_MISSING',
-      evaluationId,
-      originalPdfAvailable: true,
-      hasResult,
-      hasDurablePackage,
-      status,
-      safeToRetry: false,
-    });
+    // Reuse the exact material linked to this evaluation. Never substitute another paper.
+    const materialId = String(evaluation.material_id || '').trim();
+    if (!materialId) {
+      return res.status(409).json({
+        error: 'The original reference material is not linked to this evaluation. No retry was started.',
+        code: 'REFERENCE_MATERIAL_ID_MISSING',
+        evaluationId,
+        originalPdfAvailable: true,
+      });
+    }
+
+    let material: any = null;
+    const materialSource = String(evaluation.material_source || '').toUpperCase();
+    try {
+      if (materialSource === 'INSTITUTE') {
+        material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(materialId) as any;
+      } else {
+        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(materialId) as any;
+      }
+      // Legacy rows may not have material_source populated; only try the other table
+      // with the exact same material ID, never search by subject or pick a substitute.
+      if (!material && materialSource !== 'INSTITUTE') {
+        material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(materialId) as any;
+      }
+      if (!material && materialSource === 'INSTITUTE') {
+        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(materialId) as any;
+      }
+    } catch (materialError) {
+      console.error('[AdminRecovery] Failed loading exact reference material:', materialError);
+    }
+
+    const questionText = String(material?.question_paper_text || '');
+    const suggestedText = String(material?.suggested_answers_text || '');
+    if (!material || !questionText.trim() || !suggestedText.trim()) {
+      return res.status(409).json({
+        error: 'The exact linked question paper and suggested answer are not both available. No retry was started.',
+        code: 'EXACT_REFERENCE_MATERIAL_UNAVAILABLE',
+        evaluationId,
+        materialId,
+        originalPdfAvailable: true,
+      });
+    }
+
+    const student = db.prepare(`
+      SELECT u.full_name, u.email, p.icai_registration_number
+      FROM users u
+      LEFT JOIN student_profiles p ON p.user_id = u.id
+      WHERE u.id = ?
+      LIMIT 1
+    `).get(evaluation.student_id) as any;
+
+    const sourceFormat = (material.source_format || evaluation.source_format || 'LEGACY') as 'SEPARATE' | 'COMBINED' | 'LEGACY';
+    const isInstituteMaterial = Boolean(material.institute_id) || materialSource === 'INSTITUTE';
+    const entitlementSource = String(evaluation.entitlement_source || 'PERSONAL_FREE') as
+      'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+    const sponsoringInstituteId = evaluation.sponsoring_institute_id || evaluation.institute_id || material.institute_id || null;
+
+    // Durable compare-and-set claim prevents two admins from launching duplicate retries.
+    // A crashed claim can be reclaimed after two minutes. Failed statuses are blocked above.
+    const claim = db.prepare(`
+      UPDATE evaluations
+      SET progress_stage = 'RECOVERY_CLAIMED',
+          progress_message = 'Admin recovery claimed; validating retry inputs',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status IN ('QUEUED', 'PROCESSING')
+        AND (
+          COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
+          OR updated_at < datetime('now', '-2 minutes')
+          OR updated_at IS NULL
+        )
+    `).run(evaluationId);
+
+    if (claim.changes !== 1) {
+      return res.status(409).json({
+        error: 'Another recovery request has claimed this evaluation. Wait briefly and refresh its status.',
+        code: 'RECOVERY_ALREADY_CLAIMED',
+        evaluationId,
+      });
+    }
+
+    try {
+      enqueueEvaluation({
+        evaluationId,
+        studentId: String(evaluation.student_id),
+        studentName: String(student?.full_name || 'Student Candidate'),
+        icaiRegistrationNumber: String(student?.icai_registration_number || 'N/A'),
+        level: String(evaluation.level || material.level || 'CA_INTERMEDIATE') as any,
+        materialType: String(evaluation.material_type || material.material_type || 'MTP') as any,
+        mtpSeries: (evaluation.mtp_series || material.mtp_series || undefined) as 1 | 2 | undefined,
+        modelGroup: evaluation.model_group || material.model_group || undefined,
+        subjectKey: String(evaluation.subject_key || material.subject_key),
+        subjectName: String(evaluation.subject_name || material.subject_name),
+        paper: String(evaluation.paper || material.paper || 'Paper 1'),
+        attempt: String(evaluation.attempt || material.attempt || 'Unknown attempt'),
+        syllabusVersion: String(evaluation.syllabus_version || material.syllabus_version || 'ALL'),
+        checkingMode: String(evaluation.checking_mode || 'standard') as any,
+        fileBase64: original.buffer.toString('base64'),
+        mimeType: 'application/pdf',
+        filename: String(evaluation.original_filename || `${evaluationId}_original.pdf`),
+        pdfBuf: original.buffer,
+        referenceQuestionPaperText: questionText,
+        referenceSuggestedAnswersText: suggestedText,
+        markingSchemeText: String(material.marking_scheme_text || ''),
+        referenceMaterialTitle: String(material.question_paper_title || material.title || evaluation.original_filename || 'Reference material'),
+        referenceMaterialVersion: String(material.version || evaluation.material_version || '1.0'),
+        referenceMaterialId: materialId,
+        officialPaperMaxMarks: Number(material.official_max_marks || material.maximum_marks || evaluation.maximum_marks || 100),
+        sourceFormat,
+        combinedSourceMaterialId: material.combined_source_material_id || (sourceFormat === 'COMBINED' ? materialId : undefined),
+        questionMaterialId: material.question_material_id || (sourceFormat !== 'COMBINED' ? materialId : undefined),
+        suggestedAnswerMaterialId: material.suggested_answer_material_id || (sourceFormat !== 'COMBINED' ? materialId : undefined),
+        markingSchemeMaterialId: material.marking_scheme_material_id || undefined,
+        entitlementSource,
+        resolvedSponsoringInstituteId: sponsoringInstituteId,
+        resolvedSponsoringEnrollmentId: evaluation.sponsoring_enrollment_id || null,
+        resolvedSponsoringBatchId: evaluation.sponsoring_batch_id || evaluation.assignment_id || null,
+        resolvedInstituteName: evaluation.institute_name || undefined,
+        requestedEvalSource: isInstituteMaterial ? 'INSTITUTE' : 'PUBLIC',
+        personalEntitlement: undefined,
+        // Recovery must never charge another personal credit. Institute usage ledger is
+        // idempotent by evaluation ID in the evaluator's completion path.
+        creditAlreadyConsumed: true,
+      } as any);
+
+      try {
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, 'EVALUATION_RECOVERY_STARTED', 'EVALUATION', ?, ?)
+        `).run(
+          `aud_${crypto.randomBytes(8).toString('hex')}`,
+          String(req.user?.id || evaluation.student_id),
+          evaluationId,
+          'Admin initiated a safe retry using the original PDF and exact linked reference material; personal credit deduction disabled for retry.'
+        );
+      } catch (auditError) {
+        console.warn('[AdminRecovery] Audit log insert failed:', auditError);
+      }
+
+      return res.json({
+        success: true,
+        code: 'EVALUATION_RECOVERY_QUEUED',
+        message: 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
+        evaluationId,
+        status: 'QUEUED',
+        originalPdfAvailable: true,
+        referenceMaterialId: materialId,
+        additionalPersonalCreditDeducted: false,
+      });
+    } catch (enqueueError: any) {
+      db.prepare(`
+        UPDATE evaluations
+        SET progress_stage = 'QUEUED',
+            progress_message = 'Recovery enqueue failed; safe to retry after checking status',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND progress_stage = 'RECOVERY_CLAIMED'
+      `).run(evaluationId);
+      throw enqueueError;
+    }
   } catch (error: any) {
     console.error('[AdminRecovery] Recovery preflight failed:', error);
     return res.status(500).json({
