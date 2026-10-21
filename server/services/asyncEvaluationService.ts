@@ -67,6 +67,8 @@ export interface EvaluationJobData {
   requestedEvalSource: 'PUBLIC' | 'INSTITUTE';
   personalEntitlement?: any;
   creditAlreadyConsumed?: boolean;
+  /** Retry of an existing evaluation: do not consume or refund its original entitlement again. */
+  isRecoveryRetry?: boolean;
 }
 
 // Keep the supervisor correction loop opt-in until its model/pipeline is validated.
@@ -463,7 +465,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         // The upload may already have consumed a personal entitlement. A source
         // binding failure is a protected system failure, so return that credit.
         if (
-          job.creditAlreadyConsumed &&
+          job.creditAlreadyConsumed && !job.isRecoveryRetry &&
           (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
         ) {
           refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
@@ -675,7 +677,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       // The personal entitlement was charged when the upload was accepted.
       // Return it when the system could not produce a verified final result.
       if (
-        job.creditAlreadyConsumed &&
+        job.creditAlreadyConsumed && !job.isRecoveryRetry &&
         (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
       ) {
         try {
@@ -836,7 +838,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
 
     // Refund credit/free/promo evaluation atomically if it was already deducted on acceptance
-    if (job.creditAlreadyConsumed && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
       try {
         refundEvaluationCreditAtomic({
           userId: studentId,
