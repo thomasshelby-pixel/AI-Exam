@@ -356,7 +356,7 @@ router.get('/revocation-requests', (req: AuthRequest, res: Response) => {
 });
 
 // Revocation Request Review (Approve or Reject)
-router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response) => {
+router.post('/revocation-requests/:id/review', async (req: AuthRequest, res: Response) => {
   try {
     const requestId = req.params.id;
     const { decision, adminReply } = req.body;
@@ -370,43 +370,36 @@ router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response)
       return res.status(404).json({ error: 'Revocation request not found' });
     }
 
-    const reply = adminReply?.trim() || (decision === 'APPROVED' ? 'Your appeal has been reviewed and accepted. Account access is reinstated.' : 'Your appeal has been reviewed and denied.');
+    const reply = adminReply?.trim() || (decision === 'APPROVED'
+      ? 'Your appeal has been reviewed and accepted. Account access is reinstated.'
+      : 'Your appeal has been reviewed and denied.');
 
-    // Update request
     db.prepare(`
       UPDATE revocation_requests
-      SET status = ?,
-          admin_reply = ?,
-          reviewed_by = ?,
-          reviewed_at = CURRENT_TIMESTAMP
+      SET status = ?, admin_reply = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(decision, reply, req.user!.id, requestId);
 
     if (decision === 'APPROVED') {
-      // Reinstate user
-      db.prepare("UPDATE users SET status = 'ACTIVE' WHERE id = ?").run(request.user_id);
+      db.prepare("UPDATE users SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(request.user_id);
 
-      // Mark suspension as reinstated
       if (request.suspension_id) {
         db.prepare("UPDATE account_suspensions SET status = 'REINSTATED', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(request.suspension_id);
       } else {
         db.prepare("UPDATE account_suspensions SET status = 'REINSTATED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'SUSPENDED'").run(request.user_id);
       }
 
-      // Notify user
       db.prepare(`
         INSERT INTO notifications (id, user_id, title, message, type)
         VALUES (?, ?, 'Account Appeal Approved', ?, 'SYSTEM')
       `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, request.user_id, `Your suspension appeal was approved. Message: ${reply}`);
     } else {
-      // Notify user of rejection
       db.prepare(`
         INSERT INTO notifications (id, user_id, title, message, type)
         VALUES (?, ?, 'Account Appeal Rejected', ?, 'WARNING')
       `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, request.user_id, `Your suspension appeal was reviewed and rejected. Reason: ${reply}`);
     }
 
-    // Audit log
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'REVOCATION_REVIEW', 'USER', ?, ?)
@@ -416,6 +409,16 @@ router.post('/revocation-requests/:id/review', (req: AuthRequest, res: Response)
       request.user_id,
       `Reviewed revocation request ${requestId}: Decision ${decision}. Reply: ${reply}`
     );
+
+    const durablyPersisted = await persistUserStatusAndSuspensions(request.user_id);
+    if (!durablyPersisted) {
+      return res.status(503).json({
+        success: false,
+        localDecisionSaved: true,
+        code: 'STATUS_PERSISTENCE_FAILED',
+        error: 'The appeal decision was saved locally, but Firestore did not confirm every account-status record. Please retry/review account status before relying on persistence.',
+      });
+    }
 
     return res.json({
       success: true,
