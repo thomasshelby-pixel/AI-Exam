@@ -100,6 +100,12 @@ export async function claimFreeTrialEligibility(params: {
       if (params.forceBlock) {
         return { eligible: false, reason: 'DEVICE_CHANGED_DURING_SIGNUP' as const };
       }
+      // For a new free-trial grant, require both a stable browser/device ID and a
+      // valid client IP. Still claim whichever signal is available so future
+      // signups cannot evade checks simply by omitting one of the headers.
+      if (deviceIds.length === 0 || ipAddresses.length === 0) {
+        return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' as const };
+      }
       if (reusedDevice) {
         return { eligible: false, reason: 'REUSED_DEVICE' as const };
       }
