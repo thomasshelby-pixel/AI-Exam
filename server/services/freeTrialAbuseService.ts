@@ -6,6 +6,7 @@ import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator
 export const FREE_TRIAL_DEVICE_COOKIE = 'ca_free_trial_device';
 export const FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 400;
 const IP_TRIAL_LOCK_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
+const RESERVATION_TTL_MS = 15 * 60 * 1000;
 
 export type FreeTrialBlockReason =
   | 'DEVICE_ALREADY_USED'
@@ -19,12 +20,17 @@ export interface FreeTrialClaimResult {
   reason?: FreeTrialBlockReason;
 }
 
+export interface FreeTrialClaimSignals {
+  userId: string;
+  deviceCookieHash: string | null;
+  clientDeviceHash: string | null;
+  ipHash: string | null;
+}
+
 let claimsFirestore: Firestore | null = null;
 let warnedMissingSecret = false;
 
 function getTrialHashSecret(): string | null {
-  // Prefer a dedicated secret, while reusing the existing server secret to avoid
-  // introducing a new production dependency for an already-configured installation.
   const secret = process.env.TRIAL_ABUSE_HMAC_SECRET || process.env.JWT_SECRET || process.env.SESSION_SECRET;
   if (secret && secret.trim().length >= 32) return secret.trim();
 
@@ -78,11 +84,10 @@ export function normalizeIpAddress(input: string): string | null {
 }
 
 /**
- * Firebase App Hosting fronts the runtime with Google-managed proxies. The external
- * load balancer appends the observed client IP and then its own IP to X-Forwarded-For.
- * Do NOT trust the left-most value: clients can supply their own leading XFF values.
- * Setting FREE_TRIAL_XFF_CLIENT_IP_INDEX_FROM_RIGHT allows adjustment if the hosting
- * topology appends additional documented proxy hops before the app.
+ * Google external load balancers append the observed client IP and then the
+ * load-balancer IP to X-Forwarded-For. User-supplied values appear to their left
+ * and must not be trusted. Set FREE_TRIAL_XFF_CLIENT_IP_INDEX_FROM_RIGHT if App
+ * Hosting adds a different documented number of proxy hops before the app.
  */
 export function getTrustedAppHostingClientIp(headers: Record<string, unknown>, remoteAddress?: string | null): string | null {
   const raw = headers['x-forwarded-for'];
@@ -98,8 +103,7 @@ export function getTrustedAppHostingClientIp(headers: Record<string, unknown>, r
     if (candidate) return candidate;
   }
 
-  // A local development fallback only. In production, the socket is commonly a proxy,
-  // not the student; using it could accidentally lock every user to one shared proxy IP.
+  // A local development fallback only. In production, the socket is commonly a proxy.
   if (process.env.NODE_ENV !== 'production') {
     return normalizeIpAddress(String(remoteAddress || ''));
   }
@@ -117,121 +121,97 @@ function getClaimsStore(): Firestore {
   return claimsFirestore;
 }
 
-/**
- * Releases only the claims owned by a newly generated userId when account creation fails
- * before commit. A committed account must never call this function.
- */
-export async function releaseFreeTrialClaimForAccount(params: {
-  userId: string;
-  deviceCookieHash: string | null;
-  clientDeviceHash: string | null;
-  ipHash: string | null;
-}): Promise<void> {
-  const { userId, deviceCookieHash, clientDeviceHash, ipHash } = params;
-  if (!deviceCookieHash || !ipHash) return;
+function getClaimRefs(store: Firestore, params: FreeTrialClaimSignals) {
+  return {
+    deviceCookieRef: store.collection('free_trial_device_claims').doc(params.deviceCookieHash!),
+    clientDeviceRef: params.clientDeviceHash
+      ? store.collection('free_trial_client_device_claims').doc(params.clientDeviceHash)
+      : null,
+    ipRef: store.collection('free_trial_ip_claims').doc(params.ipHash!),
+  };
+}
 
-  try {
-    const store = getClaimsStore();
-    const refs = [
-      store.collection('free_trial_device_claims').doc(deviceCookieHash),
-      ...(clientDeviceHash ? [store.collection('free_trial_client_device_claims').doc(clientDeviceHash)] : []),
-      store.collection('free_trial_ip_claims').doc(ipHash),
-    ];
+function isActiveReservation(data: Record<string, any>, now: number): boolean {
+  return data.status === 'RESERVED' && Number(data.reservationExpiresAtMs || 0) > now;
+}
 
-    await store.runTransaction(async (transaction) => {
-      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
-      const allowedToRelease: Array<{ index: number; ref: typeof refs[number] }> = [];
-
-      snapshots.forEach((snapshot, index) => {
-        if (!snapshot.exists) return;
-        const data = snapshot.data() || {};
-        if (data.userId !== userId) return;
-        // The IP lock is shared by all accounts, so release it only if it still belongs
-        // to this exact device claim. Never release another successful signup's IP.
-        if (index === refs.length - 1 && data.deviceCookieHash !== deviceCookieHash) return;
-        allowedToRelease.push({ index, ref: refs[index] });
-      });
-
-      for (const item of allowedToRelease) transaction.delete(item.ref);
-    });
-  } catch (error: unknown) {
-    console.error('[FreeTrialAbuse] Could not release an uncommitted signup claim:', error instanceof Error ? error.message : 'unknown error');
-  }
+function isPermanentDeviceClaim(data: Record<string, any>): boolean {
+  return data.status === 'CLAIMED';
 }
 
 /**
- * Atomic, multi-instance-safe trial claim. A browser/device can receive one claim ever;
- * an IP address can receive one claim within a rolling 180-day window. Only keyed HMACs
- * are persisted; raw IP addresses and cookie tokens are never stored in the claims ledger.
+ * Reserve a claim in Firestore before signup benefits are granted. The reservation
+ * expires after 15 minutes unless finalized after the SQL account transaction commits.
+ * Permanent device claims do not expire; one network/IP claim expires after 180 days.
+ * Only keyed HMACs are stored (never raw IPs, cookie tokens, or browser IDs).
  */
-export async function claimFreeTrialForAccount(params: {
-  userId: string;
-  deviceCookieHash: string | null;
-  clientDeviceHash: string | null;
-  ipHash: string | null;
-}): Promise<FreeTrialClaimResult> {
+export async function claimFreeTrialForAccount(params: FreeTrialClaimSignals): Promise<FreeTrialClaimResult> {
   const { userId, deviceCookieHash, clientDeviceHash, ipHash } = params;
   if (!deviceCookieHash) return { eligible: false, reason: 'DEVICE_ID_UNAVAILABLE' };
   if (!ipHash) return { eligible: false, reason: 'NETWORK_ID_UNAVAILABLE' };
 
   try {
     const store = getClaimsStore();
-    const cookieDeviceRef = store.collection('free_trial_device_claims').doc(deviceCookieHash);
-    const clientDeviceRef = clientDeviceHash
-      ? store.collection('free_trial_client_device_claims').doc(clientDeviceHash)
-      : null;
-    const ipRef = store.collection('free_trial_ip_claims').doc(ipHash);
+    const { deviceCookieRef, clientDeviceRef, ipRef } = getClaimRefs(store, params);
     const now = Date.now();
 
     return await store.runTransaction(async (transaction) => {
-      // Read every document before issuing transaction writes.
-      const cookieDeviceSnap = await transaction.get(cookieDeviceRef);
+      // Complete all reads before any writes.
+      const cookieDeviceSnap = await transaction.get(deviceCookieRef);
       const clientDeviceSnap = clientDeviceRef ? await transaction.get(clientDeviceRef) : null;
       const ipSnap = await transaction.get(ipRef);
 
       const deviceSnaps = [cookieDeviceSnap, ...(clientDeviceSnap ? [clientDeviceSnap] : [])];
-      const existingDeviceClaim = deviceSnaps.find((snap) => snap.exists);
-      if (existingDeviceClaim) {
-        const data = existingDeviceClaim.data() || {};
-        if (data.userId === userId && data.status === 'CLAIMED') {
-          return { eligible: true };
+      for (const snap of deviceSnaps) {
+        if (!snap.exists) continue;
+        const data = snap.data() || {};
+        if (data.userId === userId && isPermanentDeviceClaim(data)) return { eligible: true };
+        if (data.userId === userId && isActiveReservation(data, now)) return { eligible: true };
+        if (isPermanentDeviceClaim(data) || isActiveReservation(data, now)) {
+          return { eligible: false, reason: 'DEVICE_ALREADY_USED' };
         }
-        return { eligible: false, reason: 'DEVICE_ALREADY_USED' };
+        // An expired reservation can safely be overwritten below.
       }
 
       if (ipSnap.exists) {
         const ipData = ipSnap.data() || {};
-        if (ipData.userId === userId && ipData.deviceCookieHash === deviceCookieHash && ipData.status === 'CLAIMED') {
+        if (
+          ipData.userId === userId &&
+          ipData.deviceCookieHash === deviceCookieHash &&
+          (isPermanentDeviceClaim(ipData) || isActiveReservation(ipData, now))
+        ) {
           return { eligible: true };
         }
-        const expiresAtMs = Number(ipData.expiresAtMs || 0);
-        if (!expiresAtMs || expiresAtMs > now) {
-          return { eligible: false, reason: 'IP_ALREADY_USED' };
-        }
-        // The IP cooldown expired. Replacing the existing record below is atomic.
-        // Device claims remain permanent, so an old browser cannot reclaim a trial.
+        const activeIpClaim = isPermanentDeviceClaim(ipData)
+          ? Number(ipData.expiresAtMs || 0) > now
+          : isActiveReservation(ipData, now);
+        if (activeIpClaim) return { eligible: false, reason: 'IP_ALREADY_USED' };
+        // Expired IP claims/reservations are replaced atomically below.
       }
 
+      const reservationExpiresAtMs = now + RESERVATION_TTL_MS;
       const ipExpiresAtMs = now + IP_TRIAL_LOCK_WINDOW_MS;
-      const claim = {
+      const reservation = {
         userId,
-        status: 'CLAIMED',
-        claimedAt: FieldValue.serverTimestamp(),
+        status: 'RESERVED',
+        reservedAt: FieldValue.serverTimestamp(),
+        reservationExpiresAtMs,
       };
-      transaction.create(cookieDeviceRef, {
-        ...claim,
+
+      transaction.set(deviceCookieRef, {
+        ...reservation,
         ipHash,
         lockType: 'SIGNED_BROWSER_COOKIE',
       });
       if (clientDeviceRef) {
-        transaction.create(clientDeviceRef, {
-          ...claim,
+        transaction.set(clientDeviceRef, {
+          ...reservation,
           ipHash,
           lockType: 'CLIENT_DEVICE_ID',
         });
       }
       transaction.set(ipRef, {
-        ...claim,
+        ...reservation,
         deviceCookieHash,
         expiresAtMs: ipExpiresAtMs,
       });
@@ -239,7 +219,87 @@ export async function claimFreeTrialForAccount(params: {
       return { eligible: true };
     });
   } catch (error: unknown) {
-    console.error('[FreeTrialAbuse] Atomic claim failed; withholding free trial safely:', error instanceof Error ? error.message : 'unknown error');
+    console.error('[FreeTrialAbuse] Atomic claim reservation failed; withholding free trial safely:', error instanceof Error ? error.message : 'unknown error');
     return { eligible: false, reason: 'ABUSE_GUARD_UNAVAILABLE' };
+  }
+}
+
+/** Finalize a reserved claim after the student account transaction has committed. */
+export async function finalizeFreeTrialClaimForAccount(params: FreeTrialClaimSignals): Promise<boolean> {
+  const { userId, deviceCookieHash, clientDeviceHash, ipHash } = params;
+  if (!deviceCookieHash || !ipHash) return false;
+
+  try {
+    const store = getClaimsStore();
+    const { deviceCookieRef, clientDeviceRef, ipRef } = getClaimRefs(store, params);
+    const now = Date.now();
+
+    return await store.runTransaction(async (transaction) => {
+      const cookieSnap = await transaction.get(deviceCookieRef);
+      const clientSnap = clientDeviceRef ? await transaction.get(clientDeviceRef) : null;
+      const ipSnap = await transaction.get(ipRef);
+
+      const docs = [
+        { ref: deviceCookieRef, snap: cookieSnap, kind: 'device' },
+        ...(clientDeviceRef && clientSnap ? [{ ref: clientDeviceRef, snap: clientSnap, kind: 'client' }] : []),
+        { ref: ipRef, snap: ipSnap, kind: 'ip' },
+      ];
+
+      for (const item of docs) {
+        if (!item.snap.exists) return false;
+        const data = item.snap.data() || {};
+        if (data.userId !== userId) return false;
+        if (data.status === 'RESERVED' && Number(data.reservationExpiresAtMs || 0) <= now) return false;
+        if (item.kind === 'ip' && data.deviceCookieHash !== deviceCookieHash) return false;
+        if (data.status !== 'RESERVED' && data.status !== 'CLAIMED') return false;
+      }
+
+      for (const item of docs) {
+        const finalClaim: Record<string, unknown> = {
+          status: 'CLAIMED',
+          claimedAt: FieldValue.serverTimestamp(),
+          reservationExpiresAtMs: FieldValue.delete(),
+        };
+        if (item.kind === 'ip') finalClaim.expiresAtMs = now + IP_TRIAL_LOCK_WINDOW_MS;
+        transaction.set(item.ref, finalClaim, { merge: true });
+      }
+      return true;
+    });
+  } catch (error: unknown) {
+    console.error('[FreeTrialAbuse] Could not finalize trial claim; free trial remains disabled.', error instanceof Error ? error.message : 'unknown error');
+    return false;
+  }
+}
+
+/**
+ * Releases only this uncommitted user's reservation if account creation fails.
+ * It can never release a different account's permanent device/IP claim.
+ */
+export async function releaseFreeTrialClaimForAccount(params: FreeTrialClaimSignals): Promise<void> {
+  const { userId, deviceCookieHash, clientDeviceHash, ipHash } = params;
+  if (!deviceCookieHash || !ipHash) return;
+
+  try {
+    const store = getClaimsStore();
+    const { deviceCookieRef, clientDeviceRef, ipRef } = getClaimRefs(store, params);
+    const refs = [deviceCookieRef, ...(clientDeviceRef ? [clientDeviceRef] : []), ipRef];
+
+    await store.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      const releasable: Array<typeof refs[number]> = [];
+
+      snapshots.forEach((snapshot, index) => {
+        if (!snapshot.exists) return;
+        const data = snapshot.data() || {};
+        if (data.userId !== userId || data.status !== 'RESERVED') return;
+        // IP is a shared lock: release only if it still belongs to this exact reservation.
+        if (index === refs.length - 1 && data.deviceCookieHash !== deviceCookieHash) return;
+        releasable.push(refs[index]);
+      });
+
+      for (const ref of releasable) transaction.delete(ref);
+    });
+  } catch (error: unknown) {
+    console.error('[FreeTrialAbuse] Could not release an uncommitted signup reservation:', error instanceof Error ? error.message : 'unknown error');
   }
 }
