@@ -946,8 +946,11 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         try {
           db.exec('BEGIN IMMEDIATE');
           grantStarted = true;
-          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
-          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(userId);
+          // Use an ISO millisecond timestamp so the existing stale-write guard can
+          // recognize this post-claim entitlement grant as newer than the prior cloud row.
+          const grantUpdatedAt = new Date().toISOString();
+          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = ? WHERE id = ?').run(grantUpdatedAt, userId);
+          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = ? WHERE user_id = ?').run(grantUpdatedAt, userId);
           db.exec('COMMIT');
           grantStarted = false;
           freeTrialGranted = true;
