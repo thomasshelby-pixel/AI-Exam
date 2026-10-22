@@ -115,8 +115,21 @@ type AccountStatusUser = { id: string; status: string };
 export async function reconcileAuthoritativeAccountStatus(
   user: AccountStatusUser,
 ): Promise<AccountStatusSnapshot | null> {
-  const snapshot = await getAccountStatusSnapshot(user.id);
-  return reconcileLocalAccountStatus(user, snapshot);
+  try {
+    const snapshot = await getAccountStatusSnapshot(user.id);
+    return reconcileLocalAccountStatus(user, snapshot);
+  } catch (error) {
+    // Unit tests and local development often deliberately have no Firebase project
+    // credentials. Preserve the local suspension safety net there; production must fail
+    // closed because it has multiple independent SQLite caches.
+    const productionRuntime = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
+    if (productionRuntime) throw error;
+    console.warn(
+      '[Auth] Authoritative status store unavailable outside production; using local status and active suspension ledger.',
+      error instanceof Error ? error.message : 'unknown error',
+    );
+    return reconcileLocalAccountStatus(user, null);
+  }
 }
 
 function reconcileLocalAccountStatus(
