@@ -31,3 +31,21 @@ test('account status decisions are append-only and the latest event is authorita
   assert.match(firestoreSync, /Enforce the highest versioned status event/);
   assert.match(firestoreSync, /Backfilled durable suspension event/);
 });
+
+test('student registration claims ICAI identity globally before the local account transaction', () => {
+  assert.match(firestoreAdapter, /claimStudentRegistrationNumber/);
+  assert.match(firestoreAdapter, /createHash\('sha256'\)\.update\(numericSequence\)/);
+  assert.match(firestoreAdapter, /collection\('student_registration_claims'\)/);
+  assert.match(firestoreAdapter, /transaction\.create\(claimRef/);
+  assert.match(firestoreAdapter, /releaseStudentRegistrationNumberClaim/);
+
+  const verificationStart = authRoutes.indexOf("router.post('/verify-otp'");
+  const verificationEnd = authRoutes.indexOf('// Normal Professional SaaS Login', verificationStart);
+  assert.ok(verificationStart >= 0 && verificationEnd > verificationStart);
+  const verificationRoute = authRoutes.slice(verificationStart, verificationEnd);
+  const claimIndex = verificationRoute.indexOf('await claimStudentRegistrationNumber(');
+  const localTransactionIndex = verificationRoute.indexOf("db.exec('BEGIN IMMEDIATE')");
+  assert.ok(claimIndex >= 0 && localTransactionIndex > claimIndex, 'Global SRN claim must happen before local account creation');
+  assert.match(verificationRoute, /SRN_CLAIM_UNAVAILABLE/);
+  assert.match(verificationRoute, /Could not release SRN claim after failed account creation/);
+});
