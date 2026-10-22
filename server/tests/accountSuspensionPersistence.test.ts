@@ -44,6 +44,7 @@ test('appeal decisions also persist the resulting account and suspension states'
 test('a stale Firestore reinstatement cannot overwrite a newer local suspension record', () => {
   assert.match(firestoreSync, /shouldPreserveLocalSuspension\(/);
   assert.match(firestoreSync, /Ignored stale .* status for newer suspension/);
+  assert.match(firestoreSync, /const incomingUpdatedAt = suspension\\.updated_at \\|\\| suspension\\.suspended_at \\|\\| suspension\\.created_at \\|\\| suspension\\._updatedAt/);
   assert.equal(shouldPreserveLocalSuspension(
     'SUSPENDED',
     '2026-10-22 14:00:00',
