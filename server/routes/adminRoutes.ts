@@ -2934,7 +2934,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       console.error('[AdminRecovery] Failed resolving exact reference material:', materialError);
     }
 
-        const questionText = String(material?.question_paper_text || '');
+        const materialId = String(material?.id || requestedMaterialId || '').trim();
+    const questionText = String(material?.question_paper_text || '');
     const suggestedText = String(material?.suggested_answers_text || '');
     if (!material || !questionText.trim() || !suggestedText.trim()) {
       return res.status(409).json({
