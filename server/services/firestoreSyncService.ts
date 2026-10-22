@@ -9,6 +9,9 @@ import {
   getAllFirestoreDocs,
   recordTombstone,
   isTombstoned,
+  appendAccountStatusEvent,
+  claimStudentRegistrationNumber,
+  type AccountStatusEventRecord,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
@@ -17,6 +20,7 @@ import { isEntityTombstoned } from './deletionPersistence.js';
 
 import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
 import { decryptMfaSecret } from './mfaCryptoService.js';
+import { shouldPreserveLocalSuspension } from './suspensionState.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -382,7 +386,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
         const existingLocalUser = db.prepare(`
-          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, updated_at
+          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, free_trial_eligible, updated_at
           FROM users WHERE id = ? OR lower(email) = ?
         `).get(targetId, normEmail) as {
           id: string;
@@ -391,6 +395,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           mfa_enrolled_at: string | null;
           totp_secret: string | null;
           mfa_reset_required: number | null;
+          free_trial_eligible: number | null;
           updated_at: string | null;
         } | undefined;
         const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
@@ -415,10 +420,15 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           : u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
         const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
+        // Legacy documents default to eligible, but a durable local grant/denial must not be
+        // accidentally overwritten by a stale or sparse Firestore user projection.
+        const incomingFreeTrialEligible = u.free_trial_eligible === undefined || u.free_trial_eligible === null
+          ? (existingLocalUser?.free_trial_eligible ?? 1)
+          : Number(u.free_trial_eligible) === 0 ? 0 : 1;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, free_trial_eligible, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -435,6 +445,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
+            free_trial_eligible = users.free_trial_eligible,
             mfa_enabled = CASE
               WHEN excluded.mfa_reset_required = 1 THEN 0
               WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
@@ -465,7 +476,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
-          uEmailVerified, uEmailVerifiedAt,
+          uEmailVerified, uEmailVerifiedAt, incomingFreeTrialEligible,
           uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
         );
@@ -481,6 +492,40 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     for (const suspension of accountSuspensionDocs) {
       if (!suspension.id || !suspension.user_id) continue;
       try {
+        const localSuspension = db.prepare(
+          'SELECT * FROM account_suspensions WHERE id = ?'
+        ).get(suspension.id) as Record<string, any> | undefined;
+        const incomingStatus = String(suspension.status || 'SUSPENDED').toUpperCase();
+        const incomingUpdatedAt = suspension.updated_at || suspension.suspended_at || suspension.created_at || suspension._updatedAt || null;
+        const preserveLocalSuspension = shouldPreserveLocalSuspension(
+          localSuspension?.status,
+          localSuspension?.updated_at || localSuspension?.suspended_at || localSuspension?.created_at,
+          incomingStatus,
+          incomingUpdatedAt,
+        );
+
+        // A late/stale Firestore REINSTATED write can arrive after a newer admin suspension.
+        // Do not overwrite the newer local suspension status or its accompanying audit details.
+        const effectiveSuspension = preserveLocalSuspension && localSuspension
+          ? {
+              ...suspension,
+              id: localSuspension.id,
+              user_id: localSuspension.user_id,
+              reason: localSuspension.reason,
+              internal_note: localSuspension.internal_note,
+              suspended_by: localSuspension.suspended_by,
+              status: localSuspension.status,
+              created_at: localSuspension.created_at,
+              previous_status: localSuspension.previous_status,
+              suspended_at: localSuspension.suspended_at,
+              updated_at: localSuspension.updated_at,
+            }
+          : suspension;
+
+        if (preserveLocalSuspension) {
+          console.warn(`[FirestoreSync] Ignored stale ${incomingStatus} status for newer suspension ${suspension.id}.`);
+        }
+
         db.prepare(`
           INSERT INTO account_suspensions (
             id, user_id, reason, internal_note, suspended_by, status,
@@ -495,20 +540,171 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             suspended_at = COALESCE(excluded.suspended_at, account_suspensions.suspended_at),
             updated_at = COALESCE(excluded.updated_at, account_suspensions.updated_at)
         `).run(
-          suspension.id,
-          suspension.user_id,
-          suspension.reason || 'Account suspended by administrator.',
-          suspension.internal_note || null,
-          suspension.suspended_by || 'system',
-          suspension.status || 'SUSPENDED',
-          suspension.created_at || null,
-          suspension.previous_status || null,
-          suspension.suspended_at || null,
-          suspension.updated_at || null
+          effectiveSuspension.id,
+          effectiveSuspension.user_id,
+          effectiveSuspension.reason || 'Account suspended by administrator.',
+          effectiveSuspension.internal_note || null,
+          effectiveSuspension.suspended_by || 'system',
+          effectiveSuspension.status || 'SUSPENDED',
+          effectiveSuspension.created_at || null,
+          effectiveSuspension.previous_status || null,
+          effectiveSuspension.suspended_at || null,
+          effectiveSuspension.updated_at || null
         );
       } catch (suspensionErr) {
         console.warn(`[FirestoreSync] Failed to hydrate suspension record ${suspension.id}:`, suspensionErr);
         if (requireComplete) throw suspensionErr;
+      }
+    }
+
+    // Immutable status events are canonical. The mutable users and suspension documents
+    // are materialized views and may be stale after concurrent App Hosting instances/restarts.
+    const persistedStatusEvents = await readDocs<any>('account_status_events');
+    const latestStatusEventByUser = new Map<string, AccountStatusEventRecord>();
+    const validAccountStatuses = new Set(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DISABLED', 'DELETED']);
+
+    const saveStatusEventLocally = (event: any) => {
+      const userId = String(event.user_id || '');
+      const version = Number(event.version);
+      const status = String(event.status || '').toUpperCase();
+      if (!userId || !Number.isInteger(version) || version < 1 || !validAccountStatuses.has(status)) return;
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      if (!userExists) return;
+      db.prepare(`
+        INSERT OR IGNORE INTO account_status_events (
+          id, user_id, status, version, reason, changed_by, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        String(event.id || `status_${userId}_${version}`),
+        userId,
+        status,
+        version,
+        event.reason || '',
+        event.changed_by || 'system',
+        event.source || 'SERVER',
+        event.created_at || null,
+        event.updated_at || event.created_at || null,
+      );
+    };
+
+    for (const event of persistedStatusEvents) {
+      saveStatusEventLocally(event);
+      const userId = String(event.user_id || '');
+      const version = Number(event.version);
+      const status = String(event.status || '').toUpperCase();
+      if (!userId || !Number.isInteger(version) || version < 1 || !validAccountStatuses.has(status)) continue;
+      const previous = latestStatusEventByUser.get(userId);
+      if (!previous || version > previous.version) {
+        latestStatusEventByUser.set(userId, {
+          id: String(event.id || `status_${userId}_${version}`),
+          user_id: userId,
+          status: status as AccountStatusEventRecord['status'],
+          version,
+          reason: String(event.reason || ''),
+          changed_by: String(event.changed_by || 'system'),
+          source: String(event.source || 'SERVER'),
+          created_at: String(event.created_at || ''),
+          updated_at: String(event.updated_at || event.created_at || ''),
+        });
+      }
+    }
+
+    // Backfill the immutable ledger for legacy active suspensions made before the
+    // event ledger existed. Future restarts can then distinguish an old suspension
+    // from an explicit newer admin/appeal reactivation.
+    const legacyActiveSuspensions = db.prepare(
+      "SELECT * FROM account_suspensions WHERE status = 'SUSPENDED' ORDER BY created_at ASC"
+    ).all() as Array<Record<string, any>>;
+    for (const suspension of legacyActiveSuspensions) {
+      const userId = String(suspension.user_id || '');
+      if (!userId || latestStatusEventByUser.has(userId)) continue;
+      try {
+        const event = await appendAccountStatusEvent({
+          userId,
+          status: 'SUSPENDED',
+          changedBy: String(suspension.suspended_by || 'legacy-hydration'),
+          reason: String(suspension.reason || 'Legacy active suspension recovered during hydration.'),
+          source: 'LEGACY_SUSPENSION_BACKFILL',
+        });
+        saveStatusEventLocally(event);
+        latestStatusEventByUser.set(userId, event);
+        console.warn(`[FirestoreSync] Backfilled durable suspension event ${event.id} for user ${userId}.`);
+      } catch (eventError) {
+        console.error(`[FirestoreSync] Could not backfill a durable suspension event for user ${userId}:`, eventError);
+        if (requireComplete) throw eventError;
+      }
+    }
+
+    // Enforce the highest versioned status event after loading mutable user/suspension rows.
+    for (const [userId, event] of latestStatusEventByUser) {
+      const localUser = db.prepare('SELECT status FROM users WHERE id = ?').get(userId) as { status: string } | undefined;
+      if (!localUser) continue;
+      let userNeedsPersist = String(localUser.status || '').toUpperCase() !== event.status;
+      if (userNeedsPersist) {
+        db.prepare('UPDATE users SET status = ?, updated_at = COALESCE(?, CURRENT_TIMESTAMP) WHERE id = ?')
+          .run(event.status, event.created_at || null, userId);
+      }
+
+      let suspensionsNeedPersist = false;
+      if (event.status === 'SUSPENDED') {
+        const revoked = db.prepare(`
+          UPDATE user_sessions
+          SET status = 'REVOKED', revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+          WHERE user_id = ? AND status = 'ACTIVE'
+        `).run(userId);
+        if (revoked.changes > 0) userNeedsPersist = true;
+
+        const activeSuspension = db.prepare(
+          "SELECT id FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+        ).get(userId);
+        if (!activeSuspension) {
+          const suspensionId = `susp_event_${event.id}`;
+          db.prepare(`
+            INSERT OR IGNORE INTO account_suspensions (
+              id, user_id, reason, internal_note, suspended_by, status,
+              created_at, previous_status, suspended_at, updated_at
+            ) VALUES (?, ?, ?, '', ?, 'SUSPENDED', COALESCE(?, CURRENT_TIMESTAMP), 'ACTIVE', COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+          `).run(
+            suspensionId,
+            userId,
+            event.reason || 'Account suspended by administrator.',
+            event.changed_by || 'system',
+            event.created_at || null,
+            event.created_at || null,
+            event.updated_at || event.created_at || null,
+          );
+          suspensionsNeedPersist = true;
+        }
+      } else {
+        const reactivated = db.prepare(`
+          UPDATE account_suspensions
+          SET status = 'REINSTATED', updated_at = COALESCE(?, CURRENT_TIMESTAMP)
+          WHERE user_id = ? AND status = 'SUSPENDED'
+        `).run(event.created_at || null, userId);
+        suspensionsNeedPersist = reactivated.changes > 0;
+      }
+
+      // Persist corrections when mutable documents disagree with the immutable event ledger.
+      if (userNeedsPersist) {
+        const correctedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, any> | undefined;
+        if (correctedUser) {
+          const saved = await setFirestoreDoc('users', userId, correctedUser);
+          if (!saved) {
+            console.error(`[FirestoreSync] Could not persist event-enforced status ${event.status} for user ${userId}.`);
+            if (requireComplete) throw new Error(`Failed to persist event-enforced user status for ${userId}.`);
+          }
+        }
+      }
+      if (suspensionsNeedPersist) {
+        const rows = db.prepare('SELECT * FROM account_suspensions WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
+        for (const row of rows) {
+          if (!row.id) continue;
+          const saved = await setFirestoreDoc('account_suspensions', String(row.id), row);
+          if (!saved) {
+            console.error(`[FirestoreSync] Could not persist event-enforced suspension ledger for user ${userId}.`);
+            if (requireComplete) throw new Error(`Failed to persist suspension ledger for ${userId}.`);
+          }
+        }
       }
     }
 
@@ -618,6 +814,58 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     // 3. Hydrate Student Profiles
     const profiles = await readDocs<any>('student_profiles');
+
+    // Backfill global SRN claims for existing accounts once. New registrations then
+    // collide with the same hash even when they land on another App Hosting instance.
+    const srnBackfillState = await getFirestoreDoc<any>(
+      'system_configuration',
+      'student_srn_claim_backfill',
+      { failOnError: requireComplete },
+    );
+    if (srnBackfillState?.status !== 'COMPLETED') {
+      for (const profile of profiles) {
+        const userId = String(profile.user_id || profile.id || '');
+        const normalizedSrn = String(profile.icai_registration_number || '').trim().toUpperCase();
+        if (!userId || !/^[A-Z]{3}\d{7}$/.test(normalizedSrn)) continue;
+        const isTombstonedProfile = tombstoneSet.has(`student_profiles_${userId}`) ||
+          tombstoneSet.has(`student_profiles:${userId}`) ||
+          tombstoneSet.has(`users_${userId}`) ||
+          tombstoneSet.has(`users:${userId}`) ||
+          tombstoneSet.has(userId) ||
+          isLocalTombstoned('users', userId) ||
+          isLocalTombstoned('student_profiles', userId);
+        if (isTombstonedProfile) continue;
+        const existingUser = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as { email: string } | undefined;
+        if (!existingUser) continue;
+
+        try {
+          const claim = await claimStudentRegistrationNumber({
+            normalizedSrn,
+            userId,
+            email: String(existingUser.email || ''),
+          });
+          if (!claim.claimed) {
+            // Keep startup going for historic duplicates; the already-created global claim
+            // still blocks any additional signup for this seven-digit identity.
+            console.warn(`[FirestoreSync] Historical SRN collision detected while backfilling user ${userId} (${claim.conflictKind || 'UNKNOWN'}).`);
+          }
+        } catch (claimError) {
+          console.error(`[FirestoreSync] Could not backfill global SRN claim for user ${userId}.`, claimError);
+          if (requireComplete) throw claimError;
+        }
+      }
+
+      const markedComplete = await setFirestoreDoc('system_configuration', 'student_srn_claim_backfill', {
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+        profiles_seen: profiles.length,
+        purpose: 'GLOBAL_ICAi_SRN_UNIQUENESS',
+      });
+      if (!markedComplete && requireComplete) {
+        throw new Error('Could not persist the global ICAI registration-claim backfill completion marker.');
+      }
+    }
+
     for (const p of profiles) {
       const uId = p.user_id || p.id;
       const isProfileTombstoned = tombstoneSet.has(`student_profiles_${uId}`) ||

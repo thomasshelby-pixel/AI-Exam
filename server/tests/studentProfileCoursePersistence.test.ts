@@ -60,7 +60,7 @@ async function run() {
       await handler(request, response);
       return response;
     };
-    const authenticate = (authToken: string | null) => {
+    const authenticate = async (authToken: string | null) => {
       const request: any = {
         headers: authToken ? { authorization: `Bearer ${authToken}` } : {},
         query: {},
@@ -73,17 +73,17 @@ async function run() {
         json(body: unknown) { this.body = body; return this; },
       };
       let continued = false;
-      authenticateToken(request, response, () => { continued = true; });
+      await authenticateToken(request, response, () => { continued = true; });
       return { request, response, continued };
     };
-    const authenticatedRequest = (authToken: string, body?: unknown) => {
-      const auth = authenticate(authToken);
+    const authenticatedRequest = async (authToken: string, body?: unknown) => {
+      const auth = await authenticate(authToken);
       assert.equal(auth.continued, true, 'Valid student session must pass the actual auth middleware');
       auth.request.body = body || {};
       return auth.request;
     };
 
-    const initialResponse = await invoke(getProfileHandler, authenticatedRequest(token));
+    const initialResponse = await invoke(getProfileHandler, await authenticatedRequest(token));
     assert.equal(initialResponse.statusCode, 200);
     assert.equal(initialResponse.body.profile.caLevel, 'INTERMEDIATE');
     const entitlementsBeforeSave = db.prepare(`
@@ -92,7 +92,7 @@ async function run() {
       FROM student_profiles WHERE user_id = ?
     `).get(studentId) as any;
 
-    const saveResponse = await invoke(updateProfileHandler, authenticatedRequest(token, {
+    const saveResponse = await invoke(updateProfileHandler, await authenticatedRequest(token, {
         studentId: otherStudentId,
         fullName: 'Course Test Student',
         phone: '',
@@ -105,20 +105,20 @@ async function run() {
     const saved = saveResponse.body;
     assert.equal(saved.profile.caLevel, 'FINAL', 'API must return the saved course');
 
-    const reloadedResponse = await invoke(getProfileHandler, authenticatedRequest(token));
+    const reloadedResponse = await invoke(getProfileHandler, await authenticatedRequest(token));
     assert.equal(reloadedResponse.statusCode, 200);
     const reloaded = reloadedResponse.body;
     assert.equal(reloaded.profile.caLevel, 'FINAL', 'Fresh profile read must retain the saved course');
 
     const newLoginToken = generateToken({ id: studentId, email, role: 'STUDENT', fullName: 'Course Test Student' });
-    const afterLoginResponse = await invoke(getProfileHandler, authenticatedRequest(newLoginToken));
+    const afterLoginResponse = await invoke(getProfileHandler, await authenticatedRequest(newLoginToken));
     const afterLogin = afterLoginResponse.body;
     assert.equal(afterLogin.profile.caLevel, 'FINAL', 'A fresh authenticated session must read the saved course');
 
-    const unsupportedResponse = await invoke(updateProfileHandler, authenticatedRequest(token, { caLevel: 'CA_FINAL' }));
+    const unsupportedResponse = await invoke(updateProfileHandler, await authenticatedRequest(token, { caLevel: 'CA_FINAL' }));
     assert.equal(unsupportedResponse.statusCode, 400, 'Unsupported course values must be rejected');
 
-    const unauthorized = authenticate(null);
+    const unauthorized = await authenticate(null);
     assert.equal(unauthorized.continued, false);
     assert.equal(unauthorized.response.statusCode, 401, 'Unauthenticated profile updates must be rejected');
 

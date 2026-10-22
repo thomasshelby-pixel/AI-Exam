@@ -186,6 +186,7 @@ export function initDatabase() {
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
       email_verified INTEGER NOT NULL DEFAULT 0,
       email_verified_at TEXT,
+      free_trial_eligible INTEGER NOT NULL DEFAULT 1,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
@@ -649,6 +650,22 @@ export function initDatabase() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS account_status_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      reason TEXT,
+      changed_by TEXT,
+      source TEXT NOT NULL DEFAULT 'SERVER',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, version),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_account_status_events_latest
+      ON account_status_events(user_id, version DESC);
 
     CREATE TABLE IF NOT EXISTS revocation_requests (
       id TEXT PRIMARY KEY,
@@ -1419,6 +1436,8 @@ function runMigrations() {
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified_at', 'TEXT');
+  // Existing students remain eligible; only newly verified device-duplicate accounts are restricted.
+  addColumnIfNotExists('users', 'free_trial_eligible', 'INTEGER NOT NULL DEFAULT 1');
 
   // CRITICAL MIGRATION: Pre-existing accounts created before OTP deployment remain trusted/verified automatically.
   // Backfill existing accounts as verified so existing students, admins, and testing accounts continue login uninterrupted.

@@ -2,15 +2,17 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db, hashPassword, verifyPassword } from '../db.js';
-import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
+import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET, reconcileAuthoritativeAccountStatus } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
+import { getFirestoreDoc, getAllFirestoreDocs, findFirestoreDocsByField, isTombstoned, claimStudentRegistrationNumber, releaseStudentRegistrationNumberClaim } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
+import { getClientIp } from '../utils/rateLimiter.js';
+import { getSignupTurnstileConfig, verifySignupTurnstile } from '../services/turnstileService.js';
+import { getOrIssueFreeTrialDeviceSignals, reserveFreeTrialForAccount, finalizeFreeTrialForAccount, releaseFreeTrialReservation, type FreeTrialDeviceSignals } from '../services/freeTrialDeviceService.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
 import {
@@ -36,6 +38,17 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
+
+// Public signup security configuration. The site key is intentionally public; the secret
+// stays exclusively in server-side Firebase App Hosting secrets.
+router.get('/registration-security-config', (_req: Request, res: Response) => {
+  const config = getSignupTurnstileConfig();
+  return res.json({
+    turnstileRequired: config.required,
+    turnstileSiteKey: config.setupIncomplete ? null : config.siteKey,
+    turnstileSetupIncomplete: config.setupIncomplete,
+  });
+});
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -228,17 +241,13 @@ async function authenticateWithFirestoreFallback(
   mfa_enrolled_at?: string | null;
   totp_secret?: string | null;
 } | null> {
-  const fdb = getFirestoreDb();
-  if (!fdb) return null;
-
   try {
-    const usersRef = collection(fdb, 'users');
-    let snap = await getDocs(query(usersRef, where('email', '==', normalizedEmail)));
-    let fUserDoc: any = null;
-    if (!snap.empty) {
-      fUserDoc = snap.docs[0].data();
-    } else {
-      const allUsers = await getAllFirestoreDocs<any>('users');
+    const matchingUsers = await findFirestoreDocsByField<any>('users', 'email', normalizedEmail, 1);
+    let fUserDoc: any = matchingUsers[0] || null;
+    if (!fUserDoc) {
+      // Historical records may contain email casing differences; preserve the legacy
+      // normalized fallback while querying through the privileged server adapter.
+      const allUsers = await getAllFirestoreDocs<any>('users', { failOnError: true });
       fUserDoc = allUsers.find((u: any) => String(u.email || '').trim().toLowerCase() === normalizedEmail);
     }
 
@@ -483,6 +492,19 @@ function studentSrnConflictResponse(res: Response, conflict: { kind: 'EXACT' | '
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
+    // In production the CAPTCHA is a fail-closed server gate: a client-side widget
+    // callback alone is never trusted, and the same token cannot be replayed.
+    const turnstile = await verifySignupTurnstile(req.body?.turnstileToken, req);
+    if (!turnstile.valid) {
+      const statusCode = turnstile.code === 'TURNSTILE_NOT_CONFIGURED' || turnstile.code === 'TURNSTILE_UNAVAILABLE'
+        ? 503
+        : 400;
+      return res.status(statusCode).json({
+        error: turnstile.message || 'Security verification failed. Please try again.',
+        code: turnstile.code || 'TURNSTILE_REJECTED',
+      });
+    }
+
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
 
     if (!email || !password || !fullName || !icaiRegistrationNumber) {
@@ -564,9 +586,10 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = getClientIp(req);
+    const trialDeviceSignals = getOrIssueFreeTrialDeviceSignals(req, res);
 
-    // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
+    // Initiate the existing email OTP flow and bind the pending challenge to a signed browser/device claim.
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
       fullName: fullName.trim(),
@@ -576,6 +599,8 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       caLevel: caLevel || 'INTERMEDIATE',
       referralCode: rawReferralCode || null,
       clientIp,
+      trialDeviceCookieHash: trialDeviceSignals.deviceCookieHash,
+      trialClientDeviceHash: trialDeviceSignals.clientDeviceHash,
     });
 
     if (!otpResult.success) {
@@ -627,7 +652,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = getClientIp(req);
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -638,6 +663,8 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       caLevel: payload.caLevel,
       referralCode: payload.referralCode,
       clientIp,
+      trialDeviceCookieHash: payload.trialDeviceCookieHash || null,
+      trialClientDeviceHash: payload.trialClientDeviceHash || null,
     });
 
     if (!otpResult.success) {
@@ -663,6 +690,10 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
 
 // Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
 router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
+  let reservedSrnClaim: { normalizedSrn: string; userId: string } | null = null;
+  let trialSignalsForCleanup: FreeTrialDeviceSignals | null = null;
+  let trialUserIdForCleanup: string | null = null;
+  let trialReservationNeedsCleanup = false;
   try {
     const { email, otp } = req.body;
 
@@ -699,8 +730,60 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const normalizedSrn = String(regData.icaiRegistrationNumber || '').trim().toUpperCase();
+
+    // SQLite's BEGIN IMMEDIATE lock only coordinates this App Hosting instance.
+    // Reserve the SRN globally in Firestore before creating a second account on another instance.
+    let globalSrnClaim;
+    try {
+      globalSrnClaim = await claimStudentRegistrationNumber({
+        normalizedSrn,
+        userId,
+        email: normalizedEmail,
+      });
+    } catch (claimError) {
+      console.error('[AuthRoutes] Global ICAI registration claim unavailable:', claimError instanceof Error ? claimError.message : 'unknown error');
+      return res.status(503).json({
+        error: 'Student identity verification is temporarily unavailable. No new account was created; please retry later.',
+        code: 'SRN_CLAIM_UNAVAILABLE',
+      });
+    }
+
+    if (!globalSrnClaim.claimed) {
+      return studentSrnConflictResponse(res, {
+        kind: globalSrnClaim.conflictKind || 'EXACT',
+      });
+    }
+    if (globalSrnClaim.globallyEnforced) {
+      reservedSrnClaim = { normalizedSrn, userId };
+    }
+
     const role: UserRole = 'STUDENT';
     const rawReferralCode = regData.referralCode || '';
+    const permanentFreeExemption = checkPermanentFreeAccess(normalizedEmail);
+    const freeTrialSignals: FreeTrialDeviceSignals = {
+      deviceCookieHash: typeof regData.trialDeviceCookieHash === 'string' ? regData.trialDeviceCookieHash : null,
+      clientDeviceHash: typeof regData.trialClientDeviceHash === 'string' ? regData.trialClientDeviceHash : null,
+    };
+    trialSignalsForCleanup = freeTrialSignals;
+    trialUserIdForCleanup = userId;
+    let freeTrialClaimHeld = false;
+    let freeTrialGranted = permanentFreeExemption;
+    let freeTrialBlockReason: string | undefined;
+
+    if (!permanentFreeExemption) {
+      const trialClaim = await reserveFreeTrialForAccount(userId, freeTrialSignals);
+      freeTrialClaimHeld = trialClaim.eligible && trialClaim.reservationHeld;
+      trialReservationNeedsCleanup = freeTrialClaimHeld;
+      freeTrialGranted = trialClaim.eligible && !trialClaim.reservationHeld;
+      freeTrialBlockReason = trialClaim.reason;
+      if (!trialClaim.eligible) {
+        console.info('[FreeTrialAbuse] Signup continues without free-trial benefits.', {
+          userId,
+          reason: freeTrialBlockReason || 'UNKNOWN',
+        });
+      }
+    }
 
     // Re-validate promo code if specified
     let promoCampaign: any = null;
@@ -708,6 +791,9 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       promoCampaign = db.prepare(`
         SELECT * FROM referral_campaigns WHERE UPPER(code) = UPPER(?)
       `).get(rawReferralCode) as any;
+    }
+    if (!freeTrialGranted && !freeTrialClaimHeld && !permanentFreeExemption) {
+      promoCampaign = null;
     }
 
     // Begin immediate transaction to create student account exactly once
@@ -722,6 +808,19 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
       if (lockedSrnConflict) {
         db.exec('ROLLBACK');
+        if (reservedSrnClaim) {
+          try {
+            await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+          } catch (releaseError) {
+            console.error('[AuthRoutes] Could not release a failed local SRN claim:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+          }
+          reservedSrnClaim = null;
+        }
+        if (freeTrialClaimHeld) {
+          await releaseFreeTrialReservation(userId, freeTrialSignals);
+          freeTrialClaimHeld = false;
+          trialReservationNeedsCleanup = false;
+        }
         return studentSrnConflictResponse(res, lockedSrnConflict);
       }
 
@@ -749,12 +848,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
       const nowIso = new Date().toISOString();
 
-      // Insert active student account with verified email
+      // Start every non-whitelisted signup with no free trial. The device claim is finalized
+      // after this SQL transaction; only then is the free allowance enabled.
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, free_trial_eligible, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -762,20 +862,23 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         regData.fullName.trim(),
         regData.phone?.trim() || null,
         role,
-        nowIso
+        nowIso,
+        freeTrialGranted ? 1 : 0
       );
 
-      // Insert student profile with permanent unique student code
+      // Insert student profile with permanent unique student code and a gated free allowance.
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
-        ) VALUES (?, ?, ?, 0, 0, ?)
+          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits,
+          student_code, monthly_free_evaluations_limit
+        ) VALUES (?, ?, ?, 0, 0, ?, ?)
       `).run(
         userId,
         regData.icaiRegistrationNumber,
         regData.caLevel || 'INTERMEDIATE',
-        studentCode
+        studentCode,
+        freeTrialGranted ? 2 : 0
       );
 
       // If promo campaign was valid and claimed, insert redemption record transactionally
@@ -813,10 +916,94 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       }
 
       db.exec('COMMIT');
+      // Keep the global SRN claim after the local transaction commits.
+      reservedSrnClaim = null;
     } catch (txErr: any) {
       try { db.exec('ROLLBACK'); } catch {}
+      if (reservedSrnClaim) {
+        try {
+          await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+        } catch (releaseError) {
+          console.error('[AuthRoutes] Could not release SRN claim after failed account creation:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+        }
+        reservedSrnClaim = null;
+      }
+      if (freeTrialClaimHeld) {
+        await releaseFreeTrialReservation(userId, freeTrialSignals);
+        freeTrialClaimHeld = false;
+        trialReservationNeedsCleanup = false;
+      }
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Finalize the browser/device claim only after the account transaction commits.
+    if (freeTrialClaimHeld) {
+      const finalized = await finalizeFreeTrialForAccount(userId, freeTrialSignals);
+      if (finalized) {
+        trialReservationNeedsCleanup = false;
+        let grantStarted = false;
+        try {
+          db.exec('BEGIN IMMEDIATE');
+          grantStarted = true;
+          // Use an ISO millisecond timestamp so the existing stale-write guard can
+          // recognize this post-claim entitlement grant as newer than the prior cloud row.
+          const grantUpdatedAt = new Date().toISOString();
+          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = ? WHERE id = ?').run(grantUpdatedAt, userId);
+          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = ? WHERE user_id = ?').run(grantUpdatedAt, userId);
+          db.exec('COMMIT');
+          grantStarted = false;
+          freeTrialGranted = true;
+          freeTrialClaimHeld = false;
+        } catch (grantError: unknown) {
+          if (grantStarted) { try { db.exec('ROLLBACK'); } catch {} }
+          console.error('[FreeTrialAbuse] Device claim finalized but free-trial entitlement update failed; free trial remains withheld.', grantError instanceof Error ? grantError.message : 'unknown error');
+          freeTrialGranted = false;
+          freeTrialClaimHeld = false;
+        }
+      } else {
+        await releaseFreeTrialReservation(userId, freeTrialSignals);
+        freeTrialClaimHeld = false;
+        trialReservationNeedsCleanup = false;
+        freeTrialGranted = false;
+      }
+    }
+
+    // A promotion is a free benefit too. If the device claim could not be finalized,
+    // remove any provisional redemption rather than leaving free credits on this account.
+    if (!freeTrialGranted && promoCampaign && !permanentFreeExemption) {
+      let cleanupStarted = false;
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        cleanupStarted = true;
+        const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
+        db.prepare('DELETE FROM referral_redemptions WHERE id = ? AND user_id = ?').run(redemptionId, userId);
+        const remaining = db.prepare(`
+          SELECT COUNT(*) as total FROM referral_redemptions r
+          LEFT JOIN users u ON u.id = r.user_id
+          WHERE UPPER(r.referral_code) = UPPER(?)
+            AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+        `).get(rawReferralCode) as { total: number };
+        const inDateRange =
+          (!promoCampaign.start_date || new Date(promoCampaign.start_date) <= new Date()) &&
+          (!promoCampaign.end_date || new Date(promoCampaign.end_date) >= new Date());
+        if (Number(remaining.total || 0) < Number(promoCampaign.max_redemptions ?? 20) &&
+            promoCampaign.is_active &&
+            promoCampaign.status !== 'DISABLED' &&
+            promoCampaign.status !== 'ARCHIVED' &&
+            inDateRange) {
+          db.prepare(`
+            UPDATE referral_campaigns SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP
+            WHERE UPPER(code) = UPPER(?) AND status = 'EXHAUSTED'
+          `).run(rawReferralCode);
+        }
+        db.exec('COMMIT');
+        cleanupStarted = false;
+      } catch (cleanupError: unknown) {
+        if (cleanupStarted) { try { db.exec('ROLLBACK'); } catch {} }
+        console.error('[FreeTrialAbuse] Could not roll back provisional promo entitlement.', cleanupError instanceof Error ? cleanupError.message : 'unknown error');
+      }
+      promoCampaign = null;
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
@@ -894,11 +1081,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Auto-link any pending coaching institute enrollment for this email
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
-    // Welcome Notification
+    // Welcome notification must accurately reflect whether the device qualified for a trial.
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      freeTrialGranted
+        ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations.'
+        : 'Your account is active. Free-trial benefits are unavailable for this signup because this browser/device has already claimed a trial or could not be verified. Purchased credits remain available. If this is a shared or replacement device, contact support for review.'
+    );
 
     // Audit log
     db.prepare(`
@@ -944,6 +1137,18 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       } : undefined,
     });
   } catch (error: unknown) {
+    if (reservedSrnClaim) {
+      try {
+        await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+      } catch (releaseError) {
+        console.error('[AuthRoutes] Could not release SRN claim after unexpected registration error:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+      }
+      reservedSrnClaim = null;
+    }
+    if (trialReservationNeedsCleanup && trialSignalsForCleanup && trialUserIdForCleanup) {
+      await releaseFreeTrialReservation(trialUserIdForCleanup, trialSignalsForCleanup);
+      trialReservationNeedsCleanup = false;
+    }
     console.error('Verify OTP error:', error);
     return res.status(500).json({ error: 'Verification failed. Please try again.' });
   }
@@ -1003,6 +1208,18 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       : user.role;
     if (!isAuthPortalRoleAllowed(roleForPortalCheck, portalScope)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Login must honor the same authoritative status event as protected API requests.
+    // This prevents a stale local ACTIVE user row from receiving a fresh session.
+    try {
+      await reconcileAuthoritativeAccountStatus(user);
+    } catch (statusError) {
+      console.error('[AuthRoutes] Authoritative account-status lookup failed during login:', statusError instanceof Error ? statusError.message : 'unknown error');
+      return res.status(503).json({
+        error: 'The current account status could not be verified. Please try again.',
+        code: 'ACCOUNT_STATUS_UNAVAILABLE',
+      });
     }
 
     // Restrict flagged non-test student accounts at sign-in after duplicate answer-sheet reuse was detected.
@@ -1129,7 +1346,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
       const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
-      const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+      const ipAddress = getClientIp(req);
 
       const limitCheck = isDeviceLimitExceeded(user.id, user.email, deviceId);
       if (limitCheck.exceeded) {

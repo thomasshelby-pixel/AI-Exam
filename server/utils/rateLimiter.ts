@@ -25,12 +25,15 @@ export interface RateLimitOptions {
   skipSuccessfulRequests?: boolean;
 }
 
+/**
+ * Use Express's resolved client address only. Never parse X-Forwarded-For directly:
+ * clients can forge that header unless Express is configured with the correct trusted
+ * proxy hop count in server.ts.
+ */
 export function getClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.ip || req.socket.remoteAddress || '127.0.0.1';
+  const resolvedIp = String(req.ip || req.socket.remoteAddress || '').trim();
+  if (!resolvedIp) return 'unknown';
+  return resolvedIp.startsWith('::ffff:') ? resolvedIp.slice(7) : resolvedIp;
 }
 
 /**

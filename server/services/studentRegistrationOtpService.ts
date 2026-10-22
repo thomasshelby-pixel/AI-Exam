@@ -10,6 +10,8 @@ export interface PendingStudentRegistration {
   icaiRegistrationNumber: string;
   caLevel: string;
   referralCode?: string | null;
+  trialDeviceCookieHash?: string | null;
+  trialClientDeviceHash?: string | null;
   createdAt: string;
   expiresAt: string;
   resendAvailableAt: string;
@@ -165,6 +167,8 @@ export async function initiateStudentRegistrationOtp(params: {
   caLevel: string;
   referralCode?: string | null;
   clientIp?: string;
+  trialDeviceCookieHash?: string | null;
+  trialClientDeviceHash?: string | null;
 }): Promise<OtpChallengeResult> {
   initRegistrationOtpTable();
 
@@ -217,6 +221,8 @@ export async function initiateStudentRegistrationOtp(params: {
     icaiRegistrationNumber: params.icaiRegistrationNumber.trim(),
     caLevel: params.caLevel || 'INTERMEDIATE',
     referralCode: params.referralCode?.trim() || null,
+    trialDeviceCookieHash: params.trialDeviceCookieHash || null,
+    trialClientDeviceHash: params.trialClientDeviceHash || null,
     createdAt,
     expiresAt,
     resendAvailableAt,
