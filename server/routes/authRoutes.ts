@@ -1810,7 +1810,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const userId = req.user.id;
     const user = db.prepare(`
-      SELECT id, email, full_name, phone, phone_verified, phone_verified_at, role, status, mfa_enabled, mfa_phone, created_at,
+      SELECT id, email, full_name, phone, email_verified, email_verified_at, phone_verified, phone_verified_at, role, status, mfa_enabled, mfa_phone, created_at,
              suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
       FROM users WHERE id = ?
     `).get(userId) as {
@@ -1818,6 +1818,8 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       email: string;
       full_name: string;
       phone: string | null;
+      email_verified: number;
+      email_verified_at: string | null;
       phone_verified: number;
       phone_verified_at: string | null;
       role: UserRole;
@@ -1946,6 +1948,8 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         email: user.email,
         fullName: user.full_name,
         phone: user.phone,
+        emailVerified: Boolean(user.email_verified),
+        emailVerifiedAt: user.email_verified_at || undefined,
         phoneVerified: Boolean(user.phone_verified),
         phoneVerifiedAt: user.phone_verified_at || undefined,
         role: user.role,
