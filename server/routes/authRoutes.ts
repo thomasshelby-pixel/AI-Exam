@@ -363,7 +363,7 @@ async function authenticateWithFirestoreFallback(
             spDoc.ca_level || 'INTERMEDIATE',
             spDoc.free_evaluations_used || 0,
             spDoc.monthly_free_evaluations_used || 0,
-            spDoc.monthly_free_evaluations_limit || 2,
+            spDoc.monthly_free_evaluations_limit ?? 2,
             spDoc.free_evaluation_reset_month || '2026-09',
             finalPurchased,
             finalPurchased,
@@ -952,7 +952,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Welcome Notification
     const welcomeMessage = freeTrialDecision.eligible
       ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
-      : 'Your email is verified and your account is active. The standard free-trial allowance is unavailable because this device/browser or network has already claimed a trial. Paid credits and eligible institute or promotional benefits remain available.';
+      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because this account did not pass the device/browser and network eligibility check. Paid credits and eligible institute or promotional benefits remain available.';
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
