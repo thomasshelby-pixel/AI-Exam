@@ -122,20 +122,24 @@ export async function reserveFreeTrialForAccount(
 
     return await store.runTransaction(async (transaction) => {
       const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      let ownClaimed = false;
+      let ownActiveReservation = false;
       for (const snap of snapshots) {
         if (!snap.exists) continue;
         const data = snap.data() || {};
-        if (data.userId === userId && data.status === 'CLAIMED') {
-          return { eligible: true, reservationHeld: false };
-        }
-        if (data.userId === userId && data.status === 'RESERVED' && Number(data.reservationExpiresAtMs || 0) > now) {
-          return { eligible: true, reservationHeld: true };
-        }
-        if (data.status === 'CLAIMED' ||
-            (data.status === 'RESERVED' && Number(data.reservationExpiresAtMs || 0) > now)) {
-          return { eligible: false, reservationHeld: false, reason: 'DEVICE_ALREADY_USED' };
+        const activeReservation = data.status === 'RESERVED' && Number(data.reservationExpiresAtMs || 0) > now;
+        if (data.status === 'CLAIMED' || activeReservation) {
+          if (data.userId !== userId) {
+            return { eligible: false, reservationHeld: false, reason: 'DEVICE_ALREADY_USED' };
+          }
+          if (data.status === 'CLAIMED') ownClaimed = true;
+          if (activeReservation) ownActiveReservation = true;
         }
       }
+      // Evaluate every signal before accepting an idempotent retry, so one matching cookie
+      // cannot accidentally bypass a conflicting client-device claim.
+      if (ownClaimed) return { eligible: true, reservationHeld: false };
+      if (ownActiveReservation) return { eligible: true, reservationHeld: true };
 
       const reservationExpiresAtMs = now + RESERVATION_TTL_MS;
       for (const ref of refs) {
