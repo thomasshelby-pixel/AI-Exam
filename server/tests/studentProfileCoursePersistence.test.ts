@@ -105,7 +105,7 @@ async function run() {
     const saved = saveResponse.body;
     assert.equal(saved.profile.caLevel, 'FINAL', 'API must return the saved course');
 
-    const reloadedResponse = await invoke(getProfileHandler, authenticatedRequest(token));
+    const reloadedResponse = await invoke(getProfileHandler, await authenticatedRequest(token));
     assert.equal(reloadedResponse.statusCode, 200);
     const reloaded = reloadedResponse.body;
     assert.equal(reloaded.profile.caLevel, 'FINAL', 'Fresh profile read must retain the saved course');
