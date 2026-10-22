@@ -186,6 +186,7 @@ export function initDatabase() {
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
       email_verified INTEGER NOT NULL DEFAULT 0,
       email_verified_at TEXT,
+      free_trial_eligible INTEGER NOT NULL DEFAULT 1,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
@@ -1419,6 +1420,7 @@ function runMigrations() {
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified_at', 'TEXT');
+  addColumnIfNotExists('users', 'free_trial_eligible', 'INTEGER NOT NULL DEFAULT 1');
 
   // CRITICAL MIGRATION: Pre-existing accounts created before OTP deployment remain trusted/verified automatically.
   // Backfill existing accounts as verified so existing students, admins, and testing accounts continue login uninterrupted.
