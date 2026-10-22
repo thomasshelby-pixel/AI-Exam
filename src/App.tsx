@@ -712,6 +712,24 @@ const AppRoutes: React.FC = () => {
 
   return (
     <>
+      {isAuthenticated && user?.role === 'STUDENT' && user.suspiciousActivityWarning && (
+        <div
+          role="alert"
+          className="sticky top-0 z-[100] border-b border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 shadow-sm dark:border-amber-800 dark:bg-amber-950/95 dark:text-amber-100"
+        >
+          <div className="mx-auto flex max-w-7xl items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700 dark:text-amber-300" />
+            <div>
+              <p className="font-semibold">Account Security Warning</p>
+              <p className="mt-1 text-sm leading-5">
+                We detected suspicious activity involving the same answer sheet being submitted from multiple accounts.
+                Repeated attempts to bypass evaluation limits may lead to account suspension or manual review.
+                If this is legitimate testing, please contact support.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <Routes>
         {/* Private, unlinked back-office entry. Do not expose through public navigation. */}
         <Route path="/admin-login" element={<PrivateAdminAccessPage />} />
