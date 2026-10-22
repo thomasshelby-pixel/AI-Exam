@@ -830,6 +830,50 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
     }
 
+    // Claim the standard free-trial allowance against persistent device/browser and IP signals.
+    // New profiles start blocked; the two free monthly evaluations are enabled only after
+    // Firestore atomically confirms that neither signal has claimed a trial before.
+    const registrationDeviceId = typeof regData.deviceId === 'string' ? regData.deviceId : undefined;
+    const verificationDeviceHeader = req.headers['x-device-id'];
+    const verificationDeviceId = typeof verificationDeviceHeader === 'string'
+      ? verificationDeviceHeader.trim().slice(0, 200)
+      : undefined;
+    const verificationIp = req.ip || undefined;
+    const deviceChangedDuringSignup = Boolean(
+      registrationDeviceId && verificationDeviceId && registrationDeviceId !== verificationDeviceId
+    );
+    const freeTrialDecision = await claimFreeTrialEligibility({
+      userId,
+      deviceIds: [registrationDeviceId, verificationDeviceId],
+      ipAddresses: [regData.clientIp, verificationIp],
+      forceBlock: deviceChangedDuringSignup,
+    });
+
+    if (freeTrialDecision.eligible) {
+      db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = 0,
+            monthly_free_evaluations_used = 0,
+            monthly_free_evaluations_limit = 2,
+            free_evaluation_reset_month = ?,
+            free_evaluations_used = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(getCurrentServerMonth(), userId);
+    } else {
+      db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = 1,
+            monthly_free_evaluations_limit = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(userId);
+      console.info('[FreeTrialAbuse] Standard free trial disabled for new account:', {
+        userId,
+        reason: freeTrialDecision.reason,
+      });
+    }
+
     // Post-commit notifications, audit logging, and durable Firestore sync
     if (promoCampaign) {
       const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
@@ -906,10 +950,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
     // Welcome Notification
+    const welcomeMessage = freeTrialDecision.eligible
+      ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
+      : 'Your email is verified and your account is active. The standard free-trial allowance is unavailable because this device/browser or network has already claimed a trial. Paid credits and eligible institute or promotional benefits remain available.';
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId, welcomeMessage);
 
     // Audit log
     db.prepare(`
@@ -919,7 +966,9 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       `log_${crypto.randomBytes(8).toString('hex')}`,
       userId,
       userId,
-      promoCampaign ? `New verified student account registered with promo code ${rawReferralCode}` : 'New verified student account registered'
+      promoCampaign
+        ? `New verified student account registered with promo code ${rawReferralCode}; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
+        : `New verified student account registered; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
@@ -948,6 +997,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         emailVerified: true,
       },
       promoApplied: !!promoCampaign,
+      freeTrialAvailable: freeTrialDecision.eligible,
       promoDetails: promoCampaign ? {
         code: rawReferralCode,
         evaluations: promoCampaign.max_evaluations ?? 15,
