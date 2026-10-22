@@ -34,8 +34,41 @@ import {
 } from '../services/studentRegistrationOtpService.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
+import {
+  FREE_TRIAL_DEVICE_COOKIE,
+  FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS,
+  claimFreeTrialForAccount,
+  getTrustedAppHostingClientIp,
+  hashFreeTrialSignal,
+  signTrialDeviceCookie,
+  verifyTrialDeviceCookie,
+} from '../services/freeTrialAbuseService.js';
 
 const router = Router();
+
+function getOrIssueFreeTrialDeviceNonce(req: Request, res: Response): string | null {
+  const rawCookie = (req as any).cookies?.[FREE_TRIAL_DEVICE_COOKIE];
+  const verifiedNonce = verifyTrialDeviceCookie(typeof rawCookie === 'string' ? rawCookie : undefined);
+  if (verifiedNonce) return verifiedNonce;
+
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const signedCookie = signTrialDeviceCookie(nonce);
+  if (!signedCookie) return null;
+
+  const isSecureRequest =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE);
+  const cookieParts = [
+    `${FREE_TRIAL_DEVICE_COOKIE}=${signedCookie}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS}`,
+  ];
+  if (isSecureRequest) cookieParts.push('Secure');
+  res.append('Set-Cookie', cookieParts.join('; '));
+  return nonce;
+}
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -564,7 +597,21 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+
+    // Never trust the left-most X-Forwarded-For entry; use the Google App Hosting/LB
+    // appended client address and store only keyed hashes in the trial ledger/pending OTP row.
+    const trustedClientIp = getTrustedAppHostingClientIp(
+      req.headers as unknown as Record<string, unknown>,
+      req.socket?.remoteAddress || req.ip
+    );
+    const trialDeviceNonce = getOrIssueFreeTrialDeviceNonce(req, res);
+    const trialDeviceCookieHash = hashFreeTrialSignal('device-cookie', trialDeviceNonce);
+    const clientDeviceHeader = req.headers['x-device-id'];
+    const clientDeviceId = typeof clientDeviceHeader === 'string' ? clientDeviceHeader : undefined;
+    const trialClientDeviceHash = hashFreeTrialSignal('client-device', clientDeviceId);
+    const trialIpHash = hashFreeTrialSignal('ip', trustedClientIp);
+    // Registration OTP audit stores only the keyed IP hash, never the raw address.
+    const clientIp = trialIpHash ? `hmac:${trialIpHash}` : undefined;
 
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
@@ -576,6 +623,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       caLevel: caLevel || 'INTERMEDIATE',
       referralCode: rawReferralCode || null,
       clientIp,
+      trialDeviceCookieHash,
+      trialClientDeviceHash,
+      trialIpHash,
     });
 
     if (!otpResult.success) {
@@ -627,7 +677,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = typeof payload.trialIpHash === 'string' ? `hmac:${payload.trialIpHash}` : undefined;
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -638,6 +688,9 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       caLevel: payload.caLevel,
       referralCode: payload.referralCode,
       clientIp,
+      trialDeviceCookieHash: payload.trialDeviceCookieHash || null,
+      trialClientDeviceHash: payload.trialClientDeviceHash || null,
+      trialIpHash: payload.trialIpHash || null,
     });
 
     if (!otpResult.success) {
@@ -749,12 +802,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
       const nowIso = new Date().toISOString();
 
-      // Insert active student account with verified email
+      // New accounts receive no free-evaluation entitlement until the persistent,
+      // multi-instance device/IP claim has been won after successful account creation.
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, free_trial_eligible, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -765,12 +819,14 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         nowIso
       );
 
-      // Insert student profile with permanent unique student code
+      // Use zero as the profile default for this pending trial decision. Paid/promo
+      // entitlements remain separate and this does not charge or remove purchased credits.
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
-        ) VALUES (?, ?, ?, 0, 0, ?)
+          user_id, icai_registration_number, ca_level, free_evaluations_used,
+          purchased_credits, student_code, monthly_free_evaluations_limit
+        ) VALUES (?, ?, ?, 0, 0, ?, 0)
       `).run(
         userId,
         regData.icaiRegistrationNumber,
@@ -817,6 +873,40 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       try { db.exec('ROLLBACK'); } catch {}
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Award the standard monthly free trial only once per signed browser/device and IP.
+    // Existing permanent-free accounts are explicitly exempt from this gate.
+    let freeTrialGranted = false;
+    if (checkPermanentFreeAccess(normalizedEmail)) {
+      db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+      db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(userId);
+      freeTrialGranted = true;
+    } else {
+      const trialClaim = await claimFreeTrialForAccount({
+        userId,
+        deviceCookieHash: typeof regData.trialDeviceCookieHash === 'string' ? regData.trialDeviceCookieHash : null,
+        clientDeviceHash: typeof regData.trialClientDeviceHash === 'string' ? regData.trialClientDeviceHash : null,
+        ipHash: typeof regData.trialIpHash === 'string' ? regData.trialIpHash : null,
+      });
+
+      if (trialClaim.eligible) {
+        try {
+          db.exec('BEGIN IMMEDIATE');
+          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(userId);
+          db.exec('COMMIT');
+          freeTrialGranted = true;
+        } catch (trialGrantError: unknown) {
+          try { db.exec('ROLLBACK'); } catch {}
+          console.error('[FreeTrialAbuse] Persistent claim succeeded but the local entitlement update failed; trial withheld safely.', trialGrantError instanceof Error ? trialGrantError.message : 'unknown error');
+        }
+      } else {
+        console.info('[FreeTrialAbuse] Signup completed without a free-trial entitlement.', {
+          userId,
+          reason: trialClaim.reason || 'UNKNOWN',
+        });
+      }
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
@@ -894,11 +984,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Auto-link any pending coaching institute enrollment for this email
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
-    // Welcome Notification
+    // Welcome Notification accurately reflects the trial-claim decision.
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      freeTrialGranted
+        ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations each month.'
+        : 'Your email is verified and your account is active. A signup free trial was not assigned to this device/network; you can still purchase evaluation credits.'
+    );
 
     // Audit log
     db.prepare(`
@@ -936,6 +1032,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         hasPermanentFreeAccess: isPermanentFree,
         emailVerified: true,
       },
+      freeTrialGranted,
+      freeTrialMessage: freeTrialGranted
+        ? 'Two free evaluations per month are enabled for this account.'
+        : 'This device/network has already claimed a free trial, or trial verification could not be completed. You can still use purchased credits.',
       promoApplied: !!promoCampaign,
       promoDetails: promoCampaign ? {
         code: rawReferralCode,
