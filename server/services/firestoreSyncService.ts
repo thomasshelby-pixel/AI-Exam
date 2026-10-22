@@ -10,6 +10,7 @@ import {
   recordTombstone,
   isTombstoned,
   appendAccountStatusEvent,
+  claimStudentRegistrationNumber,
   type AccountStatusEventRecord,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
@@ -806,6 +807,58 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
     // 3. Hydrate Student Profiles
     const profiles = await readDocs<any>('student_profiles');
+
+    // Backfill global SRN claims for existing accounts once. New registrations then
+    // collide with the same hash even when they land on another App Hosting instance.
+    const srnBackfillState = await getFirestoreDoc<any>(
+      'system_configuration',
+      'student_srn_claim_backfill',
+      { failOnError: requireComplete },
+    );
+    if (srnBackfillState?.status !== 'COMPLETED') {
+      for (const profile of profiles) {
+        const userId = String(profile.user_id || profile.id || '');
+        const normalizedSrn = String(profile.icai_registration_number || '').trim().toUpperCase();
+        if (!userId || !/^[A-Z]{3}\\d{7}$/.test(normalizedSrn)) continue;
+        const isTombstonedProfile = tombstoneSet.has(`student_profiles_${userId}`) ||
+          tombstoneSet.has(`student_profiles:${userId}`) ||
+          tombstoneSet.has(`users_${userId}`) ||
+          tombstoneSet.has(`users:${userId}`) ||
+          tombstoneSet.has(userId) ||
+          isLocalTombstoned('users', userId) ||
+          isLocalTombstoned('student_profiles', userId);
+        if (isTombstonedProfile) continue;
+        const existingUser = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as { email: string } | undefined;
+        if (!existingUser) continue;
+
+        try {
+          const claim = await claimStudentRegistrationNumber({
+            normalizedSrn,
+            userId,
+            email: String(existingUser.email || ''),
+          });
+          if (!claim.claimed) {
+            // Keep startup going for historic duplicates; the already-created global claim
+            // still blocks any additional signup for this seven-digit identity.
+            console.warn(`[FirestoreSync] Historical SRN collision detected while backfilling user ${userId} (${claim.conflictKind || 'UNKNOWN'}).`);
+          }
+        } catch (claimError) {
+          console.error(`[FirestoreSync] Could not backfill global SRN claim for user ${userId}.`, claimError);
+          if (requireComplete) throw claimError;
+        }
+      }
+
+      const markedComplete = await setFirestoreDoc('system_configuration', 'student_srn_claim_backfill', {
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+        profiles_seen: profiles.length,
+        purpose: 'GLOBAL_ICAi_SRN_UNIQUENESS',
+      });
+      if (!markedComplete && requireComplete) {
+        throw new Error('Could not persist the global ICAI registration-claim backfill completion marker.');
+      }
+    }
+
     for (const p of profiles) {
       const uId = p.user_id || p.id;
       const isProfileTombstoned = tombstoneSet.has(`student_profiles_${uId}`) ||
