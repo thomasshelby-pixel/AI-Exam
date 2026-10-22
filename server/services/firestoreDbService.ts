@@ -256,16 +256,22 @@ export async function claimStudentRegistrationNumber(
     );
     if (!legacyProfiles.empty) {
       const legacyOwnerId = legacyProfiles.docs[0].id;
+      const now = new Date().toISOString();
       transaction.create(claimRef, {
         normalized_srn: normalizedSrn,
         numeric_sequence_hash: sequenceHash,
         user_id: legacyOwnerId,
         email: '',
         status: 'LEGACY_EXISTING_ACCOUNT',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        source: 'LEGACY_EXISTING_ACCOUNT',
+        created_at: now,
+        updated_at: now,
       });
-      return { claimed: false, globallyEnforced: true, conflictKind: 'EXACT' };
+      // Startup backfill is allowed to claim an already-existing profile for its owner.
+      // A new registration always supplies a fresh userId and therefore receives a conflict.
+      return legacyOwnerId === userId
+        ? { claimed: true, globallyEnforced: true }
+        : { claimed: false, globallyEnforced: true, conflictKind: 'EXACT' };
     }
 
     const now = new Date().toISOString();
