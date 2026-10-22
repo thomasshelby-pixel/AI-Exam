@@ -90,7 +90,6 @@ export async function claimFreeTrialEligibility(params: {
         if (!entry.snapshot.exists()) {
           transaction.set(entry.ref, {
             signalType: entry.type,
-            firstUserId: params.userId,
             firstSeenAt: now,
             trialClaimed: true,
           });
