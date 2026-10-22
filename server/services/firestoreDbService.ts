@@ -1,53 +1,18 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  writeBatch,
-  deleteDoc,
-  collection,
-  getDocs,
-  query,
-  where,
-  Firestore,
-  DocumentData,
-  terminate,
-  setLogLevel,
-} from 'firebase/firestore';
-import { setUserLogHandler } from '@firebase/logger';
+import { applicationDefault, getApps, getApp, initializeApp } from 'firebase-admin/app';
+import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 
 import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
-
-// Suppress benign internal gRPC stream cancellations (e.g. idle stream Code 1 CANCELLED)
-// that occur during normal stream recycling or server idle periods.
-try {
-  setLogLevel('error');
-  setUserLogHandler((logEntry) => {
-    const msg = logEntry.message || '';
-    if (
-      msg.includes('1 CANCELLED') ||
-      msg.includes('Call cancelled') ||
-      (msg.includes("RPC 'Listen' stream") && msg.includes('Code: 1')) ||
-      (msg.includes("RPC 'Write' stream") && msg.includes('Code: 1'))
-    ) {
-      return;
-    }
-    if (logEntry.level === 'error') {
-      console.error(`[${logEntry.type || 'Firestore'}] ${msg}`);
-    } else if (logEntry.level === 'warn') {
-      console.warn(`[${logEntry.type || 'Firestore'}] ${msg}`);
-    }
-  });
-} catch {
-  // Safe fallback if logger cannot be customized
-}
 
 let firestoreInstance: Firestore | null = null;
 let initAttempted = false;
 
+/**
+ * Return the privileged server-side Firestore connection.
+ *
+ * All backend reads/writes must use the Admin SDK so client Firestore rules can
+ * be closed to public access. Production uses Application Default Credentials
+ * from Firebase App Hosting / Cloud Run; local development needs ADC credentials.
+ */
 export function getFirestoreDb(): Firestore | null {
   if (firestoreInstance) return firestoreInstance;
   if (initAttempted && !firestoreInstance) return null;
@@ -55,99 +20,112 @@ export function getFirestoreDb(): Firestore | null {
   initAttempted = true;
   try {
     const { config } = loadAndValidateFirebaseConfig();
-    const app = getApps().length === 0 ? initializeApp(config) : getApp();
+    const app = getApps().length === 0
+      ? initializeApp({
+          credential: applicationDefault(),
+          projectId: config.projectId,
+        })
+      : getApp();
+
     firestoreInstance = config.firestoreDatabaseId
       ? getFirestore(app, config.firestoreDatabaseId)
       : getFirestore(app);
-    console.log('[Firestore] Successfully initialized database:', config.firestoreDatabaseId || '(default)');
+    console.log('[Firestore Admin] Initialized privileged database:', config.firestoreDatabaseId || '(default)', 'project:', config.projectId);
     return firestoreInstance;
-  } catch (err: any) {
-    console.error('[Firestore FATAL] Initialization error:', err?.message || err);
+  } catch (err: unknown) {
+    console.error('[Firestore Admin FATAL] Initialization error:', err instanceof Error ? err.message : err);
     throw err;
   }
 }
 
 export async function closeFirestoreCleanly(): Promise<void> {
-  if (firestoreInstance) {
-    try {
-      await terminate(firestoreInstance);
-      console.log('[Firestore] Cleanly terminated database connection.');
-    } catch {
-      // Ignore cleanup error on process exit
-    }
+  if (!firestoreInstance) return;
+  try {
+    await firestoreInstance.terminate();
+    console.log('[Firestore Admin] Cleanly terminated database connection.');
+  } catch {
+    // Ignore cleanup error on process exit.
+  } finally {
     firestoreInstance = null;
+    initAttempted = false;
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number = 12000, fallback: T, operationName: string = 'Firestore operation'): Promise<T> {
-  let timeoutHandle: any;
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms = 12000,
+  fallback: T,
+  operationName = 'Firestore operation',
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<T>((resolve) => {
     timeoutHandle = setTimeout(() => {
-      console.warn(`[Firestore TIMEOUT] ${operationName} exceeded ${ms}ms threshold; applying fallback.`);
+      console.warn(`[Firestore Admin TIMEOUT] ${operationName} exceeded ${ms}ms threshold.`);
       resolve(fallback);
     }, ms);
   });
 
-  // Attach a silent catch handler to promise so that if it finishes/rejects after timeout,
-  // it never triggers an unhandled promise rejection or unhandled stream error.
+  // A timed-out SDK promise may still reject later; attach a handler to prevent an
+  // unhandled rejection while preserving the timeout fallback for the caller.
   promise.catch(() => {});
 
   try {
-    const result = await Promise.race([promise, timeoutPromise]);
-    clearTimeout(timeoutHandle);
-    return result;
-  } catch (err) {
-    clearTimeout(timeoutHandle);
-    throw err;
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 
-export async function setFirestoreDoc(collectionName: string, docId: string, data: Record<string, any>): Promise<boolean> {
+function cleanFirestoreData(data: Record<string, any>): Record<string, any> {
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) cleaned[key] = value;
+  }
+  return cleaned;
+}
+
+export async function setFirestoreDoc(
+  collectionName: string,
+  docId: string,
+  data: Record<string, any>,
+): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) return false;
   try {
-    const cleanData: Record<string, any> = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (v !== undefined) {
-        cleanData[k] = v;
-      }
-    }
+    const cleanData = cleanFirestoreData(data);
     cleanData._updatedAt = new Date().toISOString();
     return await withTimeout(
-      setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true }).then(() => true),
+      db.collection(collectionName).doc(String(docId)).set(cleanData, { merge: true }).then(() => true),
       12000,
       false,
-      `setFirestoreDoc(${collectionName}/${docId})`
+      `setFirestoreDoc(${collectionName}/${docId})`,
     );
   } catch (err) {
-    console.warn(`[Firestore] Failed to set document in ${collectionName}/${docId}:`, err);
+    console.warn(`[Firestore Admin] Failed to set document in ${collectionName}/${docId}:`, err);
     return false;
   }
 }
 
 export async function setFirestoreDocsAtomically(
-  writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }>
+  writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }>,
 ): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || writes.length === 0 || writes.some((write) => !write.docId)) return false;
   try {
-    const batch = writeBatch(db);
+    const batch = db.batch();
     for (const write of writes) {
-      const cleanData: Record<string, any> = {};
-      for (const [key, value] of Object.entries(write.data)) {
-        if (value !== undefined) cleanData[key] = value;
-      }
+      const cleanData = cleanFirestoreData(write.data);
       cleanData._updatedAt = new Date().toISOString();
-      batch.set(doc(db, write.collectionName, String(write.docId)), cleanData, { merge: true });
+      batch.set(db.collection(write.collectionName).doc(String(write.docId)), cleanData, { merge: true });
     }
     return await withTimeout(
       batch.commit().then(() => true),
       12000,
       false,
-      'setFirestoreDocsAtomically'
+      'setFirestoreDocsAtomically',
     );
   } catch (err) {
-    console.warn('[Firestore] Failed to atomically persist protected records:', err);
+    console.warn('[Firestore Admin] Failed to atomically persist protected records:', err);
     return false;
   }
 }
@@ -155,7 +133,7 @@ export async function setFirestoreDocsAtomically(
 export async function getFirestoreDoc<T = DocumentData>(
   collectionName: string,
   docId: string,
-  options: { failOnError?: boolean } = {}
+  options: { failOnError?: boolean } = {},
 ): Promise<T | null> {
   const firestore = getFirestoreDb();
   if (!firestore || !docId) {
@@ -163,92 +141,106 @@ export async function getFirestoreDoc<T = DocumentData>(
     if (options.failOnError) throw error;
     return null;
   }
+
   try {
     const snap = await withTimeout(
-      getDoc(doc(firestore, collectionName, String(docId))),
+      firestore.collection(collectionName).doc(String(docId)).get(),
       12000,
       null as any,
-      `getFirestoreDoc(${collectionName}/${docId})`
+      `getFirestoreDoc(${collectionName}/${docId})`,
     );
     if (!snap) {
       if (options.failOnError) throw new Error(`Firestore read timed out for ${collectionName}/${docId}.`);
       return null;
     }
-    if (!snap.exists()) return null;
-    return { id: snap.id, ...snap.data() } as unknown as T;
+    if (!snap.exists) return null;
+    return { id: snap.id, ...(snap.data() || {}) } as unknown as T;
   } catch (err) {
-    console.warn(`[Firestore] Failed to get document in ${collectionName}/${docId}:`, err);
+    console.warn(`[Firestore Admin] Failed to get document in ${collectionName}/${docId}:`, err);
     if (options.failOnError) throw err;
     return null;
   }
 }
+
+export async function findFirestoreDocsByField<T = DocumentData>(
+  collectionName: string,
+  fieldName: string,
+  fieldValue: unknown,
+  limitCount = 1,
+): Promise<T[]> {
+  const firestore = getFirestoreDb();
+  if (!firestore) throw new Error('Firestore is unavailable while querying records.');
+  if (!collectionName || !fieldName) throw new Error('Collection name and field name are required.');
+  const safeLimit = Number.isInteger(limitCount) ? Math.min(100, Math.max(1, limitCount)) : 1;
+  const snap = await firestore.collection(collectionName).where(fieldName, '==', fieldValue).limit(safeLimit).get();
+  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
+}
+
 export async function deleteFirestoreDoc(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) return false;
   try {
     return await withTimeout(
-      deleteDoc(doc(db, collectionName, String(docId))).then(() => true),
+      db.collection(collectionName).doc(String(docId)).delete().then(() => true),
       12000,
       false,
-      `deleteFirestoreDoc(${collectionName}/${docId})`
+      `deleteFirestoreDoc(${collectionName}/${docId})`,
     );
   } catch (err) {
-    console.warn(`[Firestore] Failed to delete document in ${collectionName}/${docId}:`, err);
+    console.warn(`[Firestore Admin] Failed to delete document in ${collectionName}/${docId}:`, err);
     return false;
   }
 }
+
 export async function getAllFirestoreDocs<T = DocumentData>(
   collectionName: string,
-  options: { failOnError?: boolean } = {}
+  options: { failOnError?: boolean } = {},
 ): Promise<T[]> {
   const db = getFirestoreDb();
   if (!db) {
     if (options.failOnError) throw new Error(`Firestore is unavailable while reading ${collectionName}.`);
     return [];
   }
+
   try {
     let snap = await withTimeout(
-      getDocs(collection(db, collectionName)),
+      db.collection(collectionName).get(),
       12000,
       null as any,
-      `getAllFirestoreDocs(${collectionName})`
+      `getAllFirestoreDocs(${collectionName})`,
     );
 
-    // If initial query timed out on cold start, retry once with backoff
     if (!snap) {
-      console.log(`[Firestore] Retrying getAllFirestoreDocs for ${collectionName}...`);
-      await new Promise((r) => setTimeout(r, 1000));
+      console.log(`[Firestore Admin] Retrying getAllFirestoreDocs for ${collectionName}...`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       snap = await withTimeout(
-        getDocs(collection(db, collectionName)),
+        db.collection(collectionName).get(),
         15000,
         null as any,
-        `getAllFirestoreDocs_Retry(${collectionName})`
+        `getAllFirestoreDocs_Retry(${collectionName})`,
       );
     }
 
     if (!snap) {
-      console.warn(`[Firestore WARN] Failed to retrieve documents from ${collectionName} after retry.`);
+      console.warn(`[Firestore Admin WARN] Failed to retrieve documents from ${collectionName} after retry.`);
       if (options.failOnError) throw new Error(`Firestore returned no result while reading ${collectionName} after retry.`);
       return [];
     }
-    const results: T[] = [];
-    snap.forEach((d: any) => {
-      results.push({ id: d.id, ...d.data() } as unknown as T);
-    });
-    return results;
+
+    return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
   } catch (err) {
-    console.warn(`[Firestore] Failed to list documents in ${collectionName}:`, err);
+    console.warn(`[Firestore Admin] Failed to list documents in ${collectionName}:`, err);
     if (options.failOnError) throw err;
     return [];
   }
 }
 
-// Tombstones: Ensure permanent deletions survive restarts and prevent re-seeding
+// Tombstones: Ensure permanent deletions survive restarts and prevent re-seeding.
 export async function recordTombstone(
   collectionName: string,
   docId: string,
   reason?: string,
-  options: { failOnError?: boolean } = {}
+  options: { failOnError?: boolean } = {},
 ): Promise<boolean> {
   const firestore = getFirestoreDb();
   if (!firestore || !docId) {
@@ -259,54 +251,53 @@ export async function recordTombstone(
   try {
     const tombstoneId = `${collectionName}_${docId}`;
     const recorded = await withTimeout(
-      setDoc(doc(firestore, 'tombstones', tombstoneId), {
+      firestore.collection('tombstones').doc(tombstoneId).set({
         collectionName,
         targetId: docId,
         reason: reason || 'PERMANENT_DELETION',
         deletedAt: new Date().toISOString(),
+        _updatedAt: new Date().toISOString(),
       }).then(() => true),
       12000,
       false,
-      `recordTombstone(${collectionName}/${docId})`
+      `recordTombstone(${collectionName}/${docId})`,
     );
-    if (!recorded && options.failOnError) {
-      throw new Error(`Firestore did not confirm the deletion tombstone for ${collectionName}/${docId}.`);
-    }
+    if (!recorded && options.failOnError) throw new Error(`Firestore did not confirm the deletion tombstone for ${collectionName}/${docId}.`);
     return recorded;
   } catch (err) {
-    console.warn(`[Firestore] Failed to record tombstone for ${collectionName}/${docId}:`, err);
+    console.warn(`[Firestore Admin] Failed to record tombstone for ${collectionName}/${docId}:`, err);
     if (options.failOnError) throw err;
     return false;
   }
 }
+
 export async function isTombstoned(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) throw new Error('Firestore is unavailable while checking a deletion tombstone.');
+
   try {
-    // For credit-related collections, never block updates unless the entire user account is tombstoned
     if (collectionName === 'student_profiles' || collectionName === 'student_credit_purchases' || collectionName === 'credit_ledger') {
       const userTombstoneSnap = await withTimeout(
-        getDoc(doc(db, 'tombstones', `users_${docId}`)),
+        db.collection('tombstones').doc(`users_${docId}`).get(),
         2500,
-        null
+        null,
+        `isTombstoned(users/${docId})`,
       );
-      if (userTombstoneSnap && userTombstoneSnap.exists()) {
-        return true;
-      }
+      if (userTombstoneSnap?.exists) return true;
       return false;
     }
 
     const tombstoneId = `${collectionName}_${docId}`;
     const snap = await withTimeout(
-      getDoc(doc(db, 'tombstones', tombstoneId)),
+      db.collection('tombstones').doc(tombstoneId).get(),
       12000,
       null,
-      `isTombstoned(${collectionName}/${docId})`
+      `isTombstoned(${collectionName}/${docId})`,
     );
     if (!snap) throw new Error(`Timed out checking tombstone for ${collectionName}/${docId}.`);
-    return Boolean(snap && snap.exists());
+    return snap.exists;
   } catch (err) {
-    console.error(`[Firestore] Could not verify tombstone state for ${collectionName}/${docId}:`, err);
+    console.error(`[Firestore Admin] Could not verify tombstone state for ${collectionName}/${docId}:`, err);
     throw err;
   }
 }
