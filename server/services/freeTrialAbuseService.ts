@@ -30,7 +30,7 @@ export async function claimFreeTrialEligibility(params: {
   ipAddresses: Array<string | undefined | null>;
   forceBlock?: boolean;
 }): Promise<FreeTrialEligibilityDecision> {
-  const secret = process.env.SESSION_SECRET || process.env.JWT_SECRET || process.env.ENCRYPTION_KEY || '';
+  const secret = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.SESSION_SECRET || '';
   if (!secret || !params.userId) {
     return { eligible: false, reason: 'SIGNAL_STORE_UNAVAILABLE' };
   }
