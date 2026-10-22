@@ -8,7 +8,7 @@ import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
-import { getFirestoreDoc, getAllFirestoreDocs, findFirestoreDocsByField, isTombstoned } from '../services/firestoreDbService.js';
+import { getFirestoreDoc, getAllFirestoreDocs, findFirestoreDocsByField, isTombstoned, claimStudentRegistrationNumber, releaseStudentRegistrationNumberClaim } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { getClientIp } from '../utils/rateLimiter.js';
 import { getSignupTurnstileConfig, verifySignupTurnstile } from '../services/turnstileService.js';
@@ -684,6 +684,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
 
 // Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
 router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
+  let reservedSrnClaim: { normalizedSrn: string; userId: string } | null = null;
   try {
     const { email, otp } = req.body;
 
@@ -720,6 +721,34 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const normalizedSrn = String(regData.icaiRegistrationNumber || '').trim().toUpperCase();
+
+    // SQLite's BEGIN IMMEDIATE lock only coordinates this App Hosting instance.
+    // Reserve the SRN globally in Firestore before creating a second account on another instance.
+    let globalSrnClaim;
+    try {
+      globalSrnClaim = await claimStudentRegistrationNumber({
+        normalizedSrn,
+        userId,
+        email: normalizedEmail,
+      });
+    } catch (claimError) {
+      console.error('[AuthRoutes] Global ICAI registration claim unavailable:', claimError instanceof Error ? claimError.message : 'unknown error');
+      return res.status(503).json({
+        error: 'Student identity verification is temporarily unavailable. No new account was created; please retry later.',
+        code: 'SRN_CLAIM_UNAVAILABLE',
+      });
+    }
+
+    if (!globalSrnClaim.claimed) {
+      return studentSrnConflictResponse(res, {
+        kind: globalSrnClaim.conflictKind || 'EXACT',
+      });
+    }
+    if (globalSrnClaim.globallyEnforced) {
+      reservedSrnClaim = { normalizedSrn, userId };
+    }
+
     const role: UserRole = 'STUDENT';
     const rawReferralCode = regData.referralCode || '';
 
@@ -743,6 +772,14 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
       if (lockedSrnConflict) {
         db.exec('ROLLBACK');
+        if (reservedSrnClaim) {
+          try {
+            await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+          } catch (releaseError) {
+            console.error('[AuthRoutes] Could not release a failed local SRN claim:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+          }
+          reservedSrnClaim = null;
+        }
         return studentSrnConflictResponse(res, lockedSrnConflict);
       }
 
@@ -834,8 +871,18 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       }
 
       db.exec('COMMIT');
+      // Keep the global SRN claim after the local transaction commits.
+      reservedSrnClaim = null;
     } catch (txErr: any) {
       try { db.exec('ROLLBACK'); } catch {}
+      if (reservedSrnClaim) {
+        try {
+          await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+        } catch (releaseError) {
+          console.error('[AuthRoutes] Could not release SRN claim after failed account creation:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+        }
+        reservedSrnClaim = null;
+      }
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
     }
@@ -965,6 +1012,14 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       } : undefined,
     });
   } catch (error: unknown) {
+    if (reservedSrnClaim) {
+      try {
+        await releaseStudentRegistrationNumberClaim(reservedSrnClaim.normalizedSrn, reservedSrnClaim.userId);
+      } catch (releaseError) {
+        console.error('[AuthRoutes] Could not release SRN claim after unexpected registration error:', releaseError instanceof Error ? releaseError.message : 'unknown error');
+      }
+      reservedSrnClaim = null;
+    }
     console.error('Verify OTP error:', error);
     return res.status(500).json({ error: 'Verification failed. Please try again.' });
   }
