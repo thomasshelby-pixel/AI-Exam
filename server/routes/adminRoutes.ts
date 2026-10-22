@@ -2795,19 +2795,19 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         status,
       });
     }
-    if (status === 'COMPLETED') {
-      return res.status(409).json({
-        error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
-        code: 'EVALUATION_ALREADY_COMPLETED',
-        evaluationId,
-      });
-    }
     if (status !== 'QUEUED' && status !== 'PROCESSING') {
       return res.status(409).json({
         error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations.',
         code: 'EVALUATION_STATUS_NOT_RECOVERABLE',
         evaluationId,
         status,
+      });
+    }
+    if (status === 'COMPLETED') {
+      return res.status(409).json({
+        error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
+        code: 'EVALUATION_ALREADY_COMPLETED',
+        evaluationId,
       });
     }
 
