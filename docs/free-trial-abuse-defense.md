@@ -12,6 +12,17 @@ This change adds an anti-bot gate to student registration, hardens the request I
 
 Turnstile stops automated/bot-driven signups. It is **not** SMS verification or proof of identity; a determined human may still create accounts with different email/SRN details. There is no honest way to guarantee that every bypass is impossible. Stronger identity proof (for example, verified phone ownership or ICAI identity checks) remains a separate product and cost decision.
 
+## Lock down Firestore direct access
+
+The old rules allowed public browser reads/writes for account and entitlement collections. The rules in this branch now deny all direct browser access, while the backend uses the Firebase Admin SDK (privileged server connection) for Firestore persistence and queries. This closes the direct-client-rule bypass path for changing user/profile/credit documents.
+
+Before deploying:
+1. Confirm the Firebase App Hosting runtime service account has Firestore data access permissions (for example, the appropriate Cloud Datastore/Firestore data role) on the authoritative Firebase project. The Admin SDK uses Application Default Credentials; do not add a service-account JSON key to the repo or frontend.
+2. Deploy to a staging backend first, then verify startup hydration, signup/OTP, normal login fallback, student dashboard, credit balance/consumption, payment fulfillment, admin updates, account suspension/reinstatement, and document deletion/recovery.
+3. Because Firestore rules now reject all browser reads and writes, any frontend feature that directly accessed Firestore instead of the backend API must be migrated to the API before production rollout. The current frontend Firebase module is intended for Firebase Auth/MFA; business records must go through backend endpoints.
+
+The server Admin SDK bypasses Firestore Security Rules, so all privileged access must continue to be gated by server authentication/authorization and validated inputs. A browser client must never receive Admin credentials.
+
 ## Configure Turnstile before production deploy
 
 1. In Cloudflare Dashboard, open **Turnstile** and create a **Managed** widget for your production hostnames. Include the hostname students actually use, for example `caexamcheckerai.com` and, if needed, the Firebase App Hosting hostname `caexamcheckerai-prod--gen-lang-client-0211426234.asia-southeast1.hosted.app`.
