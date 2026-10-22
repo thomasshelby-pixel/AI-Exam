@@ -32,7 +32,8 @@ import {
   verifyAndConsumeRegistrationOtp,
   maskEmail,
 } from '../services/studentRegistrationOtpService.js';
-import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
+import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
@@ -336,9 +337,9 @@ async function authenticateWithFirestoreFallback(
             INSERT INTO student_profiles (
               user_id, icai_registration_number, ca_level,
               free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
-              purchased_credits, paid_credits, institute_id, batch_id, updated_at
+              purchased_credits, paid_credits, free_trial_blocked, institute_id, batch_id, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
               icai_registration_number = excluded.icai_registration_number,
               ca_level = excluded.ca_level,
@@ -352,6 +353,7 @@ async function authenticateWithFirestoreFallback(
               free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
               purchased_credits = ?,
               paid_credits = ?,
+              free_trial_blocked = COALESCE(excluded.free_trial_blocked, student_profiles.free_trial_blocked, 0),
               institute_id = excluded.institute_id,
               batch_id = excluded.batch_id,
               updated_at = CURRENT_TIMESTAMP
@@ -365,6 +367,7 @@ async function authenticateWithFirestoreFallback(
             spDoc.free_evaluation_reset_month || '2026-09',
             finalPurchased,
             finalPurchased,
+            spDoc.free_trial_blocked || 0,
             spDoc.institute_id || null,
             spDoc.batch_id || null,
             finalPurchased,
@@ -564,7 +567,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = req.ip || undefined;
+    const deviceHeader = req.headers['x-device-id'];
+    const deviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
 
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
@@ -575,6 +580,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       icaiRegistrationNumber: srnValidation.normalized,
       caLevel: caLevel || 'INTERMEDIATE',
       referralCode: rawReferralCode || null,
+      deviceId,
       clientIp,
     });
 
@@ -627,7 +633,9 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = req.ip || undefined;
+    const deviceHeader = req.headers['x-device-id'];
+    const currentDeviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -637,6 +645,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       icaiRegistrationNumber: payload.icaiRegistrationNumber,
       caLevel: payload.caLevel,
       referralCode: payload.referralCode,
+      deviceId: payload.deviceId || currentDeviceId,
       clientIp,
     });
 
@@ -769,13 +778,15 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
-        ) VALUES (?, ?, ?, 0, 0, ?)
+          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code,
+          monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month, free_trial_blocked
+        ) VALUES (?, ?, ?, 0, 0, ?, 0, 0, ?, 1)
       `).run(
         userId,
         regData.icaiRegistrationNumber,
         regData.caLevel || 'INTERMEDIATE',
-        studentCode
+        studentCode,
+        getCurrentServerMonth()
       );
 
       // If promo campaign was valid and claimed, insert redemption record transactionally
