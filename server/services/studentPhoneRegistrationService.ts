@@ -66,6 +66,11 @@ export function savePendingPhoneRegistration(params: {
     return { success: false, message: normalizedPhone.error || 'Enter a valid mobile number.' };
   }
   const phone = normalizedPhone.canonicalPhoneE164;
+  // The current signup UI and SMS contract are India-only. Fail closed instead of storing
+  // an international number that the configured widget flow cannot verify.
+  if (!/^\+91\d{10}$/.test(phone)) {
+    return { success: false, message: 'Mobile OTP registration currently supports Indian mobile numbers only (+91 followed by 10 digits).' };
+  }
 
   const existingEmail = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(email);
   if (existingEmail) {
