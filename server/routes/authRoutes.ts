@@ -691,6 +691,9 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
 // Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
 router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
   let reservedSrnClaim: { normalizedSrn: string; userId: string } | null = null;
+  let trialSignalsForCleanup: FreeTrialDeviceSignals | null = null;
+  let trialUserIdForCleanup: string | null = null;
+  let trialReservationNeedsCleanup = false;
   try {
     const { email, otp } = req.body;
 
@@ -762,6 +765,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       deviceCookieHash: typeof regData.trialDeviceCookieHash === 'string' ? regData.trialDeviceCookieHash : null,
       clientDeviceHash: typeof regData.trialClientDeviceHash === 'string' ? regData.trialClientDeviceHash : null,
     };
+    trialSignalsForCleanup = freeTrialSignals;
+    trialUserIdForCleanup = userId;
     let freeTrialClaimHeld = false;
     let freeTrialGranted = permanentFreeExemption;
     let freeTrialBlockReason: string | undefined;
@@ -769,6 +774,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     if (!permanentFreeExemption) {
       const trialClaim = await reserveFreeTrialForAccount(userId, freeTrialSignals);
       freeTrialClaimHeld = trialClaim.eligible && trialClaim.reservationHeld;
+      trialReservationNeedsCleanup = freeTrialClaimHeld;
       freeTrialGranted = trialClaim.eligible && !trialClaim.reservationHeld;
       freeTrialBlockReason = trialClaim.reason;
       if (!trialClaim.eligible) {
@@ -813,6 +819,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         if (freeTrialClaimHeld) {
           await releaseFreeTrialReservation(userId, freeTrialSignals);
           freeTrialClaimHeld = false;
+          trialReservationNeedsCleanup = false;
         }
         return studentSrnConflictResponse(res, lockedSrnConflict);
       }
@@ -924,6 +931,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       if (freeTrialClaimHeld) {
         await releaseFreeTrialReservation(userId, freeTrialSignals);
         freeTrialClaimHeld = false;
+        trialReservationNeedsCleanup = false;
       }
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
@@ -933,6 +941,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     if (freeTrialClaimHeld) {
       const finalized = await finalizeFreeTrialForAccount(userId, freeTrialSignals);
       if (finalized) {
+        trialReservationNeedsCleanup = false;
         let grantStarted = false;
         try {
           db.exec('BEGIN IMMEDIATE');
@@ -952,6 +961,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       } else {
         await releaseFreeTrialReservation(userId, freeTrialSignals);
         freeTrialClaimHeld = false;
+        trialReservationNeedsCleanup = false;
         freeTrialGranted = false;
       }
     }
@@ -1131,6 +1141,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         console.error('[AuthRoutes] Could not release SRN claim after unexpected registration error:', releaseError instanceof Error ? releaseError.message : 'unknown error');
       }
       reservedSrnClaim = null;
+    }
+    if (trialReservationNeedsCleanup && trialSignalsForCleanup && trialUserIdForCleanup) {
+      await releaseFreeTrialReservation(trialUserIdForCleanup, trialSignalsForCleanup);
+      trialReservationNeedsCleanup = false;
     }
     console.error('Verify OTP error:', error);
     return res.status(500).json({ error: 'Verification failed. Please try again.' });
