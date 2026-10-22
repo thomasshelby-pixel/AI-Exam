@@ -445,7 +445,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
-            free_trial_eligible = CASE WHEN users.free_trial_eligible = 1 THEN 1 ELSE excluded.free_trial_eligible END,
+            free_trial_eligible = users.free_trial_eligible,
             mfa_enabled = CASE
               WHEN excluded.mfa_reset_required = 1 THEN 0
               WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
