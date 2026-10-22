@@ -1,4 +1,5 @@
 import { applicationDefault, getApps, getApp, initializeApp } from 'firebase-admin/app';
+import { createHash } from 'node:crypto';
 import { getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 
 import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
@@ -174,6 +175,135 @@ export async function findFirestoreDocsByField<T = DocumentData>(
   const safeLimit = Number.isInteger(limitCount) ? Math.min(100, Math.max(1, limitCount)) : 1;
   const snap = await firestore.collection(collectionName).where(fieldName, '==', fieldValue).limit(safeLimit).get();
   return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
+}
+
+export interface StudentRegistrationNumberClaimInput {
+  normalizedSrn: string;
+  userId: string;
+  email: string;
+}
+
+export interface StudentRegistrationNumberClaimResult {
+  claimed: boolean;
+  globallyEnforced: boolean;
+  conflictKind?: 'EXACT' | 'REGION_VARIANT';
+}
+
+/**
+ * Claim one ICAI seven-digit registration sequence globally, across all App Hosting
+ * instances. The three-letter regional prefix is retained for diagnostics; the hash
+ * key uses the seven numeric digits so a regional-prefix variant cannot farm another
+ * trial. The transaction also checks legacy exact-SRN profile documents.
+ *
+ * This is intentionally fail-closed in production when the authoritative store is
+ * unavailable. Local tests/dev without Firebase credentials can continue using the
+ * existing single-instance SQLite checks.
+ */
+export async function claimStudentRegistrationNumber(
+  input: StudentRegistrationNumberClaimInput,
+): Promise<StudentRegistrationNumberClaimResult> {
+  const normalizedSrn = String(input.normalizedSrn || '').trim().toUpperCase();
+  const userId = String(input.userId || '').trim();
+  const email = String(input.email || '').trim().toLowerCase();
+
+  if (!/^[A-Z]{3}\d{7}$/.test(normalizedSrn) || !userId || !email) {
+    throw new Error('A valid normalized ICAI registration number, user ID, and email are required.');
+  }
+
+  let firestore: Firestore | null;
+  try {
+    firestore = getFirestoreDb();
+  } catch (error) {
+    const productionRuntime = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
+    if (productionRuntime) throw error;
+    console.warn('[SrnClaim] Firestore unavailable outside production; using local-only uniqueness checks.');
+    return { claimed: true, globallyEnforced: false };
+  }
+
+  if (!firestore) {
+    const productionRuntime = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE);
+    if (productionRuntime) throw new Error('Firestore is required to enforce global ICAI registration uniqueness.');
+    return { claimed: true, globallyEnforced: false };
+  }
+
+  const numericSequence = normalizedSrn.slice(-7);
+  const sequenceHash = createHash('sha256').update(numericSequence).digest('hex');
+  const claimRef = firestore.collection('student_registration_claims').doc(`srn_${sequenceHash}`);
+
+  return await firestore.runTransaction(async (transaction) => {
+    const existingClaim = await transaction.get(claimRef);
+    if (existingClaim.exists) {
+      const existingData = existingClaim.data() || {};
+      const existingUserId = String(existingData.user_id || '');
+      if (existingUserId === userId) {
+        return { claimed: true, globallyEnforced: true };
+      }
+      const existingSrn = String(existingData.normalized_srn || '').toUpperCase();
+      return {
+        claimed: false,
+        globallyEnforced: true,
+        conflictKind: existingSrn === normalizedSrn ? 'EXACT' : 'REGION_VARIANT',
+      };
+    }
+
+    // Preserve uniqueness for pre-existing accounts created before the global claim
+    // ledger was introduced. Exact legacy profile matches are promoted into the claim
+    // ledger as part of this same transaction.
+    const legacyProfiles = await transaction.get(
+      firestore.collection('student_profiles')
+        .where('icai_registration_number', '==', normalizedSrn)
+        .limit(1),
+    );
+    if (!legacyProfiles.empty) {
+      const legacyOwnerId = legacyProfiles.docs[0].id;
+      transaction.create(claimRef, {
+        normalized_srn: normalizedSrn,
+        numeric_sequence_hash: sequenceHash,
+        user_id: legacyOwnerId,
+        email: '',
+        status: 'LEGACY_EXISTING_ACCOUNT',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      return { claimed: false, globallyEnforced: true, conflictKind: 'EXACT' };
+    }
+
+    const now = new Date().toISOString();
+    transaction.create(claimRef, {
+      normalized_srn: normalizedSrn,
+      numeric_sequence_hash: sequenceHash,
+      user_id: userId,
+      email,
+      status: 'ACTIVE',
+      source: 'STUDENT_REGISTRATION',
+      created_at: now,
+      updated_at: now,
+    });
+    return { claimed: true, globallyEnforced: true };
+  });
+}
+
+/** Release a just-created claim only when its owner matches; used if local account creation fails. */
+export async function releaseStudentRegistrationNumberClaim(
+  normalizedSrnInput: string,
+  userIdInput: string,
+): Promise<void> {
+  const normalizedSrn = String(normalizedSrnInput || '').trim().toUpperCase();
+  const userId = String(userIdInput || '').trim();
+  if (!/^[A-Z]{3}\d{7}$/.test(normalizedSrn) || !userId) return;
+
+  const firestore = getFirestoreDb();
+  if (!firestore) throw new Error('Firestore is unavailable while releasing an SRN claim.');
+  const sequenceHash = createHash('sha256').update(normalizedSrn.slice(-7)).digest('hex');
+  const claimRef = firestore.collection('student_registration_claims').doc(`srn_${sequenceHash}`);
+
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(claimRef);
+    if (!snapshot.exists) return;
+    if (String(snapshot.get('user_id') || '') !== userId) return;
+    if (String(snapshot.get('source') || '') === 'LEGACY_EXISTING_ACCOUNT') return;
+    transaction.delete(claimRef);
+  });
 }
 
 export interface AccountStatusEventInput {
