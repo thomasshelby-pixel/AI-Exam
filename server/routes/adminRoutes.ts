@@ -68,7 +68,7 @@ import { generateDetailedReportPdf } from '../services/detailedReportPdfService.
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
-import { normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
+import { findAuthoritativeMaterialWithFallback, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
   checkMaterialDuplicate,
   computeMaterialUniqueKey,
@@ -2848,38 +2848,93 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       });
     }
 
-    // Reuse the exact material linked to this evaluation. Never substitute another paper.
-    const materialId = String(evaluation.material_id || '').trim();
-    if (!materialId) {
-      return res.status(409).json({
-        error: 'The original reference material is not linked to this evaluation. No retry was started.',
-        code: 'REFERENCE_MATERIAL_ID_MISSING',
-        evaluationId,
-        originalPdfAvailable: true,
-      });
-    }
-
-    let material: any = null;
+    // Prefer the material ID saved on the evaluation. Older evaluation rows may not
+    // have that linkage even though the exact reference material exists in the admin library.
+    const requestedMaterialId = String(evaluation.material_id || '').trim();
     const materialSource = String(evaluation.material_source || '').toUpperCase();
+    let material: any = null;
     try {
-      if (materialSource === 'INSTITUTE') {
-        material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(materialId) as any;
-      } else {
-        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(materialId) as any;
+      if (requestedMaterialId && materialSource === 'INSTITUTE') {
+        material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(requestedMaterialId) as any;
+      } else if (requestedMaterialId) {
+        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(requestedMaterialId) as any;
       }
-      // Legacy rows may not have material_source populated; only try the other table
-      // with the exact same material ID, never search by subject or pick a substitute.
+
+      // A missing foreign key is recoverable: match against the evaluation's own
+      // subject, level, attempt, paper and material type. The resolver enforces
+      // attempt/paper/type filters and requires both reference texts.
       if (!material && materialSource !== 'INSTITUTE') {
-        material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(materialId) as any;
+        const rawLevel = String(evaluation.level || 'INTERMEDIATE').toUpperCase();
+        const level = rawLevel.replace(/^CA_/, '');
+        const subjectKey = String(evaluation.subject_key || evaluation.subject_name || '').trim();
+        const materialType = String(evaluation.material_type || 'MTP').toUpperCase();
+        material = await findAuthoritativeMaterialWithFallback({
+          level,
+          subjectKey,
+          attempt: String(evaluation.attempt || ''),
+          paper: String(evaluation.paper || ''),
+          materialType,
+          mtpSeries: evaluation.mtp_series,
+          minTextLength: 20,
+        });
+
+        // Also try subject-name/key aliases only if the exact metadata search missed.
+        if (!material && evaluation.subject_name && evaluation.subject_name !== subjectKey) {
+          const aliases = getSubjectKeyCandidates(String(evaluation.subject_name), level);
+          for (const candidate of aliases) {
+            material = await findAuthoritativeMaterialWithFallback({
+              level,
+              subjectKey: candidate,
+              attempt: String(evaluation.attempt || ''),
+              paper: String(evaluation.paper || ''),
+              materialType,
+              mtpSeries: evaluation.mtp_series,
+              minTextLength: 20,
+            });
+            if (material) break;
+          }
+        }
       }
+
+      // An institute-owned upload is resolved only inside its own institute;
+      // don't accidentally use public material for an institute assessment.
       if (!material && materialSource === 'INSTITUTE') {
-        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(materialId) as any;
+        const level = String(evaluation.level || 'INTERMEDIATE').toUpperCase().replace(/^CA_/, '');
+        const subjectKey = String(evaluation.subject_key || '').trim();
+        const subjectName = String(evaluation.subject_name || '').trim();
+        const attempt = String(evaluation.attempt || '');
+        const paper = String(evaluation.paper || '');
+        const rows = db.prepare(`
+          SELECT * FROM institute_materials
+          WHERE institute_id = ?
+            AND UPPER(level) = UPPER(?)
+            AND (subject_key = ? OR LOWER(subject_name) = LOWER(?))
+            AND (paper = ? OR paper = 'All' OR ? = '')
+          ORDER BY created_at DESC
+        `).all(
+          String(evaluation.sponsoring_institute_id || evaluation.institute_id || ''),
+          level, subjectKey, subjectName, paper, paper
+        ) as any[];
+        material = rows.find((row) =>
+          (!attempt || !row.attempt || String(row.attempt) === attempt) &&
+          String(row.question_paper_text || '').trim().length > 20 &&
+          String(row.suggested_answers_text || '').trim().length > 20
+        ) || null;
+      }
+
+      // Persist the recovered exact ID to heal legacy evaluation rows for next time.
+      if (material && !requestedMaterialId && material.id) {
+        db.prepare(`
+          UPDATE evaluations
+          SET material_id = ?, material_version = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND (material_id IS NULL OR TRIM(material_id) = '')
+        `).run(String(material.id), String(material.version || '1.0'), evaluationId);
       }
     } catch (materialError) {
-      console.error('[AdminRecovery] Failed loading exact reference material:', materialError);
+      console.error('[AdminRecovery] Failed resolving exact reference material:', materialError);
     }
 
-    const questionText = String(material?.question_paper_text || '');
+        const questionText = String(material?.question_paper_text || '');
     const suggestedText = String(material?.suggested_answers_text || '');
     if (!material || !questionText.trim() || !suggestedText.trim()) {
       return res.status(409).json({
