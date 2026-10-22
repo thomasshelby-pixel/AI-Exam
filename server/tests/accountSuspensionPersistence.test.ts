@@ -63,5 +63,5 @@ test('a stale Firestore reinstatement cannot overwrite a newer local suspension 
     'REINSTATED',
     '2026-10-22T14:00:01.000Z',
   ), false);
-  assert.match(suspensionStateService, /With no authoritative time on the incoming document, fail closed/);
+  assert.match(suspensionStateService, /If either side lacks a trustworthy domain timestamp, fail closed and keep the ban/);
 });
