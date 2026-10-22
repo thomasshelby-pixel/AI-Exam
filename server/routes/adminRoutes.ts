@@ -34,7 +34,7 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs, appendAccountStatusEvent } from '../services/firestoreDbService.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -95,12 +95,49 @@ import {
 
 const router = Router();
 
-async function persistUserStatusAndSuspensions(userId: string): Promise<boolean> {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, unknown> | undefined;
+async function persistUserStatusAndSuspensions(
+  userId: string,
+  eventDetails: { changedBy: string; reason?: string; source: string },
+): Promise<boolean> {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, any> | undefined;
   if (!user) return false;
 
-  // Store the suspension ledger as well as the effective user status so hydration
-  // can recover the enforcement state after an App Hosting instance is replaced.
+  const effectiveStatus = String(user.status || '').toUpperCase();
+  if (!['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DISABLED', 'DELETED'].includes(effectiveStatus)) {
+    console.error(`[AdminRoutes] Refusing to persist unknown account status '${effectiveStatus}' for user ${userId}.`);
+    return false;
+  }
+
+  // Append the authoritative event first. It is versioned in a Firestore transaction,
+  // so a delayed older user/suspension document cannot undo a newer explicit admin decision.
+  let eventPersisted = false;
+  try {
+    const event = await appendAccountStatusEvent({
+      userId,
+      status: effectiveStatus as 'ACTIVE' | 'SUSPENDED' | 'BLOCKED' | 'DISABLED' | 'DELETED',
+      changedBy: eventDetails.changedBy,
+      reason: eventDetails.reason || '',
+      source: eventDetails.source,
+    });
+    eventPersisted = true;
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO account_status_events (
+          id, user_id, status, version, reason, changed_by, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        event.id, event.user_id, event.status, event.version, event.reason,
+        event.changed_by, event.source, event.created_at, event.updated_at,
+      );
+    } catch (mirrorError) {
+      // Firestore is authoritative; hydration can reconstruct the local mirror.
+      console.warn(`[AdminRoutes] Status event ${event.id} is durable but its local mirror failed:`, mirrorError);
+    }
+  } catch (eventError) {
+    console.error(`[AdminRoutes] Failed to append durable account-status event for ${userId}:`, eventError);
+  }
+
+  // Also maintain the legacy mutable documents for older clients and admin views.
   const suspensions = db.prepare('SELECT * FROM account_suspensions WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
   let suspensionsPersisted = true;
   for (const suspension of suspensions) {
@@ -116,7 +153,7 @@ async function persistUserStatusAndSuspensions(userId: string): Promise<boolean>
   if (!userPersisted) {
     console.error(`[AdminRoutes] Failed to persist status for user ${userId} to Firestore.`);
   }
-  return userPersisted && suspensionsPersisted;
+  return eventPersisted && userPersisted && suspensionsPersisted;
 }
 
 // Strict Super Admin Access ONLY
@@ -306,7 +343,11 @@ router.put('/users/:id/status', async (req: AuthRequest, res: Response) => {
       `Changed status to ${status}. Reason: ${reason || 'N/A'}`
     );
 
-    const durablyPersisted = await persistUserStatusAndSuspensions(userId);
+    const durablyPersisted = await persistUserStatusAndSuspensions(userId, {
+      changedBy: req.user!.id,
+      reason: reason?.trim() || `Administrator changed account status to ${status}.`,
+      source: 'ADMIN_USER_STATUS_UPDATE',
+    });
     if (!durablyPersisted) {
       return res.status(503).json({
         success: false,
@@ -410,7 +451,11 @@ router.post('/revocation-requests/:id/review', async (req: AuthRequest, res: Res
       `Reviewed revocation request ${requestId}: Decision ${decision}. Reply: ${reply}`
     );
 
-    const durablyPersisted = await persistUserStatusAndSuspensions(request.user_id);
+    const durablyPersisted = await persistUserStatusAndSuspensions(request.user_id, {
+      changedBy: req.user!.id,
+      reason: reply,
+      source: `ADMIN_APPEAL_${decision}`,
+    });
     if (!durablyPersisted) {
       return res.status(503).json({
         success: false,
