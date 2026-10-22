@@ -38,6 +38,7 @@ export interface User {
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
   emailVerified?: boolean;
+  emailVerifiedAt?: string;
   mfaEnabled?: boolean;
   mfaPhone?: string | null;
   mfaVerified?: boolean;
