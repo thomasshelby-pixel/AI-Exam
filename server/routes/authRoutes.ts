@@ -8,8 +8,7 @@ import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
+import { getFirestoreDoc, getAllFirestoreDocs, findFirestoreDocsByField, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { getClientIp } from '../utils/rateLimiter.js';
 import { getSignupTurnstileConfig, verifySignupTurnstile } from '../services/turnstileService.js';
@@ -241,17 +240,13 @@ async function authenticateWithFirestoreFallback(
   mfa_enrolled_at?: string | null;
   totp_secret?: string | null;
 } | null> {
-  const fdb = getFirestoreDb();
-  if (!fdb) return null;
-
   try {
-    const usersRef = collection(fdb, 'users');
-    let snap = await getDocs(query(usersRef, where('email', '==', normalizedEmail)));
-    let fUserDoc: any = null;
-    if (!snap.empty) {
-      fUserDoc = snap.docs[0].data();
-    } else {
-      const allUsers = await getAllFirestoreDocs<any>('users');
+    const matchingUsers = await findFirestoreDocsByField<any>('users', 'email', normalizedEmail, 1);
+    let fUserDoc: any = matchingUsers[0] || null;
+    if (!fUserDoc) {
+      // Historical records may contain email casing differences; preserve the legacy
+      // normalized fallback while querying through the privileged server adapter.
+      const allUsers = await getAllFirestoreDocs<any>('users', { failOnError: true });
       fUserDoc = allUsers.find((u: any) => String(u.email || '').trim().toLowerCase() === normalizedEmail);
     }
 
