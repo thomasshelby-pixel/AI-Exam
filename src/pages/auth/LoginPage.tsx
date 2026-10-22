@@ -27,6 +27,59 @@ import {
   Building2,
 } from 'lucide-react';
 
+interface SignupSecurityConfig {
+  turnstileRequired: boolean;
+  turnstileSiteKey: string | null;
+  turnstileSetupIncomplete: boolean;
+}
+
+interface TurnstileWidgetApi {
+  render: (container: HTMLElement, options: {
+    sitekey: string;
+    action: string;
+    callback: (token: string) => void;
+    'expired-callback'?: () => void;
+    'error-callback'?: () => void;
+  }) => string | number;
+  reset: (widgetId?: string | number) => void;
+  remove: (widgetId: string | number) => void;
+}
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileWidgetApi;
+  }
+}
+
+let turnstileScriptPromise: Promise<void> | null = null;
+
+function loadTurnstileScript(): Promise<void> {
+  if (window.turnstile) return Promise.resolve();
+  if (turnstileScriptPromise) return turnstileScriptPromise;
+
+  turnstileScriptPromise = new Promise<void>((resolve, reject) => {
+    let script = document.querySelector<HTMLScriptElement>('script[data-cloudflare-turnstile="true"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.dataset.cloudflareTurnstile = 'true';
+    }
+    script.addEventListener('load', () => {
+      if (window.turnstile) resolve();
+      else reject(new Error('Cloudflare Turnstile API did not initialize.'));
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error('Cloudflare Turnstile script failed to load.')), { once: true });
+    if (!script.isConnected) document.head.appendChild(script);
+  }).catch((error) => {
+    turnstileScriptPromise = null;
+    throw error;
+  });
+
+  return turnstileScriptPromise;
+}
+
 interface LoginPageProps {
   initialMode?: 'login' | 'register';
   onSuccess: (user: any) => void;
@@ -70,6 +123,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
+  const [signupSecurityConfig, setSignupSecurityConfig] = useState<SignupSecurityConfig | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const turnstileWidgetIdRef = React.useRef<string | number | null>(null);
 
   // Countdown timer effect for OTP resend cooldown
   React.useEffect(() => {
@@ -79,6 +136,80 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }, 1000);
     return () => clearInterval(timer);
   }, [resendCooldown]);
+
+  // Read signup protection settings from the backend. A failed lookup is fail-closed.
+  React.useEffect(() => {
+    let active = true;
+    fetch('/api/auth/registration-security-config', { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Signup security configuration could not be loaded.');
+        return await response.json() as Partial<SignupSecurityConfig>;
+      })
+      .then((config) => {
+        if (!active) return;
+        setSignupSecurityConfig({
+          turnstileRequired: config.turnstileRequired === true,
+          turnstileSiteKey: typeof config.turnstileSiteKey === 'string' ? config.turnstileSiteKey : null,
+          turnstileSetupIncomplete: config.turnstileSetupIncomplete === true,
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setSignupSecurityConfig({
+            turnstileRequired: true,
+            turnstileSiteKey: null,
+            turnstileSetupIncomplete: true,
+          });
+        }
+      });
+    return () => { active = false; };
+  }, []);
+
+  // Render Cloudflare Turnstile only on the student registration form.
+  React.useEffect(() => {
+    const config = signupSecurityConfig;
+    if (mode !== 'register' || isVerifyingOtp || !config?.turnstileRequired ||
+        config.turnstileSetupIncomplete || !config.turnstileSiteKey) {
+      return;
+    }
+
+    let active = true;
+    let localWidgetId: string | number | null = null;
+    loadTurnstileScript().then(() => {
+      if (!active || !turnstileContainerRef.current || !window.turnstile) return;
+      localWidgetId = window.turnstile.render(turnstileContainerRef.current, {
+        sitekey: config.turnstileSiteKey!,
+        action: 'signup',
+        callback: (token) => {
+          if (active) setTurnstileToken(token);
+        },
+        'expired-callback': () => {
+          if (active) setTurnstileToken('');
+        },
+        'error-callback': () => {
+          if (active) {
+            setTurnstileToken('');
+            setErrorMessage('Security check failed to load. Please refresh and try again.');
+          }
+        },
+      });
+      turnstileWidgetIdRef.current = localWidgetId;
+    }).catch(() => {
+      if (active) {
+        setTurnstileToken('');
+        setErrorMessage('Could not load Cloudflare security verification. Please refresh and try again.');
+      }
+    });
+
+    return () => {
+      active = false;
+      if (localWidgetId !== null && window.turnstile) {
+        try { window.turnstile.remove(localWidgetId); } catch { /* widget already removed */ }
+      }
+      if (turnstileWidgetIdRef.current === localWidgetId) turnstileWidgetIdRef.current = null;
+      setTurnstileToken('');
+    };
+  }, [mode, isVerifyingOtp, signupSecurityConfig?.turnstileRequired, signupSecurityConfig?.turnstileSetupIncomplete, signupSecurityConfig?.turnstileSiteKey]);
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -112,6 +243,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     setErrorMessage('');
 
+    if (!signupSecurityConfig) {
+      setErrorMessage('Signup security is still loading. Please wait a moment and try again.');
+      return;
+    }
+    if (signupSecurityConfig.turnstileSetupIncomplete) {
+      setErrorMessage('Signup security is not configured yet. No account was created; please try again later.');
+      return;
+    }
+    if (signupSecurityConfig.turnstileRequired && !turnstileToken) {
+      setErrorMessage('Please complete the Cloudflare security check before creating your account.');
+      return;
+    }
+
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
       setErrorMessage(srnValidation.error || 'Please provide a valid ICAI Registration Number (e.g. CRO0123456).');
@@ -134,6 +278,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         icaiRegistrationNumber: srnValidation.normalized,
         caLevel,
         referralCode: referralCode.trim() || undefined,
+        turnstileToken: turnstileToken || undefined,
       });
 
       if (data.requiresOtpVerification) {
@@ -147,6 +292,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
       setErrorMessage(msg);
+      // Siteverify tokens are single-use; request a fresh challenge after any failed attempt.
+      setTurnstileToken('');
+      if (turnstileWidgetIdRef.current !== null && window.turnstile) {
+        try { window.turnstile.reset(turnstileWidgetIdRef.current); } catch { /* reset is best effort */ }
+      }
     } finally {
       setIsLoading(false);
     }
@@ -637,10 +787,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
               </div>
 
+              {signupSecurityConfig?.turnstileRequired && (
+                <div className="space-y-2 pt-1">
+                  <div
+                    id="turnstile-signup-container"
+                    ref={turnstileContainerRef}
+                    className="flex justify-center min-h-1"
+                  />
+                  {signupSecurityConfig.turnstileSetupIncomplete && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300 text-center">
+                      Security verification is not configured. Signup is paused to prevent automated account creation.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <button
                 id="btn-register-submit"
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || signupSecurityConfig === null || Boolean(signupSecurityConfig.turnstileSetupIncomplete) || Boolean(signupSecurityConfig.turnstileRequired && !turnstileToken)}
                 className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? (
