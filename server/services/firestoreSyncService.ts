@@ -9,6 +9,8 @@ import {
   getAllFirestoreDocs,
   recordTombstone,
   isTombstoned,
+  appendAccountStatusEvent,
+  type AccountStatusEventRecord,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
@@ -544,6 +546,157 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       } catch (suspensionErr) {
         console.warn(`[FirestoreSync] Failed to hydrate suspension record ${suspension.id}:`, suspensionErr);
         if (requireComplete) throw suspensionErr;
+      }
+    }
+
+    // Immutable status events are canonical. The mutable users and suspension documents
+    // are materialized views and may be stale after concurrent App Hosting instances/restarts.
+    const persistedStatusEvents = await readDocs<any>('account_status_events');
+    const latestStatusEventByUser = new Map<string, AccountStatusEventRecord>();
+    const validAccountStatuses = new Set(['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DISABLED', 'DELETED']);
+
+    const saveStatusEventLocally = (event: any) => {
+      const userId = String(event.user_id || '');
+      const version = Number(event.version);
+      const status = String(event.status || '').toUpperCase();
+      if (!userId || !Number.isInteger(version) || version < 1 || !validAccountStatuses.has(status)) return;
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      if (!userExists) return;
+      db.prepare(`
+        INSERT OR IGNORE INTO account_status_events (
+          id, user_id, status, version, reason, changed_by, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        String(event.id || `status_${userId}_${version}`),
+        userId,
+        status,
+        version,
+        event.reason || '',
+        event.changed_by || 'system',
+        event.source || 'SERVER',
+        event.created_at || null,
+        event.updated_at || event.created_at || null,
+      );
+    };
+
+    for (const event of persistedStatusEvents) {
+      saveStatusEventLocally(event);
+      const userId = String(event.user_id || '');
+      const version = Number(event.version);
+      const status = String(event.status || '').toUpperCase();
+      if (!userId || !Number.isInteger(version) || version < 1 || !validAccountStatuses.has(status)) continue;
+      const previous = latestStatusEventByUser.get(userId);
+      if (!previous || version > previous.version) {
+        latestStatusEventByUser.set(userId, {
+          id: String(event.id || `status_${userId}_${version}`),
+          user_id: userId,
+          status: status as AccountStatusEventRecord['status'],
+          version,
+          reason: String(event.reason || ''),
+          changed_by: String(event.changed_by || 'system'),
+          source: String(event.source || 'SERVER'),
+          created_at: String(event.created_at || ''),
+          updated_at: String(event.updated_at || event.created_at || ''),
+        });
+      }
+    }
+
+    // Backfill the immutable ledger for legacy active suspensions made before the
+    // event ledger existed. Future restarts can then distinguish an old suspension
+    // from an explicit newer admin/appeal reactivation.
+    const legacyActiveSuspensions = db.prepare(
+      "SELECT * FROM account_suspensions WHERE status = 'SUSPENDED' ORDER BY created_at ASC"
+    ).all() as Array<Record<string, any>>;
+    for (const suspension of legacyActiveSuspensions) {
+      const userId = String(suspension.user_id || '');
+      if (!userId || latestStatusEventByUser.has(userId)) continue;
+      try {
+        const event = await appendAccountStatusEvent({
+          userId,
+          status: 'SUSPENDED',
+          changedBy: String(suspension.suspended_by || 'legacy-hydration'),
+          reason: String(suspension.reason || 'Legacy active suspension recovered during hydration.'),
+          source: 'LEGACY_SUSPENSION_BACKFILL',
+        });
+        saveStatusEventLocally(event);
+        latestStatusEventByUser.set(userId, event);
+        console.warn(`[FirestoreSync] Backfilled durable suspension event ${event.id} for user ${userId}.`);
+      } catch (eventError) {
+        console.error(`[FirestoreSync] Could not backfill a durable suspension event for user ${userId}:`, eventError);
+        if (requireComplete) throw eventError;
+      }
+    }
+
+    // Enforce the highest versioned status event after loading mutable user/suspension rows.
+    for (const [userId, event] of latestStatusEventByUser) {
+      const localUser = db.prepare('SELECT status FROM users WHERE id = ?').get(userId) as { status: string } | undefined;
+      if (!localUser) continue;
+      let userNeedsPersist = String(localUser.status || '').toUpperCase() !== event.status;
+      if (userNeedsPersist) {
+        db.prepare('UPDATE users SET status = ?, updated_at = COALESCE(?, CURRENT_TIMESTAMP) WHERE id = ?')
+          .run(event.status, event.created_at || null, userId);
+      }
+
+      let suspensionsNeedPersist = false;
+      if (event.status === 'SUSPENDED') {
+        const revoked = db.prepare(`
+          UPDATE user_sessions
+          SET status = 'REVOKED', revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+          WHERE user_id = ? AND status = 'ACTIVE'
+        `).run(userId);
+        if (revoked.changes > 0) userNeedsPersist = true;
+
+        const activeSuspension = db.prepare(
+          "SELECT id FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED' ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+        ).get(userId);
+        if (!activeSuspension) {
+          const suspensionId = `susp_event_${event.id}`;
+          db.prepare(`
+            INSERT OR IGNORE INTO account_suspensions (
+              id, user_id, reason, internal_note, suspended_by, status,
+              created_at, previous_status, suspended_at, updated_at
+            ) VALUES (?, ?, ?, '', ?, 'SUSPENDED', COALESCE(?, CURRENT_TIMESTAMP), 'ACTIVE', COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+          `).run(
+            suspensionId,
+            userId,
+            event.reason || 'Account suspended by administrator.',
+            event.changed_by || 'system',
+            event.created_at || null,
+            event.created_at || null,
+            event.updated_at || event.created_at || null,
+          );
+          suspensionsNeedPersist = true;
+        }
+      } else {
+        const reactivated = db.prepare(`
+          UPDATE account_suspensions
+          SET status = 'REINSTATED', updated_at = COALESCE(?, CURRENT_TIMESTAMP)
+          WHERE user_id = ? AND status = 'SUSPENDED'
+        `).run(event.created_at || null, userId);
+        suspensionsNeedPersist = reactivated.changes > 0;
+      }
+
+      // Persist corrections when mutable documents disagree with the immutable event ledger.
+      if (userNeedsPersist) {
+        const correctedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, any> | undefined;
+        if (correctedUser) {
+          const saved = await setFirestoreDoc('users', userId, correctedUser);
+          if (!saved) {
+            console.error(`[FirestoreSync] Could not persist event-enforced status ${event.status} for user ${userId}.`);
+            if (requireComplete) throw new Error(`Failed to persist event-enforced user status for ${userId}.`);
+          }
+        }
+      }
+      if (suspensionsNeedPersist) {
+        const rows = db.prepare('SELECT * FROM account_suspensions WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
+        for (const row of rows) {
+          if (!row.id) continue;
+          const saved = await setFirestoreDoc('account_suspensions', String(row.id), row);
+          if (!saved) {
+            console.error(`[FirestoreSync] Could not persist event-enforced suspension ledger for user ${userId}.`);
+            if (requireComplete) throw new Error(`Failed to persist suspension ledger for ${userId}.`);
+          }
+        }
       }
     }
 
