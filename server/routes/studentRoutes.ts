@@ -1088,7 +1088,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     const currentAccount = db.prepare('SELECT account_classification FROM users WHERE id = ?').get(studentId) as any;
     const isTestAccount = String(currentAccount?.account_classification || '').toUpperCase() === 'TEST';
     if (answerSheetSha256 && isFreeTierEntitlement && !isTestAccount) {
-      const duplicateUpload = db.prepare(`
+      let duplicateUpload = db.prepare(`
         SELECT e.id, e.display_id, e.student_id, e.created_at
         FROM evaluations e
         JOIN users prior_user ON prior_user.id = e.student_id
@@ -1100,6 +1100,50 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         ORDER BY e.created_at DESC
         LIMIT 1
       `).get(answerSheetSha256, evaluationId, studentId) as any;
+
+      // Older evaluations predate answer-sheet fingerprints. Re-hash a small,
+      // relevant set of legacy originals once so pre-existing accounts remain covered.
+      // This compares actual file bytes and never uses name/email as proof of abuse.
+      if (!duplicateUpload) {
+        const legacyCandidates = db.prepare(`
+          SELECT e.id, e.display_id, e.student_id, e.created_at
+          FROM evaluations e
+          JOIN users prior_user ON prior_user.id = e.student_id
+          WHERE (e.answer_sheet_sha256 IS NULL OR TRIM(e.answer_sheet_sha256) = '')
+            AND e.id <> ?
+            AND e.student_id <> ?
+            AND UPPER(COALESCE(prior_user.account_classification, 'NORMAL')) <> 'TEST'
+            AND UPPER(COALESCE(e.status, '')) NOT IN ('REJECTED', 'FAILED', 'PERSISTENCE_FAILED')
+            AND UPPER(COALESCE(e.subject_key, '')) = UPPER(?)
+            AND UPPER(COALESCE(e.level, '')) = UPPER(?)
+          ORDER BY e.created_at DESC
+          LIMIT 8
+        `).all(evaluationId, studentId, subjectKey, level) as any[];
+
+        for (const candidate of legacyCandidates) {
+          try {
+            const priorOriginal = await getPersistentFile(
+              `${candidate.id}_original`,
+              `${candidate.id}_original.pdf`
+            );
+            if (!priorOriginal?.buffer?.length) continue;
+
+            const priorHash = crypto.createHash('sha256').update(priorOriginal.buffer).digest('hex');
+            db.prepare(`
+              UPDATE evaluations
+              SET answer_sheet_sha256 = ?
+              WHERE id = ? AND (answer_sheet_sha256 IS NULL OR TRIM(answer_sheet_sha256) = '')
+            `).run(priorHash, candidate.id);
+
+            if (priorHash === answerSheetSha256) {
+              duplicateUpload = candidate;
+              break;
+            }
+          } catch (legacyHashError) {
+            console.warn('[StudentRoutes] Legacy answer-sheet fingerprint check failed:', candidate.id, legacyHashError);
+          }
+        }
+      }
 
       if (duplicateUpload) {
         const message = 'Suspicious activity detected: this exact answer-sheet file has already been submitted from another student account. This submission has been stopped and no credits were deducted. Repeated attempts to bypass free evaluation limits using multiple accounts may lead to account suspension or manual review. If this is legitimate testing, contact support or ask an administrator to mark the account as TEST.';
