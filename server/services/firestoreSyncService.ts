@@ -414,9 +414,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ? null
           : u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
-        const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
+        const uEmailVerifiedAt = uEmailVerified ? (u.email_verified_at || u.created_at || null) : null;
         const uPhoneVerified = u.phone_verified ? 1 : 0;
-        const uPhoneVerifiedAt = u.phone_verified_at || null;
+        const uPhoneVerifiedAt = uPhoneVerified ? (u.phone_verified_at || null) : null;
 
         db.prepare(`
           INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, phone_verified, phone_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
