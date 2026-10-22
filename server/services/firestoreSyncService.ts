@@ -646,15 +646,16 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         db.prepare(`
           INSERT INTO student_profiles (
-            user_id, student_code, icai_registration_number, ca_level,
+            user_id, student_code, icai_registration_number, ca_level, exam_attempt_id,
             free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
             purchased_credits, paid_credits, institute_id, batch_id, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(user_id) DO UPDATE SET
             student_code = COALESCE(excluded.student_code, student_profiles.student_code),
             icai_registration_number = excluded.icai_registration_number,
             ca_level = excluded.ca_level,
+            exam_attempt_id = CASE WHEN ? = 1 THEN excluded.exam_attempt_id ELSE student_profiles.exam_attempt_id END,
             free_evaluations_used = MAX(COALESCE(student_profiles.free_evaluations_used, 0), excluded.free_evaluations_used),
             monthly_free_evaluations_used = CASE
               WHEN COALESCE(student_profiles.free_evaluation_reset_month, '') = excluded.free_evaluation_reset_month
@@ -670,12 +671,14 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             updated_at = CURRENT_TIMESTAMP
         `).run(
           uId, p.student_code || p.studentCode || null, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
+          p.exam_attempt_id ?? null,
           p.free_evaluations_used || 0,
           p.monthly_free_evaluations_used || 0,
           p.monthly_free_evaluations_limit || 2,
           p.free_evaluation_reset_month || '2026-09',
           finalCredits, finalCredits,
-          p.institute_id || null, p.batch_id || null, p.created_at || null
+          p.institute_id || null, p.batch_id || null, p.created_at || null,
+          Object.prototype.hasOwnProperty.call(p, 'exam_attempt_id') ? 1 : 0
         );
       } catch (spErr) {
         console.warn(`[FirestoreSync] Failed to hydrate student profile ${uId}:`, spErr);
