@@ -186,6 +186,8 @@ export function initDatabase() {
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
       email_verified INTEGER NOT NULL DEFAULT 0,
       email_verified_at TEXT,
+      phone_verified INTEGER NOT NULL DEFAULT 0,
+      phone_verified_at TEXT,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
       mfa_phone TEXT,
       mfa_enrolled_at TEXT,
@@ -1419,6 +1421,8 @@ function runMigrations() {
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists('users', 'email_verified_at', 'TEXT');
+  addColumnIfNotExists('users', 'phone_verified', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'phone_verified_at', 'TEXT');
 
   // CRITICAL MIGRATION: Pre-existing accounts created before OTP deployment remain trusted/verified automatically.
   // Backfill existing accounts as verified so existing students, admins, and testing accounts continue login uninterrupted.
@@ -1427,7 +1431,8 @@ function runMigrations() {
       UPDATE users
       SET email_verified = 1,
           email_verified_at = COALESCE(email_verified_at, created_at, CURRENT_TIMESTAMP)
-      WHERE email_verified IS NULL OR email_verified = 0
+      WHERE (email_verified IS NULL OR email_verified = 0)
+        AND COALESCE(phone_verified, 0) = 0
     `).run();
   } catch (backfillErr) {
     console.warn('[DB Migration] Warning backfilling existing user email verification:', backfillErr);
