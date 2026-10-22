@@ -1005,6 +1005,29 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
+    // Restrict flagged non-test student accounts at sign-in after duplicate answer-sheet reuse was detected.
+    // This is a review restriction, not a permanent automatic suspension.
+    if (user.role === 'STUDENT') {
+      const riskState = db.prepare(`
+        SELECT suspicious_activity_warning, account_classification
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `).get(user.id) as {
+        suspicious_activity_warning?: number;
+        account_classification?: string;
+      } | undefined;
+
+      const isTestAccount = String(riskState?.account_classification || '').toUpperCase() === 'TEST';
+      if (Number(riskState?.suspicious_activity_warning || 0) === 1 && !isTestAccount) {
+        return res.status(403).json({
+          error: 'Sign-in is temporarily restricted because suspicious account activity was detected, including reuse of an answer sheet submitted from another account. Repeated attempts to bypass evaluation limits may lead to suspension. Please contact support for a review.',
+          code: 'SUSPICIOUS_ACTIVITY_LOGIN_RESTRICTED',
+          canRequestReview: true,
+        });
+      }
+    }
+
     // Account Status Enforcement: SUSPENDED, DISABLED, DELETED
     if (user.status === 'SUSPENDED') {
       const suspension = db.prepare(`
