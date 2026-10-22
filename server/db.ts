@@ -1340,6 +1340,7 @@ function runMigrations() {
   addColumnIfNotExists('evaluations', 'admin_reviewer_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'admin_reviewer_email', 'TEXT');
   addColumnIfNotExists('evaluations', 'admin_review_notes', 'TEXT');
+  addColumnIfNotExists('evaluations', 'answer_sheet_sha256', 'TEXT');
   addColumnIfNotExists('evaluations', 'updated_at', 'TEXT');
 
   // Ensure recheck_requests has all enhanced workflow columns
