@@ -692,6 +692,13 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 // Student Registration: Resend OTP
 router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Response) => {
   try {
+    if (isMsg91PhoneRegistrationRequested()) {
+      return res.status(403).json({
+        error: 'Mobile OTP is required for new student registrations. Request a new code through the registration form.',
+        code: 'PHONE_OTP_REQUIRED',
+      });
+    }
+
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Email address is required.' });
@@ -793,7 +800,14 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       regData = pendingPhone.registrationData;
       phoneVerified = true;
     } else {
-      // Legacy email OTP flow remains supported when phone OTP is not enabled.
+      // Once phone verification is enabled, old email OTP challenges must not be usable as a bypass.
+      if (isMsg91PhoneRegistrationRequested()) {
+        return res.status(403).json({
+          error: 'Mobile OTP verification is required to create a student account.',
+          code: 'PHONE_OTP_REQUIRED',
+        });
+      }
+
       const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
 
       if (!verification.success || !verification.registrationData) {
