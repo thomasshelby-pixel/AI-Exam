@@ -960,7 +960,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <button
                 id="btn-register-submit"
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || phoneOtpConfigStatus !== 'ready'}
                 className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? (
