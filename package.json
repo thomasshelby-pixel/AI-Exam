@@ -11,7 +11,6 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:msg91-phone": "tsx server/tests/msg91PhoneRegistrationSecurity.test.ts",
     "test:protected": "tsx server/tests/runProtectedProductionInvariants.ts",
     "test:all:isolated": "node server/tests/runAllTestsIsolated.mjs",
     "test:protected:ci": "node server/tests/runAllTestsIsolated.mjs sourceGroundedTransformation.test.ts evaluationIntegrity.test.ts evaluationIntegrityHardening.test.ts evaluationSupervisor.test.ts googleAuthAndSrnValidation.test.ts studentProfileCoursePersistence.test.ts instituteSubscriptionGatingAndTrustedDevice.test.ts superAdminMfaResetVerification.test.ts adminAccessVisibilityAndAuthSecurity.test.ts",
