@@ -245,10 +245,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         identifier,
         exposeMethods: true,
         captchaRenderId: 'msg91-captcha',
-        success: () => {},
-        failure: (error: unknown) => {
-          if (!cancelled) setErrorMessage(getMsg91ErrorMessage(error, 'Mobile verification failed. Please try again.'));
-        },
       });
       setMsg91SdkReady(true);
     }).catch(() => {
