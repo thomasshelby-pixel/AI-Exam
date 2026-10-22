@@ -40,6 +40,10 @@ export interface User {
   mfaPhone?: string | null;
   mfaVerified?: boolean;
   mfaMandatory?: boolean;
+  /** True when server has persisted a suspicious-activity warning for this account. */
+  suspiciousActivityWarning?: boolean;
+  suspiciousActivityReason?: string;
+  suspiciousActivityAt?: string;
 }
 
 export interface MfaRecoveryCodeStatus {
