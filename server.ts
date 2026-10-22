@@ -44,6 +44,10 @@ async function startServer() {
 
   const app = express();
 
+  // Firebase App Hosting sits behind a trusted platform proxy. Trust one proxy hop
+  // so req.ip reflects the client address instead of the shared Cloud Run proxy.
+  app.set('trust proxy', 1);
+
   // Lightweight health check endpoint for platform probes
   app.get('/healthz', (_req, res) => {
     res.status(200).send('OK');

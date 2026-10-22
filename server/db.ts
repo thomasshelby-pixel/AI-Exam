@@ -205,6 +205,7 @@ export function initDatabase() {
       free_evaluations_used INTEGER NOT NULL DEFAULT 0,
       monthly_free_evaluations_used INTEGER NOT NULL DEFAULT 0,
       monthly_free_evaluations_limit INTEGER NOT NULL DEFAULT 2,
+      free_trial_blocked INTEGER NOT NULL DEFAULT 0,
       free_evaluation_reset_month TEXT DEFAULT '2026-09',
       purchased_credits INTEGER NOT NULL DEFAULT 0,
       paid_credits INTEGER NOT NULL DEFAULT 0,
@@ -1243,6 +1244,7 @@ function runMigrations() {
   addColumnIfNotExists('mfa_audit_logs', 'ist_timestamp', "TEXT");
   addColumnIfNotExists('mfa_audit_logs', 'correlation_id', "TEXT");
   addColumnIfNotExists('users', 'mfa_reset_required', "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfNotExists('student_profiles', 'free_trial_blocked', "INTEGER NOT NULL DEFAULT 0");
   addColumnIfNotExists('users', 'pending_totp_secret', "TEXT");
   addColumnIfNotExists('users', 'mfa_phone', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'admin_approved', "INTEGER NOT NULL DEFAULT 0");

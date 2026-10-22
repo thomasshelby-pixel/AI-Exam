@@ -32,7 +32,8 @@ import {
   verifyAndConsumeRegistrationOtp,
   maskEmail,
 } from '../services/studentRegistrationOtpService.js';
-import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
+import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
@@ -336,9 +337,9 @@ async function authenticateWithFirestoreFallback(
             INSERT INTO student_profiles (
               user_id, icai_registration_number, ca_level,
               free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
-              purchased_credits, paid_credits, institute_id, batch_id, updated_at
+              purchased_credits, paid_credits, free_trial_blocked, institute_id, batch_id, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
               icai_registration_number = excluded.icai_registration_number,
               ca_level = excluded.ca_level,
@@ -352,6 +353,7 @@ async function authenticateWithFirestoreFallback(
               free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
               purchased_credits = ?,
               paid_credits = ?,
+              free_trial_blocked = COALESCE(excluded.free_trial_blocked, student_profiles.free_trial_blocked, 0),
               institute_id = excluded.institute_id,
               batch_id = excluded.batch_id,
               updated_at = CURRENT_TIMESTAMP
@@ -361,10 +363,11 @@ async function authenticateWithFirestoreFallback(
             spDoc.ca_level || 'INTERMEDIATE',
             spDoc.free_evaluations_used || 0,
             spDoc.monthly_free_evaluations_used || 0,
-            spDoc.monthly_free_evaluations_limit || 2,
+            spDoc.monthly_free_evaluations_limit ?? 2,
             spDoc.free_evaluation_reset_month || '2026-09',
             finalPurchased,
             finalPurchased,
+            spDoc.free_trial_blocked || 0,
             spDoc.institute_id || null,
             spDoc.batch_id || null,
             finalPurchased,
@@ -564,7 +567,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = req.ip || undefined;
+    const deviceHeader = req.headers['x-device-id'];
+    const deviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
 
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
@@ -575,6 +580,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       icaiRegistrationNumber: srnValidation.normalized,
       caLevel: caLevel || 'INTERMEDIATE',
       referralCode: rawReferralCode || null,
+      deviceId,
       clientIp,
     });
 
@@ -627,7 +633,9 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = req.ip || undefined;
+    const deviceHeader = req.headers['x-device-id'];
+    const currentDeviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -637,6 +645,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       icaiRegistrationNumber: payload.icaiRegistrationNumber,
       caLevel: payload.caLevel,
       referralCode: payload.referralCode,
+      deviceId: payload.deviceId || currentDeviceId,
       clientIp,
     });
 
@@ -769,13 +778,15 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
-        ) VALUES (?, ?, ?, 0, 0, ?)
+          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code,
+          monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month, free_trial_blocked
+        ) VALUES (?, ?, ?, 0, 0, ?, 0, 0, ?, 1)
       `).run(
         userId,
         regData.icaiRegistrationNumber,
         regData.caLevel || 'INTERMEDIATE',
-        studentCode
+        studentCode,
+        getCurrentServerMonth()
       );
 
       // If promo campaign was valid and claimed, insert redemption record transactionally
@@ -817,6 +828,50 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       try { db.exec('ROLLBACK'); } catch {}
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Claim the standard free-trial allowance against persistent device/browser and IP signals.
+    // New profiles start blocked; the two free monthly evaluations are enabled only after
+    // Firestore atomically confirms that neither signal has claimed a trial before.
+    const registrationDeviceId = typeof regData.deviceId === 'string' ? regData.deviceId : undefined;
+    const verificationDeviceHeader = req.headers['x-device-id'];
+    const verificationDeviceId = typeof verificationDeviceHeader === 'string'
+      ? verificationDeviceHeader.trim().slice(0, 200)
+      : undefined;
+    const verificationIp = req.ip || undefined;
+    const deviceChangedDuringSignup = Boolean(
+      registrationDeviceId && verificationDeviceId && registrationDeviceId !== verificationDeviceId
+    );
+    const freeTrialDecision = await claimFreeTrialEligibility({
+      userId,
+      deviceIds: [registrationDeviceId, verificationDeviceId],
+      ipAddresses: [regData.clientIp, verificationIp],
+      forceBlock: deviceChangedDuringSignup,
+    });
+
+    if (freeTrialDecision.eligible) {
+      db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = 0,
+            monthly_free_evaluations_used = 0,
+            monthly_free_evaluations_limit = 2,
+            free_evaluation_reset_month = ?,
+            free_evaluations_used = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(getCurrentServerMonth(), userId);
+    } else {
+      db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = 1,
+            monthly_free_evaluations_limit = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(userId);
+      console.info('[FreeTrialAbuse] Standard free trial disabled for new account:', {
+        userId,
+        reason: freeTrialDecision.reason,
+      });
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
@@ -895,10 +950,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
     // Welcome Notification
+    const welcomeMessage = freeTrialDecision.eligible
+      ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
+      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because this account did not pass the device/browser and network eligibility check. Paid credits and eligible institute or promotional benefits remain available.';
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId, welcomeMessage);
 
     // Audit log
     db.prepare(`
@@ -908,7 +966,9 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       `log_${crypto.randomBytes(8).toString('hex')}`,
       userId,
       userId,
-      promoCampaign ? `New verified student account registered with promo code ${rawReferralCode}` : 'New verified student account registered'
+      promoCampaign
+        ? `New verified student account registered with promo code ${rawReferralCode}; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
+        : `New verified student account registered; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
@@ -937,6 +997,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         emailVerified: true,
       },
       promoApplied: !!promoCampaign,
+      freeTrialAvailable: freeTrialDecision.eligible,
       promoDetails: promoCampaign ? {
         code: rawReferralCode,
         evaluations: promoCampaign.max_evaluations ?? 15,
@@ -1129,7 +1190,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
       const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
-      const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+      const ipAddress = req.ip || undefined;
 
       const limitCheck = isDeviceLimitExceeded(user.id, user.email, deviceId);
       if (limitCheck.exceeded) {
@@ -1148,6 +1209,17 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         ipAddress,
       });
       sessionId = session.sessionId;
+    }
+
+    // Backfill persistent abuse signals for accounts that existed before this protection
+    // was deployed. This does not change the current account's entitlement; it only
+    // prevents a later account on the same device/browser or IP from receiving a trial.
+    if (user.role === 'STUDENT') {
+      await claimFreeTrialEligibility({
+        userId: user.id,
+        deviceIds: [deviceId],
+        ipAddresses: [req.ip || undefined],
+      });
     }
 
     const effectiveRole: UserRole = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')

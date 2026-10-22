@@ -6,19 +6,41 @@ export interface ApiResponse<T = unknown> {
 }
 
 /**
- * Returns a stable unique device identifier stored in client localStorage.
+ * Returns a stable browser/device identifier. localStorage is the primary store,
+ * with a first-party cookie as a recovery path if site storage is cleared.
  */
 export function getOrCreateDeviceId(): string {
   if (typeof window === 'undefined') return 'server_render_env';
+
+  const readDeviceCookie = (): string | null => {
+    try {
+      const entry = document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith('ca_device_id='));
+      return entry ? decodeURIComponent(entry.slice('ca_device_id='.length)) : null;
+    } catch {
+      return null;
+    }
+  };
+
   try {
-    let deviceId = localStorage.getItem('ca_device_id');
+    const cookieDeviceId = readDeviceCookie();
+    let deviceId = localStorage.getItem('ca_device_id') || cookieDeviceId;
     if (!deviceId) {
       deviceId = 'dev_' + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36));
+    }
+
+    try {
       localStorage.setItem('ca_device_id', deviceId);
+    } catch {
+      // The cookie below can still preserve the identifier when localStorage is unavailable.
+    }
+
+    if (cookieDeviceId !== deviceId) {
+      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      document.cookie = 'ca_device_id=' + encodeURIComponent(deviceId) + '; Path=/; Max-Age=31536000; SameSite=Lax' + secure;
     }
     return deviceId;
   } catch {
-    return 'fallback_device_id';
+    return readDeviceCookie() || 'fallback_device_id';
   }
 }
 
