@@ -253,7 +253,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     return () => { cancelled = true; };
   }, [isVerifyingOtp, phoneOtpMode, phoneOtpConfig, phone]);
 
-  // Handle standard student/user email-password login  // Handle standard student/user email-password login
+  // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -469,7 +469,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  const handleForgotPassword = async () => {  const handleForgotPassword = async () => {
+  const handleForgotPassword = async () => {
     if (!email.trim()) {
       setErrorMessage('Please enter your email address above first.');
       return;
