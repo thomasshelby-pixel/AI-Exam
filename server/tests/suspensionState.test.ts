@@ -15,6 +15,10 @@ test('missing incoming timestamp fails closed for an active local suspension', (
   assert.equal(shouldPreserveLocalSuspension('SUSPENDED', '2026-10-22 14:00:00', 'REINSTATED', null), true);
 });
 
+test('missing local status timestamp also fails closed rather than guessing that reinstatement is newer', () => {
+  assert.equal(shouldPreserveLocalSuspension('SUSPENDED', null, 'REINSTATED', '2026-10-22T14:00:01.000Z'), true);
+});
+
 test('a newer explicit reactivation is not blocked', () => {
   assert.equal(shouldPreserveLocalSuspension(
     'SUSPENDED',
