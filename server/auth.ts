@@ -4,6 +4,7 @@ import { db } from './db.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
+import { getAccountStatusSnapshot, type AccountStatusSnapshot } from './services/firestoreDbService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -109,7 +110,67 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+type AccountStatusUser = { id: string; status: string };
+
+function reconcileLocalAccountStatus(
+  user: AccountStatusUser,
+  snapshot: AccountStatusSnapshot | null,
+): AccountStatusSnapshot | null {
+  let effectiveStatus = snapshot?.status || String(user.status || '').toUpperCase();
+
+  if (!snapshot && effectiveStatus === 'ACTIVE') {
+    // Legacy safety net: an active local suspension is stricter than a stale ACTIVE user row.
+    const localSuspension = db.prepare(
+      "SELECT id FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED' ORDER BY created_at DESC LIMIT 1"
+    ).get(user.id);
+    if (localSuspension) effectiveStatus = 'SUSPENDED';
+  }
+
+  if (String(user.status || '').toUpperCase() !== effectiveStatus) {
+    db.prepare('UPDATE users SET status = ?, updated_at = COALESCE(?, CURRENT_TIMESTAMP) WHERE id = ?')
+      .run(effectiveStatus, snapshot?.updatedAt || null, user.id);
+    user.status = effectiveStatus;
+  }
+
+  if (snapshot?.status === 'SUSPENDED') {
+    const activeSuspension = db.prepare(
+      "SELECT id FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED' ORDER BY created_at DESC LIMIT 1"
+    ).get(user.id);
+    if (!activeSuspension) {
+      const eventSuffix = snapshot.eventId || `${user.id}_${snapshot.version}`;
+      db.prepare(`
+        INSERT OR IGNORE INTO account_suspensions (
+          id, user_id, reason, internal_note, suspended_by, status, created_at
+        ) VALUES (?, ?, ?, '', ?, 'SUSPENDED', COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        `susp_event_${eventSuffix}`,
+        user.id,
+        snapshot.reason || 'Account suspended by administrator.',
+        snapshot.changedBy || 'system',
+        snapshot.updatedAt || null,
+      );
+    }
+  } else if (snapshot) {
+    // An explicit newer non-suspended event is the only thing allowed to clear old suspension rows.
+    db.prepare(`
+      UPDATE account_suspensions
+      SET status = 'REINSTATED', updated_at = COALESCE(?, CURRENT_TIMESTAMP)
+      WHERE user_id = ? AND status = 'SUSPENDED'
+    `).run(snapshot.updatedAt || null, user.id);
+  }
+
+  if (effectiveStatus === 'SUSPENDED') {
+    db.prepare(`
+      UPDATE user_sessions
+      SET status = 'REVOKED', revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+      WHERE user_id = ? AND status = 'ACTIVE'
+    `).run(user.id);
+  }
+
+  return snapshot;
+}
+
+export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -149,6 +210,20 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       return res.status(401).json({ error: 'User account not found.' });
     }
 
+    // Every protected request rechecks the versioned status projection. This prevents
+    // an App Hosting instance with a stale SQLite cache from authorizing an old ACTIVE row.
+    let accountStatusSnapshot: AccountStatusSnapshot | null = null;
+    try {
+      accountStatusSnapshot = await getAccountStatusSnapshot(user.id);
+    } catch (statusError) {
+      console.error('[Auth] Authoritative account-status lookup failed:', statusError instanceof Error ? statusError.message : 'unknown error');
+      return res.status(503).json({
+        error: 'The current account status could not be verified. Please try again.',
+        code: 'ACCOUNT_STATUS_UNAVAILABLE',
+      });
+    }
+    reconcileLocalAccountStatus(user, accountStatusSnapshot);
+
     // Check account status
     if (user.status === 'SUSPENDED') {
       // Invalidate active sessions immediately
@@ -164,7 +239,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
         ORDER BY created_at DESC LIMIT 1
       `).get(user.id) as { reason: string; created_at: string } | undefined;
 
-      const reason = suspension?.reason || 'Account access suspended by the administrator for policy verification.';
+      const reason = suspension?.reason || accountStatusSnapshot?.reason || 'Account access suspended by the administrator for policy verification.';
       const suspendedAt = suspension?.created_at || new Date().toISOString();
 
       const revocationToken = generateToken({
