@@ -95,6 +95,30 @@ import {
 
 const router = Router();
 
+async function persistUserStatusAndSuspensions(userId: string): Promise<boolean> {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, unknown> | undefined;
+  if (!user) return false;
+
+  // Store the suspension ledger as well as the effective user status so hydration
+  // can recover the enforcement state after an App Hosting instance is replaced.
+  const suspensions = db.prepare('SELECT * FROM account_suspensions WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
+  let suspensionsPersisted = true;
+  for (const suspension of suspensions) {
+    if (!suspension.id) continue;
+    const saved = await setFirestoreDoc('account_suspensions', String(suspension.id), suspension);
+    if (!saved) {
+      suspensionsPersisted = false;
+      console.error(`[AdminRoutes] Failed to persist suspension record ${suspension.id} for user ${userId}.`);
+    }
+  }
+
+  const userPersisted = await setFirestoreDoc('users', userId, user);
+  if (!userPersisted) {
+    console.error(`[AdminRoutes] Failed to persist status for user ${userId} to Firestore.`);
+  }
+  return userPersisted && suspensionsPersisted;
+}
+
 // Strict Super Admin Access ONLY
 router.use(authenticateToken);
 router.use((req: AuthRequest, res: Response, next: NextFunction) => {
@@ -207,7 +231,7 @@ router.get('/users', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/users/:id/status', (req: AuthRequest, res: Response) => {
+router.put('/users/:id/status', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.params.id;
     const { status, reason, internalNote } = req.body;
@@ -216,25 +240,49 @@ router.put('/users/:id/status', (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, userId);
+    const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    db.prepare('UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, userId);
 
     if (status === 'SUSPENDED') {
       // Invalidate all active sessions immediately server-side
       db.prepare("UPDATE user_sessions SET status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'ACTIVE'").run(userId);
 
-      const suspensionId = `susp_${crypto.randomBytes(8).toString('hex')}`;
-      const suspReason = reason?.trim() || 'Account suspended by administrator for policy violation.';
-      const suspNote = internalNote?.trim() || '';
+      const existingSuspension = db.prepare(
+        "SELECT id FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED' ORDER BY created_at DESC LIMIT 1"
+      ).get(userId) as { id: string } | undefined;
 
-      db.prepare(`
-        INSERT INTO account_suspensions (id, user_id, reason, internal_note, suspended_by, status)
-        VALUES (?, ?, ?, ?, ?, 'SUSPENDED')
-      `).run(suspensionId, userId, suspReason, suspNote, req.user!.id);
+      if (existingSuspension) {
+        // Make retries idempotent when the user is already suspended.
+        db.prepare(`
+          UPDATE account_suspensions
+          SET reason = ?, internal_note = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          reason?.trim() || 'Account suspended by administrator for policy violation.',
+          internalNote?.trim() || '',
+          existingSuspension.id
+        );
+      } else {
+        const suspensionId = `susp_${crypto.randomBytes(8).toString('hex')}`;
+        const suspReason = reason?.trim() || 'Account suspended by administrator for policy violation.';
+        const suspNote = internalNote?.trim() || '';
 
-      db.prepare(`
-        INSERT INTO notifications (id, user_id, title, message, type)
-        VALUES (?, ?, 'Account Suspended', ?, 'WARNING')
-      `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId, `Your account has been suspended: ${suspReason}. You may submit a formal appeal.`);
+        db.prepare(`
+          INSERT INTO account_suspensions (
+            id, user_id, reason, internal_note, suspended_by, status, previous_status, suspended_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, 'SUSPENDED', 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `).run(suspensionId, userId, suspReason, suspNote, req.user!.id);
+
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, title, message, type)
+          VALUES (?, ?, 'Account Suspended', ?, 'WARNING')
+        `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId, `Your account has been suspended: ${suspReason}. You may submit a formal appeal.`);
+      }
     } else if (status === 'ACTIVE') {
       db.prepare(`
         UPDATE account_suspensions
@@ -257,6 +305,16 @@ router.put('/users/:id/status', (req: AuthRequest, res: Response) => {
       userId,
       `Changed status to ${status}. Reason: ${reason || 'N/A'}`
     );
+
+    const durablyPersisted = await persistUserStatusAndSuspensions(userId);
+    if (!durablyPersisted) {
+      return res.status(503).json({
+        success: false,
+        localStatusUpdated: true,
+        code: 'STATUS_PERSISTENCE_FAILED',
+        error: 'The status changed on this instance, but Firestore did not confirm every status record. Please retry and confirm the admin status before relying on persistence.',
+      });
+    }
 
     return res.json({ success: true, message: `User status set to ${status}` });
   } catch (error: unknown) {
