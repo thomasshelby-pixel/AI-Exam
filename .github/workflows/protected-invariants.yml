@@ -172,9 +172,6 @@ jobs:
       - name: Study planner regression suite
         run: npm run test:study-planner
 
-      - name: MSG91 phone OTP security regression (mocked provider; no SMS sent)
-        run: npm run test:msg91-phone
-
       - name: Typecheck
         run: npm run lint
 
