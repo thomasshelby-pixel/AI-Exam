@@ -291,10 +291,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setErrorMessage('Please wait while secure registration settings are loaded.');
       return;
     }
-    if (phoneOtpConfigStatus === 'error') {
-      setErrorMessage('Could not confirm registration settings. Refresh the page before trying again.');
-      return;
-    }
     if (phoneOtpConfig?.phoneOtpSetupIncomplete) {
       setErrorMessage('Mobile verification is not configured yet. Please try again later.');
       return;
@@ -960,7 +956,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <button
                 id="btn-register-submit"
                 type="submit"
-                disabled={isLoading || phoneOtpConfigStatus !== 'ready'}
+                disabled={isLoading || phoneOtpConfigStatus === 'loading'}
                 className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? (
