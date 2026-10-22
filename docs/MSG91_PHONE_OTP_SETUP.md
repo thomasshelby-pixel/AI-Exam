@@ -4,7 +4,7 @@ This integration is intentionally **disabled by default**. Until the server-side
 
 ## Required runtime variables
 
-Configure these in Firebase App Hosting's runtime environment / Secret Manager; do not paste keys into source code or GitHub.
+Open Firebase Console → App Hosting → backend `caexamcheckerai-prod` → Settings → Environment. Add `MSG91_WIDGET_ID` as a normal runtime variable; add `MSG91_WIDGET_TOKEN` and `MSG91_AUTHKEY` as secrets. Keep `MSG91_PHONE_REGISTRATION_ENABLED=false` until the end-to-end SMS verification test succeeds. Do not paste credential values into source code, GitHub, chat, or frontend code.
 
 - `MSG91_PHONE_REGISTRATION_ENABLED=true` — enables the mobile-registration path only after the other variables are present.
 - `MSG91_AUTHKEY` — private server-side MSG91 Authkey used only to validate the widget access token.
