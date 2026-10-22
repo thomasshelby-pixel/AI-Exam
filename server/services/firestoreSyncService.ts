@@ -59,7 +59,9 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
           const fsPurchased = typeof existingDoc.purchased_credits === 'number' ? existingDoc.purchased_credits : 999999;
           const localUsed = typeof data.free_evaluations_used === 'number' ? data.free_evaluations_used : 0;
           const fsUsed = typeof existingDoc.free_evaluations_used === 'number' ? existingDoc.free_evaluations_used : 0;
-          if (localPurchased < fsPurchased || localUsed > fsUsed) {
+          const localTrialBlocked = Number(data.free_trial_blocked ?? 0);
+          const fsTrialBlocked = Number(existingDoc.free_trial_blocked ?? 0);
+          if (localPurchased < fsPurchased || localUsed > fsUsed || localTrialBlocked !== fsTrialBlocked) {
             // Local credit consumption detected; allow sync
           } else {
             console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
@@ -648,9 +650,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           INSERT INTO student_profiles (
             user_id, student_code, icai_registration_number, ca_level,
             free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
-            purchased_credits, paid_credits, institute_id, batch_id, created_at, updated_at
+            purchased_credits, paid_credits, free_trial_blocked, institute_id, batch_id, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(user_id) DO UPDATE SET
             student_code = COALESCE(excluded.student_code, student_profiles.student_code),
             icai_registration_number = excluded.icai_registration_number,
@@ -665,6 +667,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             free_evaluation_reset_month = COALESCE(excluded.free_evaluation_reset_month, student_profiles.free_evaluation_reset_month),
             purchased_credits = excluded.purchased_credits,
             paid_credits = excluded.paid_credits,
+            free_trial_blocked = COALESCE(excluded.free_trial_blocked, student_profiles.free_trial_blocked, 0),
             institute_id = excluded.institute_id,
             batch_id = excluded.batch_id,
             updated_at = CURRENT_TIMESTAMP
@@ -674,7 +677,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           p.monthly_free_evaluations_used || 0,
           p.monthly_free_evaluations_limit || 2,
           p.free_evaluation_reset_month || '2026-09',
-          finalCredits, finalCredits,
+          finalCredits, finalCredits, p.free_trial_blocked || 0,
           p.institute_id || null, p.batch_id || null, p.created_at || null
         );
       } catch (spErr) {
