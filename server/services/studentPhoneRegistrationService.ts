@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { db } from '../db.js';
 import type { PendingStudentRegistration } from './studentRegistrationOtpService.js';
 import { normalizePhoneToE164 } from './smsService.js';
@@ -189,6 +188,3 @@ export function consumePendingPhoneRegistration(
   }
 }
 
-export function newPhoneRegistrationId(): string {
-  return `preg_${crypto.randomBytes(8).toString('hex')}`;
-}
