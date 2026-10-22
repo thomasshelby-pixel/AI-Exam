@@ -25,8 +25,8 @@ export function shouldPreserveLocalSuspension(
   const localTime = parseTimestamp(localUpdatedAt);
   const incomingTime = parseTimestamp(incomingUpdatedAt);
 
-  // With no authoritative time on the incoming document, fail closed and keep the ban.
-  if (incomingTime === null) return true;
-  if (localTime === null) return false;
+  // If either side lacks a trustworthy domain timestamp, fail closed and keep the ban.
+  // Firestore's document-write timestamp is not proof that the underlying status transition is newer.
+  if (incomingTime === null || localTime === null) return true;
   return localTime >= incomingTime;
 }
