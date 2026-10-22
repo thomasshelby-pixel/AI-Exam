@@ -214,9 +214,7 @@ export async function appendAccountStatusEvent(
   }
 
   const sequenceRef = firestore.collection('account_status_sequences').doc(userId);
-  let createdEvent: AccountStatusEventRecord | null = null;
-
-  await firestore.runTransaction(async (transaction) => {
+  const createdEvent = await firestore.runTransaction(async (transaction) => {
     const sequenceSnapshot = await transaction.get(sequenceRef);
     let currentVersion = Number(sequenceSnapshot.get('version') || 0);
 
@@ -254,10 +252,9 @@ export async function appendAccountStatusEvent(
       version,
       updated_at: timestamp,
     }, { merge: true });
-    createdEvent = event;
+    return event;
   });
 
-  if (!createdEvent) throw new Error('Firestore did not create the account status event.');
   return createdEvent;
 }
 
