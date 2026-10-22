@@ -35,9 +35,14 @@ export function isStudentPhoneRegistered(phoneInput: string): boolean {
   const candidate = normalizePhoneToE164(phoneInput).canonicalPhoneE164;
   if (!candidate) return false;
 
+  // Only a previously verified phone can establish ownership. Legacy/student profile
+  // phone fields may have been entered without OTP proof and must not reserve a number.
   const rows = db.prepare(`
     SELECT phone FROM users
-    WHERE role = 'STUDENT' AND phone IS NOT NULL AND TRIM(phone) <> ''
+    WHERE role = 'STUDENT'
+      AND phone_verified = 1
+      AND phone IS NOT NULL
+      AND TRIM(phone) <> ''
   `).all() as Array<{ phone: string }>;
 
   return rows.some((row) => normalizePhoneToE164(row.phone).canonicalPhoneE164 === candidate);
