@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db, hashPassword, verifyPassword } from '../db.js';
-import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
+import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET, reconcileAuthoritativeAccountStatus } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
@@ -1024,6 +1024,18 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       : user.role;
     if (!isAuthPortalRoleAllowed(roleForPortalCheck, portalScope)) {
       return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // Login must honor the same authoritative status event as protected API requests.
+    // This prevents a stale local ACTIVE user row from receiving a fresh session.
+    try {
+      await reconcileAuthoritativeAccountStatus(user);
+    } catch (statusError) {
+      console.error('[AuthRoutes] Authoritative account-status lookup failed during login:', statusError instanceof Error ? statusError.message : 'unknown error');
+      return res.status(503).json({
+        error: 'The current account status could not be verified. Please try again.',
+        code: 'ACCOUNT_STATUS_UNAVAILABLE',
+      });
     }
 
     // Restrict flagged non-test student accounts at sign-in after duplicate answer-sheet reuse was detected.
