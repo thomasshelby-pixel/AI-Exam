@@ -176,6 +176,91 @@ export async function findFirestoreDocsByField<T = DocumentData>(
   return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
 }
 
+export interface AccountStatusEventInput {
+  userId: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'BLOCKED' | 'DISABLED' | 'DELETED';
+  changedBy: string;
+  reason?: string;
+  source: string;
+}
+
+export interface AccountStatusEventRecord {
+  id: string;
+  user_id: string;
+  status: AccountStatusEventInput['status'];
+  version: number;
+  reason: string;
+  changed_by: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Append an immutable, monotonically versioned account-status event in Firestore.
+ * The status-event ledger, not mutable users/account_suspensions documents, is the
+ * durable source of truth during App Hosting instance replacement.
+ */
+export async function appendAccountStatusEvent(
+  input: AccountStatusEventInput,
+): Promise<AccountStatusEventRecord> {
+  const firestore = getFirestoreDb();
+  if (!firestore) throw new Error('Firestore is unavailable while recording account status.');
+
+  const userId = String(input.userId || '').trim();
+  const status = String(input.status || '').toUpperCase() as AccountStatusEventInput['status'];
+  if (!userId || !['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DISABLED', 'DELETED'].includes(status)) {
+    throw new Error('A valid user ID and account status are required.');
+  }
+
+  const sequenceRef = firestore.collection('account_status_sequences').doc(userId);
+  let createdEvent: AccountStatusEventRecord | null = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const sequenceSnapshot = await transaction.get(sequenceRef);
+    let currentVersion = Number(sequenceSnapshot.get('version') || 0);
+
+    // Rebuild a missing counter from prior immutable events rather than starting at 1
+    // and colliding with an existing event after a partial restore.
+    if (!sequenceSnapshot.exists) {
+      const previousEvents = await transaction.get(
+        firestore.collection('account_status_events').where('user_id', '==', userId),
+      );
+      for (const docSnap of previousEvents.docs) {
+        currentVersion = Math.max(currentVersion, Number(docSnap.get('version') || 0));
+      }
+    }
+
+    const version = currentVersion + 1;
+    const id = `status_${userId}_${String(version).padStart(10, '0')}`;
+    const eventRef = firestore.collection('account_status_events').doc(id);
+    const timestamp = new Date().toISOString();
+    const event: AccountStatusEventRecord = {
+      id,
+      user_id: userId,
+      status,
+      version,
+      reason: String(input.reason || '').trim(),
+      changed_by: String(input.changedBy || 'system').trim(),
+      source: String(input.source || 'SERVER').trim(),
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    // create() enforces append-only identity; it never silently overwrites an older event.
+    transaction.create(eventRef, event);
+    transaction.set(sequenceRef, {
+      user_id: userId,
+      version,
+      updated_at: timestamp,
+    }, { merge: true });
+    createdEvent = event;
+  });
+
+  if (!createdEvent) throw new Error('Firestore did not create the account status event.');
+  return createdEvent;
+}
+
 export async function deleteFirestoreDoc(collectionName: string, docId: string): Promise<boolean> {
   const db = getFirestoreDb();
   if (!db || !docId) return false;
