@@ -250,12 +250,58 @@ export async function appendAccountStatusEvent(
     transaction.set(sequenceRef, {
       user_id: userId,
       version,
+      status,
+      reason: event.reason,
+      changed_by: event.changed_by,
+      source: event.source,
+      event_id: event.id,
       updated_at: timestamp,
     }, { merge: true });
     return event;
   });
 
   return createdEvent;
+}
+
+export interface AccountStatusSnapshot {
+  userId: string;
+  status: AccountStatusEventInput['status'];
+  version: number;
+  reason: string;
+  changedBy: string;
+  source: string;
+  eventId: string;
+  updatedAt: string;
+}
+
+/** Read the atomically-maintained current status projection for a user. */
+export async function getAccountStatusSnapshot(userIdInput: string): Promise<AccountStatusSnapshot | null> {
+  const userId = String(userIdInput || '').trim();
+  if (!userId) throw new Error('User ID is required to read account status.');
+  const sequence = await getFirestoreDoc<Record<string, any>>(
+    'account_status_sequences',
+    userId,
+    { failOnError: true },
+  );
+  if (!sequence) return null;
+
+  const status = String(sequence.status || '').toUpperCase();
+  const version = Number(sequence.version);
+  if (!['ACTIVE', 'SUSPENDED', 'BLOCKED', 'DISABLED', 'DELETED'].includes(status) ||
+      !Number.isInteger(version) || version < 1) {
+    throw new Error(`Invalid authoritative account-status snapshot for ${userId}.`);
+  }
+
+  return {
+    userId,
+    status: status as AccountStatusEventInput['status'],
+    version,
+    reason: String(sequence.reason || ''),
+    changedBy: String(sequence.changed_by || 'system'),
+    source: String(sequence.source || 'SERVER'),
+    eventId: String(sequence.event_id || ''),
+    updatedAt: String(sequence.updated_at || ''),
+  };
 }
 
 export async function deleteFirestoreDoc(collectionName: string, docId: string): Promise<boolean> {
