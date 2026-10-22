@@ -34,8 +34,46 @@ import {
 } from '../services/studentRegistrationOtpService.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from '../services/studentCreditService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
+import {
+  FREE_TRIAL_DEVICE_COOKIE,
+  FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS,
+  claimFreeTrialForAccount,
+  finalizeFreeTrialClaimForAccount,
+  releaseFreeTrialClaimForAccount,
+  getTrustedAppHostingClientIp,
+  hashFreeTrialSignal,
+  signTrialDeviceCookie,
+  verifyTrialDeviceCookie,
+} from '../services/freeTrialAbuseService.js';
 
 const router = Router();
+
+function getOrIssueFreeTrialDeviceNonce(req: Request, res: Response): string | null {
+  const rawCookie = (req as any).cookies?.[FREE_TRIAL_DEVICE_COOKIE];
+  const verifiedNonce = verifyTrialDeviceCookie(typeof rawCookie === 'string' ? rawCookie : undefined);
+  if (verifiedNonce) return verifiedNonce;
+
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const signedCookie = signTrialDeviceCookie(nonce);
+  if (!signedCookie) return null;
+
+  const isSecureRequest =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE);
+  const cookieParts = [
+    `${FREE_TRIAL_DEVICE_COOKIE}=${signedCookie}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS}`,
+  ];
+  if (isSecureRequest) cookieParts.push('Secure');
+  if (req.hostname === 'caexamcheckerai.com' || req.hostname === 'www.caexamcheckerai.com') {
+    cookieParts.push('Domain=.caexamcheckerai.com');
+  }
+  res.append('Set-Cookie', cookieParts.join('; '));
+  return nonce;
+}
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -564,7 +602,25 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+
+    // Never trust the left-most X-Forwarded-For entry; use the Google App Hosting/LB
+    // appended client address and store only keyed hashes in the trial ledger/pending OTP row.
+    const trustedClientIp = getTrustedAppHostingClientIp(
+      req.headers as unknown as Record<string, unknown>,
+      req.socket?.remoteAddress || req.ip
+    );
+    const trialDeviceNonce = getOrIssueFreeTrialDeviceNonce(req, res);
+    const trialDeviceCookieHash = hashFreeTrialSignal('device-cookie', trialDeviceNonce);
+    const clientDeviceHeader = req.headers['x-device-id'];
+    const clientDeviceId =
+      typeof clientDeviceHeader === 'string' &&
+      !['fallback_device_id', 'server_render_env'].includes(clientDeviceHeader.trim())
+        ? clientDeviceHeader
+        : undefined;
+    const trialClientDeviceHash = hashFreeTrialSignal('client-device', clientDeviceId);
+    const trialIpHash = hashFreeTrialSignal('ip', trustedClientIp);
+    // Registration OTP audit stores only the keyed IP hash, never the raw address.
+    const clientIp = trialIpHash ? `hmac:${trialIpHash}` : undefined;
 
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
@@ -576,6 +632,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       caLevel: caLevel || 'INTERMEDIATE',
       referralCode: rawReferralCode || null,
       clientIp,
+      trialDeviceCookieHash,
+      trialClientDeviceHash,
+      trialIpHash,
     });
 
     if (!otpResult.success) {
@@ -627,7 +686,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = typeof payload.trialIpHash === 'string' ? `hmac:${payload.trialIpHash}` : undefined;
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -638,6 +697,9 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       caLevel: payload.caLevel,
       referralCode: payload.referralCode,
       clientIp,
+      trialDeviceCookieHash: payload.trialDeviceCookieHash || null,
+      trialClientDeviceHash: payload.trialClientDeviceHash || null,
+      trialIpHash: payload.trialIpHash || null,
     });
 
     if (!otpResult.success) {
@@ -710,18 +772,60 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       `).get(rawReferralCode) as any;
     }
 
-    // Begin immediate transaction to create student account exactly once
-    db.exec('BEGIN IMMEDIATE');
+    // Claim the trial globally before granting any signup-only free benefit. This also
+    // covers referral/promotional freebies, so a duplicate account cannot reuse a free code.
+    const freeTrialClaimInput = {
+      userId,
+      deviceCookieHash: typeof regData.trialDeviceCookieHash === 'string' ? regData.trialDeviceCookieHash : null,
+      clientDeviceHash: typeof regData.trialClientDeviceHash === 'string' ? regData.trialClientDeviceHash : null,
+      ipHash: typeof regData.trialIpHash === 'string' ? regData.trialIpHash : null,
+    };
+    const permanentFreeExemption = checkPermanentFreeAccess(normalizedEmail);
+    let freeTrialGranted = permanentFreeExemption;
+    let freeTrialClaimHeld = false;
+    let freeTrialBlockReason: string | undefined;
+
+    if (!permanentFreeExemption) {
+      const trialClaim = await claimFreeTrialForAccount(freeTrialClaimInput);
+      // This is only a short-lived reservation. Grant eligibility after the SQL account
+      // transaction commits and the reservation is finalized in Firestore.
+      freeTrialClaimHeld = trialClaim.eligible;
+      freeTrialGranted = false;
+      freeTrialBlockReason = trialClaim.reason;
+
+      if (!trialClaim.eligible) {
+        console.info('[FreeTrialAbuse] Signup cannot receive a free-trial claim.', {
+          userId,
+          reason: freeTrialBlockReason || 'UNKNOWN',
+        });
+        if (promoCampaign) {
+          // No free promotion/trial benefits on a device/network whose claim is already used.
+          promoCampaign = null;
+          console.info('[FreeTrialAbuse] Free promotional entitlement withheld for this signup.', {
+            userId,
+            reason: freeTrialBlockReason || 'UNKNOWN',
+          });
+        }
+      }
+    }
+
+    // A generated user ID doubles as the Firestore claim owner. If the SQL transaction
+    // fails, release only this uncommitted claim so a real student is not locked out.
+    let transactionStarted = false;
     let promoRedemptionNumber = 0;
     let promoExpiryDate: string = '';
     let promoMaxEvals = 15;
     let promoMaxRedemptions = 20;
 
     try {
+      db.exec('BEGIN IMMEDIATE');
+      transactionStarted = true;
       // Final conflict check while holding the database write lock to prevent concurrent duplicate registration.
       const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
       if (lockedSrnConflict) {
         db.exec('ROLLBACK');
+        transactionStarted = false;
+        if (freeTrialClaimHeld) await releaseFreeTrialClaimForAccount(freeTrialClaimInput);
         return studentSrnConflictResponse(res, lockedSrnConflict);
       }
 
@@ -749,12 +853,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
       const nowIso = new Date().toISOString();
 
-      // Insert active student account with verified email
+      // Eligibility was reserved atomically in Firestore before this SQL transaction.
+      // Existing permanent-free whitelist accounts stay exempt from duplicate trial claims.
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, free_trial_eligible, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -762,20 +867,22 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         regData.fullName.trim(),
         regData.phone?.trim() || null,
         role,
-        nowIso
+        nowIso,
+        freeTrialGranted ? 1 : 0
       );
 
-      // Insert student profile with permanent unique student code
       const studentCode = generateUniqueStudentCode();
       db.prepare(`
         INSERT INTO student_profiles (
-          user_id, icai_registration_number, ca_level, free_evaluations_used, purchased_credits, student_code
-        ) VALUES (?, ?, ?, 0, 0, ?)
+          user_id, icai_registration_number, ca_level, free_evaluations_used,
+          purchased_credits, student_code, monthly_free_evaluations_limit
+        ) VALUES (?, ?, ?, 0, 0, ?, ?)
       `).run(
         userId,
         regData.icaiRegistrationNumber,
         regData.caLevel || 'INTERMEDIATE',
-        studentCode
+        studentCode,
+        freeTrialGranted ? 2 : 0
       );
 
       // If promo campaign was valid and claimed, insert redemption record transactionally
@@ -813,10 +920,88 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       }
 
       db.exec('COMMIT');
+      transactionStarted = false;
     } catch (txErr: any) {
-      try { db.exec('ROLLBACK'); } catch {}
+      if (transactionStarted) {
+        try { db.exec('ROLLBACK'); } catch {}
+        transactionStarted = false;
+      }
+      if (freeTrialClaimHeld) await releaseFreeTrialClaimForAccount(freeTrialClaimInput);
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Finalize the global claim only after the account row exists. If the process
+    // crashes before this point, the reservation expires after 15 minutes rather than
+    // permanently consuming a trial that no account received.
+    if (freeTrialClaimHeld) {
+      const finalized = await finalizeFreeTrialClaimForAccount(freeTrialClaimInput);
+      if (finalized) {
+        let grantTransactionStarted = false;
+        try {
+          db.exec('BEGIN IMMEDIATE');
+          grantTransactionStarted = true;
+          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(userId);
+          db.exec('COMMIT');
+          grantTransactionStarted = false;
+          freeTrialGranted = true;
+          freeTrialClaimHeld = false;
+        } catch (trialGrantError: unknown) {
+          if (grantTransactionStarted) {
+            try { db.exec('ROLLBACK'); } catch {}
+          }
+          console.error('[FreeTrialAbuse] Claim finalized, but entitlement persistence failed; this account receives no free trial until repaired.', trialGrantError instanceof Error ? trialGrantError.message : 'unknown error');
+        }
+      } else {
+        console.warn('[FreeTrialAbuse] Trial reservation could not be finalized. Signup continues without a free trial.');
+      }
+    }
+
+    // If the reservation failed to finalize, remove any signup promo redemption created
+    // inside the account transaction. Never leave free campaign credits on a denied trial.
+    if (!freeTrialGranted && promoCampaign) {
+      const rejectedRedemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
+      let cleanupStarted = false;
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        cleanupStarted = true;
+        db.prepare('DELETE FROM referral_redemptions WHERE id = ? AND user_id = ?')
+          .run(rejectedRedemptionId, userId);
+
+        const remainingRedemptions = db.prepare(`
+          SELECT COUNT(*) as total
+          FROM referral_redemptions r
+          LEFT JOIN users u ON u.id = r.user_id
+          WHERE UPPER(r.referral_code) = UPPER(?)
+            AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+        `).get(rawReferralCode) as { total: number };
+        const currentTime = new Date();
+        const campaignInDateRange =
+          (!promoCampaign.start_date || new Date(promoCampaign.start_date) <= currentTime) &&
+          (!promoCampaign.end_date || new Date(promoCampaign.end_date) >= currentTime);
+        if (
+          Number(remainingRedemptions.total || 0) < Number(promoCampaign.max_redemptions ?? 20) &&
+          promoCampaign.is_active &&
+          promoCampaign.status !== 'DISABLED' &&
+          promoCampaign.status !== 'ARCHIVED' &&
+          campaignInDateRange
+        ) {
+          db.prepare(`
+            UPDATE referral_campaigns
+            SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP
+            WHERE UPPER(code) = UPPER(?) AND status = 'EXHAUSTED'
+          `).run(rawReferralCode);
+        }
+        db.exec('COMMIT');
+        cleanupStarted = false;
+      } catch (cleanupError: unknown) {
+        if (cleanupStarted) {
+          try { db.exec('ROLLBACK'); } catch {}
+        }
+        console.error('[FreeTrialAbuse] Could not clean up a promo redemption after trial finalization failed.', cleanupError instanceof Error ? cleanupError.message : 'unknown error');
+      }
+      promoCampaign = null;
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
@@ -894,11 +1079,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Auto-link any pending coaching institute enrollment for this email
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
-    // Welcome Notification
+    // Welcome Notification accurately reflects the trial-claim decision.
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      freeTrialGranted
+        ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations each month.'
+        : 'Your email is verified and your account is active. A signup free trial was not assigned to this device/network; you can still purchase evaluation credits.'
+    );
 
     // Audit log
     db.prepare(`
@@ -936,6 +1127,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         hasPermanentFreeAccess: isPermanentFree,
         emailVerified: true,
       },
+      freeTrialGranted,
+      freeTrialMessage: freeTrialGranted
+        ? 'Two free evaluations per month are enabled for this account.'
+        : 'This device/network has already claimed a free trial, or trial verification could not be completed. You can still use purchased credits.',
       promoApplied: !!promoCampaign,
       promoDetails: promoCampaign ? {
         code: rawReferralCode,
