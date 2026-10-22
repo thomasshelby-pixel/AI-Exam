@@ -44,6 +44,23 @@ async function startServer() {
 
   const app = express();
 
+  // Firebase App Hosting / Cloud Run sit behind a platform proxy. Resolve req.ip
+  // through a configured number of trusted hops; rate-limiters must not trust a raw
+  // user-supplied X-Forwarded-For header. Set TRUST_PROXY_HOPS to the actual chain
+  // length if Cloudflare or another reverse proxy adds an additional hop.
+  const defaultTrustProxyHops = process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE) ? 1 : 0;
+  const trustProxySetting = process.env.TRUST_PROXY_HOPS;
+  const parsedTrustProxyHops = trustProxySetting === undefined || trustProxySetting.trim() === ''
+    ? defaultTrustProxyHops
+    : Number.parseInt(trustProxySetting, 10);
+  const trustProxyHops = Number.isInteger(parsedTrustProxyHops) && parsedTrustProxyHops >= 0 && parsedTrustProxyHops <= 5
+    ? parsedTrustProxyHops
+    : defaultTrustProxyHops;
+  if (trustProxyHops !== parsedTrustProxyHops && trustProxySetting !== undefined && trustProxySetting.trim() !== '') {
+    console.warn('[Security] Invalid TRUST_PROXY_HOPS; using the environment default.');
+  }
+  app.set('trust proxy', trustProxyHops > 0 ? trustProxyHops : false);
+
   // Lightweight health check endpoint for platform probes
   app.get('/healthz', (_req, res) => {
     res.status(200).send('OK');
