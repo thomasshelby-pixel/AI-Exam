@@ -11,6 +11,8 @@ import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
+import { getClientIp } from '../utils/rateLimiter.js';
+import { getSignupTurnstileConfig, verifySignupTurnstile } from '../services/turnstileService.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
 import {
@@ -36,6 +38,17 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
+
+// Public signup security configuration. The site key is intentionally public; the secret
+// stays exclusively in server-side Firebase App Hosting secrets.
+router.get('/registration-security-config', (_req: Request, res: Response) => {
+  const config = getSignupTurnstileConfig();
+  return res.json({
+    turnstileRequired: config.required,
+    turnstileSiteKey: config.setupIncomplete ? null : config.siteKey,
+    turnstileSetupIncomplete: config.setupIncomplete,
+  });
+});
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -483,6 +496,19 @@ function studentSrnConflictResponse(res: Response, conflict: { kind: 'EXACT' | '
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
+    // In production the CAPTCHA is a fail-closed server gate: a client-side widget
+    // callback alone is never trusted, and the same token cannot be replayed.
+    const turnstile = await verifySignupTurnstile(req.body?.turnstileToken, req);
+    if (!turnstile.valid) {
+      const statusCode = turnstile.code === 'TURNSTILE_NOT_CONFIGURED' || turnstile.code === 'TURNSTILE_UNAVAILABLE'
+        ? 503
+        : 400;
+      return res.status(statusCode).json({
+        error: turnstile.message || 'Security verification failed. Please try again.',
+        code: turnstile.code || 'TURNSTILE_REJECTED',
+      });
+    }
+
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
 
     if (!email || !password || !fullName || !icaiRegistrationNumber) {
@@ -564,7 +590,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     }
 
     const passwordHash = hashPassword(password);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = getClientIp(req);
 
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
@@ -627,7 +653,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
-    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+    const clientIp = getClientIp(req);
 
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -1129,7 +1155,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
       const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
-      const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+      const ipAddress = getClientIp(req);
 
       const limitCheck = isDeviceLimitExceeded(user.id, user.email, deviceId);
       if (limitCheck.exceeded) {
