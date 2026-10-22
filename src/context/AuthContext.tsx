@@ -94,6 +94,7 @@ interface AuthContextType {
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
+    turnstileToken?: string;
   }) => Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
   verifyRegisterOtp: (email: string, otp: string) => Promise<User>;
   resendRegisterOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
@@ -764,6 +765,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
+    turnstileToken?: string;
   }): Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }> => {
     return await apiRequest<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>(
       '/api/auth/register',
