@@ -31,11 +31,14 @@ export interface User {
   email: string;
   fullName: string;
   phone?: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: string;
   role: UserRole;
   status: UserStatus;
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
   emailVerified?: boolean;
+  emailVerifiedAt?: string;
   mfaEnabled?: boolean;
   mfaPhone?: string | null;
   mfaVerified?: boolean;

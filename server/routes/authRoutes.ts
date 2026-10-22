@@ -12,6 +12,8 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
+import { verifyMsg91WidgetAccessToken } from '../services/msg91Service.js';
+import { consumePendingPhoneRegistration, isStudentPhoneRegistered, savePendingPhoneRegistration } from '../services/studentPhoneRegistrationService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
 import {
   getAuthoritativeUserMfaStatus,
@@ -36,6 +38,34 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
+
+function isMsg91PhoneRegistrationRequested(): boolean {
+  return String(process.env.MSG91_PHONE_REGISTRATION_ENABLED || '').toLowerCase() === 'true';
+}
+
+function isMsg91PhoneRegistrationConfigured(): boolean {
+  return Boolean(
+    process.env.MSG91_AUTHKEY?.trim() &&
+    process.env.MSG91_WIDGET_ID?.trim() &&
+    process.env.MSG91_WIDGET_TOKEN?.trim()
+  );
+}
+
+// Public widget ID/token are intended for the client SDK; server Authkey is never returned.
+router.get('/registration-otp-config', (_req: Request, res: Response) => {
+  const requested = isMsg91PhoneRegistrationRequested();
+  const configured = isMsg91PhoneRegistrationConfigured();
+  const phoneOtpEnabled = requested && configured;
+
+  return res.json({
+    phoneOtpEnabled,
+    phoneOtpSetupIncomplete: requested && !configured,
+    ...(phoneOtpEnabled ? {
+      widgetId: process.env.MSG91_WIDGET_ID!.trim(),
+      widgetToken: process.env.MSG91_WIDGET_TOKEN!.trim(),
+    } : {}),
+  });
+});
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -223,6 +253,8 @@ async function authenticateWithFirestoreFallback(
   full_name: string;
   role: UserRole;
   status: string;
+  phone_verified?: number;
+  phone_verified_at?: string | null;
   mfa_enabled?: number;
   mfa_phone?: string | null;
   mfa_enrolled_at?: string | null;
@@ -270,6 +302,8 @@ async function authenticateWithFirestoreFallback(
 
     const uFullName = fUserDoc.full_name || fUserDoc.name || 'CA Student';
     const uPhone = fUserDoc.phone || null;
+    const uPhoneVerified = fUserDoc.phone_verified ? 1 : 0;
+    const uPhoneVerifiedAt = fUserDoc.phone_verified_at || null;
     const uStatus = fUserDoc.status || 'ACTIVE';
     const uClassification = fUserDoc.account_classification || 'NORMAL';
     const uMfaEnabled = fUserDoc.mfa_enabled ? 1 : 0;
@@ -284,8 +318,8 @@ async function authenticateWithFirestoreFallback(
       }
 
       db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, phone_verified, phone_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           email = excluded.email,
           password_hash = excluded.password_hash,
@@ -294,6 +328,8 @@ async function authenticateWithFirestoreFallback(
           role = excluded.role,
           status = excluded.status,
           account_classification = excluded.account_classification,
+          phone_verified = CASE WHEN users.phone_verified = 1 THEN 1 ELSE excluded.phone_verified END,
+          phone_verified_at = COALESCE(users.phone_verified_at, excluded.phone_verified_at),
           mfa_enabled = CASE
             WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN 0
             WHEN users.mfa_enabled = 1 THEN 1
@@ -313,7 +349,7 @@ async function authenticateWithFirestoreFallback(
             ELSE 0
           END,
           updated_at = CURRENT_TIMESTAMP
-      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired, fUserDoc.created_at || null);
+      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uPhoneVerified, uPhoneVerifiedAt, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired, fUserDoc.created_at || null);
 
       if (uRole === 'STUDENT') {
         const spDoc = await getFirestoreDoc<any>('student_profiles', uId);
@@ -566,6 +602,58 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     const passwordHash = hashPassword(password);
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
 
+    // Optional MSG91 mobile-registration flow. Default OFF; the established email OTP path remains unchanged.
+    if (isMsg91PhoneRegistrationRequested()) {
+      if (!isMsg91PhoneRegistrationConfigured()) {
+        return res.status(503).json({
+          error: 'Mobile OTP registration is not fully configured yet. Please try again later.',
+          code: 'PHONE_OTP_NOT_CONFIGURED',
+        });
+      }
+
+      if (typeof phone !== 'string' || !phone.trim()) {
+        return res.status(400).json({ error: 'Mobile number is required for registration.', code: 'PHONE_REQUIRED' });
+      }
+
+      const normalizedPhone = normalizePhoneToE164(phone);
+      if (!normalizedPhone.canonicalPhoneE164) {
+        return res.status(400).json({
+          error: normalizedPhone.error || 'Enter a valid mobile number.',
+          code: 'INVALID_PHONE',
+        });
+      }
+
+      const pendingPhone = savePendingPhoneRegistration({
+        email: normalizedEmail,
+        fullName: fullName.trim(),
+        passwordHash,
+        phone: normalizedPhone.canonicalPhoneE164,
+        icaiRegistrationNumber: srnValidation.normalized,
+        caLevel: caLevel || 'INTERMEDIATE',
+        referralCode: rawReferralCode || null,
+        clientIp,
+      });
+
+      if (!pendingPhone.success) {
+        return res.status(400).json({
+          error: pendingPhone.message,
+          cooldownSeconds: pendingPhone.cooldownSeconds,
+          code: 'PHONE_REGISTRATION_REJECTED',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        requiresOtpVerification: true,
+        requiresPhoneOtpVerification: true,
+        email: normalizedEmail,
+        phoneMasked: pendingPhone.phoneMasked,
+        cooldownSeconds: pendingPhone.cooldownSeconds || 60,
+        expiresInSeconds: pendingPhone.expiresInSeconds || 900,
+        message: pendingPhone.message,
+      });
+    }
+
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -604,6 +692,13 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 // Student Registration: Resend OTP
 router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Response) => {
   try {
+    if (isMsg91PhoneRegistrationRequested()) {
+      return res.status(403).json({
+        error: 'Mobile OTP is required for new student registrations. Request a new code through the registration form.',
+        code: 'PHONE_OTP_REQUIRED',
+      });
+    }
+
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Email address is required.' });
@@ -664,26 +759,67 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
 // Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
 router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, accessToken } = req.body;
 
-    if (!email || !otp) {
-      return res.status(400).json({ error: 'Email and 6-digit verification code are required.' });
+    if (!email || (!otp && !accessToken)) {
+      return res.status(400).json({ error: 'Email and a valid verification code/token are required.' });
+    }
+    if (typeof email !== 'string') {
+      return res.status(400).json({ error: 'A valid email address is required.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    let regData: any;
+    let phoneVerified = false;
 
-    // Verify and consume OTP atomically (guarantees single-use & handles attempt limits)
-    const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
+    if (accessToken !== undefined && accessToken !== null) {
+      if (typeof accessToken !== 'string' || !accessToken.trim()) {
+        return res.status(400).json({ error: 'A valid mobile verification token is required.' });
+      }
+      if (!isMsg91PhoneRegistrationRequested() || !isMsg91PhoneRegistrationConfigured()) {
+        return res.status(503).json({ error: 'Mobile OTP registration is not enabled or configured.', code: 'PHONE_OTP_NOT_CONFIGURED' });
+      }
 
-    if (!verification.success || !verification.registrationData) {
-      return res.status(400).json({
-        error: verification.message,
-        code: verification.code,
-        attemptsRemaining: verification.attemptsRemaining,
-      });
+      // Never trust the browser callback alone: confirm the access token with MSG91 server-side.
+      const providerVerification = await verifyMsg91WidgetAccessToken(accessToken);
+      if (!providerVerification.success || !providerVerification.phoneE164) {
+        return res.status(400).json({
+          error: providerVerification.error || 'Mobile number verification failed. Please request a new OTP.',
+          code: 'PHONE_OTP_VERIFICATION_FAILED',
+        });
+      }
+
+      const pendingPhone = consumePendingPhoneRegistration(normalizedEmail, providerVerification.phoneE164);
+      if (!pendingPhone.success || !pendingPhone.registrationData) {
+        return res.status(400).json({
+          error: pendingPhone.message,
+          code: 'PHONE_REGISTRATION_NOT_READY',
+        });
+      }
+
+      regData = pendingPhone.registrationData;
+      phoneVerified = true;
+    } else {
+      // Once phone verification is enabled, old email OTP challenges must not be usable as a bypass.
+      if (isMsg91PhoneRegistrationRequested()) {
+        return res.status(403).json({
+          error: 'Mobile OTP verification is required to create a student account.',
+          code: 'PHONE_OTP_REQUIRED',
+        });
+      }
+
+      const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
+
+      if (!verification.success || !verification.registrationData) {
+        return res.status(400).json({
+          error: verification.message,
+          code: verification.code,
+          attemptsRemaining: verification.attemptsRemaining,
+        });
+      }
+
+      regData = verification.registrationData;
     }
-
-    const regData = verification.registrationData;
 
     // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
@@ -718,11 +854,21 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     let promoMaxRedemptions = 20;
 
     try {
-      // Final conflict check while holding the database write lock to prevent concurrent duplicate registration.
+      // Final conflict checks while holding the database write lock.
       const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
       if (lockedSrnConflict) {
         db.exec('ROLLBACK');
         return studentSrnConflictResponse(res, lockedSrnConflict);
+      }
+
+      // Recheck phone uniqueness at account-creation time, not just when the OTP challenge is created.
+      // The widget token is already validated by MSG91 before this point.
+      if (phoneVerified && regData.phone && isStudentPhoneRegistered(regData.phone)) {
+        db.exec('ROLLBACK');
+        return res.status(409).json({
+          error: 'This mobile number is already linked to a student account.',
+          code: 'PHONE_ALREADY_REGISTERED',
+        });
       }
 
       if (promoCampaign && promoCampaign.is_active && promoCampaign.status !== 'DISABLED' && promoCampaign.status !== 'ARCHIVED') {
@@ -749,12 +895,12 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
       const nowIso = new Date().toISOString();
 
-      // Insert active student account with verified email
+      // Mobile registration proves phone ownership, not email ownership. Track them separately.
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, phone_verified, phone_verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -762,7 +908,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         regData.fullName.trim(),
         regData.phone?.trim() || null,
         role,
-        nowIso
+        phoneVerified ? 0 : 1,
+        phoneVerified ? null : nowIso,
+        phoneVerified ? 1 : 0,
+        phoneVerified ? nowIso : null
       );
 
       // Insert student profile with permanent unique student code
@@ -894,11 +1043,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Auto-link any pending coaching institute enrollment for this email
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
-    // Welcome Notification
+    // Welcome Notification — keep email-verification wording accurate for the phone OTP path.
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      phoneVerified
+        ? 'Your mobile number is verified and your account is active! You receive 2 free full-paper evaluations.'
+        : 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!'
+    );
 
     // Audit log
     db.prepare(`
@@ -934,7 +1089,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         fullName: regData.fullName.trim(),
         role,
         hasPermanentFreeAccess: isPermanentFree,
-        emailVerified: true,
+        emailVerified: !phoneVerified,
+        phoneVerified,
       },
       promoApplied: !!promoCampaign,
       promoDetails: promoCampaign ? {
@@ -1654,7 +1810,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const userId = req.user.id;
     const user = db.prepare(`
-      SELECT id, email, full_name, phone, role, status, mfa_enabled, mfa_phone, created_at,
+      SELECT id, email, full_name, phone, email_verified, email_verified_at, phone_verified, phone_verified_at, role, status, mfa_enabled, mfa_phone, created_at,
              suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
       FROM users WHERE id = ?
     `).get(userId) as {
@@ -1662,6 +1818,10 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       email: string;
       full_name: string;
       phone: string | null;
+      email_verified: number;
+      email_verified_at: string | null;
+      phone_verified: number;
+      phone_verified_at: string | null;
       role: UserRole;
       status: string;
       mfa_enabled: number;
@@ -1788,6 +1948,10 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         email: user.email,
         fullName: user.full_name,
         phone: user.phone,
+        emailVerified: Boolean(user.email_verified),
+        emailVerifiedAt: user.email_verified_at || undefined,
+        phoneVerified: Boolean(user.phone_verified),
+        phoneVerifiedAt: user.phone_verified_at || undefined,
         role: user.role,
         status: user.status,
         createdAt: user.created_at,

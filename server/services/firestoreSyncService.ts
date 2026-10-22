@@ -414,11 +414,13 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ? null
           : u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
-        const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
+        const uEmailVerifiedAt = uEmailVerified ? (u.email_verified_at || u.created_at || null) : null;
+        const uPhoneVerified = u.phone_verified ? 1 : 0;
+        const uPhoneVerifiedAt = uPhoneVerified ? (u.phone_verified_at || null) : null;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, phone_verified, phone_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -435,6 +437,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
+            phone_verified = CASE WHEN users.phone_verified = 1 THEN 1 ELSE excluded.phone_verified END,
+            phone_verified_at = COALESCE(users.phone_verified_at, excluded.phone_verified_at),
             mfa_enabled = CASE
               WHEN excluded.mfa_reset_required = 1 THEN 0
               WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
@@ -465,7 +469,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
-          uEmailVerified, uEmailVerifiedAt,
+          uEmailVerified, uEmailVerifiedAt, uPhoneVerified, uPhoneVerifiedAt,
           uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
         );

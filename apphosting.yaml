@@ -22,3 +22,8 @@ env:
     value: "CA Exam Checker AI <support@caexamcheckerai.com>"
   - variable: APP_URL
     value: https://caexamcheckerai.com
+
+  - variable: MSG91_PHONE_REGISTRATION_ENABLED
+    value: "false"
+    availability:
+      - RUNTIME

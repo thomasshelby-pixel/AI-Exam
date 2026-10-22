@@ -27,6 +27,114 @@ import {
   Building2,
 } from 'lucide-react';
 
+
+interface PhoneOtpConfig {
+  phoneOtpEnabled: boolean;
+  phoneOtpSetupIncomplete: boolean;
+  widgetId?: string;
+  widgetToken?: string;
+}
+
+declare global {
+  interface Window {
+    initSendOTP?: (configuration: Record<string, unknown>) => void;
+    sendOtp?: (identifier: string, success?: (data: unknown) => void, failure?: (error: unknown) => void) => void;
+    verifyOtp?: (otp: string, success?: (data: unknown) => void, failure?: (error: unknown) => void, requestId?: string) => void;
+    retryOtp?: (channel: string | null, success?: (data: unknown) => void, failure?: (error: unknown) => void, requestId?: string) => void;
+  }
+}
+
+let msg91SdkLoadPromise: Promise<void> | null = null;
+
+function loadMsg91Sdk(): Promise<void> {
+  if (typeof window.initSendOTP === 'function') return Promise.resolve();
+  if (msg91SdkLoadPromise) return msg91SdkLoadPromise;
+  msg91SdkLoadPromise = new Promise<void>((resolve, reject) => {
+    let script = document.querySelector<HTMLScriptElement>('script[data-msg91-otp-sdk="true"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://verify.msg91.com/otp-provider.js';
+      script.async = true;
+      script.dataset.msg91OtpSdk = 'true';
+    }
+    script.addEventListener('load', () => {
+      if (typeof window.initSendOTP === 'function') resolve();
+      else reject(new Error('MSG91 OTP SDK unavailable.'));
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error('MSG91 OTP SDK failed to load.')), { once: true });
+    if (!script.isConnected) document.head.appendChild(script);
+  }).catch((error) => {
+    msg91SdkLoadPromise = null;
+    throw error;
+  });
+  return msg91SdkLoadPromise;
+}
+
+function getMsg91Identifier(rawPhone: string): string | null {
+  let digits = String(rawPhone || '').replace(/\D/g, '');
+  if (digits.length === 10) digits = '91' + digits;
+  return digits.length === 12 && digits.startsWith('91') ? digits : null;
+}
+
+function extractMsg91RequestId(value: unknown, depth = 0): string | null {
+  if (depth > 5 || !value || typeof value !== 'object') return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractMsg91RequestId(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const obj = value as Record<string, unknown>;
+  for (const [key, item] of Object.entries(obj)) {
+    if (/^(reqid|req_id|requestid|request_id|request-id)$/i.test(key) && (typeof item === 'string' || typeof item === 'number')) return String(item);
+    // MSG91's Web SDK commonly returns the send/retry request ID in `message`.
+    if (key.toLowerCase() === 'message' && typeof item === 'string' && /^[A-Za-z0-9]{8,}$/.test(item.trim())) return item.trim();
+  }
+  for (const item of Object.values(obj)) {
+    const found = extractMsg91RequestId(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function extractMsg91AccessToken(value: unknown, depth = 0): string | null {
+  if (depth > 6 || value == null) return null;
+  const jwtPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+  if (typeof value === 'string') return jwtPattern.test(value.trim()) ? value.trim() : null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractMsg91AccessToken(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  for (const key of ['accessToken', 'access_token', 'access-token', 'jwt', 'token', 'message', 'data']) {
+    if (key in obj) {
+      const found = extractMsg91AccessToken(obj[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  for (const item of Object.values(obj)) {
+    const found = extractMsg91AccessToken(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getMsg91ErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['message', 'error', 'reason', 'description']) {
+      if (typeof obj[key] === 'string' && (obj[key] as string).trim()) return (obj[key] as string).trim();
+    }
+  }
+  return fallback;
+}
+
 interface LoginPageProps {
   initialMode?: 'login' | 'register';
   onSuccess: (user: any) => void;
@@ -44,7 +152,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, register, initiateRegister, verifyRegisterOtp, resendRegisterOtp, suspendedAccount, clearSuspension } = useAuth();
+  const { login, register, initiateRegister, verifyRegisterOtp, verifyRegisterPhoneOtp, resendRegisterOtp, suspendedAccount, clearSuspension } = useAuth();
   const accountDeletedMessage = (location.state as any)?.accountDeletedMessage;
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
 
@@ -66,6 +174,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [pendingEmail, setPendingEmail] = useState('');
   const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [phoneOtpConfig, setPhoneOtpConfig] = useState<PhoneOtpConfig | null>(null);
+  const [phoneOtpConfigStatus, setPhoneOtpConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [phoneOtpMode, setPhoneOtpMode] = useState(false);
+  const [phoneOtpSent, setPhoneOtpSent] = useState(false);
+  const [phoneOtpRequestId, setPhoneOtpRequestId] = useState<string | null>(null);
+  const [msg91SdkReady, setMsg91SdkReady] = useState(false);
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -79,6 +193,68 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }, 1000);
     return () => clearInterval(timer);
   }, [resendCooldown]);
+
+  // Read the public widget configuration from the server; never expose the server Authkey.
+  React.useEffect(() => {
+    let active = true;
+    fetch('/api/auth/registration-otp-config', { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('OTP configuration request failed.');
+        return await response.json() as Partial<PhoneOtpConfig>;
+      })
+      .then((data) => {
+        if (!active) return;
+        setPhoneOtpConfigStatus('ready');
+        const configured = data.phoneOtpEnabled === true &&
+          typeof data.widgetId === 'string' && Boolean(data.widgetId.trim()) &&
+          typeof data.widgetToken === 'string' && Boolean(data.widgetToken.trim());
+        setPhoneOtpConfig({
+          phoneOtpEnabled: configured,
+          phoneOtpSetupIncomplete: data.phoneOtpSetupIncomplete === true,
+          widgetId: configured ? data.widgetId : undefined,
+          widgetToken: configured ? data.widgetToken : undefined,
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setPhoneOtpConfigStatus('error');
+          setPhoneOtpConfig({ phoneOtpEnabled: false, phoneOtpSetupIncomplete: false });
+        }
+      });
+    return () => { active = false; };
+  }, []);
+
+  React.useEffect(() => {
+    if (!isVerifyingOtp || !phoneOtpMode || !phoneOtpConfig?.phoneOtpEnabled ||
+        !phoneOtpConfig.widgetId || !phoneOtpConfig.widgetToken) {
+      setMsg91SdkReady(false);
+      return;
+    }
+    let cancelled = false;
+    const identifier = getMsg91Identifier(phone);
+    if (!identifier) {
+      setErrorMessage('Enter a valid 10-digit Indian mobile number before requesting an OTP.');
+      return;
+    }
+    loadMsg91Sdk().then(() => {
+      if (cancelled) return;
+      if (typeof window.initSendOTP !== 'function') throw new Error('MSG91 OTP SDK unavailable.');
+      window.initSendOTP!({
+        widgetId: phoneOtpConfig.widgetId,
+        tokenAuth: phoneOtpConfig.widgetToken,
+        identifier,
+        exposeMethods: true,
+        captchaRenderId: 'msg91-captcha',
+      });
+      setMsg91SdkReady(true);
+    }).catch(() => {
+      if (!cancelled) {
+        setMsg91SdkReady(false);
+        setErrorMessage('Could not load mobile verification. Please refresh and try again.');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [isVerifyingOtp, phoneOtpMode, phoneOtpConfig, phone]);
 
   // Handle standard student/user email-password login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -111,6 +287,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    if (phoneOtpConfigStatus === 'loading') {
+      setErrorMessage('Please wait while secure registration settings are loaded.');
+      return;
+    }
+    if (phoneOtpConfig?.phoneOtpSetupIncomplete) {
+      setErrorMessage('Mobile verification is not configured yet. Please try again later.');
+      return;
+    }
 
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
@@ -136,8 +320,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         referralCode: referralCode.trim() || undefined,
       });
 
-      if (data.requiresOtpVerification) {
+      if (data.requiresPhoneOtpVerification) {
+        if (!phoneOtpConfig?.phoneOtpEnabled || !phoneOtpConfig.widgetId || !phoneOtpConfig.widgetToken) {
+          setErrorMessage('Mobile OTP is enabled on the server, but widget settings did not load. Refresh the page and try again; no student account has been created.');
+          return;
+        }
         setIsVerifyingOtp(true);
+        setPhoneOtpMode(true);
+        setPhoneOtpSent(false);
+        setPhoneOtpRequestId(null);
+        setPendingEmail(data.email || email.trim().toLowerCase());
+        setMaskedEmail(data.phoneMasked || phone);
+        setResendCooldown(0);
+        setOtpSuccessMessage(data.message || 'Your mobile number is ready for verification. Request an OTP to continue.');
+        setOtpCode('');
+      } else if (data.requiresOtpVerification) {
+        setIsVerifyingOtp(true);
+        setPhoneOtpMode(false);
+        setPhoneOtpSent(false);
+        setPhoneOtpRequestId(null);
         setPendingEmail(data.email || email.trim().toLowerCase());
         setMaskedEmail(data.emailMasked || email.trim().toLowerCase());
         setResendCooldown(data.cooldownSeconds || 60);
@@ -152,11 +353,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  // Handle OTP verification submission
+  // Handle OTP verification for mobile (MSG91) or email signup.
   const handleOtpVerifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-
     const cleanOtp = otpCode.trim();
     if (cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
       setErrorMessage('Please enter a valid 6-digit verification code.');
@@ -164,6 +364,39 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
 
     setIsLoading(true);
+    if (phoneOtpMode) {
+      if (!phoneOtpRequestId) {
+        setIsLoading(false);
+        setErrorMessage('The OTP request reference is missing. Please edit the details and request a new OTP.');
+        return;
+      }
+      if (typeof window.verifyOtp !== 'function') {
+        setIsLoading(false);
+        setErrorMessage('Mobile verification is not ready. Refresh the page and request a new OTP.');
+        return;
+      }
+      try {
+        window.verifyOtp(cleanOtp, (verificationData: unknown) => {
+          const accessToken = extractMsg91AccessToken(verificationData);
+          if (!accessToken) {
+            setIsLoading(false);
+            setErrorMessage('MSG91 did not return a verification token. Please request a new OTP and try again.');
+            return;
+          }
+          void verifyRegisterPhoneOtp(pendingEmail || email.trim().toLowerCase(), accessToken)
+            .then((activatedUser) => onSuccess(activatedUser))
+            .catch((err: unknown) => setErrorMessage(err instanceof Error ? err.message : 'Mobile verification failed. Please try again.'))
+            .finally(() => setIsLoading(false));
+        }, (error: unknown) => {
+          setIsLoading(false);
+          setErrorMessage(getMsg91ErrorMessage(error, 'Incorrect or expired OTP. Please try again.'));
+        }, phoneOtpRequestId || undefined);
+      } catch (error: unknown) {
+        setIsLoading(false);
+        setErrorMessage(getMsg91ErrorMessage(error, 'Mobile verification failed. Please try again.'));
+      }
+      return;
+    }
 
     try {
       const activatedUser = await verifyRegisterOtp(pendingEmail || email.trim().toLowerCase(), cleanOtp);
@@ -176,11 +409,36 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  // Handle resend OTP request
+  // Resend via MSG91 widget or the existing email OTP endpoint.
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || isLoading) return;
     setErrorMessage('');
     setIsLoading(true);
+
+    if (phoneOtpMode) {
+      if (typeof window.retryOtp !== 'function') {
+        setIsLoading(false);
+        setErrorMessage('Mobile resend is not ready. Please refresh the page and try again.');
+        return;
+      }
+      try {
+        window.retryOtp(null, (data: unknown) => {
+          const newRequestId = extractMsg91RequestId(data);
+          if (newRequestId) setPhoneOtpRequestId(newRequestId);
+          setResendCooldown(60);
+          setOtpSuccessMessage('A new verification code has been requested for your mobile number.');
+          setOtpCode('');
+          setIsLoading(false);
+        }, (error: unknown) => {
+          setErrorMessage(getMsg91ErrorMessage(error, 'Could not resend the mobile OTP. Please try again.'));
+          setIsLoading(false);
+        }, phoneOtpRequestId || undefined);
+      } catch (error: unknown) {
+        setErrorMessage(getMsg91ErrorMessage(error, 'Could not resend the mobile OTP. Please try again.'));
+        setIsLoading(false);
+      }
+      return;
+    }
 
     try {
       const data = await resendRegisterOtp(pendingEmail || email.trim().toLowerCase());
@@ -192,6 +450,45 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSendPhoneOtp = () => {
+    setErrorMessage('');
+    if (isLoading) return;
+    const identifier = getMsg91Identifier(phone);
+    if (!identifier) {
+      setErrorMessage('Enter a valid 10-digit Indian mobile number.');
+      return;
+    }
+    if (!msg91SdkReady || typeof window.sendOtp !== 'function') {
+      setErrorMessage('Mobile verification is still loading. Please wait a moment and try again.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      window.sendOtp(identifier, (data: unknown) => {
+        const requestId = extractMsg91RequestId(data);
+        if (!requestId) {
+          setPhoneOtpSent(false);
+          setIsLoading(false);
+          setErrorMessage('MSG91 did not return the OTP request ID required for verification. Please try sending the OTP again.');
+          return;
+        }
+        setPhoneOtpRequestId(requestId);
+        setPhoneOtpSent(true);
+        setOtpCode('');
+        setResendCooldown(60);
+        setOtpSuccessMessage('OTP sent. Enter the 6-digit code received on your mobile.');
+        setIsLoading(false);
+      }, (error: unknown) => {
+        setIsLoading(false);
+        setErrorMessage(getMsg91ErrorMessage(error, 'Could not send SMS OTP. Please check your number and try again.'));
+      });
+    } catch (error: unknown) {
+      setIsLoading(false);
+      setErrorMessage(getMsg91ErrorMessage(error, 'Could not send SMS OTP. Please try again.'));
     }
   };
 
@@ -329,15 +626,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
                 <MailCheck className="w-6 h-6" />
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Verify Your Email Address</h3>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">{phoneOtpMode ? 'Verify Your Mobile Number' : 'Verify Your Email Address'}</h3>
               <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                We sent a 6-digit verification code to
+                {phoneOtpMode ? (phoneOtpSent ? 'We sent a 6-digit verification code to' : 'Send a verification code to') : 'We sent a 6-digit verification code to'}
               </p>
               <p className="text-xs font-mono font-bold text-blue-700 dark:text-blue-300 mt-0.5">
                 {maskedEmail || email}
               </p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
-                Code expires in <strong>10 minutes</strong>. Single-use only.
+                Code expires in <strong>{phoneOtpMode ? '15 minutes' : '10 minutes'}</strong>. Single-use only.
               </p>
             </div>
 
@@ -348,7 +645,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleOtpVerifySubmit} className="space-y-3.5">
+            {phoneOtpMode && <div id="msg91-captcha" className="flex justify-center min-h-2" />}
+
+            {phoneOtpMode && !phoneOtpSent && (
+              <div className="space-y-3">
+                <button
+                  id="btn-send-mobile-otp"
+                  type="button"
+                  onClick={handleSendPhoneOtp}
+                  disabled={isLoading || !msg91SdkReady}
+                  className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isLoading ? 'Sending OTP...' : !msg91SdkReady ? 'Loading secure verification...' : 'Send OTP to Mobile'}
+                </button>
+              </div>
+            )}
+
+            {(!phoneOtpMode || phoneOtpSent) && (
+              <form onSubmit={handleOtpVerifySubmit} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 text-center">
                   Enter 6-Digit Verification Code
@@ -423,7 +737,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   )}
                 </button>
               </div>
-            </form>
+              </form>
+            )}
           </div>
         )}
 
@@ -578,7 +893,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number (Optional)</label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone Number {phoneOtpConfig?.phoneOtpEnabled || phoneOtpConfig?.phoneOtpSetupIncomplete ? '(Required for verification)' : '(Optional)'}</label>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
@@ -587,6 +902,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     placeholder="+91 98765 43210"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
+                    required={Boolean(phoneOtpConfig?.phoneOtpEnabled || phoneOtpConfig?.phoneOtpSetupIncomplete)}
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500"
                   />
                 </div>
@@ -640,7 +956,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <button
                 id="btn-register-submit"
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || phoneOtpConfigStatus === 'loading'}
                 className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isLoading ? (
