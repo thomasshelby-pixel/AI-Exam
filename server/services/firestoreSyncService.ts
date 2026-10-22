@@ -819,7 +819,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       for (const profile of profiles) {
         const userId = String(profile.user_id || profile.id || '');
         const normalizedSrn = String(profile.icai_registration_number || '').trim().toUpperCase();
-        if (!userId || !/^[A-Z]{3}\\d{7}$/.test(normalizedSrn)) continue;
+        if (!userId || !/^[A-Z]{3}\d{7}$/.test(normalizedSrn)) continue;
         const isTombstonedProfile = tombstoneSet.has(`student_profiles_${userId}`) ||
           tombstoneSet.has(`student_profiles:${userId}`) ||
           tombstoneSet.has(`users_${userId}`) ||
