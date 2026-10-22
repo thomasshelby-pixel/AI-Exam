@@ -1631,7 +1631,9 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const userId = req.user.id;
     const user = db.prepare(`
-      SELECT id, email, full_name, phone, role, status, mfa_enabled, mfa_phone, created_at FROM users WHERE id = ?
+      SELECT id, email, full_name, phone, role, status, mfa_enabled, mfa_phone, created_at,
+             suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
+      FROM users WHERE id = ?
     `).get(userId) as {
       id: string;
       email: string;
@@ -1642,6 +1644,9 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       mfa_enabled: number;
       mfa_phone: string | null;
       created_at: string;
+      suspicious_activity_warning: number;
+      suspicious_activity_reason: string | null;
+      suspicious_activity_at: string | null;
     } | undefined;
 
     if (!user) {
@@ -1768,6 +1773,9 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified,
         mfaMandatory: isMandatoryRole,
+        suspiciousActivityWarning: Boolean(user.suspicious_activity_warning),
+        suspiciousActivityReason: user.suspicious_activity_reason || undefined,
+        suspiciousActivityAt: user.suspicious_activity_at || undefined,
       },
       profile: profileData,
     });
