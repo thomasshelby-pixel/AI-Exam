@@ -892,8 +892,10 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       manifest: verifiedPackage.manifest,
     };
 
-    // Save uploaded file to uploads directory for original & checked copy generation
+    // Save uploaded file to uploads directory for original & checked copy generation.
+    // Fingerprint the normalized file to detect exact answer-sheet reuse across free-tier accounts.
     let pdfBuf = Buffer.from(fileBase64, 'base64');
+    let answerSheetSha256 = '';
     try {
       const uploadsDir = path.join(process.cwd(), 'uploads');
       if (!fs.existsSync(uploadsDir)) {
@@ -921,6 +923,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         }
       }
 
+      answerSheetSha256 = crypto.createHash('sha256').update(pdfBuf).digest('hex');
       const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
       fs.writeFileSync(originalFilePath, pdfBuf);
 
@@ -1000,6 +1003,15 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       entitlementSource
     );
 
+    // Persist the normalized answer-sheet fingerprint for future cross-account duplicate checks.
+    if (answerSheetSha256) {
+      try {
+        db.prepare('UPDATE evaluations SET answer_sheet_sha256 = ? WHERE id = ?').run(answerSheetSha256, evaluationId);
+      } catch (fingerprintErr) {
+        console.warn('[StudentRoutes] Could not persist answer-sheet fingerprint:', fingerprintErr);
+      }
+    }
+
     // Durable Cloud Firestore synchronization for persistent evaluation history
     try {
       const initEval = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
@@ -1063,6 +1075,51 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         selectedSubject: subjectName,
         detectedSubject: subjectValidation.detectedSubject,
       });
+    }
+
+    // Step D.1.1: Detect exact answer-sheet reuse across student accounts before consuming a free entitlement.
+    // This is an abuse signal, not identity proof. It applies only to free/promo entitlements;
+    // purchased-credit and institute-sponsored evaluations remain available. Admin-marked TEST
+    // accounts can repeat fixture uploads during QA.
+    const isFreeTierEntitlement =
+      entitlementSource === 'PROMO' ||
+      entitlementSource === 'PERSONAL_FREE' ||
+      entitlementSource === 'PERMANENT_FREE';
+    const currentAccount = db.prepare('SELECT account_classification FROM users WHERE id = ?').get(studentId) as any;
+    const isTestAccount = String(currentAccount?.account_classification || '').toUpperCase() === 'TEST';
+    if (answerSheetSha256 && isFreeTierEntitlement && !isTestAccount) {
+      const duplicateUpload = db.prepare(`
+        SELECT e.id, e.display_id, e.student_id, e.created_at
+        FROM evaluations e
+        WHERE e.answer_sheet_sha256 = ?
+          AND e.id <> ?
+          AND e.student_id <> ?
+          AND UPPER(COALESCE(e.status, '')) NOT IN ('REJECTED', 'FAILED', 'PERSISTENCE_FAILED')
+        ORDER BY e.created_at DESC
+        LIMIT 1
+      `).get(answerSheetSha256, evaluationId, studentId) as any;
+
+      if (duplicateUpload) {
+        const message = 'This exact answer-sheet file has already been submitted from another student account. To protect free evaluation credits, this submission was stopped without deducting any credits. If this is a legitimate shared/test file, contact support or use an admin-marked TEST account.';
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'REJECTED',
+              document_validation_status = 'DUPLICATE_ACCOUNT_UPLOAD',
+              error_message = ?,
+              progress_stage = 'REJECTED',
+              progress_message = 'Duplicate answer-sheet upload across accounts',
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(message, evaluationId);
+
+        return res.status(409).json({
+          error: message,
+          code: 'DUPLICATE_ANSWER_SHEET_FREE_TIER',
+          duplicateEvaluationId: duplicateUpload.display_id || duplicateUpload.id,
+          creditsDeducted: false,
+        });
+      }
     }
 
     // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
