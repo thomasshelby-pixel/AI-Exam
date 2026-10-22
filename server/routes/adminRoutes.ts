@@ -2848,6 +2848,14 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const status = String(evaluation.status || '').toUpperCase();
+    if (status === 'COMPLETED') {
+      return res.status(409).json({
+        error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
+        code: 'EVALUATION_ALREADY_COMPLETED',
+        evaluationId,
+      });
+    }
+
     if (status === 'FAILED' || status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
       return res.status(409).json({
         error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations. Failed evaluations are not eligible.',
@@ -2864,14 +2872,6 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         status,
       });
     }
-    if (status === 'COMPLETED') {
-      return res.status(409).json({
-        error: 'This evaluation is already marked completed. Recovery will not rerun it or alter marks.',
-        code: 'EVALUATION_ALREADY_COMPLETED',
-        evaluationId,
-      });
-    }
-
     let result: any = null;
     try {
       result = evaluation.result_json ? JSON.parse(evaluation.result_json) : null;
