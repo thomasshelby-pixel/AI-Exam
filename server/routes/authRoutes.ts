@@ -253,6 +253,8 @@ async function authenticateWithFirestoreFallback(
   full_name: string;
   role: UserRole;
   status: string;
+  phone_verified?: number;
+  phone_verified_at?: string | null;
   mfa_enabled?: number;
   mfa_phone?: string | null;
   mfa_enrolled_at?: string | null;
@@ -300,6 +302,8 @@ async function authenticateWithFirestoreFallback(
 
     const uFullName = fUserDoc.full_name || fUserDoc.name || 'CA Student';
     const uPhone = fUserDoc.phone || null;
+    const uPhoneVerified = fUserDoc.phone_verified ? 1 : 0;
+    const uPhoneVerifiedAt = fUserDoc.phone_verified_at || null;
     const uStatus = fUserDoc.status || 'ACTIVE';
     const uClassification = fUserDoc.account_classification || 'NORMAL';
     const uMfaEnabled = fUserDoc.mfa_enabled ? 1 : 0;
@@ -314,8 +318,8 @@ async function authenticateWithFirestoreFallback(
       }
 
       db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, phone_verified, phone_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           email = excluded.email,
           password_hash = excluded.password_hash,
@@ -324,6 +328,8 @@ async function authenticateWithFirestoreFallback(
           role = excluded.role,
           status = excluded.status,
           account_classification = excluded.account_classification,
+          phone_verified = CASE WHEN users.phone_verified = 1 THEN 1 ELSE excluded.phone_verified END,
+          phone_verified_at = COALESCE(users.phone_verified_at, excluded.phone_verified_at),
           mfa_enabled = CASE
             WHEN excluded.mfa_reset_required = 1 OR users.mfa_reset_required = 1 THEN 0
             WHEN users.mfa_enabled = 1 THEN 1
@@ -343,7 +349,7 @@ async function authenticateWithFirestoreFallback(
             ELSE 0
           END,
           updated_at = CURRENT_TIMESTAMP
-      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired, fUserDoc.created_at || null);
+      `).run(uId, normalizedEmail, fHash, uFullName, uPhone, uRole, uStatus, uClassification, uPhoneVerified, uPhoneVerifiedAt, uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired, fUserDoc.created_at || null);
 
       if (uRole === 'STUDENT') {
         const spDoc = await getFirestoreDoc<any>('student_profiles', uId);
