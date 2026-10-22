@@ -88,6 +88,8 @@ function extractMsg91RequestId(value: unknown, depth = 0): string | null {
   const obj = value as Record<string, unknown>;
   for (const [key, item] of Object.entries(obj)) {
     if (/^(reqid|req_id|requestid|request_id|request-id)$/i.test(key) && (typeof item === 'string' || typeof item === 'number')) return String(item);
+    // MSG91's Web SDK commonly returns the send/retry request ID in `message`.
+    if (key.toLowerCase() === 'message' && typeof item === 'string' && /^[A-Za-z0-9]{8,}$/.test(item.trim())) return item.trim();
   }
   for (const item of Object.values(obj)) {
     const found = extractMsg91RequestId(item, depth + 1);
@@ -173,6 +175,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [phoneOtpConfig, setPhoneOtpConfig] = useState<PhoneOtpConfig | null>(null);
+  const [phoneOtpConfigStatus, setPhoneOtpConfigStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [phoneOtpMode, setPhoneOtpMode] = useState(false);
   const [phoneOtpSent, setPhoneOtpSent] = useState(false);
   const [phoneOtpRequestId, setPhoneOtpRequestId] = useState<string | null>(null);
@@ -201,6 +204,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       })
       .then((data) => {
         if (!active) return;
+        setPhoneOtpConfigStatus('ready');
         const configured = data.phoneOtpEnabled === true &&
           typeof data.widgetId === 'string' && Boolean(data.widgetId.trim()) &&
           typeof data.widgetToken === 'string' && Boolean(data.widgetToken.trim());
@@ -212,7 +216,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         });
       })
       .catch(() => {
-        if (active) setPhoneOtpConfig({ phoneOtpEnabled: false, phoneOtpSetupIncomplete: false });
+        if (active) {
+          setPhoneOtpConfigStatus('error');
+          setPhoneOtpConfig({ phoneOtpEnabled: false, phoneOtpSetupIncomplete: false });
+        }
       });
     return () => { active = false; };
   }, []);
@@ -284,6 +291,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    if (phoneOtpConfigStatus === 'loading') {
+      setErrorMessage('Please wait while secure registration settings are loaded.');
+      return;
+    }
+    if (phoneOtpConfigStatus === 'error') {
+      setErrorMessage('Could not confirm registration settings. Refresh the page before trying again.');
+      return;
+    }
 
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
