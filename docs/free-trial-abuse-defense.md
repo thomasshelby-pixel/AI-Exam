@@ -9,6 +9,7 @@ This change adds an anti-bot gate to student registration, hardens the request I
 - **Registration IP limits use Express's resolved `req.ip`**, not a client-supplied `X-Forwarded-For` value. The Express proxy-hop setting must match the real hosting proxy chain.
 - **Existing gates remain in place:** the same ICAI SRN cannot be registered twice; exact reuse of a prior answer-sheet PDF across NORMAL free/promo accounts is rejected before an evaluation credit is consumed; existing signup and OTP rate limits continue to apply.
 - **Suspension recovery:** a Firestore `REINSTATED` row with an older/missing timestamp will not overwrite a newer locally stored `SUSPENDED` row during hydration. Explicitly newer admin reactivation is allowed.
+- **Suspension source of truth:** admin status changes now append a transactionally versioned `account_status_events` record. Hydration applies the latest event after loading mutable user/suspension documents and backfills old active suspensions into the ledger, so stale mutable rows cannot silently reactivate the account.
 
 Turnstile stops automated/bot-driven signups. It is **not** SMS verification or proof of identity; a determined human may still create accounts with different email/SRN details. There is no honest way to guarantee that every bypass is impossible. Stronger identity proof (for example, verified phone ownership or ICAI identity checks) remains a separate product and cost decision.
 
