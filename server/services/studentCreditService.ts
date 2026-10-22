@@ -117,7 +117,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
 
   const profile = db.prepare(`
     SELECT user_id, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
-           free_evaluations_used, purchased_credits, paid_credits
+           free_evaluations_used, purchased_credits, paid_credits, free_trial_blocked
     FROM student_profiles
     WHERE user_id = ?
   `).get(userId) as any;
@@ -135,32 +135,47 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   }
 
   const resetMonth = profile.free_evaluation_reset_month;
+  const trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
-  // If new month started or resetMonth not initialized, perform automatic monthly reset
+  // Keep a blocked account's standard free-trial allowance at zero even after
+  // a monthly reset or when a legacy profile still carries a positive quota.
+  if (trialBlocked && Number(profile.monthly_free_evaluations_limit || 0) !== 0) {
+    db.prepare(`
+      UPDATE student_profiles
+      SET monthly_free_evaluations_limit = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(userId);
+    profile.monthly_free_evaluations_limit = 0;
+    syncStudentCreditsToFirestore(userId).catch(() => {});
+  }
+
+  // If new month started or resetMonth not initialized, perform automatic monthly reset.
+  // Paid credits are not modified; blocked accounts do not regain free evaluations.
   if (!resetMonth || resetMonth !== currentMonth) {
+    const monthlyLimit = trialBlocked ? 0 : 2;
     db.prepare(`
       UPDATE student_profiles
       SET monthly_free_evaluations_used = 0,
-          monthly_free_evaluations_limit = 2,
+          monthly_free_evaluations_limit = ?,
           free_evaluation_reset_month = ?,
           free_evaluations_used = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND (free_evaluation_reset_month IS NULL OR free_evaluation_reset_month != ?)
-    `).run(currentMonth, userId, currentMonth);
+    `).run(monthlyLimit, currentMonth, userId, currentMonth);
 
     const paidCredits = getValidStudentCreditBalance(userId);
     syncStudentCreditsToFirestore(userId).catch(() => {});
     return {
       userId,
       monthlyFreeEvaluationsUsed: 0,
-      monthlyFreeEvaluationsLimit: 2,
+      monthlyFreeEvaluationsLimit: monthlyLimit,
       freeEvaluationResetMonth: currentMonth,
-      freeEvaluationsRemaining: 2,
+      freeEvaluationsRemaining: monthlyLimit,
       paidCredits,
     };
   }
 
-  const limit = typeof profile.monthly_free_evaluations_limit === 'number' ? profile.monthly_free_evaluations_limit : 2;
+  const limit = trialBlocked ? 0 : (typeof profile.monthly_free_evaluations_limit === 'number' ? profile.monthly_free_evaluations_limit : 2);
   const used = typeof profile.monthly_free_evaluations_used === 'number' ? profile.monthly_free_evaluations_used : 0;
   const freeRemaining = Math.max(0, limit - used);
   const paidCredits = getValidStudentCreditBalance(userId);
