@@ -299,6 +299,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setErrorMessage('Could not confirm registration settings. Refresh the page before trying again.');
       return;
     }
+    if (phoneOtpConfig?.phoneOtpSetupIncomplete) {
+      setErrorMessage('Mobile verification is not configured yet. Please try again later.');
+      return;
+    }
 
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
