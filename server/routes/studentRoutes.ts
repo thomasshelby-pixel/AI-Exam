@@ -1091,16 +1091,27 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       const duplicateUpload = db.prepare(`
         SELECT e.id, e.display_id, e.student_id, e.created_at
         FROM evaluations e
+        JOIN users prior_user ON prior_user.id = e.student_id
         WHERE e.answer_sheet_sha256 = ?
           AND e.id <> ?
           AND e.student_id <> ?
+          AND UPPER(COALESCE(prior_user.account_classification, 'NORMAL')) <> 'TEST'
           AND UPPER(COALESCE(e.status, '')) NOT IN ('REJECTED', 'FAILED', 'PERSISTENCE_FAILED')
         ORDER BY e.created_at DESC
         LIMIT 1
       `).get(answerSheetSha256, evaluationId, studentId) as any;
 
       if (duplicateUpload) {
-        const message = 'This exact answer-sheet file has already been submitted from another student account. To protect free evaluation credits, this submission was stopped without deducting any credits. If this is a legitimate shared/test file, contact support or use an admin-marked TEST account.';
+        const message = 'Suspicious activity detected: this exact answer-sheet file has already been submitted from another student account. This submission has been stopped and no credits were deducted. Repeated attempts to bypass free evaluation limits using multiple accounts may lead to account suspension or manual review. If this is legitimate testing, contact support or ask an administrator to mark the account as TEST.';
+        db.prepare(`
+          UPDATE users
+          SET suspicious_activity_warning = 1,
+              suspicious_activity_reason = ?,
+              suspicious_activity_at = COALESCE(suspicious_activity_at, CURRENT_TIMESTAMP),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(message, studentId);
+
         db.prepare(`
           UPDATE evaluations
           SET status = 'REJECTED',
