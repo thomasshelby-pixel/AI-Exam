@@ -35,7 +35,7 @@ Firebase App Hosting / Cloud Run does not guarantee a static outbound IP by defa
 
 ## Important behaviour
 
-- The signup flow rejects a phone number already found on an existing student account (normalizing common Indian number formats).
+- The signup flow rejects a phone number already verified on another student account (normalizing common Indian number formats). Legacy phone fields without OTP verification do not reserve a number.
 - Pending phone registration data expires after 15 minutes and uses a 60-second cooldown before a registration can be restarted.
 - The MSG91 access token is validated from the server before an account is created. The browser's success callback alone is not trusted.
 - Keep the feature flag false until the MSG91 runtime secrets are configured and the first end-to-end test is successful.
