@@ -1190,7 +1190,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     let sessionId: string | undefined;
     if (user.role === 'STUDENT') {
       const deviceName = req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']);
-      const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
+      const ipAddress = req.ip || undefined;
 
       const limitCheck = isDeviceLimitExceeded(user.id, user.email, deviceId);
       if (limitCheck.exceeded) {
@@ -1209,6 +1209,17 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         ipAddress,
       });
       sessionId = session.sessionId;
+    }
+
+    // Backfill persistent abuse signals for accounts that existed before this protection
+    // was deployed. This does not change the current account's entitlement; it only
+    // prevents a later account on the same device/browser or IP from receiving a trial.
+    if (user.role === 'STUDENT') {
+      await claimFreeTrialEligibility({
+        userId: user.id,
+        deviceIds: [deviceId],
+        ipAddresses: [req.ip || undefined],
+      });
     }
 
     const effectiveRole: UserRole = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
