@@ -612,7 +612,11 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     const trialDeviceNonce = getOrIssueFreeTrialDeviceNonce(req, res);
     const trialDeviceCookieHash = hashFreeTrialSignal('device-cookie', trialDeviceNonce);
     const clientDeviceHeader = req.headers['x-device-id'];
-    const clientDeviceId = typeof clientDeviceHeader === 'string' ? clientDeviceHeader : undefined;
+    const clientDeviceId =
+      typeof clientDeviceHeader === 'string' &&
+      !['fallback_device_id', 'server_render_env'].includes(clientDeviceHeader.trim())
+        ? clientDeviceHeader
+        : undefined;
     const trialClientDeviceHash = hashFreeTrialSignal('client-device', clientDeviceId);
     const trialIpHash = hashFreeTrialSignal('ip', trustedClientIp);
     // Registration OTP audit stores only the keyed IP hash, never the raw address.
