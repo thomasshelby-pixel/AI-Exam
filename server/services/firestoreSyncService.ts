@@ -533,6 +533,31 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         WHERE user_id = ? AND status = 'ACTIVE'
       `).run(suspended.user_id);
       console.warn(`[FirestoreSync] Enforced active suspension for user ${suspended.user_id} during hydration.`);
+
+      // Repair any legacy suspension that was previously written only to SQLite.
+      // Persist the enforced state so the next instance starts from the same status.
+      try {
+        const enforcedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(suspended.user_id) as Record<string, any> | undefined;
+        if (enforcedUser) {
+          const userSaved = await setFirestoreDoc('users', suspended.user_id, enforcedUser);
+          if (!userSaved) {
+            console.error(`[FirestoreSync] Could not persist recovered suspended status for user ${suspended.user_id}.`);
+          }
+        }
+
+        const activeSuspensionRows = db.prepare(
+          "SELECT * FROM account_suspensions WHERE user_id = ? AND status = 'SUSPENDED'"
+        ).all(suspended.user_id) as Array<Record<string, any>>;
+        for (const suspension of activeSuspensionRows) {
+          if (!suspension.id) continue;
+          const suspensionSaved = await setFirestoreDoc('account_suspensions', String(suspension.id), suspension);
+          if (!suspensionSaved) {
+            console.error(`[FirestoreSync] Could not persist recovered suspension record ${suspension.id}.`);
+          }
+        }
+      } catch (persistSuspensionError) {
+        console.error(`[FirestoreSync] Failed to persist recovered suspension for user ${suspended.user_id}:`, persistSuspensionError);
+      }
     }
 
     // 2.5 Hydrate Student Credit Purchases (Must precede student_profiles so lots are present)
