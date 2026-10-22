@@ -434,6 +434,52 @@ function syncPendingInstituteEnrollments(userId: string, email: string) {
   }
 }
 
+/**
+ * Checks whether an ICAI registration number is already bound to another student.
+ * Exact duplicates are blocked; same numeric SRN with a different region prefix is
+ * held for manual review rather than silently treating the accounts as the same person.
+ */
+function findStudentSrnConflict(input: string): { kind: 'EXACT' | 'REGION_VARIANT' } | null {
+  const normalized = String(input || '').trim().toUpperCase();
+  if (!normalized) return null;
+
+  const exact = db.prepare(`
+    SELECT 1
+    FROM student_profiles
+    WHERE UPPER(TRIM(icai_registration_number)) = ?
+    LIMIT 1
+  `).get(normalized);
+  if (exact) return { kind: 'EXACT' };
+
+  // If only the regional prefix differs while all seven numeric digits match,
+  // don't auto-merge/block as a confirmed duplicate: require staff verification.
+  const regionVariant = db.prepare(`
+    SELECT 1
+    FROM student_profiles
+    WHERE LENGTH(TRIM(icai_registration_number)) = 10
+      AND LENGTH(?) = 10
+      AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = SUBSTR(?, 4)
+      AND SUBSTR(UPPER(TRIM(icai_registration_number)), 1, 3) <> SUBSTR(?, 1, 3)
+    LIMIT 1
+  `).get(normalized, normalized, normalized);
+  if (regionVariant) return { kind: 'REGION_VARIANT' };
+
+  return null;
+}
+
+function studentSrnConflictResponse(res: Response, conflict: { kind: 'EXACT' | 'REGION_VARIANT' }) {
+  if (conflict.kind === 'EXACT') {
+    return res.status(409).json({
+      error: 'An account is already registered with this ICAI Student Registration Number. Please sign in using your existing account email or contact support if you have lost access.',
+      code: 'ICAI_REGISTRATION_ALREADY_USED',
+    });
+  }
+  return res.status(409).json({
+    error: 'This ICAI registration number resembles an existing account but has a different regional prefix. Registration is paused for manual verification. Please contact support to verify your ICAI details.',
+    code: 'ICAI_REGISTRATION_REVIEW_REQUIRED',
+  });
+}
+
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
@@ -450,6 +496,9 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
         code: 'INVALID_SRN',
       });
     }
+
+    const srnConflict = findStudentSrnConflict(srnValidation.normalized);
+    if (srnConflict) return studentSrnConflictResponse(res, srnConflict);
 
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
@@ -636,6 +685,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
     const regData = verification.registrationData;
 
+    // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
+    const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
+    if (verifiedSrnConflict) return studentSrnConflictResponse(res, verifiedSrnConflict);
+
     // Check existing email again to eliminate race condition duplicates
     const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
     if (existing) {
@@ -665,6 +718,13 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     let promoMaxRedemptions = 20;
 
     try {
+      // Final conflict check while holding the database write lock to prevent concurrent duplicate registration.
+      const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
+      if (lockedSrnConflict) {
+        db.exec('ROLLBACK');
+        return studentSrnConflictResponse(res, lockedSrnConflict);
+      }
+
       if (promoCampaign && promoCampaign.is_active && promoCampaign.status !== 'DISABLED' && promoCampaign.status !== 'ARCHIVED') {
         const lockedCount = db.prepare(`
           SELECT COUNT(*) as total
