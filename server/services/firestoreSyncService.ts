@@ -486,7 +486,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           'SELECT * FROM account_suspensions WHERE id = ?'
         ).get(suspension.id) as Record<string, any> | undefined;
         const incomingStatus = String(suspension.status || 'SUSPENDED').toUpperCase();
-        const incomingUpdatedAt = suspension._updatedAt || suspension.updated_at || suspension.suspended_at || suspension.created_at || null;
+        const incomingUpdatedAt = suspension.updated_at || suspension.suspended_at || suspension.created_at || suspension._updatedAt || null;
         const preserveLocalSuspension = shouldPreserveLocalSuspension(
           localSuspension?.status,
           localSuspension?.updated_at || localSuspension?.suspended_at || localSuspension?.created_at,
