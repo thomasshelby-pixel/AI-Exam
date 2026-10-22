@@ -17,7 +17,7 @@ The server's public config endpoint returns the Widget ID and widget token only 
 
 1. Use the existing OTP widget and configure the contact point as **Mobile Number** with **SMS** as the primary/only channel.
 2. Turn off WhatsApp, Voice, and Email channels if SMS-only is intended.
-3. Keep CAPTCHA / reCAPTCHA enabled and restrict the widget to India if the app serves Indian students only.
+3. Do not enable invisible OTP for this flow: the current MSG91 OTP Widget API sequence relies on a send response with `reqId`, followed by OTP verification and access-token validation. Follow the current Web SDK guidance for CAPTCHA compatibility and test the configured widget in staging before production. Restrict the widget to India if the app serves Indian students only.
 4. Configure the widget's retry count, resend delay, and OTP expiration. MSG91's current guide documents a minimum 15-minute expiration for this widget.
 5. Use the provider's approved template where available. MSG91 documents a default SMS template to use while a custom template is awaiting DLT approval, but that is not a promise of a permanent DLT exemption. Its guide also warns that account communication-limit and price-block settings do not work with the default template. Confirm the route, price, and applicable Indian requirements with MSG91 before production usage.
 
