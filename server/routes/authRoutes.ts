@@ -12,6 +12,8 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
+import { verifyMsg91WidgetAccessToken } from '../services/msg91Service.js';
+import { consumePendingPhoneRegistration, isStudentPhoneRegistered, savePendingPhoneRegistration } from '../services/studentPhoneRegistrationService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
 import {
   getAuthoritativeUserMfaStatus,
@@ -36,6 +38,34 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
+
+function isMsg91PhoneRegistrationRequested(): boolean {
+  return String(process.env.MSG91_PHONE_REGISTRATION_ENABLED || '').toLowerCase() === 'true';
+}
+
+function isMsg91PhoneRegistrationConfigured(): boolean {
+  return Boolean(
+    process.env.MSG91_AUTHKEY?.trim() &&
+    process.env.MSG91_WIDGET_ID?.trim() &&
+    process.env.MSG91_WIDGET_TOKEN?.trim()
+  );
+}
+
+// Public widget ID/token are intended for the client SDK; server Authkey is never returned.
+router.get('/registration-otp-config', (_req: Request, res: Response) => {
+  const requested = isMsg91PhoneRegistrationRequested();
+  const configured = isMsg91PhoneRegistrationConfigured();
+  const phoneOtpEnabled = requested && configured;
+
+  return res.json({
+    phoneOtpEnabled,
+    phoneOtpSetupIncomplete: requested && !configured,
+    ...(phoneOtpEnabled ? {
+      widgetId: process.env.MSG91_WIDGET_ID!.trim(),
+      widgetToken: process.env.MSG91_WIDGET_TOKEN!.trim(),
+    } : {}),
+  });
+});
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -566,6 +596,58 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
     const passwordHash = hashPassword(password);
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined;
 
+    // Optional MSG91 mobile-registration flow. Default OFF; the established email OTP path remains unchanged.
+    if (isMsg91PhoneRegistrationRequested()) {
+      if (!isMsg91PhoneRegistrationConfigured()) {
+        return res.status(503).json({
+          error: 'Mobile OTP registration is not fully configured yet. Please try again later.',
+          code: 'PHONE_OTP_NOT_CONFIGURED',
+        });
+      }
+
+      if (typeof phone !== 'string' || !phone.trim()) {
+        return res.status(400).json({ error: 'Mobile number is required for registration.', code: 'PHONE_REQUIRED' });
+      }
+
+      const normalizedPhone = normalizePhoneToE164(phone);
+      if (!normalizedPhone.canonicalPhoneE164) {
+        return res.status(400).json({
+          error: normalizedPhone.error || 'Enter a valid mobile number.',
+          code: 'INVALID_PHONE',
+        });
+      }
+
+      const pendingPhone = savePendingPhoneRegistration({
+        email: normalizedEmail,
+        fullName: fullName.trim(),
+        passwordHash,
+        phone: normalizedPhone.canonicalPhoneE164,
+        icaiRegistrationNumber: srnValidation.normalized,
+        caLevel: caLevel || 'INTERMEDIATE',
+        referralCode: rawReferralCode || null,
+        clientIp,
+      });
+
+      if (!pendingPhone.success) {
+        return res.status(400).json({
+          error: pendingPhone.message,
+          cooldownSeconds: pendingPhone.cooldownSeconds,
+          code: 'PHONE_REGISTRATION_REJECTED',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        requiresOtpVerification: true,
+        requiresPhoneOtpVerification: true,
+        email: normalizedEmail,
+        phoneMasked: pendingPhone.phoneMasked,
+        cooldownSeconds: pendingPhone.cooldownSeconds || 60,
+        expiresInSeconds: pendingPhone.expiresInSeconds || 900,
+        message: pendingPhone.message,
+      });
+    }
+
     // Initiate cryptographic OTP challenge and dispatch branded email via existing Resend configuration
     const otpResult = await initiateStudentRegistrationOtp({
       email: normalizedEmail,
@@ -664,26 +746,60 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
 // Student Registration: Step 2 - Verify OTP & Atomically Create/Activate Student Account
 router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, accessToken } = req.body;
 
-    if (!email || !otp) {
-      return res.status(400).json({ error: 'Email and 6-digit verification code are required.' });
+    if (!email || (!otp && !accessToken)) {
+      return res.status(400).json({ error: 'Email and a valid verification code/token are required.' });
+    }
+    if (typeof email !== 'string') {
+      return res.status(400).json({ error: 'A valid email address is required.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    let regData: any;
+    let phoneVerified = false;
 
-    // Verify and consume OTP atomically (guarantees single-use & handles attempt limits)
-    const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
+    if (accessToken !== undefined && accessToken !== null) {
+      if (typeof accessToken !== 'string' || !accessToken.trim()) {
+        return res.status(400).json({ error: 'A valid mobile verification token is required.' });
+      }
+      if (!isMsg91PhoneRegistrationRequested() || !isMsg91PhoneRegistrationConfigured()) {
+        return res.status(503).json({ error: 'Mobile OTP registration is not enabled or configured.', code: 'PHONE_OTP_NOT_CONFIGURED' });
+      }
 
-    if (!verification.success || !verification.registrationData) {
-      return res.status(400).json({
-        error: verification.message,
-        code: verification.code,
-        attemptsRemaining: verification.attemptsRemaining,
-      });
+      // Never trust the browser callback alone: confirm the access token with MSG91 server-side.
+      const providerVerification = await verifyMsg91WidgetAccessToken(accessToken);
+      if (!providerVerification.success || !providerVerification.phoneE164) {
+        return res.status(400).json({
+          error: providerVerification.error || 'Mobile number verification failed. Please request a new OTP.',
+          code: 'PHONE_OTP_VERIFICATION_FAILED',
+        });
+      }
+
+      const pendingPhone = consumePendingPhoneRegistration(normalizedEmail, providerVerification.phoneE164);
+      if (!pendingPhone.success || !pendingPhone.registrationData) {
+        return res.status(400).json({
+          error: pendingPhone.message,
+          code: 'PHONE_REGISTRATION_NOT_READY',
+        });
+      }
+
+      regData = pendingPhone.registrationData;
+      phoneVerified = true;
+    } else {
+      // Legacy email OTP flow remains supported when phone OTP is not enabled.
+      const verification = verifyAndConsumeRegistrationOtp(normalizedEmail, String(otp));
+
+      if (!verification.success || !verification.registrationData) {
+        return res.status(400).json({
+          error: verification.message,
+          code: verification.code,
+          attemptsRemaining: verification.attemptsRemaining,
+        });
+      }
+
+      regData = verification.registrationData;
     }
-
-    const regData = verification.registrationData;
 
     // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
@@ -718,11 +834,21 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     let promoMaxRedemptions = 20;
 
     try {
-      // Final conflict check while holding the database write lock to prevent concurrent duplicate registration.
+      // Final conflict checks while holding the database write lock.
       const lockedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
       if (lockedSrnConflict) {
         db.exec('ROLLBACK');
         return studentSrnConflictResponse(res, lockedSrnConflict);
+      }
+
+      // Recheck phone uniqueness at account-creation time, not just when the OTP challenge is created.
+      // The widget token is already validated by MSG91 before this point.
+      if (phoneVerified && regData.phone && isStudentPhoneRegistered(regData.phone)) {
+        db.exec('ROLLBACK');
+        return res.status(409).json({
+          error: 'This mobile number is already linked to a student account.',
+          code: 'PHONE_ALREADY_REGISTERED',
+        });
       }
 
       if (promoCampaign && promoCampaign.is_active && promoCampaign.status !== 'DISABLED' && promoCampaign.status !== 'ARCHIVED') {
