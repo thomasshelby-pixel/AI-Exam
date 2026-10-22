@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { getFirestoreDb } from './firestoreDbService.js';
 
 export const FREE_TRIAL_DEVICE_COOKIE = 'ca_free_trial_device';
@@ -92,7 +92,7 @@ export function getOrIssueFreeTrialDeviceSignals(req: Request, res: Response): F
   return { deviceCookieHash, clientDeviceHash };
 }
 
-function getClaimRefs(store: FirebaseFirestore.Firestore, signals: FreeTrialDeviceSignals) {
+function getClaimRefs(store: Firestore, signals: FreeTrialDeviceSignals) {
   const refs = [];
   if (signals.deviceCookieHash) refs.push(store.collection('free_trial_device_claims').doc(signals.deviceCookieHash));
   if (signals.clientDeviceHash) refs.push(store.collection('free_trial_client_device_claims').doc(signals.clientDeviceHash));
