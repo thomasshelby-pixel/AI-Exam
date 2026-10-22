@@ -38,6 +38,7 @@ import {
   FREE_TRIAL_DEVICE_COOKIE,
   FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS,
   claimFreeTrialForAccount,
+  finalizeFreeTrialClaimForAccount,
   releaseFreeTrialClaimForAccount,
   getTrustedAppHostingClientIp,
   hashFreeTrialSignal,
@@ -772,17 +773,20 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       clientDeviceHash: typeof regData.trialClientDeviceHash === 'string' ? regData.trialClientDeviceHash : null,
       ipHash: typeof regData.trialIpHash === 'string' ? regData.trialIpHash : null,
     };
-    let freeTrialGranted = checkPermanentFreeAccess(normalizedEmail);
+    const permanentFreeExemption = checkPermanentFreeAccess(normalizedEmail);
+    let freeTrialGranted = permanentFreeExemption;
     let freeTrialClaimHeld = false;
     let freeTrialBlockReason: string | undefined;
 
-    if (!freeTrialGranted) {
+    if (!permanentFreeExemption) {
       const trialClaim = await claimFreeTrialForAccount(freeTrialClaimInput);
-      freeTrialGranted = trialClaim.eligible;
+      // This is only a short-lived reservation. Grant eligibility after the SQL account
+      // transaction commits and the reservation is finalized in Firestore.
       freeTrialClaimHeld = trialClaim.eligible;
+      freeTrialGranted = false;
       freeTrialBlockReason = trialClaim.reason;
 
-      if (!freeTrialGranted && promoCampaign) {
+      if (!trialClaim.eligible && promoCampaign) {
         // No free promotion/trial benefits on a device/network whose claim is already used.
         promoCampaign = null;
         console.info('[FreeTrialAbuse] Free promotional entitlement withheld.', {
@@ -912,6 +916,33 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       if (freeTrialClaimHeld) await releaseFreeTrialClaimForAccount(freeTrialClaimInput);
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Finalize the global claim only after the account row exists. If the process
+    // crashes before this point, the reservation expires after 15 minutes rather than
+    // permanently consuming a trial that no account received.
+    if (freeTrialClaimHeld) {
+      const finalized = await finalizeFreeTrialClaimForAccount(freeTrialClaimInput);
+      if (finalized) {
+        let grantTransactionStarted = false;
+        try {
+          db.exec('BEGIN IMMEDIATE');
+          grantTransactionStarted = true;
+          db.prepare('UPDATE users SET free_trial_eligible = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+          db.prepare('UPDATE student_profiles SET monthly_free_evaluations_limit = 2, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?').run(userId);
+          db.exec('COMMIT');
+          grantTransactionStarted = false;
+          freeTrialGranted = true;
+          freeTrialClaimHeld = false;
+        } catch (trialGrantError: unknown) {
+          if (grantTransactionStarted) {
+            try { db.exec('ROLLBACK'); } catch {}
+          }
+          console.error('[FreeTrialAbuse] Claim finalized, but entitlement persistence failed; this account receives no free trial until repaired.', trialGrantError instanceof Error ? trialGrantError.message : 'unknown error');
+        }
+      } else {
+        console.warn('[FreeTrialAbuse] Trial reservation could not be finalized. Signup continues without a free trial.');
+      }
     }
 
     // Post-commit notifications, audit logging, and durable Firestore sync
