@@ -622,9 +622,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
             )}
 
+            {phoneOtpMode && <div id="msg91-captcha" className="flex justify-center min-h-2" />}
+
             {phoneOtpMode && !phoneOtpSent && (
               <div className="space-y-3">
-                <div id="msg91-captcha" className="flex justify-center min-h-2" />
                 <button
                   id="btn-send-mobile-otp"
                   type="button"
