@@ -650,6 +650,22 @@ export function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS account_status_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      reason TEXT,
+      changed_by TEXT,
+      source TEXT NOT NULL DEFAULT 'SERVER',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, version),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_account_status_events_latest
+      ON account_status_events(user_id, version DESC);
+
     CREATE TABLE IF NOT EXISTS revocation_requests (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
