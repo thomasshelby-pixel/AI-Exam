@@ -1409,6 +1409,9 @@ function runMigrations() {
 
   // Ensure users and entities support account classification (NORMAL / TEST)
   addColumnIfNotExists('users', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('users', 'suspicious_activity_warning', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists('users', 'suspicious_activity_reason', 'TEXT');
+  addColumnIfNotExists('users', 'suspicious_activity_at', 'TEXT');
   addColumnIfNotExists('institutes', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('payment_orders', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
