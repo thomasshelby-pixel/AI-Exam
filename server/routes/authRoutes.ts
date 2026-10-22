@@ -68,6 +68,9 @@ function getOrIssueFreeTrialDeviceNonce(req: Request, res: Response): string | n
     `Max-Age=${FREE_TRIAL_DEVICE_COOKIE_MAX_AGE_SECONDS}`,
   ];
   if (isSecureRequest) cookieParts.push('Secure');
+  if (req.hostname === 'caexamcheckerai.com' || req.hostname === 'www.caexamcheckerai.com') {
+    cookieParts.push('Domain=.caexamcheckerai.com');
+  }
   res.append('Set-Cookie', cookieParts.join('; '));
   return nonce;
 }
@@ -786,13 +789,19 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       freeTrialGranted = false;
       freeTrialBlockReason = trialClaim.reason;
 
-      if (!trialClaim.eligible && promoCampaign) {
-        // No free promotion/trial benefits on a device/network whose claim is already used.
-        promoCampaign = null;
-        console.info('[FreeTrialAbuse] Free promotional entitlement withheld.', {
+      if (!trialClaim.eligible) {
+        console.info('[FreeTrialAbuse] Signup cannot receive a free-trial claim.', {
           userId,
           reason: freeTrialBlockReason || 'UNKNOWN',
         });
+        if (promoCampaign) {
+          // No free promotion/trial benefits on a device/network whose claim is already used.
+          promoCampaign = null;
+          console.info('[FreeTrialAbuse] Free promotional entitlement withheld for this signup.', {
+            userId,
+            reason: freeTrialBlockReason || 'UNKNOWN',
+          });
+        }
       }
     }
 
