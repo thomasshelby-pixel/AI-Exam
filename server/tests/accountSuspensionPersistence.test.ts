@@ -23,6 +23,9 @@ test('Firestore hydration restores suspension records and prevents stale ACTIVE 
   assert.match(firestoreSync, /WHERE s\.status = 'SUSPENDED' AND u\.status = 'ACTIVE'/);
   assert.match(firestoreSync, /SET status = 'SUSPENDED', updated_at = CURRENT_TIMESTAMP/);
   assert.match(firestoreSync, /Enforced active suspension for user/);
+  assert.match(firestoreSync, /Repair any legacy suspension that was previously written only to SQLite/);
+  assert.match(firestoreSync, /setFirestoreDoc\('users', suspended\.user_id, enforcedUser\)/);
+  assert.match(firestoreSync, /setFirestoreDoc\('account_suspensions', String\(suspension\.id\), suspension\)/);
 });
 
 test('appeal decisions also persist the resulting account and suspension states', () => {
