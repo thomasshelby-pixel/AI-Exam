@@ -91,5 +91,5 @@ test('trial denial remains persistent through monthly resets and Firestore hydra
   assert.match(studentCredit, /SELECT free_trial_eligible FROM users WHERE id = \?/);
   assert.match(studentCredit, /const freeTrialLimit = trialEligible \? 2 : 0/);
   assert.match(database, /addColumnIfNotExists\('users', 'free_trial_eligible', 'INTEGER NOT NULL DEFAULT 1'\)/);
-  assert.match(hydration, /free_trial_eligible = CASE WHEN users\.free_trial_eligible = 1 THEN 1 ELSE excluded\.free_trial_eligible END/);
+  assert.match(hydration, /free_trial_eligible = users\.free_trial_eligible/);
 });
