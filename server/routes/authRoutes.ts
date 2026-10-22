@@ -875,12 +875,12 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 
       const nowIso = new Date().toISOString();
 
-      // Insert active student account with verified email
+      // Mobile registration proves phone ownership, not email ownership. Track them separately.
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, phone_verified, phone_verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -888,7 +888,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         regData.fullName.trim(),
         regData.phone?.trim() || null,
         role,
-        nowIso
+        phoneVerified ? 0 : 1,
+        phoneVerified ? null : nowIso,
+        phoneVerified ? 1 : 0,
+        phoneVerified ? nowIso : null
       );
 
       // Insert student profile with permanent unique student code
@@ -1020,11 +1023,17 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Auto-link any pending coaching institute enrollment for this email
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
-    // Welcome Notification
+    // Welcome Notification — keep email-verification wording accurate for the phone OTP path.
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
-      VALUES (?, ?, 'Welcome to CA Exam Checker AI', 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!', 'SYSTEM')
-    `).run(`notif_${crypto.randomBytes(8).toString('hex')}`, userId);
+      VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
+    `).run(
+      `notif_${crypto.randomBytes(8).toString('hex')}`,
+      userId,
+      phoneVerified
+        ? 'Your mobile number is verified and your account is active! You receive 2 free full-paper evaluations.'
+        : 'Your email is verified and your account is active! You receive 2 free full-paper evaluations!'
+    );
 
     // Audit log
     db.prepare(`
@@ -1060,7 +1069,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         fullName: regData.fullName.trim(),
         role,
         hasPermanentFreeAccess: isPermanentFree,
-        emailVerified: true,
+        emailVerified: !phoneVerified,
+        phoneVerified,
       },
       promoApplied: !!promoCampaign,
       promoDetails: promoCampaign ? {
