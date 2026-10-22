@@ -9,7 +9,9 @@ const suspensionStateService = readFileSync(new URL('../services/suspensionState
 
 
 test('admin status changes persist both the user document and suspension ledger', () => {
-  assert.match(adminRoutes, /async function persistUserStatusAndSuspensions\(userId: string\)/);
+  assert.match(adminRoutes, /async function persistUserStatusAndSuspensions\(/);
+  assert.match(adminRoutes, /appendAccountStatusEvent\(/);
+  assert.match(adminRoutes, /return eventPersisted && userPersisted && suspensionsPersisted/);
   assert.match(adminRoutes, /setFirestoreDoc\('account_suspensions', String\(suspension\.id\), suspension\)/);
   assert.match(adminRoutes, /setFirestoreDoc\('users', userId, user\)/);
 
@@ -17,12 +19,16 @@ test('admin status changes persist both the user document and suspension ledger'
   const end = adminRoutes.indexOf('// Revocation Requests Listing (Admin Portal)', start);
   assert.ok(start >= 0 && end > start, 'Admin status route must exist');
   const statusRoute = adminRoutes.slice(start, end);
-  assert.match(statusRoute, /await persistUserStatusAndSuspensions\(userId\)/);
+  assert.match(statusRoute, /await persistUserStatusAndSuspensions\(userId, \{/);
   assert.match(statusRoute, /STATUS_PERSISTENCE_FAILED/);
 });
 
 test('Firestore hydration restores suspension records and prevents stale ACTIVE user documents from reactivating users', () => {
   assert.match(firestoreSync, /readDocs<any>\('account_suspensions'\)/);
+  assert.match(firestoreSync, /readDocs<any>\('account_status_events'\)/);
+  assert.match(firestoreSync, /latestStatusEventByUser/);
+  assert.match(firestoreSync, /Backfilled durable suspension event/);
+  assert.match(firestoreSync, /Enforce the highest versioned status event/);
   assert.match(firestoreSync, /WHERE s\.status = 'SUSPENDED' AND u\.status = 'ACTIVE'/);
   assert.match(firestoreSync, /SET status = 'SUSPENDED', updated_at = CURRENT_TIMESTAMP/);
   assert.match(firestoreSync, /Enforced active suspension for user/);
@@ -36,7 +42,7 @@ test('appeal decisions also persist the resulting account and suspension states'
   const end = adminRoutes.indexOf('// Adjust student credits manually', start);
   assert.ok(start >= 0 && end > start, 'Revocation review route must exist');
   const reviewRoute = adminRoutes.slice(start, end);
-  assert.match(reviewRoute, /await persistUserStatusAndSuspensions\(request\.user_id\)/);
+  assert.match(reviewRoute, /await persistUserStatusAndSuspensions\(request\.user_id, \{/);
   assert.match(reviewRoute, /STATUS_PERSISTENCE_FAILED/);
 });
 
