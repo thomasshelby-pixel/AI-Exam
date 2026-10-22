@@ -17,6 +17,7 @@ import { isEntityTombstoned } from './deletionPersistence.js';
 
 import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
 import { decryptMfaSecret } from './mfaCryptoService.js';
+import { shouldPreserveLocalSuspension } from './suspensionState.js';
 
 /**
  * Safely converts an arbitrary value into a valid SQLite parameter string or null.
@@ -481,6 +482,40 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     for (const suspension of accountSuspensionDocs) {
       if (!suspension.id || !suspension.user_id) continue;
       try {
+        const localSuspension = db.prepare(
+          'SELECT * FROM account_suspensions WHERE id = ?'
+        ).get(suspension.id) as Record<string, any> | undefined;
+        const incomingStatus = String(suspension.status || 'SUSPENDED').toUpperCase();
+        const incomingUpdatedAt = suspension._updatedAt || suspension.updated_at || suspension.suspended_at || suspension.created_at || null;
+        const preserveLocalSuspension = shouldPreserveLocalSuspension(
+          localSuspension?.status,
+          localSuspension?.updated_at || localSuspension?.suspended_at || localSuspension?.created_at,
+          incomingStatus,
+          incomingUpdatedAt,
+        );
+
+        // A late/stale Firestore REINSTATED write can arrive after a newer admin suspension.
+        // Do not overwrite the newer local suspension status or its accompanying audit details.
+        const effectiveSuspension = preserveLocalSuspension && localSuspension
+          ? {
+              ...suspension,
+              id: localSuspension.id,
+              user_id: localSuspension.user_id,
+              reason: localSuspension.reason,
+              internal_note: localSuspension.internal_note,
+              suspended_by: localSuspension.suspended_by,
+              status: localSuspension.status,
+              created_at: localSuspension.created_at,
+              previous_status: localSuspension.previous_status,
+              suspended_at: localSuspension.suspended_at,
+              updated_at: localSuspension.updated_at,
+            }
+          : suspension;
+
+        if (preserveLocalSuspension) {
+          console.warn(`[FirestoreSync] Ignored stale ${incomingStatus} status for newer suspension ${suspension.id}.`);
+        }
+
         db.prepare(`
           INSERT INTO account_suspensions (
             id, user_id, reason, internal_note, suspended_by, status,
@@ -495,16 +530,16 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             suspended_at = COALESCE(excluded.suspended_at, account_suspensions.suspended_at),
             updated_at = COALESCE(excluded.updated_at, account_suspensions.updated_at)
         `).run(
-          suspension.id,
-          suspension.user_id,
-          suspension.reason || 'Account suspended by administrator.',
-          suspension.internal_note || null,
-          suspension.suspended_by || 'system',
-          suspension.status || 'SUSPENDED',
-          suspension.created_at || null,
-          suspension.previous_status || null,
-          suspension.suspended_at || null,
-          suspension.updated_at || null
+          effectiveSuspension.id,
+          effectiveSuspension.user_id,
+          effectiveSuspension.reason || 'Account suspended by administrator.',
+          effectiveSuspension.internal_note || null,
+          effectiveSuspension.suspended_by || 'system',
+          effectiveSuspension.status || 'SUSPENDED',
+          effectiveSuspension.created_at || null,
+          effectiveSuspension.previous_status || null,
+          effectiveSuspension.suspended_at || null,
+          effectiveSuspension.updated_at || null
         );
       } catch (suspensionErr) {
         console.warn(`[FirestoreSync] Failed to hydrate suspension record ${suspension.id}:`, suspensionErr);
