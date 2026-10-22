@@ -386,7 +386,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
         const existingLocalUser = db.prepare(`
-          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, updated_at
+          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, free_trial_eligible, updated_at
           FROM users WHERE id = ? OR lower(email) = ?
         `).get(targetId, normEmail) as {
           id: string;
@@ -395,6 +395,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           mfa_enrolled_at: string | null;
           totp_secret: string | null;
           mfa_reset_required: number | null;
+          free_trial_eligible: number | null;
           updated_at: string | null;
         } | undefined;
         const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
@@ -419,10 +420,15 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           : u.mfa_reset_required === 1 ? 1 : 0;
         const uEmailVerified = u.email_verified !== undefined ? (u.email_verified ? 1 : 0) : 1;
         const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
+        // Legacy documents default to eligible, but a durable local grant/denial must not be
+        // accidentally overwritten by a stale or sparse Firestore user projection.
+        const incomingFreeTrialEligible = u.free_trial_eligible === undefined || u.free_trial_eligible === null
+          ? (existingLocalUser?.free_trial_eligible ?? 1)
+          : Number(u.free_trial_eligible) === 0 ? 0 : 1;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, free_trial_eligible, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -439,6 +445,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
+            free_trial_eligible = CASE WHEN users.free_trial_eligible = 1 THEN 1 ELSE excluded.free_trial_eligible END,
             mfa_enabled = CASE
               WHEN excluded.mfa_reset_required = 1 THEN 0
               WHEN excluded.mfa_enabled IS NULL AND excluded.totp_secret IS NULL AND excluded.mfa_reset_required IS NULL THEN users.mfa_enabled
@@ -469,7 +476,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
           targetRole, targetStatus, userClassification,
-          uEmailVerified, uEmailVerifiedAt,
+          uEmailVerified, uEmailVerifiedAt, incomingFreeTrialEligible,
           uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
         );
