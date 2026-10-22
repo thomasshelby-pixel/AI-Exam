@@ -112,6 +112,13 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
 
 type AccountStatusUser = { id: string; status: string };
 
+export async function reconcileAuthoritativeAccountStatus(
+  user: AccountStatusUser,
+): Promise<AccountStatusSnapshot | null> {
+  const snapshot = await getAccountStatusSnapshot(user.id);
+  return reconcileLocalAccountStatus(user, snapshot);
+}
+
 function reconcileLocalAccountStatus(
   user: AccountStatusUser,
   snapshot: AccountStatusSnapshot | null,
@@ -214,7 +221,7 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
     // an App Hosting instance with a stale SQLite cache from authorizing an old ACTIVE row.
     let accountStatusSnapshot: AccountStatusSnapshot | null = null;
     try {
-      accountStatusSnapshot = await getAccountStatusSnapshot(user.id);
+      accountStatusSnapshot = await reconcileAuthoritativeAccountStatus(user);
     } catch (statusError) {
       console.error('[Auth] Authoritative account-status lookup failed:', statusError instanceof Error ? statusError.message : 'unknown error');
       return res.status(503).json({
@@ -222,7 +229,6 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
         code: 'ACCOUNT_STATUS_UNAVAILABLE',
       });
     }
-    reconcileLocalAccountStatus(user, accountStatusSnapshot);
 
     // Check account status
     if (user.status === 'SUSPENDED') {
@@ -296,6 +302,11 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
           });
         }
       }
+    }
+
+    if (user) {
+      // Optional-auth routes (including /me) must not display a stale ACTIVE cache either.
+      await reconcileAuthoritativeAccountStatus(user);
     }
 
     const rawCookies = (req as any).cookies || {};
@@ -392,7 +403,7 @@ export function authenticateRevocationToken(req: AuthRequest, res: Response, nex
   }
 }
 
-export function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+export async function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
