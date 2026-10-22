@@ -945,6 +945,52 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       }
     }
 
+    // If the reservation failed to finalize, remove any signup promo redemption created
+    // inside the account transaction. Never leave free campaign credits on a denied trial.
+    if (!freeTrialGranted && promoCampaign) {
+      const rejectedRedemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
+      let cleanupStarted = false;
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        cleanupStarted = true;
+        db.prepare('DELETE FROM referral_redemptions WHERE id = ? AND user_id = ?')
+          .run(rejectedRedemptionId, userId);
+
+        const remainingRedemptions = db.prepare(`
+          SELECT COUNT(*) as total
+          FROM referral_redemptions r
+          LEFT JOIN users u ON u.id = r.user_id
+          WHERE UPPER(r.referral_code) = UPPER(?)
+            AND (u.account_classification IS NULL OR u.account_classification != 'TEST')
+        `).get(rawReferralCode) as { total: number };
+        const currentTime = new Date();
+        const campaignInDateRange =
+          (!promoCampaign.start_date || new Date(promoCampaign.start_date) <= currentTime) &&
+          (!promoCampaign.end_date || new Date(promoCampaign.end_date) >= currentTime);
+        if (
+          Number(remainingRedemptions.total || 0) < Number(promoCampaign.max_redemptions ?? 20) &&
+          promoCampaign.is_active &&
+          promoCampaign.status !== 'DISABLED' &&
+          promoCampaign.status !== 'ARCHIVED' &&
+          campaignInDateRange
+        ) {
+          db.prepare(`
+            UPDATE referral_campaigns
+            SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP
+            WHERE UPPER(code) = UPPER(?) AND status = 'EXHAUSTED'
+          `).run(rawReferralCode);
+        }
+        db.exec('COMMIT');
+        cleanupStarted = false;
+      } catch (cleanupError: unknown) {
+        if (cleanupStarted) {
+          try { db.exec('ROLLBACK'); } catch {}
+        }
+        console.error('[FreeTrialAbuse] Could not clean up a promo redemption after trial finalization failed.', cleanupError instanceof Error ? cleanupError.message : 'unknown error');
+      }
+      promoCampaign = null;
+    }
+
     // Post-commit notifications, audit logging, and durable Firestore sync
     if (promoCampaign) {
       const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
