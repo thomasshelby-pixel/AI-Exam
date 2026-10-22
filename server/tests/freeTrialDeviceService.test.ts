@@ -9,7 +9,7 @@ function makeResponse() {
   const response = {
     setHeader(name: string, value: string | string[]) {
       if (name.toLowerCase() === 'set-cookie') cookieHeader = value;
-      return response;
+      return undefined;
     },
     getCookieHeader: () => cookieHeader,
   };
