@@ -118,6 +118,48 @@ function getClaimsStore(): Firestore {
 }
 
 /**
+ * Releases only the claims owned by a newly generated userId when account creation fails
+ * before commit. A committed account must never call this function.
+ */
+export async function releaseFreeTrialClaimForAccount(params: {
+  userId: string;
+  deviceCookieHash: string | null;
+  clientDeviceHash: string | null;
+  ipHash: string | null;
+}): Promise<void> {
+  const { userId, deviceCookieHash, clientDeviceHash, ipHash } = params;
+  if (!deviceCookieHash || !ipHash) return;
+
+  try {
+    const store = getClaimsStore();
+    const refs = [
+      store.collection('free_trial_device_claims').doc(deviceCookieHash),
+      ...(clientDeviceHash ? [store.collection('free_trial_client_device_claims').doc(clientDeviceHash)] : []),
+      store.collection('free_trial_ip_claims').doc(ipHash),
+    ];
+
+    await store.runTransaction(async (transaction) => {
+      const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+      const allowedToRelease: Array<{ index: number; ref: typeof refs[number] }> = [];
+
+      snapshots.forEach((snapshot, index) => {
+        if (!snapshot.exists) return;
+        const data = snapshot.data() || {};
+        if (data.userId !== userId) return;
+        // The IP lock is shared by all accounts, so release it only if it still belongs
+        // to this exact device claim. Never release another successful signup's IP.
+        if (index === refs.length - 1 && data.deviceCookieHash !== deviceCookieHash) return;
+        allowedToRelease.push({ index, ref: refs[index] });
+      });
+
+      for (const item of allowedToRelease) transaction.delete(item.ref);
+    });
+  } catch (error: unknown) {
+    console.error('[FreeTrialAbuse] Could not release an uncommitted signup claim:', error instanceof Error ? error.message : 'unknown error');
+  }
+}
+
+/**
  * Atomic, multi-instance-safe trial claim. A browser/device can receive one claim ever;
  * an IP address can receive one claim within a rolling 180-day window. Only keyed HMACs
  * are persisted; raw IP addresses and cookie tokens are never stored in the claims ledger.
