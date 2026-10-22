@@ -354,6 +354,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setIsLoading(true);
     if (phoneOtpMode) {
+      if (!phoneOtpRequestId) {
+        setIsLoading(false);
+        setErrorMessage('The OTP request reference is missing. Please edit the details and request a new OTP.');
+        return;
+      }
       if (typeof window.verifyOtp !== 'function') {
         setIsLoading(false);
         setErrorMessage('Mobile verification is not ready. Refresh the page and request a new OTP.');
@@ -453,7 +458,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsLoading(true);
     try {
       window.sendOtp(identifier, (data: unknown) => {
-        setPhoneOtpRequestId(extractMsg91RequestId(data));
+        const requestId = extractMsg91RequestId(data);
+        if (!requestId) {
+          setPhoneOtpSent(false);
+          setIsLoading(false);
+          setErrorMessage('MSG91 did not return the OTP request ID required for verification. Please try sending the OTP again.');
+          return;
+        }
+        setPhoneOtpRequestId(requestId);
         setPhoneOtpSent(true);
         setOtpCode('');
         setResendCooldown(60);
