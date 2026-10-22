@@ -675,7 +675,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           uId, p.student_code || p.studentCode || null, p.icai_registration_number || '', p.ca_level || 'INTERMEDIATE',
           p.free_evaluations_used || 0,
           p.monthly_free_evaluations_used || 0,
-          p.monthly_free_evaluations_limit || 2,
+          p.monthly_free_evaluations_limit ?? 2,
           p.free_evaluation_reset_month || '2026-09',
           finalCredits, finalCredits, p.free_trial_blocked || 0,
           p.institute_id || null, p.batch_id || null, p.created_at || null
