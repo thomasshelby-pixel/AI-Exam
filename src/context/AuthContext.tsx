@@ -94,8 +94,9 @@ interface AuthContextType {
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
-  }) => Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
+  }) => Promise<{ requiresOtpVerification: boolean; requiresPhoneOtpVerification?: boolean; email: string; emailMasked?: string; phoneMasked?: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
   verifyRegisterOtp: (email: string, otp: string) => Promise<User>;
+  verifyRegisterPhoneOtp: (email: string, accessToken: string) => Promise<User>;
   resendRegisterOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
   submitRevocationRequest: (appealReason: string, explanation: string, supportingInfo?: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
@@ -764,8 +765,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
-  }): Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }> => {
-    return await apiRequest<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>(
+  }): Promise<{ requiresOtpVerification: boolean; requiresPhoneOtpVerification?: boolean; email: string; emailMasked?: string; phoneMasked?: string; cooldownSeconds: number; expiresInSeconds: number; message: string }> => {
+    return await apiRequest<{ requiresOtpVerification: boolean; requiresPhoneOtpVerification?: boolean; email: string; emailMasked?: string; phoneMasked?: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>(
       '/api/auth/register',
       {
         method: 'POST',
@@ -778,6 +779,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await apiRequest<{ token: string; user: User }>('/api/auth/verify-otp', {
       method: 'POST',
       body: JSON.stringify({ email, otp }),
+    });
+
+    localStorage.setItem('ca_exam_checker_token', res.token);
+    setToken(res.token);
+    setUser(res.user);
+    setSuspendedAccount(null);
+
+    refreshUser().catch(() => {});
+    return res.user;
+  };
+
+  const verifyRegisterPhoneOtp = async (email: string, accessToken: string): Promise<User> => {
+    const res = await apiRequest<{ token: string; user: User }>('/api/auth/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email, accessToken }),
     });
 
     localStorage.setItem('ca_exam_checker_token', res.token);
@@ -936,6 +952,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         initiateRegister,
         verifyRegisterOtp,
+        verifyRegisterPhoneOtp,
         resendRegisterOtp,
         submitRevocationRequest,
         logout,
