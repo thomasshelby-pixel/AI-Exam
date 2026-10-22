@@ -475,6 +475,66 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
     }
 
+    // 2.1 Hydrate the durable suspension ledger before relying on user status alone.
+    // Admin status changes must survive Cloud Run/App Hosting instance replacement.
+    const accountSuspensionDocs = await readDocs<any>('account_suspensions');
+    for (const suspension of accountSuspensionDocs) {
+      if (!suspension.id || !suspension.user_id) continue;
+      try {
+        db.prepare(`
+          INSERT INTO account_suspensions (
+            id, user_id, reason, internal_note, suspended_by, status,
+            created_at, previous_status, suspended_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            reason = excluded.reason,
+            internal_note = excluded.internal_note,
+            suspended_by = excluded.suspended_by,
+            status = excluded.status,
+            previous_status = COALESCE(excluded.previous_status, account_suspensions.previous_status),
+            suspended_at = COALESCE(excluded.suspended_at, account_suspensions.suspended_at),
+            updated_at = COALESCE(excluded.updated_at, account_suspensions.updated_at)
+        `).run(
+          suspension.id,
+          suspension.user_id,
+          suspension.reason || 'Account suspended by administrator.',
+          suspension.internal_note || null,
+          suspension.suspended_by || 'system',
+          suspension.status || 'SUSPENDED',
+          suspension.created_at || null,
+          suspension.previous_status || null,
+          suspension.suspended_at || null,
+          suspension.updated_at || null
+        );
+      } catch (suspensionErr) {
+        console.warn(`[FirestoreSync] Failed to hydrate suspension record ${suspension.id}:`, suspensionErr);
+        if (requireComplete) throw suspensionErr;
+      }
+    }
+
+    // An active suspension record takes precedence over a stale ACTIVE value in the
+    // users collection. Never reactivate an account just because that document is old.
+    const accountsWithActiveSuspension = db.prepare(`
+      SELECT DISTINCT s.user_id
+      FROM account_suspensions s
+      INNER JOIN users u ON u.id = s.user_id
+      WHERE s.status = 'SUSPENDED' AND u.status = 'ACTIVE'
+    `).all() as Array<{ user_id: string }>;
+
+    for (const suspended of accountsWithActiveSuspension) {
+      db.prepare(`
+        UPDATE users
+        SET status = 'SUSPENDED', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'ACTIVE'
+      `).run(suspended.user_id);
+      db.prepare(`
+        UPDATE user_sessions
+        SET status = 'REVOKED', revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+        WHERE user_id = ? AND status = 'ACTIVE'
+      `).run(suspended.user_id);
+      console.warn(`[FirestoreSync] Enforced active suspension for user ${suspended.user_id} during hydration.`);
+    }
+
     // 2.5 Hydrate Student Credit Purchases (Must precede student_profiles so lots are present)
     const creditPurchasesEarly = await readDocs<any>('student_credit_purchases');
     for (const cp of creditPurchasesEarly) {
