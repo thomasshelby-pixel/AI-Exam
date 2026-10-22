@@ -166,8 +166,8 @@ export async function claimFreeTrialForAccount(params: {
         if (!expiresAtMs || expiresAtMs > now) {
           return { eligible: false, reason: 'IP_ALREADY_USED' };
         }
-        // The IP cooldown has expired. Device claims remain permanent.
-        transaction.delete(ipRef);
+        // The IP cooldown expired. Replacing the existing record below is atomic.
+        // Device claims remain permanent, so an old browser cannot reclaim a trial.
       }
 
       const ipExpiresAtMs = now + IP_TRIAL_LOCK_WINDOW_MS;
