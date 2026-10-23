@@ -116,10 +116,12 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   const currentMonth = getCurrentServerMonth();
 
   const profile = db.prepare(`
-    SELECT user_id, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
-           free_evaluations_used, purchased_credits, paid_credits, free_trial_blocked
-    FROM student_profiles
-    WHERE user_id = ?
+    SELECT p.user_id, p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit, p.free_evaluation_reset_month,
+           p.free_evaluations_used, p.purchased_credits, p.paid_credits, p.free_trial_blocked,
+           p.icai_registration_number, u.email_verified, u.status AS account_status, u.role AS account_role
+    FROM student_profiles p
+    JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = ?
   `).get(userId) as any;
 
   if (!profile) {
@@ -134,8 +136,93 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
     };
   }
 
-  const resetMonth = profile.free_evaluation_reset_month;
-  const trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
+  let resetMonth = profile.free_evaluation_reset_month;
+  let trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
+
+  // Repair legacy false-blocks only when the authenticated identity can be
+  // independently checked in our account registry. Device/IP signals are noisy
+  // (shared PCs, carrier NAT, changing networks), so they must not permanently
+  // deny a verified, active student whose ICAI registration identity is unique.
+  // We never grant an extra evaluation: usage is reconstructed from the current
+  // month's authoritative consumption ledger and paid balances are untouched.
+  if (trialBlocked || Number(profile.monthly_free_evaluations_limit || 0) <= 0) {
+    const srn = String(profile.icai_registration_number || '').trim().toUpperCase();
+    const srnDigits = srn.length === 10 ? srn.slice(3) : '';
+    const duplicateIdentity = srnDigits
+      ? db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM student_profiles
+          WHERE user_id != ?
+            AND LENGTH(TRIM(icai_registration_number)) = 10
+            AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = ?
+        `).get(userId, srnDigits) as { count: number }
+      : { count: 1 };
+    const identityVerified =
+      Number(profile.email_verified) === 1 &&
+      profile.account_status === 'ACTIVE' &&
+      profile.account_role === 'STUDENT' &&
+      /^[A-Z]{3}\\d{7}$/.test(srn) &&
+      Number(duplicateIdentity.count) === 0;
+
+    if (identityVerified) {
+      const monthStart = `${currentMonth}-01 00:00:00`;
+      const rows = db.prepare(`
+        SELECT evaluation_id, source, amount
+        FROM credit_ledger
+        WHERE student_id = ?
+          AND evaluation_id IS NOT NULL
+          AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
+          AND datetime(created_at) >= datetime(?)
+        ORDER BY rowid ASC
+      `).all(userId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
+      const latest = new Map<string, { source: string; amount: number }>();
+      for (const row of rows) latest.set(row.evaluation_id, row);
+      const ledgerUsed = [...latest.values()].filter((row) =>
+        row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
+      ).length;
+
+      if (ledgerUsed <= 2) {
+        const repair = db.prepare(`
+          UPDATE student_profiles
+          SET free_trial_blocked = 0,
+              monthly_free_evaluations_used = ?,
+              monthly_free_evaluations_limit = 2,
+              free_evaluation_reset_month = ?,
+              free_evaluations_used = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+            AND (COALESCE(free_trial_blocked, 0) = 1 OR COALESCE(monthly_free_evaluations_limit, 0) <= 0)
+        `).run(ledgerUsed, currentMonth, ledgerUsed, userId);
+
+        if (repair.changes > 0) {
+          trialBlocked = false;
+          resetMonth = currentMonth;
+          profile.free_trial_blocked = 0;
+          profile.monthly_free_evaluations_used = ledgerUsed;
+          profile.monthly_free_evaluations_limit = 2;
+          profile.free_evaluation_reset_month = currentMonth;
+          profile.free_evaluations_used = ledgerUsed;
+
+          try {
+            db.prepare(`
+              INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+              VALUES (?, ?, 'FREE_TRIAL_FALSE_BLOCK_REPAIRED', 'STUDENT_PROFILE', ?, ?)
+            `).run(
+              'aud_' + crypto.randomBytes(8).toString('hex'),
+              userId,
+              userId,
+              'Restored monthly free quota after checking verified email, active student status, unique ICAI registration identity, and current-month consumption ledger.'
+            );
+          } catch (auditError) {
+            console.warn('[StudentCreditService] Could not write free-trial repair audit log:', auditError);
+          }
+
+          console.info('[StudentCreditService] Repaired false-blocked free quota for verified student:', userId);
+          syncStudentCreditsToFirestore(userId).catch(() => {});
+        }
+      }
+    }
+  }
 
   // Reconcile the monthly counter against the authoritative consumption ledger.
   // Both counters are normally changed in the same transaction; a mismatch (for
