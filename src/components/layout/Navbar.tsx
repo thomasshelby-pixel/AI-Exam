@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useTheme } from '../../context/ThemeContext.js';
 import { featureApi } from '../../api/featureClient.js';
+import { apiRequest } from '../../api/client.js';
 import { BrandLogo } from '../common/BrandLogo';
 import {
   FileCheck2,
@@ -31,6 +32,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
   const { user, profile, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [authoritativeFreeRemaining, setAuthoritativeFreeRemaining] = useState<number | null>(null);
+  const [authoritativePaidCredits, setAuthoritativePaidCredits] = useState<number | null>(null);
 
   const normRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
   const isStudent = normRole === 'STUDENT';
@@ -43,8 +46,33 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
     institute_name?: string;
   } | null;
 
-  const freeRemaining = Math.max(0, 2 - (studentProfile?.free_evaluations_used || 0));
-  const purchasedCredits = studentProfile?.purchased_credits || 0;
+  // Never derive the header badge from the legacy free_evaluations_used profile field.
+  // The backend dashboard response applies monthly resets, trial eligibility, and paid-credit rules.
+  useEffect(() => {
+    let active = true;
+    if (!user || !isStudent) {
+      setAuthoritativeFreeRemaining(null);
+      setAuthoritativePaidCredits(null);
+      return () => { active = false; };
+    }
+    apiRequest<{ metrics?: { freeEvaluationsRemaining?: number; purchasedCredits?: number } }>('/api/student/dashboard')
+      .then((response) => {
+        if (!active) return;
+        const free = response?.metrics?.freeEvaluationsRemaining;
+        const paid = response?.metrics?.purchasedCredits;
+        if (typeof free === 'number' && Number.isFinite(free)) setAuthoritativeFreeRemaining(Math.max(0, free));
+        if (typeof paid === 'number' && Number.isFinite(paid)) setAuthoritativePaidCredits(Math.max(0, paid));
+      })
+      .catch(() => {
+        if (!active) return;
+        // Avoid showing a fabricated positive free balance if the authoritative lookup fails.
+        setAuthoritativeFreeRemaining(0);
+      });
+    return () => { active = false; };
+  }, [user?.id, isStudent, currentView]);
+
+  const freeRemaining = authoritativeFreeRemaining ?? 0;
+  const purchasedCredits = authoritativePaidCredits ?? Number(studentProfile?.purchased_credits || 0);
 
   // Restrict MCQ Arena to Super Admin, MCQ Admin, and allowlisted testers while restricted/testing
   const [canAccessMcqArena, setCanAccessMcqArena] = useState<boolean>(false);

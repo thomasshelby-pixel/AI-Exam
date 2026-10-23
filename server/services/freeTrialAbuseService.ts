@@ -20,8 +20,10 @@ export interface FreeTrialEligibilityDecision {
  * Claims hashed browser/device and IP signals in Firestore in one transaction.
  * Raw device identifiers and IP addresses are never persisted.
  *
- * A prior claim from either signal blocks the standard free-trial quota for a new
- * account. Paid credits, institute allocations, and explicit promotional grants
+ * A repeated device identifier blocks the standard free-trial quota. A shared IP
+ * address alone is not enough to block a student because students may share home,
+ * institute, library, or mobile-carrier networks. IP reuse is still recorded as a
+ * risk signal, while paid credits, institute allocations, and promotional grants
  * remain governed by their existing entitlement paths.
  */
 export async function claimFreeTrialEligibility(params: {
@@ -108,9 +110,9 @@ export async function claimFreeTrialEligibility(params: {
       if (reusedDevice) {
         return { eligible: false, reason: 'REUSED_DEVICE' as const };
       }
-      if (reusedIp) {
-        return { eligible: false, reason: 'REUSED_IP' as const };
-      }
+      // Do not deny the free trial based only on a reused IP. Shared NAT and
+      // carrier-grade NAT commonly put unrelated students behind the same IP.
+      // A stable device reuse remains the stronger signal for duplicate accounts.
       return { eligible: true, reason: 'FIRST_CLAIM' as const };
     });
   } catch (error) {
