@@ -379,6 +379,10 @@ function initSelfDeleteOtpTable() {
   `);
 }
 
+function isGoogleOAuthPasswordMarker(passwordHash: string | null | undefined): boolean {
+  return String(passwordHash || '').startsWith('GOOGLE_');
+}
+
 function isSocialOAuthPasswordMarker(passwordHash: string | null | undefined): boolean {
   const marker = String(passwordHash || '');
   return marker.startsWith('GOOGLE_') || marker.startsWith('APPLE_') || marker === 'EXTERNAL_OAUTH';
@@ -411,9 +415,11 @@ export function getSelfDeleteVerificationOptions(studentId: string): {
     throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
   }
 
-  const requiresEmailOtp = isSocialOAuthPasswordMarker(user.password_hash);
+  // Only Google-created accounts use the new email-OTP deletion flow.
+  // Apple and legacy external-OAuth accounts keep the existing registered-email confirmation flow.
+  const requiresEmailOtp = isGoogleOAuthPasswordMarker(user.password_hash);
   const isPasswordAccount = Boolean(user.password_hash) &&
-    !requiresEmailOtp &&
+    !isSocialOAuthPasswordMarker(user.password_hash) &&
     user.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
 
   return {
@@ -485,8 +491,8 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   if (!user || user.role !== 'STUDENT') {
     throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
   }
-  if (!isSocialOAuthPasswordMarker(user.password_hash)) {
-    throw createSelfDeleteOtpError('Email OTP deletion verification is only available for social-sign-in accounts.', 400, 'EMAIL_OTP_NOT_REQUIRED');
+  if (!isGoogleOAuthPasswordMarker(user.password_hash)) {
+    throw createSelfDeleteOtpError('Email OTP deletion verification is only available for Google-created accounts.', 400, 'EMAIL_OTP_NOT_REQUIRED');
   }
   if (user.status === 'DELETED') {
     throw createSelfDeleteOtpError('This account is already deleted.', 409, 'ACCOUNT_ALREADY_DELETED');
@@ -870,15 +876,16 @@ export async function selfDeleteStudentAccount(
   }
 
   // 4. Secure Re-Authentication
+  const isGoogleOAuthAccount = isGoogleOAuthPasswordMarker(targetUser.password_hash);
   const isSocialOAuthAccount = isSocialOAuthPasswordMarker(targetUser.password_hash);
   const isPasswordAccount = Boolean(targetUser.password_hash) &&
     !isSocialOAuthAccount &&
     targetUser.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
 
-  if (isSocialOAuthAccount) {
-    // Social accounts must prove control of their registered mailbox via a
-    // fresh, single-use, rate-limited email OTP. Typing the email address alone
-    // is not sufficient authorization for irreversible data deletion.
+  if (isGoogleOAuthAccount) {
+    // Google-created accounts must prove control of their registered mailbox via a
+    // fresh, single-use, rate-limited email OTP. Apple and legacy OAuth accounts
+    // retain the prior registered-email confirmation flow.
     await verifyAndConsumeSelfDeleteOtp(studentId, emailOtp || '');
   } else if (isPasswordAccount) {
     if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.trim() === '') {
