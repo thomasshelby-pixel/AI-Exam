@@ -1,6 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { doc, runTransaction } from 'firebase/firestore';
+import { getFirestoreDb } from './firestoreDbService.js';
 import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
@@ -426,6 +428,33 @@ export function getSelfDeleteVerificationOptions(studentId: string): {
  * email address. Only accounts created with a social OAuth credential marker may
  * request this challenge; the destination is never accepted from the client.
  */
+function isSelfDeleteOtpTestMode(): boolean {
+  return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+}
+
+function getSelfDeleteOtpDocId(studentId: string): string {
+  const stableKey = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.SESSION_SECRET || 'ca-exam-student-delete-otp-key';
+  return crypto.createHmac('sha256', stableKey).update('student-delete-otp:' + studentId).digest('hex');
+}
+
+async function removeReservedSelfDeleteOtp(
+  firestore: NonNullable<ReturnType<typeof getFirestoreDb>>,
+  docId: string,
+  challengeId: string
+): Promise<void> {
+  try {
+    const reference = doc(firestore, 'student_account_deletion_otps', docId);
+    await runTransaction(firestore, async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (snapshot.exists() && String(snapshot.data()?.challenge_id || '') === challengeId) {
+        transaction.delete(reference);
+      }
+    });
+  } catch (error) {
+    console.warn('[StudentDelete] Could not remove an undeliverable OTP reservation:', (error as any)?.message || 'unknown error');
+  }
+}
+
 export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   success: true;
   message: string;
