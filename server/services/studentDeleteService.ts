@@ -459,7 +459,7 @@ async function removeReservedSelfDeleteOtp(
     const reference = firestore.collection('student_account_deletion_otps').doc(docId);
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
-      if (snapshot.exists() && String(snapshot.data()?.challenge_id || '') === challengeId) {
+      if (snapshot.exists && String(snapshot.data()?.challenge_id || '') === challengeId) {
         transaction.delete(reference);
       }
     });
@@ -530,7 +530,7 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
       const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
       const reservation = await firestore.runTransaction(async (transaction) => {
         const existing = await transaction.get(reference);
-        if (existing.exists()) {
+        if (existing.exists) {
           const previous = existing.data();
           const nextAllowedAt = new Date(String(previous.resend_available_at || '')).getTime();
           if (Number.isFinite(nextAllowedAt) && nowMs < nextAllowedAt) {
@@ -706,7 +706,7 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
   try {
     outcome = await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
-      if (!snapshot.exists()) {
+      if (!snapshot.exists) {
         return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a verification code first using Send OTP.' };
       }
 
