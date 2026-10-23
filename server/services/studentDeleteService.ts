@@ -597,12 +597,9 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
     `,
   });
 
-  const isIsolatedTestMode =
-    process.env.NODE_ENV === 'test' ||
-    Boolean(process.env.VITEST) ||
-    process.env.NOTIFICATION_DEV_SAFE_MODE === 'true';
-  // Production activates a code only when SMTP actually confirms delivery.
-  if (!emailResult?.success || (emailResult.status !== 'SENT' && !isIsolatedTestMode)) {
+  // A sandbox/audit-only email result is never sufficient for account deletion.
+  // Automated tests are the only place where a synthetic delivery may be accepted.
+  if (!emailResult?.success || (emailResult.status !== 'SENT' && !isTestMode)) {
     if (!isTestMode && firestore) {
       await removeReservedSelfDeleteOtp(firestore, otpDocumentId, challengeId);
     }
