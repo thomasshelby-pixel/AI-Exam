@@ -96,9 +96,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       ) {
         return;
       }
-      const message = err?.code === 'auth/popup-closed-by-user'
-        ? 'Sign-in was cancelled.'
-        : (err instanceof Error ? err.message : 'Social sign-in failed. Please try again.');
+      let message: string;
+      if (err?.code === 'auth/popup-closed-by-user') {
+        message = 'Sign-in was cancelled.';
+      } else if (err?.code === 'auth/operation-not-allowed') {
+        message = `${provider === 'apple' ? 'Apple' : 'Google'} Sign-In is not enabled in Firebase Authentication yet.`;
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        message = 'This website domain is not authorized for Firebase Sign-In. Add caexamcheckerai.com to Firebase Authentication authorized domains.';
+      } else if (err?.code === 'auth/popup-blocked') {
+        message = 'Your browser blocked the sign-in popup. Allow popups for this site and try again.';
+      } else {
+        message = err instanceof Error ? err.message : 'Social sign-in failed. Please try again.';
+      }
       setErrorMessage(message);
     } finally {
       setIsLoading(false);
