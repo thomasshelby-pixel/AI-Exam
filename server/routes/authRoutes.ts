@@ -41,6 +41,13 @@ import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/s
 
 const router = Router();
 
+function inferAuthProvider(passwordHash?: string | null): 'password' | 'google' | 'apple' {
+  const marker = String(passwordHash || '');
+  if (marker.startsWith('APPLE_')) return 'apple';
+  if (marker.startsWith('GOOGLE_') || marker === 'EXTERNAL_OAUTH') return 'google';
+  return 'password';
+}
+
 const SOCIAL_AUTH_ADMIN_APP_NAME = 'ca-exam-checker-social-auth';
 
 function getSocialAuthAdminApp() {
@@ -1069,7 +1076,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 // Normal Professional SaaS Login (Server-Side RBAC)
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, firebaseIdToken, socialProvider } = req.body || {};
+    const { email, password, firebaseIdToken, socialProvider, displayName: requestedDisplayName } = req.body || {};
     const portalScope = parseAuthPortalScope(req.body?.portalScope);
     const isSocialLogin = typeof firebaseIdToken === 'string' && firebaseIdToken.trim().length > 0;
 
@@ -1166,7 +1173,8 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
 
         const timestamp = new Date().toISOString();
         const providerMarker = socialProvider === 'google' ? 'GOOGLE_OAUTH' : 'APPLE_OAUTH';
-        const fullName = identity.fullName.trim() || 'CA Student';
+        const requestedName = typeof requestedDisplayName === 'string' ? requestedDisplayName.trim().replace(/[<>]/g, '').slice(0, 120) : '';
+        const fullName = requestedName || identity.fullName.trim() || 'CA Student';
 
         try {
           db.exec('BEGIN IMMEDIATE');
@@ -1467,6 +1475,10 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       VALUES (?, ?, 'USER_LOGIN', 'USER', ?, 'User successfully logged in')
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, user.id, user.id);
 
+    const meProfileSrn = String((profileData as any)?.icai_registration_number || (profileData as any)?.icaiRegistrationNumber || '').trim().toUpperCase();
+    const meRequiresProfileCompletion = user.role === 'STUDENT' && (!meProfileSrn || meProfileSrn === 'REG-PENDING');
+    const meAuthProvider = inferAuthProvider(user.password_hash);
+
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
     const resolvedTrustToken = mfaCheck.trustToken || trustToken;
@@ -1495,6 +1507,8 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         fullName: user.full_name,
         role: effectiveRole,
         status: user.status,
+        authProvider: isSocialLogin ? socialProvider : inferAuthProvider(user.password_hash),
+        requiresProfileCompletion,
         hasPermanentFreeAccess: isPermanentFree,
         mfaEnabled: authMfa.mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
@@ -1954,7 +1968,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const userId = req.user.id;
     const user = db.prepare(`
-      SELECT id, email, full_name, phone, role, status, mfa_enabled, mfa_phone, created_at,
+      SELECT id, email, full_name, phone, role, status, password_hash, mfa_enabled, mfa_phone, created_at,
              suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
       FROM users WHERE id = ?
     `).get(userId) as {
@@ -1964,6 +1978,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       phone: string | null;
       role: UserRole;
       status: string;
+      password_hash: string;
       mfa_enabled: number;
       mfa_phone: string | null;
       created_at: string;
@@ -2091,6 +2106,8 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         role: user.role,
         status: user.status,
         createdAt: user.created_at,
+        authProvider: meAuthProvider,
+        requiresProfileCompletion: meRequiresProfileCompletion,
         hasPermanentFreeAccess: isPermanentFree,
         mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
