@@ -503,7 +503,13 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
     `,
   });
 
-  if (!emailResult?.success) {
+  const isIsolatedTestMode =
+    process.env.NODE_ENV === 'test' ||
+    Boolean(process.env.VITEST) ||
+    process.env.NOTIFICATION_DEV_SAFE_MODE === 'true';
+  // In production, a sandbox/audit-only result is not a delivered email. Do not
+  // create an OTP challenge or tell the user it was sent unless SMTP confirmed it.
+  if (!emailResult?.success || (emailResult.status !== 'SENT' && !isIsolatedTestMode)) {
     throw createSelfDeleteOtpError(
       emailResult?.message || 'Could not send the verification email. Please try again.',
       503,
