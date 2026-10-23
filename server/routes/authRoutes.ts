@@ -1022,7 +1022,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       userId,
       promoCampaign
         ? `New verified student account registered with promo code ${rawReferralCode}; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
-        : `New verified student account registered; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
+        : `New verified student account registered; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
