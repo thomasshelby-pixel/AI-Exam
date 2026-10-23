@@ -75,10 +75,14 @@ export function loadAndValidateFirebaseConfig(): {
     errors.push('Missing or invalid projectId in firebase-applet-config.json');
   }
 
-  // 2. Validate authDomain
+  // 2. Validate authDomain. The custom domain is explicitly allowlisted so a
+  // branded Firebase Hosting auth handler can be used without relaxing project checks.
   const authDomain = String(rawConfig.authDomain || '').trim();
-  if (!authDomain || !authDomain.includes(projectId) && !authDomain.includes('firebaseapp.com')) {
-    errors.push(`Invalid authDomain "${authDomain}" for projectId "${projectId}"`);
+  const isAuthoritativeProjectAuthDomain =
+    authDomain.includes(projectId) || authDomain.includes('firebaseapp.com');
+  const isApprovedCustomAuthDomain = authDomain === 'auth.caexamcheckerai.com';
+  if (!authDomain || (!isAuthoritativeProjectAuthDomain && !isApprovedCustomAuthDomain)) {
+    errors.push(`Invalid or unapproved authDomain "${authDomain}" for projectId "${projectId}"`);
   }
 
   // 3. Validate appId
