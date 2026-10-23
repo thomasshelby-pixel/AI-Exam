@@ -28,6 +28,7 @@ const duplicateBlockedId = 'usr_trial_dup_blocked_' + suffix;
 const nowMonth = getCurrentServerMonth();
 const repairSrnDigits = String(Date.now()).slice(-7);
 const duplicateSrnDigits = String(Number(repairSrnDigits) + 1).slice(-7).padStart(7, '0');
+const unverifiedSrnDigits = String(Number(repairSrnDigits) + 2).slice(-7).padStart(7, '0');
 
 try {
   db.prepare(`
@@ -42,7 +43,7 @@ try {
       monthly_free_evaluations_limit, free_evaluation_reset_month,
       purchased_credits, paid_credits, free_trial_blocked
     ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 2, ?, 7, 7, 1)
-  `).run(blockedUserId, 'WRO' + repairSrnDigits, nowMonth);
+  `).run(blockedUserId, 'WRO' + unverifiedSrnDigits, nowMonth);
 
   const blockedCurrentMonth = ensureMonthlyFreeEvaluationsReset(blockedUserId);
   assert(blockedCurrentMonth.monthlyFreeEvaluationsLimit === 0, 'A device/IP-blocked account receives zero standard free evaluations');
