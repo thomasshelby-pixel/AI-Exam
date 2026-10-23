@@ -161,7 +161,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
       Number(profile.email_verified) === 1 &&
       profile.account_status === 'ACTIVE' &&
       profile.account_role === 'STUDENT' &&
-      /^[A-Z]{3}\\d{7}$/.test(srn) &&
+      /^[A-Z]{3}[0-9]{7}$/.test(srn) &&
       Number(duplicateIdentity.count) === 0;
 
     if (identityVerified) {
