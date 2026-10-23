@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import { initializeApp as initializeAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
+import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
+import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
 import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
@@ -37,6 +40,42 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 
 const router = Router();
+
+const SOCIAL_AUTH_ADMIN_APP_NAME = 'ca-exam-checker-social-auth';
+
+function getSocialAuthAdminApp() {
+  const existingApp = getAdminApps().find((candidate) => candidate.name === SOCIAL_AUTH_ADMIN_APP_NAME);
+  if (existingApp) return existingApp;
+
+  const { config } = loadAndValidateFirebaseConfig();
+  return initializeAdminApp({ projectId: config.projectId }, SOCIAL_AUTH_ADMIN_APP_NAME);
+}
+
+async function verifyFirebaseSocialIdentity(
+  idToken: string,
+  provider: 'google' | 'apple'
+): Promise<{ email: string; fullName: string; uid: string }> {
+  const adminAuth = getFirebaseAdminAuth(getSocialAuthAdminApp());
+  const decoded = await adminAuth.verifyIdToken(idToken);
+  const expectedProvider = provider === 'google' ? 'google.com' : 'apple.com';
+  const actualProvider = (decoded as any).firebase?.sign_in_provider;
+
+  if (actualProvider !== expectedProvider) {
+    throw new Error('The authentication provider does not match the selected sign-in option.');
+  }
+  if (typeof decoded.email !== 'string' || !decoded.email.trim()) {
+    throw new Error('The provider did not supply an email address for this account.');
+  }
+  if (decoded.email_verified !== true) {
+    throw new Error('Please verify your email address with the selected sign-in provider first.');
+  }
+
+  return {
+    email: decoded.email.trim().toLowerCase(),
+    fullName: typeof decoded.name === 'string' && decoded.name.trim() ? decoded.name.trim() : 'CA Student',
+    uid: decoded.uid,
+  };
+}
 
 // Mount dedicated MFA sub-router
 router.use('/mfa', mfaRoutes);
@@ -1013,21 +1052,25 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 // Normal Professional SaaS Login (Server-Side RBAC)
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, firebaseIdToken, socialProvider } = req.body || {};
     const portalScope = parseAuthPortalScope(req.body?.portalScope);
+    const isSocialLogin = typeof firebaseIdToken === 'string' && firebaseIdToken.trim().length > 0;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
     if (portalScope === 'INVALID') {
       return res.status(400).json({ error: 'Invalid sign-in context.' });
     }
+    if (isSocialLogin && socialProvider !== 'google' && socialProvider !== 'apple') {
+      return res.status(400).json({ error: 'Unsupported social sign-in provider.' });
+    }
+    if (!isSocialLogin && (!email || !password)) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+    if (isSocialLogin && portalScope !== 'STUDENT') {
+      return res.status(403).json({ error: 'Google and Apple sign-in are available for student accounts only.' });
+    }
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const lookupEmail = normalizedEmail;
-    let user = db.prepare(`
-      SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
-    `).get(lookupEmail) as {
+    let normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    let user: {
       id: string;
       email: string;
       password_hash: string;
@@ -1037,23 +1080,58 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       mfa_enabled?: number;
       mfa_phone?: string | null;
     } | undefined;
-
     let isAuthenticated = false;
-    if (user) {
-      isAuthenticated = verifyPassword(password, user.password_hash);
-    }
 
-    if (!isAuthenticated) {
-      // Direct Cloud Firestore fallback & self-healing
-      const firestoreUser = await authenticateWithFirestoreFallback(lookupEmail, password);
-      if (firestoreUser) {
-        user = firestoreUser;
-        isAuthenticated = true;
+    if (isSocialLogin) {
+      let identity: { email: string; fullName: string; uid: string };
+      try {
+        identity = await verifyFirebaseSocialIdentity(firebaseIdToken.trim(), socialProvider);
+      } catch (error: any) {
+        console.warn('[Auth] Firebase social identity verification failed:', error?.code || error?.message || 'unknown error');
+        return res.status(401).json({
+          error: error?.message || 'Could not verify your Google or Apple sign-in. Please try again.',
+          code: 'SOCIAL_SIGNIN_INVALID',
+        });
       }
-    }
 
-    if (!user || !isAuthenticated) {
-      return res.status(401).json({ error: 'Invalid email or password.' });
+      normalizedEmail = identity.email;
+      user = db.prepare(`
+        SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
+      `).get(normalizedEmail) as typeof user;
+
+      // OAuth proves control of a verified provider identity; it does not create an app
+      // account or grant an app role. Student accounts must complete the normal SRN/OTP
+      // registration flow first, and all app-side suspension, MFA and device checks below
+      // remain authoritative.
+      if (!user || user.role !== 'STUDENT') {
+        return res.status(401).json({
+          error: 'No existing student account was found for this verified email. Create your student account first, then sign in with the same email.',
+          code: 'SOCIAL_ACCOUNT_NOT_REGISTERED',
+        });
+      }
+      isAuthenticated = true;
+    } else {
+      const lookupEmail = normalizedEmail;
+      user = db.prepare(`
+        SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
+      `).get(lookupEmail) as typeof user;
+
+      if (user) {
+        isAuthenticated = verifyPassword(password, user.password_hash);
+      }
+
+      if (!isAuthenticated) {
+        // Direct Cloud Firestore fallback & self-healing (password login only).
+        const firestoreUser = await authenticateWithFirestoreFallback(lookupEmail, password);
+        if (firestoreUser) {
+          user = firestoreUser;
+          isAuthenticated = true;
+        }
+      }
+
+      if (!user || !isAuthenticated) {
+        return res.status(401).json({ error: 'Invalid email or password.' });
+      }
     }
 
     // Portal scope narrows sign-in only; it never changes or grants an account role.
