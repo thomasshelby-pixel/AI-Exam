@@ -26,10 +26,9 @@ export interface RateLimitOptions {
 }
 
 export function getClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
-  }
+  // Express derives req.ip using the application's configured trusted-proxy
+  // policy. Do not parse X-Forwarded-For directly: clients can supply that
+  // header, and trusting its left-most value lets them rotate rate-limit keys.
   return req.ip || req.socket.remoteAddress || '127.0.0.1';
 }
 
