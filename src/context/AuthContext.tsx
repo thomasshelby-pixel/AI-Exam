@@ -16,7 +16,7 @@ export interface LockedUserInfo {
   email: string;
   fullName: string;
   role: string;
-  authProvider?: 'password' | 'google';
+  authProvider?: 'password' | 'google' | 'apple';
 }
 
 export interface MfaChallengeState {
@@ -43,6 +43,7 @@ interface AuthContextType {
   lockSession: () => void;
   resumeSessionWithPassword: (password: string) => Promise<User>;
   resumeSessionWithGoogle: () => Promise<User>;
+  resumeSessionWithApple: () => Promise<User>;
   switchAccountOrLogout: () => Promise<void>;
   suspendedAccount: SuspendedAccountInfo | null;
   clearSuspension: () => void;
@@ -617,6 +618,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ email, password, deviceId, trustToken, portalScope }),
       });
 
+      localStorage.setItem('ca_exam_checker_auth_provider', 'password');
+
       if (res.mfaRequired && res.mfaSessionToken) {
         return new Promise<User>((resolve, reject) => {
           setMfaChallenge({
@@ -658,7 +661,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const socialLogin = async (provider: 'google' | 'apple'): Promise<User> => {
+  const socialLogin = async (provider: 'google' | 'apple', expectedEmail?: string): Promise<User> => {
     try {
       const authProvider = (() => {
         if (provider === 'google') {
@@ -676,6 +679,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const email = popupResult.user.email?.trim().toLowerCase();
       if (!email) {
         throw new Error('The selected provider did not return an email address. Please use email and password instead.');
+      }
+      if (expectedEmail && email !== expectedEmail.trim().toLowerCase()) {
+        throw new Error(`Please sign in with the same account (${expectedEmail}) to resume this session.`);
       }
 
       const firebaseIdToken = await popupResult.user.getIdToken(true);
@@ -730,6 +736,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
       }
       localStorage.setItem('ca_exam_checker_token', res.token);
+      localStorage.setItem('ca_exam_checker_auth_provider', provider);
       setToken(res.token);
       setUser(res.user);
       setSuspendedAccount(null);
@@ -764,6 +771,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         body: JSON.stringify({ email, password, deviceId, trustToken }),
       });
+
+      localStorage.setItem('ca_exam_checker_auth_provider', 'password');
 
       if (res.mfaRequired && res.mfaSessionToken) {
         return new Promise<User>((resolve, reject) => {
@@ -904,11 +913,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const lockSession = useCallback(() => {
     if (!user && !lockedUser) return;
+    const storedAuthProvider = typeof window !== 'undefined'
+      ? localStorage.getItem('ca_exam_checker_auth_provider')
+      : null;
+    const authProvider: LockedUserInfo['authProvider'] =
+      storedAuthProvider === 'google' || storedAuthProvider === 'apple' || storedAuthProvider === 'password'
+        ? storedAuthProvider
+        : 'password';
     const info: LockedUserInfo = {
       email: user?.email || lockedUser?.email || '',
       fullName: user?.fullName || (user as any)?.name || lockedUser?.fullName || 'User',
       role: user?.role || lockedUser?.role || 'STUDENT',
-      authProvider: 'password',
+      authProvider,
     };
     setLockedUser(info);
     setIsSessionLocked(true);
@@ -941,8 +957,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return verifiedUser;
   };
 
+  const clearLockedSessionState = () => {
+    setIsSessionLocked(false);
+    setLockedUser(null);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('ca_session_locked');
+      sessionStorage.removeItem('ca_locked_user');
+    }
+  };
+
   const resumeSessionWithGoogle = async (): Promise<User> => {
-    throw new Error('Google Sign-In has been discontinued. Please resume using your account password.');
+    const targetEmail = lockedUser?.email || user?.email;
+    if (!targetEmail) throw new Error('No locked session found. Please log in again.');
+    const verifiedUser = await socialLogin('google', targetEmail);
+    clearLockedSessionState();
+    return verifiedUser;
+  };
+
+  const resumeSessionWithApple = async (): Promise<User> => {
+    const targetEmail = lockedUser?.email || user?.email;
+    if (!targetEmail) throw new Error('No locked session found. Please log in again.');
+    const verifiedUser = await socialLogin('apple', targetEmail);
+    clearLockedSessionState();
+    return verifiedUser;
   };
 
   const switchAccountOrLogout = async (): Promise<void> => {
@@ -961,6 +998,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       await signOut(firebaseClientAuth).catch(() => {});
       localStorage.removeItem('ca_exam_checker_token');
+      localStorage.removeItem('ca_exam_checker_auth_provider');
       localStorage.removeItem('ca_totp_enrolled');
       // PRESERVE TRUSTED DEVICE STATE ACROSS LOGOUTS:
       // The 365-day trusted-device token is an authorization proof for this device,
@@ -995,6 +1033,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lockSession,
         resumeSessionWithPassword,
         resumeSessionWithGoogle,
+        resumeSessionWithApple,
         switchAccountOrLogout,
         suspendedAccount,
         clearSuspension,
