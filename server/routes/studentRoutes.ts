@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, hashPassword, verifyPassword, loadEvaluationRunPackage } from '../db.js';
-import { authenticateToken, AuthRequest, getStudentEntitlement } from '../auth.js';
+import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
@@ -20,6 +20,7 @@ import {
   consumeEvaluationEntitlementAtomic,
   getStudentCreditDetailedSummary,
   syncStudentCreditsToFirestore,
+  getCurrentServerMonth,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
@@ -34,8 +35,9 @@ import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
-import { selfDeleteStudentAccount } from '../services/studentDeleteService.js';
-import { promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
+import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
+import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
+import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
 import {
   getOrAssignStudentCode,
@@ -48,8 +50,18 @@ import {
 
 const router = Router();
 
-// Ensure all student routes require authentication
-router.use(authenticateToken);
+// Ensure all student routes require authentication. Self-delete endpoints use a
+// narrower middleware so deactivated students can still securely delete their own data
+// using a password or a fresh email OTP.
+router.use((req: AuthRequest, res: Response, next) => {
+  const isSelfDeletePath = req.path === '/delete-account' ||
+    req.path === '/delete-account/options' ||
+    req.path === '/delete-account/send-otp' ||
+    (req.path === '/account' && req.method === 'DELETE');
+  return isSelfDeletePath
+    ? authenticateSelfDeleteToken(req, res, next)
+    : authenticateToken(req, res, next);
+});
 
 export const CURRENT_DISCLAIMER_VERSION = 'v1.0';
 
@@ -2698,6 +2710,57 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       normalizedSrn = srnValidation.normalized;
     }
 
+    // ICAI registration is the durable student identity. Never bind a duplicate
+    // SRN, and do not let an already-completed profile silently change its identity.
+    const priorProfileForSrn = db.prepare(
+      'SELECT icai_registration_number FROM student_profiles WHERE user_id = ?'
+    ).get(studentId) as { icai_registration_number?: string } | undefined;
+    const priorSrn = String(priorProfileForSrn?.icai_registration_number || '').trim().toUpperCase();
+    const hadCompletedSrn = Boolean(priorSrn && priorSrn !== 'REG-PENDING');
+
+    if (normalizedSrn !== null && hadCompletedSrn && normalizedSrn !== priorSrn) {
+      return res.status(409).json({
+        error: 'Your ICAI registration number is already set. Contact support if it needs correction.',
+        code: 'ICAI_REGISTRATION_ALREADY_SET',
+      });
+    }
+
+    let isCompletingProfile = normalizedSrn !== null && !hadCompletedSrn;
+    if (normalizedSrn !== null) {
+      const exactConflict = db.prepare(`
+        SELECT user_id
+        FROM student_profiles
+        WHERE user_id != ?
+          AND UPPER(TRIM(icai_registration_number)) = ?
+          AND UPPER(TRIM(icai_registration_number)) NOT IN ('', 'REG-PENDING')
+        LIMIT 1
+      `).get(studentId, normalizedSrn);
+      if (exactConflict) {
+        return res.status(409).json({
+          error: 'An account is already registered with this ICAI Student Registration Number. Please sign in using your existing account email or contact support.',
+          code: 'ICAI_REGISTRATION_ALREADY_USED',
+        });
+      }
+
+      const regionVariant = db.prepare(`
+        SELECT user_id
+        FROM student_profiles
+        WHERE user_id != ?
+          AND LENGTH(TRIM(icai_registration_number)) = 10
+          AND LENGTH(?) = 10
+          AND UPPER(TRIM(icai_registration_number)) NOT IN ('', 'REG-PENDING')
+          AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = SUBSTR(?, 4)
+          AND SUBSTR(UPPER(TRIM(icai_registration_number)), 1, 3) <> SUBSTR(?, 1, 3)
+        LIMIT 1
+      `).get(studentId, normalizedSrn, normalizedSrn, normalizedSrn);
+      if (regionVariant) {
+        return res.status(409).json({
+          error: 'This ICAI registration number resembles an existing account but has a different regional prefix. Please contact support for manual verification.',
+          code: 'ICAI_REGISTRATION_REVIEW_REQUIRED',
+        });
+      }
+    }
+
     const validCaLevels = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
     if (caLevel !== undefined && !validCaLevels.includes(caLevel)) {
       return res.status(400).json({ error: 'Invalid CA Level. Must be FOUNDATION, INTERMEDIATE, or FINAL.' });
@@ -2790,7 +2853,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
     }
 
     const updatedUser = db.prepare('SELECT id, full_name, email, phone, role FROM users WHERE id = ?').get(studentId) as any;
-    const updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+    let updatedProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
 
     if (caLevel !== undefined && updatedProfile?.ca_level !== caLevel) {
       return res.status(500).json({ error: 'The saved CA course could not be verified. Please retry.' });
@@ -2811,11 +2874,19 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
           // filter only if no newer profile save has replaced this write.
           db.prepare(`
             UPDATE student_profiles
-            SET ca_level = ?, preferred_subjects = ?, updated_at = ?
+            SET icai_registration_number = ?,
+                ca_level = ?,
+                city = ?,
+                preferred_subjects = ?,
+                avatar_url = ?,
+                updated_at = ?
             WHERE user_id = ? AND updated_at = ?
           `).run(
+            previousProfile.icai_registration_number,
             previousProfile.ca_level,
+            previousProfile.city,
             previousProfile.preferred_subjects,
+            previousProfile.avatar_url,
             previousProfile.updated_at,
             studentId,
             profileEditTimestamp
@@ -2825,6 +2896,43 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
             .run(studentId, profileEditTimestamp);
         }
         return res.status(503).json({ error: 'Your profile could not be durably saved. Please retry.' });
+      }
+    }
+
+    if (isCompletingProfile && normalizedSrn) {
+      // Claim the SRN only after the validated profile write has been accepted by
+      // the durable profile adapter. If the signal store is unavailable or this SRN
+      // was used by a deleted account, fail closed for free-trial access.
+      const deviceHeader = req.headers['x-device-id'];
+      const bodyDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
+      const deviceId = typeof deviceHeader === 'string' ? deviceHeader.trim() : bodyDeviceId?.trim();
+      const trialDecision = await claimFreeTrialEligibility({
+        userId: studentId,
+        deviceIds: [deviceId],
+        ipAddresses: [req.ip || req.socket.remoteAddress || undefined],
+        studentRegistrationNumber: normalizedSrn,
+      });
+      const currentMonth = getCurrentServerMonth();
+      db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = ?,
+            free_trial_block_reason = ?,
+            monthly_free_evaluations_limit = ?,
+            free_evaluation_reset_month = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(
+        trialDecision.eligible ? 0 : 1,
+        trialDecision.eligible ? null : `PROFILE_COMPLETION_${trialDecision.reason}`,
+        trialDecision.eligible ? 2 : 0,
+        currentMonth,
+        studentId
+      );
+
+      const durableStudentProfile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(studentId) as any;
+      if (durableStudentProfile) {
+        await syncRecordToFirestore('student_profiles', studentId, durableStudentProfile);
+        updatedProfile = durableStudentProfile;
       }
     }
 
@@ -2924,11 +3032,38 @@ router.post('/change-password', (req: AuthRequest, res: Response) => {
   }
 });
 
+// Provider-aware self-service account deletion verification options.
+router.get('/delete-account/options', (req: AuthRequest, res: Response) => {
+  try {
+    return res.json(getSelfDeleteVerificationOptions(req.user!.id));
+  } catch (error: any) {
+    return res.status(error?.statusCode || 500).json({
+      error: error?.message || 'Could not load account deletion verification options.',
+      code: error?.code,
+    });
+  }
+});
+
+// OAuth-created accounts must request an emailed OTP explicitly. This endpoint always
+// sends to the account's server-side registered email, never an address from the client.
+router.post('/delete-account/send-otp', otpResendRateLimiter, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await initiateSelfDeleteEmailOtp(req.user!.id);
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(error?.statusCode || 500).json({
+      success: false,
+      error: error?.message || 'Could not send account deletion verification code.',
+      code: error?.code,
+    });
+  }
+});
+
 // Student Self-Service Account Deletion Endpoint
 router.post('/delete-account', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
-    const { confirmationText, currentPassword, emailConfirmation } = req.body;
+    const { confirmationText, currentPassword, emailConfirmation, emailOtp } = req.body;
 
     const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null;
     const userAgent = (req.headers['user-agent'] as string) || null;
@@ -2938,6 +3073,7 @@ router.post('/delete-account', async (req: AuthRequest, res: Response) => {
       confirmationText,
       currentPassword,
       emailConfirmation,
+      emailOtp,
       ipAddress,
       userAgent,
     });

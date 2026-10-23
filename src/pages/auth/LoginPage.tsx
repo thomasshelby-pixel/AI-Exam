@@ -102,7 +102,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       } else if (err?.code === 'auth/operation-not-allowed') {
         message = `${provider === 'apple' ? 'Apple' : 'Google'} Sign-In is not enabled in Firebase Authentication yet.`;
       } else if (err?.code === 'auth/unauthorized-domain') {
-        message = 'This website domain is not authorized for Firebase Sign-In. Add caexamcheckerai.com to Firebase Authentication authorized domains.';
+        message = 'This website domain is not authorized for Firebase Sign-In. Add the current website domain in Firebase Authentication → Settings → Authorized domains.';
+      } else if (provider === 'apple' && ['auth/invalid-credential', 'auth/invalid-oauth-client-id', 'auth/missing-or-invalid-nonce', 'auth/invalid-continue-uri'].includes(err?.code)) {
+        message = 'Apple Sign-In needs its Firebase and Apple Developer credentials configured correctly. Check the Services ID, Team ID, Key ID, private key, and the return URL https://auth.caexamcheckerai.com/__/auth/handler.';
       } else if (err?.code === 'auth/popup-blocked') {
         message = 'Your browser blocked the sign-in popup. Allow popups for this site and try again.';
       } else {
@@ -570,7 +572,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </button>
 
                 <p className="text-[10px] leading-relaxed text-center text-slate-500 dark:text-slate-400">
-                  Social sign-in is for existing student accounts and uses the same verified email. New students must complete the regular registration and SRN verification first.
+                  New students can create an account with Google or Apple. After sign-in, complete your ICAI registration number to unlock student features; phone number is optional.
                 </p>
               </div>
             </form>
@@ -717,6 +719,44 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   </>
                 )}
               </button>
+
+              <div className="pt-3 space-y-2.5">
+                <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest font-semibold text-slate-400 dark:text-slate-500">
+                  <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                  <span>Or sign up with</span>
+                  <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                </div>
+                <button
+                  id="btn-google-signup"
+                  type="button"
+                  onClick={() => handleSocialLogin('google')}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 font-semibold text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2.5"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 48 48" className="w-4 h-4 shrink-0">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" transform="translate(0 5)"/>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.74 7.18l7.27 5.64c4.25-3.92 6.71-9.7 6.71-17.29Z"/>
+                    <path fill="#FBBC05" d="M10.53 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.27-3.12.76-4.59l-7.98-6.2A23.86 23.86 0 0 0 0 24c0 3.88.93 7.56 2.56 10.79l7.97-6.2Z"/>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.94-2.14 15.92-5.81l-7.27-5.64c-2.02 1.35-4.6 2.15-8.65 2.15-6.26 0-11.57-4.22-13.46-9.91l-7.98 6.2C6.51 43.62 14.62 48 24 48Z"/>
+                  </svg>
+                  <span>{isLoading ? 'Signing up…' : 'Sign up with Google'}</span>
+                </button>
+                <button
+                  id="btn-apple-signup"
+                  type="button"
+                  onClick={() => handleSocialLogin('apple')}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-950 hover:bg-black dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2.5"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 shrink-0" fill="currentColor">
+                    <path d="M16.37 12.2c.02 2.1 1.85 2.8 1.87 2.81-.02.05-.29 1.02-.96 2.02-.58.87-1.18 1.73-2.12 1.75-.92.02-1.22-.56-2.28-.56s-1.4.54-2.27.58c-.91.03-1.6-.94-2.18-1.8-1.18-1.72-2.08-4.86-.87-6.98.6-1.05 1.68-1.72 2.85-1.74.89-.02 1.73.61 2.28.61.55 0 1.58-.75 2.67-.64.46.02 1.75.19 2.58 1.42-.07.04-1.54.9-1.57 2.53ZM14.62 6.94c.48-.58.8-1.39.71-2.19-.69.03-1.52.46-2.02 1.04-.45.52-.84 1.35-.74 2.14.77.06 1.56-.39 2.05-.99Z"/>
+                  </svg>
+                  <span>{isLoading ? 'Signing up…' : 'Sign up with Apple'}</span>
+                </button>
+                <p className="text-[10px] leading-relaxed text-center text-slate-500 dark:text-slate-400">
+                  Your account will open with a profile-completion prompt. ICAI registration number is required; phone number is optional. Social signup follows the same student eligibility checks.
+                </p>
+              </div>
 
               <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 pt-1">
                 By creating an account, you agree to our{' '}

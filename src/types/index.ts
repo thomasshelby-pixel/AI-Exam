@@ -36,6 +36,10 @@ export interface User {
   createdAt: string;
   hasPermanentFreeAccess?: boolean;
   emailVerified?: boolean;
+  /** Authentication provider used for this session, when known. */
+  authProvider?: 'password' | 'google' | 'apple';
+  /** A social student account must add a valid ICAI registration number before use. */
+  requiresProfileCompletion?: boolean;
   mfaEnabled?: boolean;
   mfaPhone?: string | null;
   mfaVerified?: boolean;

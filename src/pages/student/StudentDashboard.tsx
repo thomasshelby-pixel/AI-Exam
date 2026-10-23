@@ -37,6 +37,7 @@ import { StudentNotificationModal } from '../../components/student/StudentNotifi
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { OfflineNotificationBanner } from '../../components/common/OfflineNotificationBanner.js';
 import { featureApi } from '../../api/featureClient.js';
+import { validateSrn } from '../../utils/srnValidator.js';
 
 interface StudentDashboardProps {
   onNavigateUpload: () => void;
@@ -144,7 +145,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateExaminerProfile,
 }) => {
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
+  const { user, profile, refreshUser } = useAuth();
+  const [showCompleteProfileModal, setShowCompleteProfileModal] = useState(false);
+  const [autoPromptedProfileUserId, setAutoPromptedProfileUserId] = useState<string | null>(null);
+  const [profileSrnInput, setProfileSrnInput] = useState('');
+  const [profilePhoneInput, setProfilePhoneInput] = useState('');
+  const [profileCompletionError, setProfileCompletionError] = useState('');
+  const [profileCompletionSuccess, setProfileCompletionSuccess] = useState('');
+  const [isSavingProfileCompletion, setIsSavingProfileCompletion] = useState(false);
   const [data, setData] = useState<DashboardData | null>(null);
   const [showNotificationModal, setShowNotificationModal] = useState<boolean>(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState<number>(0);
@@ -187,6 +195,65 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     ca_level?: string;
     institute_name?: string;
   } | null;
+
+  const normalizedCurrentSrn = String(studentProfile?.icai_registration_number || '').trim().toUpperCase();
+  const needsSocialProfileCompletion = Boolean(
+    user?.role === 'STUDENT' &&
+    (user.authProvider === 'google' || user.authProvider === 'apple') &&
+    (user.requiresProfileCompletion || !normalizedCurrentSrn || normalizedCurrentSrn === 'REG-PENDING')
+  );
+
+  useEffect(() => {
+    // Wait until /api/auth/me has delivered the profile before prompting, so a
+    // still-loading profile for a returning student is never mistaken as missing.
+    if (!profile || !user?.id || !needsSocialProfileCompletion) return;
+    if (autoPromptedProfileUserId === user.id) return;
+    setProfileSrnInput('');
+    setProfilePhoneInput(String((profile as any)?.phone || user.phone || ''));
+    setProfileCompletionError('');
+    setProfileCompletionSuccess('');
+    setShowCompleteProfileModal(true);
+    setAutoPromptedProfileUserId(user.id);
+  }, [profile, user?.id, user?.phone, needsSocialProfileCompletion, autoPromptedProfileUserId]);
+
+  const openCompleteProfileModal = () => {
+    setProfileSrnInput(normalizedCurrentSrn && normalizedCurrentSrn !== 'REG-PENDING' ? normalizedCurrentSrn : '');
+    setProfilePhoneInput(String((profile as any)?.phone || user?.phone || ''));
+    setProfileCompletionError('');
+    setProfileCompletionSuccess('');
+    setShowCompleteProfileModal(true);
+  };
+
+  const handleSaveSocialProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setProfileCompletionError('');
+    setProfileCompletionSuccess('');
+
+    const srnValidation = validateSrn(profileSrnInput);
+    if (!srnValidation.isValid) {
+      setProfileCompletionError(srnValidation.error || 'Enter a valid ICAI registration number.');
+      return;
+    }
+
+    setIsSavingProfileCompletion(true);
+    try {
+      await apiRequest('/api/student/profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          icaiRegistrationNumber: srnValidation.normalized,
+          phone: profilePhoneInput.trim() || '',
+        }),
+      });
+      await refreshUser();
+      await fetchDashboard();
+      setProfileCompletionSuccess('Your ICAI registration number has been saved.');
+      setShowCompleteProfileModal(false);
+    } catch (error: any) {
+      setProfileCompletionError(error?.message || 'Could not save your profile. Please check the ICAI registration number and try again.');
+    } finally {
+      setIsSavingProfileCompletion(false);
+    }
+  };
 
   const fetchDashboard = async () => {
     try {
@@ -440,6 +507,46 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Offline Alert Notification Banner */}
       <OfflineNotificationBanner onRetrySuccess={fetchDashboard} />
 
+      {needsSocialProfileCompletion && (
+        <section
+          id="social-profile-completion-banner"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4"
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 p-2">
+              <User className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-bold text-sm text-amber-950 dark:text-amber-100">Complete Your Profile</h2>
+              <p className="text-xs text-amber-900/80 dark:text-amber-200/80 mt-0.5">
+                Add your ICAI registration number to activate student features. Phone number is optional.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={openCompleteProfileModal}
+            className="shrink-0 rounded-lg bg-amber-600 hover:bg-amber-700 px-4 py-2 text-xs font-bold text-white"
+          >
+            Complete Profile
+          </button>
+        </section>
+      )}
+
+      {profileCompletionSuccess && !needsSocialProfileCompletion && !showCompleteProfileModal && (
+        <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 p-3 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{profileCompletionSuccess}</span>
+          <button
+            type="button"
+            onClick={() => setProfileCompletionSuccess('')}
+            className="ml-auto text-emerald-700 dark:text-emerald-300 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Student Welcome Header Banner */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
@@ -448,7 +555,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               CA {studentProfile?.ca_level || 'INTERMEDIATE'}
             </span>
             <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
-              <span className="font-sans font-medium text-slate-500 dark:text-slate-400">ICAI Reg:</span> {studentProfile?.icai_registration_number || 'CRO0802987'}
+              <span className="font-sans font-medium text-slate-500 dark:text-slate-400">ICAI Reg:</span> {normalizedCurrentSrn && normalizedCurrentSrn !== 'REG-PENDING' ? normalizedCurrentSrn : 'Not added yet'}
             </span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome back, {user?.fullName}</h1>
@@ -492,7 +599,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <span>Progress Trend</span>
           </a>
 
-          {onNavigateProfile && (
+          {needsSocialProfileCompletion ? (
+            <button
+              id="dashboard-complete-profile-btn"
+              type="button"
+              onClick={openCompleteProfileModal}
+              className="px-3.5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs sm:text-sm transition border border-amber-600 flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Complete your ICAI student profile"
+            >
+              <User className="w-4 h-4" />
+              <span>Complete Your Profile</span>
+            </button>
+          ) : onNavigateProfile ? (
             <button
               id="dashboard-edit-profile-btn"
               onClick={onNavigateProfile}
@@ -502,7 +620,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <User className="w-4 h-4 text-slate-600 dark:text-slate-400" />
               <span>Edit Profile</span>
             </button>
-          )}
+          ) : null}
 
           {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && (
             <button
@@ -1423,6 +1541,106 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
       )}
+      {showCompleteProfileModal && (
+        <div
+          id="social-complete-profile-modal"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="social-complete-profile-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+            <div className="border-b border-slate-200 dark:border-slate-800 p-5 flex items-start gap-3">
+              <div className="rounded-xl bg-blue-100 dark:bg-blue-950/70 text-blue-700 dark:text-blue-300 p-2.5">
+                <User className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h2 id="social-complete-profile-title" className="font-bold text-lg text-slate-900 dark:text-white">Complete Your Profile</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Add your ICAI registration number to finish setting up your student account.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCompleteProfileModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                aria-label="Close profile completion"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSocialProfile} className="p-5 space-y-4">
+              {profileCompletionError && (
+                <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 p-3 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{profileCompletionError}</span>
+                </div>
+              )}
+              {profileCompletionSuccess && (
+                <div className="rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-xs text-emerald-700 dark:text-emerald-300 flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{profileCompletionSuccess}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label htmlFor="social-profile-icai-registration" className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                  ICAI Student Registration Number <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  id="social-profile-icai-registration"
+                  type="text"
+                  autoComplete="off"
+                  required
+                  maxLength={10}
+                  placeholder="e.g. CRO0123456"
+                  value={profileSrnInput}
+                  onChange={(event) => setProfileSrnInput(event.target.value.toUpperCase().replace(/\s/g, ''))}
+                  disabled={isSavingProfileCompletion}
+                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-3 text-sm font-mono uppercase text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Your ICAI registration number is validated before it is saved.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="social-profile-phone" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Phone Number <span className="font-normal text-slate-400">(Optional)</span>
+                </label>
+                <input
+                  id="social-profile-phone"
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="+91 98765 43210"
+                  value={profilePhoneInput}
+                  onChange={(event) => setProfilePhoneInput(event.target.value)}
+                  disabled={isSavingProfileCompletion}
+                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCompleteProfileModal(false)}
+                  disabled={isSavingProfileCompletion}
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300"
+                >
+                  Do This Later
+                </button>
+                <button
+                  id="social-profile-save-btn"
+                  type="submit"
+                  disabled={isSavingProfileCompletion}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSavingProfileCompletion ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Save Profile
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* In-App Notifications Modal */}
       <StudentNotificationModal
         isOpen={showNotificationModal}

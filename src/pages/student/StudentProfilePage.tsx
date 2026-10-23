@@ -203,12 +203,94 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [deleteShowPassword, setDeleteShowPassword] = useState<boolean>(false);
   const [deleteEmailConfirm, setDeleteEmailConfirm] = useState<string>('');
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState<string>('');
+  const [deleteVerificationMethod, setDeleteVerificationMethod] = useState<'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION'>('PASSWORD');
+  const [deleteVerificationLoaded, setDeleteVerificationLoaded] = useState<boolean>(false);
+  const [deleteRegisteredEmail, setDeleteRegisteredEmail] = useState<string>('');
+  const [deleteMaskedEmail, setDeleteMaskedEmail] = useState<string>('');
+  const [deleteOtp, setDeleteOtp] = useState<string>('');
+  const [deleteOtpSent, setDeleteOtpSent] = useState<boolean>(false);
+  const [isSendingDeleteOtp, setIsSendingDeleteOtp] = useState<boolean>(false);
+  const [deleteOtpMessage, setDeleteOtpMessage] = useState<string>('');
   const [isDeletingAccount, setIsDeletingAccount] = useState<boolean>(false);
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
 
+  const handleOpenDeleteModal = async () => {
+    setShowDeleteModal(true);
+    setDeleteVerificationLoaded(false);
+    setDeleteVerificationMethod('PASSWORD');
+    setDeletePassword('');
+    setDeleteEmailConfirm('');
+    setDeleteConfirmationInput('');
+    setDeleteOtp('');
+    setDeleteOtpSent(false);
+    setDeleteOtpMessage('');
+    setDeleteAccountError(null);
+
+    try {
+      const options = await apiRequest<{
+        email: string;
+        maskedEmail: string;
+        requiresEmailOtp: boolean;
+        verificationMethod: 'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION';
+      }>('/api/student/delete-account/options');
+      setDeleteVerificationMethod(options.verificationMethod);
+      setDeleteRegisteredEmail(options.email);
+      setDeleteMaskedEmail(options.maskedEmail);
+      setDeleteVerificationLoaded(true);
+    } catch (err: any) {
+      setDeleteAccountError(err?.message || 'Could not load account verification options. Close this dialog and try again.');
+    }
+  };
+
+  const handleSendDeleteOtp = async () => {
+    if (deleteVerificationMethod !== 'EMAIL_OTP' || isSendingDeleteOtp || deleteOtpSent) return;
+    setIsSendingDeleteOtp(true);
+    setDeleteAccountError(null);
+    setDeleteOtpMessage('');
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        message: string;
+        maskedEmail: string;
+        expiresInSeconds: number;
+        cooldownSeconds: number;
+      }>('/api/student/delete-account/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (!result.success) {
+        throw new Error(result.message || 'Could not send the verification code.');
+      }
+      setDeleteOtpSent(true);
+      setDeleteOtp('');
+      setDeleteOtpMessage(result.message || `A code was sent to ${result.maskedEmail || deleteMaskedEmail}. It expires in 10 minutes.`);
+    } catch (err: any) {
+      setDeleteAccountError(err?.message || 'Could not send the verification code. Please try again.');
+    } finally {
+      setIsSendingDeleteOtp(false);
+    }
+  };
+
   const handleConfirmDeleteAccount = async () => {
+    if (!deleteVerificationLoaded) {
+      setDeleteAccountError('Account verification options have not loaded. Close and reopen this dialog to retry.');
+      return;
+    }
     if (deleteConfirmationInput.trim() !== 'DELETE') {
       setDeleteAccountError('Explicit confirmation required. Please type DELETE in all caps to confirm.');
+      return;
+    }
+    if (deleteVerificationMethod === 'PASSWORD' && !deletePassword.trim()) {
+      setDeleteAccountError('Please enter your current password to verify your identity.');
+      return;
+    }
+    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^[0-9]{6}$/.test(deleteOtp.trim()))) {
+      setDeleteAccountError('Click Send OTP and enter the 6-digit code from your registered email first.');
+      return;
+    }
+    if (deleteVerificationMethod === 'EMAIL_CONFIRMATION' &&
+      deleteEmailConfirm.trim().toLowerCase() !== deleteRegisteredEmail.trim().toLowerCase()) {
+      setDeleteAccountError('Please enter your registered email address to verify your identity.');
       return;
     }
 
@@ -220,14 +302,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         confirmationText: string;
         currentPassword?: string;
         emailConfirmation?: string;
+        emailOtp?: string;
       } = {
         confirmationText: 'DELETE',
       };
 
-      if (deletePassword.trim()) {
+      if (deleteVerificationMethod === 'PASSWORD') {
         payload.currentPassword = deletePassword.trim();
-      }
-      if (deleteEmailConfirm.trim()) {
+      } else if (deleteVerificationMethod === 'EMAIL_OTP') {
+        payload.emailOtp = deleteOtp.trim();
+      } else {
         payload.emailConfirmation = deleteEmailConfirm.trim();
       }
 
@@ -1433,13 +1517,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             <button
               id="student-open-delete-modal-button"
               type="button"
-              onClick={() => {
-                setDeleteAccountError(null);
-                setDeletePassword('');
-                setDeleteEmailConfirm('');
-                setDeleteConfirmationInput('');
-                setShowDeleteModal(true);
-              }}
+              onClick={handleOpenDeleteModal}
               className="w-full py-2.5 px-4 bg-white dark:bg-slate-900 border-2 border-rose-300 dark:border-rose-800 hover:bg-rose-600 hover:text-white hover:border-rose-600 text-rose-700 dark:text-rose-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-2xs cursor-pointer focus:ring-2 focus:ring-rose-500 focus:outline-none"
             >
               <Trash2 className="w-4 h-4" />
@@ -1525,42 +1603,127 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 </div>
               )}
 
-              {/* Re-Authentication / Recent Authentication Input */}
+              {/* Provider-aware re-authentication: password accounts keep the existing flow;
+                  social accounts must explicitly request and enter a single-use email OTP. */}
               <div className="space-y-2 pt-1">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Verify Identity (Current Password)
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    id="student-delete-account-password-field"
-                    type={deleteShowPassword ? 'text' : 'password'}
-                    value={deletePassword}
-                    onChange={(e) => setDeletePassword(e.target.value)}
-                    placeholder="Enter your current account password"
-                    disabled={isDeletingAccount}
-                    className="w-full pl-9 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder-slate-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setDeleteShowPassword(!deleteShowPassword)}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-                  >
-                    {deleteShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-400">
-                  Or confirm your registered account email address below:
-                </p>
-                <input
-                  id="student-delete-account-email-confirm-field"
-                  type="email"
-                  value={deleteEmailConfirm}
-                  onChange={(e) => setDeleteEmailConfirm(e.target.value)}
-                  placeholder={profileData?.user?.email || authUser?.email || 'student@example.com'}
-                  disabled={isDeletingAccount}
-                  className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-rose-500 placeholder-slate-400"
-                />
+                {!deleteVerificationLoaded ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-3 text-xs text-slate-500 dark:text-slate-300">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading secure account-verification options…
+                  </div>
+                ) : deleteVerificationMethod === 'EMAIL_OTP' ? (
+                  <>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Verify through your registered email
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="relative flex-1">
+                        <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          id="student-delete-account-registered-email"
+                          type="email"
+                          value={deleteRegisteredEmail}
+                          readOnly
+                          aria-label="Registered account email"
+                          className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-200"
+                        />
+                      </div>
+                      <button
+                        id="student-delete-account-send-otp-btn"
+                        type="button"
+                        onClick={handleSendDeleteOtp}
+                        disabled={isSendingDeleteOtp || deleteOtpSent || isDeletingAccount}
+                        className="shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {isSendingDeleteOtp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                        {isSendingDeleteOtp ? 'Sending…' : deleteOtpSent ? 'OTP Sent' : 'Send OTP'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Click Send OTP to email a one-time code to {deleteMaskedEmail || 'your registered email'}. The code expires in 10 minutes.
+                    </p>
+                    {deleteOtpMessage && (
+                      <div className="rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 text-[11px] text-emerald-700 dark:text-emerald-300 flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>{deleteOtpMessage}</span>
+                      </div>
+                    )}
+                    {deleteOtpSent && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="student-delete-account-email-otp-field" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Email verification code
+                        </label>
+                        <input
+                          id="student-delete-account-email-otp-field"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          maxLength={6}
+                          value={deleteOtp}
+                          onChange={(event) => setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                          placeholder="Enter 6-digit OTP"
+                          disabled={isDeletingAccount}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono tracking-[0.25em] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:normal-case placeholder:tracking-normal"
+                        />
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400">The code is single-use. Nothing is deleted until you also type DELETE and submit the final confirmation.</p>
+                      </div>
+                    )}
+                  </>
+                ) : deleteVerificationMethod === 'PASSWORD' ? (
+                  <>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Verify Identity (Current Password)
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        id="student-delete-account-password-field"
+                        type={deleteShowPassword ? 'text' : 'password'}
+                        value={deletePassword}
+                        onChange={(e) => setDeletePassword(e.target.value)}
+                        placeholder="Enter your current account password"
+                        disabled={isDeletingAccount}
+                        className="w-full pl-9 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder-slate-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setDeleteShowPassword(!deleteShowPassword)}
+                        className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        aria-label={deleteShowPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {deleteShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Use the password already associated with your account.</p>
+                    <p className="text-[10px] text-slate-400">
+                      Or confirm your registered account email address below:
+                    </p>
+                    <input
+                      id="student-delete-account-email-confirm-field"
+                      type="email"
+                      value={deleteEmailConfirm}
+                      onChange={(e) => setDeleteEmailConfirm(e.target.value)}
+                      placeholder={profileData?.user?.email || authUser?.email || 'student@example.com'}
+                      disabled={isDeletingAccount}
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-rose-500 placeholder-slate-400"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="student-delete-account-email-confirm-field" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Confirm your registered account email
+                    </label>
+                    <input
+                      id="student-delete-account-email-confirm-field"
+                      type="email"
+                      value={deleteEmailConfirm}
+                      onChange={(e) => setDeleteEmailConfirm(e.target.value)}
+                      placeholder={deleteRegisteredEmail || profileData?.user?.email || authUser?.email || 'student@example.com'}
+                      disabled={isDeletingAccount}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-rose-500 placeholder-slate-400"
+                    />
+                  </>
+                )}
               </div>
 
               {/* Explicit Confirmation Text Input: DELETE */}
@@ -1597,8 +1760,11 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 onClick={handleConfirmDeleteAccount}
                 disabled={
                   isDeletingAccount ||
+                  !deleteVerificationLoaded ||
                   deleteConfirmationInput.trim() !== 'DELETE' ||
-                  (!deletePassword.trim() && !deleteEmailConfirm.trim())
+                  (deleteVerificationMethod === 'PASSWORD' && !deletePassword.trim()) ||
+                  (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\\d{6}$/.test(deleteOtp.trim()))) ||
+                  (deleteVerificationMethod === 'EMAIL_CONFIRMATION' && deleteEmailConfirm.trim().toLowerCase() !== deleteRegisteredEmail.trim().toLowerCase())
                 }
                 className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
               >

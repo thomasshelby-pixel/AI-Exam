@@ -1,11 +1,15 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { getApps as getAdminApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getFirestore as getAdminFirestore, type Firestore as AdminFirestore } from 'firebase-admin/firestore';
+import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
 import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
 import { requireConfirmedDeletions, type DurableDeletionTarget } from './deletionPersistence.js';
+import { sendEmail } from './emailService.js';
 
 export interface DeleteStudentResult {
   success: boolean;
@@ -353,11 +357,421 @@ export function updateStudentClassification(
   };
 }
 
+const SELF_DELETE_OTP_EXPIRY_MS = 10 * 60 * 1000;
+const SELF_DELETE_OTP_RESEND_MS = 60 * 1000;
+const SELF_DELETE_OTP_MAX_ATTEMPTS = 5;
+
+function initSelfDeleteOtpTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS student_account_deletion_otps (
+      user_id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      otp_salt TEXT NOT NULL,
+      attempts_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      resend_available_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_student_delete_otp_expiry
+      ON student_account_deletion_otps(expires_at);
+  `);
+}
+
+function isGoogleOAuthPasswordMarker(passwordHash: string | null | undefined): boolean {
+  return String(passwordHash || '').startsWith('GOOGLE_');
+}
+
+function isSocialOAuthPasswordMarker(passwordHash: string | null | undefined): boolean {
+  const marker = String(passwordHash || '');
+  return marker.startsWith('GOOGLE_') || marker.startsWith('APPLE_') || marker === 'EXTERNAL_OAUTH';
+}
+
+function maskAccountEmail(email: string): string {
+  const [local, domain] = String(email || '').trim().toLowerCase().split('@');
+  if (!local || !domain) return 'your registered email';
+  if (local.length <= 2) return `${local[0] || '*'}***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+function createSelfDeleteOtpError(message: string, statusCode: number, code: string) {
+  const error: any = new Error(message);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
+
+export function getSelfDeleteVerificationOptions(studentId: string): {
+  email: string;
+  maskedEmail: string;
+  requiresEmailOtp: boolean;
+  verificationMethod: 'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION';
+} {
+  const user = db.prepare(
+    'SELECT email, role, password_hash FROM users WHERE id = ?'
+  ).get(studentId) as { email: string; role: string; password_hash: string } | undefined;
+  if (!user || user.role !== 'STUDENT') {
+    throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
+  }
+
+  // Only Google-created accounts use the new email-OTP deletion flow.
+  // Apple and legacy external-OAuth accounts keep the existing registered-email confirmation flow.
+  const requiresEmailOtp = isGoogleOAuthPasswordMarker(user.password_hash);
+  const isPasswordAccount = Boolean(user.password_hash) &&
+    !isSocialOAuthPasswordMarker(user.password_hash) &&
+    user.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
+
+  return {
+    email: user.email,
+    maskedEmail: maskAccountEmail(user.email),
+    requiresEmailOtp,
+    verificationMethod: requiresEmailOtp ? 'EMAIL_OTP' : (isPasswordAccount ? 'PASSWORD' : 'EMAIL_CONFIRMATION'),
+  };
+}
+
+/**
+ * Sends a short-lived, single-use verification OTP to the account's own registered
+ * email address. Only accounts created with a social OAuth credential marker may
+ * request this challenge; the destination is never accepted from the client.
+ */
+function isSelfDeleteOtpTestMode(): boolean {
+  return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+}
+
+function getSelfDeleteOtpFirestore(): AdminFirestore {
+  const { config } = loadAndValidateFirebaseConfig();
+  const appName = 'ca-exam-self-delete-otp';
+  let app = getAdminApps().find((candidate) => candidate.name === appName);
+  if (!app) {
+    app = initializeAdminApp({ projectId: config.projectId }, appName);
+  }
+  return config.firestoreDatabaseId
+    ? getAdminFirestore(app, config.firestoreDatabaseId)
+    : getAdminFirestore(app);
+}
+
+function getSelfDeleteOtpDocId(studentId: string): string {
+  const stableKey = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.SESSION_SECRET || 'ca-exam-student-delete-otp-key';
+  return crypto.createHmac('sha256', stableKey).update('student-delete-otp:' + studentId).digest('hex');
+}
+
+async function removeReservedSelfDeleteOtp(
+  firestore: AdminFirestore,
+  docId: string,
+  challengeId: string
+): Promise<void> {
+  try {
+    const reference = firestore.collection('student_account_deletion_otps').doc(docId);
+    await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (snapshot.exists && String(snapshot.data()?.challenge_id || '') === challengeId) {
+        transaction.delete(reference);
+      }
+    });
+  } catch (error) {
+    console.warn('[StudentDelete] Could not remove an undeliverable OTP reservation:', (error as any)?.message || 'unknown error');
+  }
+}
+
+export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
+  success: true;
+  message: string;
+  maskedEmail: string;
+  expiresInSeconds: number;
+  cooldownSeconds: number;
+}> {
+  initSelfDeleteOtpTable();
+
+  const user = db.prepare(
+    'SELECT id, email, full_name, role, status, password_hash FROM users WHERE id = ?'
+  ).get(studentId) as {
+    id: string; email: string; full_name: string; role: string; status: string; password_hash: string;
+  } | undefined;
+  if (!user || user.role !== 'STUDENT') {
+    throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
+  }
+  if (!isGoogleOAuthPasswordMarker(user.password_hash)) {
+    throw createSelfDeleteOtpError('Email OTP deletion verification is only available for Google-created accounts.', 400, 'EMAIL_OTP_NOT_REQUIRED');
+  }
+  if (user.status === 'DELETED') {
+    throw createSelfDeleteOtpError('This account is already deleted.', 409, 'ACCOUNT_ALREADY_DELETED');
+  }
+
+  const nowMs = Date.now();
+  const existing = db.prepare(
+    'SELECT resend_available_at FROM student_account_deletion_otps WHERE user_id = ?'
+  ).get(studentId) as { resend_available_at: string } | undefined;
+  if (existing) {
+    const resendAt = new Date(existing.resend_available_at).getTime();
+    if (Number.isFinite(resendAt) && nowMs < resendAt) {
+      const error = createSelfDeleteOtpError(
+        `Please wait ${Math.ceil((resendAt - nowMs) / 1000)} seconds before requesting another code.`,
+        429,
+        'OTP_RESEND_COOLDOWN'
+      );
+      throw error;
+    }
+  }
+
+  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const otpHash = crypto.createHash('sha256').update(`${salt}:${code}`).digest('hex');
+  const createdAt = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + SELF_DELETE_OTP_EXPIRY_MS).toISOString();
+  const resendAvailableAt = new Date(nowMs + SELF_DELETE_OTP_RESEND_MS).toISOString();
+  const displayName = String(user.full_name || 'Student').replace(/[<>]/g, '').trim().slice(0, 100) || 'Student';
+  const isTestMode = isSelfDeleteOtpTestMode();
+  const challengeId = crypto.randomBytes(16).toString('hex');
+  const otpDocumentId = getSelfDeleteOtpDocId(studentId);
+  let firestore: AdminFirestore | null = null;
+
+  // Reserve the OTP in a shared Firestore transaction before sending the email.
+  // This enforces the resend cooldown across App Hosting instances, not just in
+  // one container's local SQLite cache.
+  if (!isTestMode) {
+    try {
+      firestore = getSelfDeleteOtpFirestore();
+      if (!firestore) throw new Error('Authoritative OTP store is unavailable.');
+      const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
+      const reservation = await firestore.runTransaction(async (transaction) => {
+        const existing = await transaction.get(reference);
+        if (existing.exists) {
+          const previous = existing.data();
+          const nextAllowedAt = new Date(String(previous.resend_available_at || '')).getTime();
+          if (Number.isFinite(nextAllowedAt) && nowMs < nextAllowedAt) {
+            return { reserved: false as const, waitSeconds: Math.ceil((nextAllowedAt - nowMs) / 1000) };
+          }
+        }
+        transaction.set(reference, {
+          challenge_id: challengeId,
+          status: 'PENDING',
+          otp_hash: otpHash,
+          otp_salt: salt,
+          attempts_count: 0,
+          max_attempts: SELF_DELETE_OTP_MAX_ATTEMPTS,
+          created_at: createdAt,
+          expires_at: expiresAt,
+          resend_available_at: resendAvailableAt,
+        });
+        return { reserved: true as const };
+      });
+      if (!reservation.reserved) {
+        throw createSelfDeleteOtpError(
+          'Please wait ' + reservation.waitSeconds + ' seconds before requesting another code.',
+          429,
+          'OTP_RESEND_COOLDOWN'
+        );
+      }
+    } catch (error: any) {
+      if (error?.statusCode) throw error;
+      console.warn('[StudentDelete] Could not persist OTP challenge:', error?.message || 'unknown error');
+      throw createSelfDeleteOtpError(
+        'Account verification is temporarily unavailable. No code was sent; please try again shortly.',
+        503,
+        'OTP_STORE_UNAVAILABLE'
+      );
+    }
+  }
+
+  const emailResult = await sendEmail({
+    to: user.email,
+    subject: `${code} is your CA Exam Checker AI account deletion code`,
+    text:
+      `Hello ${displayName},\n\n` +
+      `You requested to permanently delete your CA Exam Checker AI student account. Your one-time verification code is: ${code}\n\n` +
+      `This code expires in 10 minutes and can only be used once. Enter it only in the account deletion dialog on caexamcheckerai.com. CA Exam Checker AI support will never ask you to share this code.\n\n` +
+      `If you did not request account deletion, ignore this email and secure your account. No deletion will occur without this code and the explicit DELETE confirmation.\n\n` +
+      `CA Exam Checker AI Support: support@caexamcheckerai.com`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f8fafc;padding:24px;border-radius:12px;color:#0f172a">
+        <div style="background:#172554;color:#fff;border-radius:8px;padding:22px;text-align:center">
+          <h1 style="margin:0;font-size:21px">CA Exam Checker AI</h1>
+          <p style="margin:8px 0 0;color:#bfdbfe">Account deletion verification</p>
+        </div>
+        <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-radius:8px;margin-top:12px">
+          <p>Hello <strong>${displayName}</strong>,</p>
+          <p>A request was made to permanently delete your student account. Enter this one-time code in the account deletion dialog to verify control of your registered email:</p>
+          <div style="margin:24px 0;text-align:center;padding:20px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:8px">
+            <div style="font-family:monospace;font-size:34px;font-weight:800;letter-spacing:7px;color:#1e3a8a">${code}</div>
+            <p style="margin:10px 0 0;color:#64748b;font-size:12px">Expires in 10 minutes • Single-use</p>
+          </div>
+          <p style="font-size:13px;color:#b91c1c"><strong>Security notice:</strong> Your account is not deleted by sending this code. Deletion occurs only after entering the code and typing DELETE in the app.</p>
+          <p style="font-size:12px;color:#64748b">If you did not request this, ignore this message. Need help? support@caexamcheckerai.com</p>
+        </div>
+      </div>
+    `,
+  });
+
+  // A sandbox/audit-only email result is never sufficient for account deletion.
+  // Automated tests are the only place where a synthetic delivery may be accepted.
+  if (!emailResult?.success || (emailResult.status !== 'SENT' && !isTestMode)) {
+    if (!isTestMode && firestore) {
+      await removeReservedSelfDeleteOtp(firestore, otpDocumentId, challengeId);
+    }
+    throw createSelfDeleteOtpError(
+      'Could not deliver the verification email. No deletion code was activated; please try again shortly.',
+      503,
+      'OTP_DELIVERY_FAILED'
+    );
+  }
+
+  db.prepare(`
+    INSERT INTO student_account_deletion_otps (
+      user_id, email, otp_hash, otp_salt, attempts_count, max_attempts,
+      created_at, expires_at, resend_available_at
+    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      email = excluded.email,
+      otp_hash = excluded.otp_hash,
+      otp_salt = excluded.otp_salt,
+      attempts_count = 0,
+      max_attempts = excluded.max_attempts,
+      created_at = excluded.created_at,
+      expires_at = excluded.expires_at,
+      resend_available_at = excluded.resend_available_at
+  `).run(
+    studentId, user.email, otpHash, SELF_DELETE_OTP_MAX_ATTEMPTS,
+    createdAt, expiresAt, resendAvailableAt
+  );
+
+  return {
+    success: true,
+    message: `A verification code was sent to ${maskAccountEmail(user.email)}. It expires in 10 minutes.`,
+    maskedEmail: maskAccountEmail(user.email),
+    expiresInSeconds: 600,
+    cooldownSeconds: 60,
+  };
+}
+
+async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string): Promise<void> {
+  initSelfDeleteOtpTable();
+  const cleanOtp = String(enteredOtp || '').trim();
+  if (!/^[0-9]{6}$/.test(cleanOtp)) {
+    throw createSelfDeleteOtpError('Enter the 6-digit code sent to your registered email.', 400, 'INVALID_DELETE_OTP');
+  }
+
+  if (isSelfDeleteOtpTestMode()) {
+    const row = db.prepare(
+      'SELECT otp_hash, otp_salt, attempts_count, max_attempts, expires_at FROM student_account_deletion_otps WHERE user_id = ?'
+    ).get(studentId) as {
+      otp_hash: string; otp_salt: string; attempts_count: number; max_attempts: number; expires_at: string;
+    } | undefined;
+
+    if (!row) {
+      throw createSelfDeleteOtpError('Request a verification code first using Send OTP.', 400, 'DELETE_OTP_NOT_REQUESTED');
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      throw createSelfDeleteOtpError('That verification code has expired. Request a new one.', 400, 'EXPIRED_DELETE_OTP');
+    }
+    const attempts = Number(row.attempts_count) || 0;
+    const maxAttempts = Number(row.max_attempts) || SELF_DELETE_OTP_MAX_ATTEMPTS;
+    if (attempts >= maxAttempts) {
+      db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      throw createSelfDeleteOtpError('Too many incorrect attempts. Request a new verification code.', 429, 'DELETE_OTP_MAX_ATTEMPTS');
+    }
+
+    const expected = Buffer.from(row.otp_hash, 'hex');
+    const supplied = Buffer.from(crypto.createHash('sha256').update(row.otp_salt + ':' + cleanOtp).digest('hex'), 'hex');
+    const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+    if (!valid) {
+      const nextAttempts = attempts + 1;
+      if (nextAttempts >= maxAttempts) {
+        db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      } else {
+        db.prepare('UPDATE student_account_deletion_otps SET attempts_count = ? WHERE user_id = ?').run(nextAttempts, studentId);
+      }
+      throw createSelfDeleteOtpError(
+        nextAttempts >= maxAttempts
+          ? 'Too many incorrect attempts. Request a new verification code.'
+          : 'Incorrect verification code. ' + (maxAttempts - nextAttempts) + ' attempt(s) remaining.',
+        nextAttempts >= maxAttempts ? 429 : 401,
+        nextAttempts >= maxAttempts ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP'
+      );
+    }
+
+    db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+    return;
+  }
+
+  let firestore: AdminFirestore;
+  try {
+    firestore = getSelfDeleteOtpFirestore();
+  } catch (error: any) {
+    console.warn('[StudentDelete] OTP verification store initialization failed:', error?.message || 'unknown error');
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
+  }
+  if (!firestore) {
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
+  }
+
+  const otpDocumentId = getSelfDeleteOtpDocId(studentId);
+  const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
+  let outcome: any;
+  try {
+    outcome = await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists) {
+        return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a verification code first using Send OTP.' };
+      }
+
+      const row = snapshot.data();
+      if (String(row.status || '') !== 'PENDING') {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a new verification code using Send OTP.' };
+      }
+      if (new Date(String(row.expires_at || '')).getTime() <= Date.now()) {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 400, code: 'EXPIRED_DELETE_OTP', message: 'That verification code has expired. Request a new one.' };
+      }
+
+      const attempts = Number(row.attempts_count) || 0;
+      const maxAttempts = Number(row.max_attempts) || SELF_DELETE_OTP_MAX_ATTEMPTS;
+      if (attempts >= maxAttempts) {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 429, code: 'DELETE_OTP_MAX_ATTEMPTS', message: 'Too many incorrect attempts. Request a new verification code.' };
+      }
+
+      const expected = Buffer.from(String(row.otp_hash || ''), 'hex');
+      const supplied = Buffer.from(crypto.createHash('sha256').update(String(row.otp_salt || '') + ':' + cleanOtp).digest('hex'), 'hex');
+      const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+      if (!valid) {
+        const nextAttempts = attempts + 1;
+        if (nextAttempts >= maxAttempts) {
+          transaction.delete(reference);
+        } else {
+          transaction.update(reference, { attempts_count: nextAttempts });
+        }
+        return {
+          ok: false,
+          statusCode: nextAttempts >= maxAttempts ? 429 : 401,
+          code: nextAttempts >= maxAttempts ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP',
+          message: nextAttempts >= maxAttempts
+            ? 'Too many incorrect attempts. Request a new verification code.'
+            : 'Incorrect verification code. ' + (maxAttempts - nextAttempts) + ' attempt(s) remaining.',
+        };
+      }
+
+      transaction.delete(reference);
+      return { ok: true };
+    });
+  } catch (error: any) {
+    console.warn('[StudentDelete] OTP verification transaction failed:', error?.message || 'unknown error');
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
+  }
+
+  if (!outcome.ok) {
+    throw createSelfDeleteOtpError(outcome.message, outcome.statusCode, outcome.code);
+  }
+}
+
 export interface SelfDeleteStudentParams {
   studentId: string;
   confirmationText: string;
   currentPassword?: string;
   emailConfirmation?: string;
+  emailOtp?: string;
   ipAddress?: string | null;
   userAgent?: string | null;
 }
@@ -386,7 +800,7 @@ export interface SelfDeleteStudentResult {
 export async function selfDeleteStudentAccount(
   params: SelfDeleteStudentParams
 ): Promise<SelfDeleteStudentResult> {
-  const { studentId, confirmationText, currentPassword, emailConfirmation, ipAddress, userAgent } = params;
+  const { studentId, confirmationText, currentPassword, emailConfirmation, emailOtp, ipAddress, userAgent } = params;
 
   // 1. Idempotency & Existence Check
   const targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(studentId) as {
@@ -462,12 +876,18 @@ export async function selfDeleteStudentAccount(
   }
 
   // 4. Secure Re-Authentication
-  const isPasswordAccount = targetUser.password_hash &&
-    !targetUser.password_hash.startsWith('GOOGLE_') &&
-    targetUser.password_hash !== 'EXTERNAL_OAUTH' &&
+  const isGoogleOAuthAccount = isGoogleOAuthPasswordMarker(targetUser.password_hash);
+  const isSocialOAuthAccount = isSocialOAuthPasswordMarker(targetUser.password_hash);
+  const isPasswordAccount = Boolean(targetUser.password_hash) &&
+    !isSocialOAuthAccount &&
     targetUser.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
 
-  if (isPasswordAccount) {
+  if (isGoogleOAuthAccount) {
+    // Google-created accounts must prove control of their registered mailbox via a
+    // fresh, single-use, rate-limited email OTP. Apple and legacy OAuth accounts
+    // retain the prior registered-email confirmation flow.
+    await verifyAndConsumeSelfDeleteOtp(studentId, emailOtp || '');
+  } else if (isPasswordAccount) {
     if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.trim() === '') {
       const error: any = new Error('Please enter your current password to verify your identity.');
       error.statusCode = 400;
@@ -480,7 +900,8 @@ export async function selfDeleteStudentAccount(
       throw error;
     }
   } else {
-    // External or Google OAuth user: verify registered email confirmation
+    // Preserve the legacy email-confirmation flow for disabled/no-password accounts
+    // that predate explicit Google/Apple provider markers.
     if (!emailConfirmation || emailConfirmation.trim().toLowerCase() !== targetUser.email.toLowerCase()) {
       const error: any = new Error('Please confirm your registered email address to verify your identity.');
       error.statusCode = 400;
