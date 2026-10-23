@@ -644,7 +644,7 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   };
 }
 
-async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string): Promise<void> {
+async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string, consume = true): Promise<void> {
   initSelfDeleteOtpTable();
   const cleanOtp = String(enteredOtp || '').trim();
   if (!/^[0-9]{6}$/.test(cleanOtp)) {
@@ -691,7 +691,7 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
       );
     }
 
-    db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+    if (consume) db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
     return;
   }
 
@@ -753,7 +753,7 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
         };
       }
 
-      transaction.delete(reference);
+      if (consume) transaction.delete(reference);
       return { ok: true };
     });
   } catch (error: any) {
@@ -764,6 +764,16 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
   if (!outcome.ok) {
     throw createSelfDeleteOtpError(outcome.message, outcome.statusCode, outcome.code);
   }
+}
+
+/** Validate a deletion OTP before the user confirms permanent deletion. The OTP is
+ * deliberately retained here; the final deletion request validates and consumes it again. */
+export async function verifySelfDeleteEmailOtp(studentId: string, enteredOtp: string): Promise<void> {
+  const options = getSelfDeleteVerificationOptions(studentId);
+  if (options.verificationMethod !== 'EMAIL_OTP') {
+    throw createSelfDeleteOtpError('Email OTP verification is only available for Google-created accounts.', 400, 'EMAIL_OTP_NOT_REQUIRED');
+  }
+  await verifyAndConsumeSelfDeleteOtp(studentId, enteredOtp, false);
 }
 
 export interface SelfDeleteStudentParams {
