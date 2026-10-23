@@ -457,7 +457,7 @@ async function removeReservedSelfDeleteOtp(
 ): Promise<void> {
   try {
     const reference = firestore.collection('student_account_deletion_otps').doc(docId);
-    await runTransaction(firestore, async (transaction) => {
+    await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
       if (snapshot.exists() && String(snapshot.data()?.challenge_id || '') === challengeId) {
         transaction.delete(reference);
@@ -518,7 +518,7 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   const isTestMode = isSelfDeleteOtpTestMode();
   const challengeId = crypto.randomBytes(16).toString('hex');
   const otpDocumentId = getSelfDeleteOtpDocId(studentId);
-  let firestore: NonNullable<ReturnType<typeof getFirestoreDb>> | null = null;
+  let firestore: AdminFirestore | null = null;
 
   // Reserve the OTP in a shared Firestore transaction before sending the email.
   // This enforces the resend cooldown across App Hosting instances, not just in
@@ -707,7 +707,7 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
   const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
   let outcome: any;
   try {
-    outcome = await runTransaction(firestore, async (transaction) => {
+    outcome = await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
       if (!snapshot.exists()) {
         return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a verification code first using Send OTP.' };
