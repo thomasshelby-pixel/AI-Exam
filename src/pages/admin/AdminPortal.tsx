@@ -2196,15 +2196,28 @@ export const AdminPortal: React.FC = () => {
                                     </div>
 
                                     <div className="flex flex-col gap-0.5 text-[10px]">
-                                      {/* Monthly free evaluations breakdown */}
-                                      <div className="flex items-center gap-1 text-slate-600">
-                                        <span className="text-slate-400">Monthly Free:</span>
-                                        <span className="font-mono font-semibold text-emerald-700">
-                                          {st.monthly_free_evaluations_remaining !== undefined
-                                            ? `${st.monthly_free_evaluations_remaining}/${st.monthly_free_evaluations_limit ?? 2}`
-                                            : `${Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))}/${st.monthly_free_evaluations_limit ?? 2}`}
-                                        </span>
-                                      </div>
+                                      {/* Free-trial availability: a pending social profile is not an exhausted trial. */}
+                                      {(!String(st.icai_registration_number || '').trim() ||
+                                        String(st.icai_registration_number || '').trim().toUpperCase() === 'REG-PENDING') ? (
+                                        <div className="flex flex-col gap-0.5 text-[10px]">
+                                          <div className="flex items-center gap-1">
+                                            <span className="text-slate-400">Free trial:</span>
+                                            <span className="font-semibold text-amber-700">Profile pending</span>
+                                          </div>
+                                          <span className="text-[9px] leading-tight text-amber-700">
+                                            2 free unlock after ICAI Reg
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1 text-slate-600">
+                                          <span className="text-slate-400">Monthly Free:</span>
+                                          <span className="font-mono font-semibold text-emerald-700">
+                                            {st.monthly_free_evaluations_remaining !== undefined
+                                              ? `${st.monthly_free_evaluations_remaining}/${st.monthly_free_evaluations_limit ?? 2}`
+                                              : `${Math.max(0, (st.monthly_free_evaluations_limit ?? 2) - (st.monthly_free_evaluations_used ?? st.free_evaluations_used ?? 0))}/${st.monthly_free_evaluations_limit ?? 2}`}
+                                          </span>
+                                        </div>
+                                      )}
 
                                       {/* Promotional evaluations breakdown */}
                                       {Number(st.promo_evaluations_granted || 0) > 0 ? (
