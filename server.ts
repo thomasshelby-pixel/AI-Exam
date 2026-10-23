@@ -2,7 +2,6 @@ import express from 'express';
 import path from 'path';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
-import { createServer as createViteServer } from 'vite';
 
 // Increase default max listeners to accommodate Cloud Storage and Vite pipeline PassThrough streams
 EventEmitter.defaultMaxListeners = 100;
@@ -225,6 +224,9 @@ export default {};
 `);
     });
 
+    // Vite is a development-only dependency and is absent from the production Docker image.
+    // Load it only in development so the production server can boot.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: 'spa',
