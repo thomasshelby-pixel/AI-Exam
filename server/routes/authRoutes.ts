@@ -1475,10 +1475,6 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       VALUES (?, ?, 'USER_LOGIN', 'USER', ?, 'User successfully logged in')
     `).run(`log_${crypto.randomBytes(8).toString('hex')}`, user.id, user.id);
 
-    const meProfileSrn = String((profileData as any)?.icai_registration_number || (profileData as any)?.icaiRegistrationNumber || '').trim().toUpperCase();
-    const meRequiresProfileCompletion = user.role === 'STUDENT' && (!meProfileSrn || meProfileSrn === 'REG-PENDING');
-    const meAuthProvider = inferAuthProvider(user.password_hash);
-
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
     const authMfa = await getAuthoritativeUserMfaStatus(user.id);
     const resolvedTrustToken = mfaCheck.trustToken || trustToken;
@@ -2059,6 +2055,10 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
       profileData = { institute };
     }
+
+    const meProfileSrn = String((profileData as any)?.icai_registration_number || (profileData as any)?.icaiRegistrationNumber || '').trim().toUpperCase();
+    const meRequiresProfileCompletion = user.role === 'STUDENT' && (!meProfileSrn || meProfileSrn === 'REG-PENDING');
+    const meAuthProvider = inferAuthProvider(user.password_hash);
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
 
