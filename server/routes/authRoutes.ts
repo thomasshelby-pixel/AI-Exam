@@ -869,9 +869,11 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
     }
 
-    // Claim the standard free-trial allowance against persistent device/browser and IP signals.
-    // New profiles start blocked; the two free monthly evaluations are enabled only after
-    // Firestore atomically confirms that neither signal has claimed a trial before.
+    // The account has passed email OTP verification and the ICAI SRN was rechecked
+    // under the registration transaction above. Grant the normal two-free-evaluation
+    // quota based on that verified identity, not noisy browser/IP heuristics. The
+    // hashed signal service is still consulted for risk telemetry and a durable
+    // per-SRN duplicate-trial claim (including after account deletion).
     const registrationDeviceId = typeof regData.deviceId === 'string' ? regData.deviceId : undefined;
     const verificationDeviceHeader = req.headers['x-device-id'];
     const verificationDeviceId = typeof verificationDeviceHeader === 'string'
@@ -885,13 +887,21 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       userId,
       deviceIds: [registrationDeviceId, verificationDeviceId],
       ipAddresses: [regData.clientIp, verificationIp],
+      studentRegistrationNumber: regData.icaiRegistrationNumber,
       forceBlock: deviceChangedDuringSignup,
     });
 
-    if (freeTrialDecision.eligible) {
+    // Device/IP reuse, missing optional signals, or a temporary Firestore
+    // signal-store failure must not penalize a verified student. A prior durable
+    // claim for the same ICAI identity is the only signal-based reason to withhold
+    // the free quota. Existing profile duplicates are also stopped before this
+    // point by findStudentSrnConflict().
+    const freeTrialGranted = freeTrialDecision.reason !== 'REUSED_SRN';
+    if (freeTrialGranted) {
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = 0,
+            free_trial_block_reason = NULL,
             monthly_free_evaluations_used = 0,
             monthly_free_evaluations_limit = 2,
             free_evaluation_reset_month = ?,
@@ -899,15 +909,22 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).run(getCurrentServerMonth(), userId);
+      if (!freeTrialDecision.eligible) {
+        console.warn('[FreeTrialAbuse] Granting verified student quota despite non-identity risk signal:', {
+          userId,
+          reason: freeTrialDecision.reason,
+        });
+      }
     } else {
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = 1,
+            free_trial_block_reason = 'REUSED_SRN',
             monthly_free_evaluations_limit = 0,
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).run(userId);
-      console.info('[FreeTrialAbuse] Standard free trial disabled for new account:', {
+      console.info('[FreeTrialAbuse] Free quota withheld due to a previously claimed ICAI identity:', {
         userId,
         reason: freeTrialDecision.reason,
       });
@@ -989,7 +1006,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     syncPendingInstituteEnrollments(userId, normalizedEmail);
 
     // Welcome Notification
-    const welcomeMessage = freeTrialDecision.eligible
+    const welcomeMessage = freeTrialGranted
       ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
       : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because this account did not pass the device/browser and network eligibility check. Paid credits and eligible institute or promotional benefits remain available.';
     db.prepare(`
@@ -1006,8 +1023,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       userId,
       userId,
       promoCampaign
-        ? `New verified student account registered with promo code ${rawReferralCode}; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
-        : `New verified student account registered; standard free trial ${freeTrialDecision.eligible ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
+        ? `New verified student account registered with promo code ${rawReferralCode}; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
+        : `New verified student account registered; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
@@ -1036,7 +1053,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         emailVerified: true,
       },
       promoApplied: !!promoCampaign,
-      freeTrialAvailable: freeTrialDecision.eligible,
+      freeTrialAvailable: freeTrialGranted,
       promoDetails: promoCampaign ? {
         code: rawReferralCode,
         evaluations: promoCampaign.max_evaluations ?? 15,
