@@ -53,7 +53,7 @@ export async function claimFreeTrialEligibility(params: {
     .filter((value) => isIP(value) !== 0))];
 
   const normalizedSrn = String(params.studentRegistrationNumber || '').trim().toUpperCase();
-  const validSrn = /^[A-Z]{3}\\d{7}$/.test(normalizedSrn);
+  const validSrn = /^[A-Z]{3}[0-9]{7}$/.test(normalizedSrn);
   const signals = [
     ...deviceIds.map((value) => ({
       type: 'device' as const,
