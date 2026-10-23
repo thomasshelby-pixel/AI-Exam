@@ -502,6 +502,58 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   const expiresAt = new Date(nowMs + SELF_DELETE_OTP_EXPIRY_MS).toISOString();
   const resendAvailableAt = new Date(nowMs + SELF_DELETE_OTP_RESEND_MS).toISOString();
   const displayName = String(user.full_name || 'Student').replace(/[<>]/g, '').trim().slice(0, 100) || 'Student';
+  const isTestMode = isSelfDeleteOtpTestMode();
+  const challengeId = crypto.randomBytes(16).toString('hex');
+  const otpDocumentId = getSelfDeleteOtpDocId(studentId);
+  let firestore: NonNullable<ReturnType<typeof getFirestoreDb>> | null = null;
+
+  // Reserve the OTP in a shared Firestore transaction before sending the email.
+  // This enforces the resend cooldown across App Hosting instances, not just in
+  // one container's local SQLite cache.
+  if (!isTestMode) {
+    try {
+      firestore = getFirestoreDb();
+      if (!firestore) throw new Error('Authoritative OTP store is unavailable.');
+      const reference = doc(firestore, 'student_account_deletion_otps', otpDocumentId);
+      const reservation = await runTransaction(firestore, async (transaction) => {
+        const existing = await transaction.get(reference);
+        if (existing.exists()) {
+          const previous = existing.data();
+          const nextAllowedAt = new Date(String(previous.resend_available_at || '')).getTime();
+          if (Number.isFinite(nextAllowedAt) && nowMs < nextAllowedAt) {
+            return { reserved: false as const, waitSeconds: Math.ceil((nextAllowedAt - nowMs) / 1000) };
+          }
+        }
+        transaction.set(reference, {
+          challenge_id: challengeId,
+          status: 'PENDING',
+          otp_hash: otpHash,
+          otp_salt: salt,
+          attempts_count: 0,
+          max_attempts: SELF_DELETE_OTP_MAX_ATTEMPTS,
+          created_at: createdAt,
+          expires_at: expiresAt,
+          resend_available_at: resendAvailableAt,
+        });
+        return { reserved: true as const };
+      });
+      if (!reservation.reserved) {
+        throw createSelfDeleteOtpError(
+          'Please wait ' + reservation.waitSeconds + ' seconds before requesting another code.',
+          429,
+          'OTP_RESEND_COOLDOWN'
+        );
+      }
+    } catch (error: any) {
+      if (error?.statusCode) throw error;
+      console.warn('[StudentDelete] Could not persist OTP challenge:', error?.message || 'unknown error');
+      throw createSelfDeleteOtpError(
+        'Account verification is temporarily unavailable. No code was sent; please try again shortly.',
+        503,
+        'OTP_STORE_UNAVAILABLE'
+      );
+    }
+  }
 
   const emailResult = await sendEmail({
     to: user.email,
@@ -536,11 +588,13 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
     process.env.NODE_ENV === 'test' ||
     Boolean(process.env.VITEST) ||
     process.env.NOTIFICATION_DEV_SAFE_MODE === 'true';
-  // In production, a sandbox/audit-only result is not a delivered email. Do not
-  // create an OTP challenge or tell the user it was sent unless SMTP confirmed it.
+  // Production activates a code only when SMTP actually confirms delivery.
   if (!emailResult?.success || (emailResult.status !== 'SENT' && !isIsolatedTestMode)) {
+    if (!isTestMode && firestore) {
+      await removeReservedSelfDeleteOtp(firestore, otpDocumentId, challengeId);
+    }
     throw createSelfDeleteOtpError(
-      emailResult?.message || 'Could not send the verification email. Please try again.',
+      'Could not deliver the verification email. No deletion code was activated; please try again shortly.',
       503,
       'OTP_DELIVERY_FAILED'
     );
