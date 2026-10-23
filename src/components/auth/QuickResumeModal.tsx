@@ -17,6 +17,7 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
     lockedUser,
     resumeSessionWithPassword,
     resumeSessionWithGoogle,
+    resumeSessionWithApple,
     switchAccountOrLogout,
   } = useAuth();
 
@@ -27,7 +28,8 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
 
   if (!isOpen || !lockedUser) return null;
 
-  const isGoogleUser = lockedUser.authProvider === 'google';
+  const isSocialUser = lockedUser.authProvider === 'google' || lockedUser.authProvider === 'apple';
+  const socialProviderLabel = lockedUser.authProvider === 'apple' ? 'Apple' : 'Google';
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,14 +51,18 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
     }
   };
 
-  const handleGoogleResume = async () => {
+  const handleSocialResume = async (provider: 'google' | 'apple') => {
     setLoading(true);
     setError(null);
     try {
-      await resumeSessionWithGoogle();
+      if (provider === 'apple') {
+        await resumeSessionWithApple();
+      } else {
+        await resumeSessionWithGoogle();
+      }
       if (onSuccess) onSuccess();
     } catch (err: any) {
-      setError(err?.message || 'Google re-authentication failed. Please try again or switch account.');
+      setError(err?.message || `${provider === 'apple' ? 'Apple' : 'Google'} re-authentication failed. Please try again or switch account.`);
     } finally {
       setLoading(false);
     }
@@ -112,14 +118,14 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
         )}
 
         {/* Form */}
-        {isGoogleUser ? (
+        {isSocialUser ? (
           <div className="space-y-3">
             <p className="text-xs text-slate-600 dark:text-slate-400 text-center">
-              Re-authenticate with Google Single Sign-On to resume instantly:
+              Re-authenticate with {socialProviderLabel} to securely resume this session:
             </p>
             <button
               type="button"
-              onClick={handleGoogleResume}
+              onClick={() => handleSocialResume(lockedUser.authProvider === 'apple' ? 'apple' : 'google')}
               disabled={loading}
               className="w-full py-2.5 px-4 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-800 dark:text-slate-100 font-semibold rounded-xl text-sm transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
             >
@@ -141,7 +147,7 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                 />
               </svg>
-              {loading ? 'Re-authenticating...' : 'Resume with Google'}
+              {loading ? 'Re-authenticating...' : `Resume with ${socialProviderLabel}`}
             </button>
           </div>
         ) : (
@@ -197,11 +203,20 @@ export const QuickResumeModal: React.FC<QuickResumeModalProps> = ({
 
             <button
               type="button"
-              onClick={handleGoogleResume}
+              onClick={() => handleSocialResume('google')}
               disabled={loading}
               className="w-full py-2 px-3 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
               <span>Resume using Google Sign-In</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSocialResume('apple')}
+              disabled={loading}
+              className="w-full py-2 px-3 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <span>Resume using Apple Sign-In</span>
             </button>
           </form>
         )}
