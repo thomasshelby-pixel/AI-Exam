@@ -1116,13 +1116,138 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
       `).get(normalizedEmail) as typeof user;
 
-      // OAuth proves control of a verified provider identity; it does not create an app
-      // account or grant an app role. Student accounts must complete the normal SRN/OTP
-      // registration flow first, and all app-side suspension, MFA and device checks below
-      // remain authoritative.
+      let createdViaSocialSignup = false;
+      if (user && user.role !== 'STUDENT') {
+        return res.status(401).json({
+          error: 'This email belongs to a non-student portal. Google and Apple sign-in are available for student accounts only.',
+          code: 'SOCIAL_PORTAL_ROLE_MISMATCH',
+        });
+      }
+
+      if (!user) {
+        // First-time Google/Apple students may create an account without a password.
+        // ICAI registration is collected by the post-login Complete Your Profile flow;
+        // free trial access stays blocked until a unique SRN is validated and claimed.
+        const socialUserId = `usr_social_${crypto.createHash('sha256').update(identity.uid).digest('hex').slice(0, 24)}`;
+        if (await isTombstoned('users', socialUserId)) {
+          return res.status(403).json({
+            error: 'This social account was permanently deleted and cannot be restored. Contact support if you believe this is a mistake.',
+            code: 'SOCIAL_ACCOUNT_PREVIOUSLY_DELETED',
+          });
+        }
+
+        // Fail closed if an older account exists in Firestore but is not hydrated into
+        // the local authoritative account registry. Never create a duplicate account.
+        try {
+          const firestore = getFirestoreDb();
+          if (firestore) {
+            const matchingCloudUsers = await getDocs(
+              query(collection(firestore, 'users'), where('email', '==', normalizedEmail))
+            );
+            if (!matchingCloudUsers.empty) {
+              return res.status(409).json({
+                error: 'An account with this email already exists but is not available in the local account registry yet. Please retry shortly or contact support.',
+                code: 'SOCIAL_ACCOUNT_SYNC_PENDING',
+              });
+            }
+          } else {
+            return res.status(503).json({
+              error: 'Account storage is temporarily unavailable. Please try again shortly.',
+              code: 'SOCIAL_ACCOUNT_STORAGE_UNAVAILABLE',
+            });
+          }
+        } catch (lookupError) {
+          console.warn('[Auth] Could not verify existing Firestore account before social signup:', (lookupError as any)?.message || 'unknown error');
+          return res.status(503).json({
+            error: 'Could not safely check for an existing account. Please retry shortly.',
+            code: 'SOCIAL_ACCOUNT_LOOKUP_FAILED',
+          });
+        }
+
+        const timestamp = new Date().toISOString();
+        const providerMarker = socialProvider === 'google' ? 'GOOGLE_OAUTH' : 'APPLE_OAUTH';
+        const fullName = identity.fullName.trim() || 'CA Student';
+
+        try {
+          db.exec('BEGIN IMMEDIATE');
+          const emailRace = db.prepare(
+            'SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?'
+          ).get(normalizedEmail) as typeof user;
+
+          if (emailRace) {
+            db.exec('ROLLBACK');
+            if (emailRace.role !== 'STUDENT') {
+              return res.status(401).json({
+                error: 'This email belongs to a non-student portal. Please use the correct sign-in method.',
+                code: 'SOCIAL_PORTAL_ROLE_MISMATCH',
+              });
+            }
+            user = emailRace;
+          } else {
+            db.prepare(`
+              INSERT INTO users (
+                id, email, password_hash, full_name, phone, role, status,
+                account_classification, email_verified, email_verified_at, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, NULL, 'STUDENT', 'ACTIVE', 'NORMAL', 1, ?, ?, ?)
+            `).run(socialUserId, normalizedEmail, providerMarker, fullName, timestamp, timestamp, timestamp);
+
+            db.prepare(`
+              INSERT INTO student_profiles (
+                user_id, student_code, icai_registration_number, ca_level,
+                free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+                free_trial_blocked, free_trial_block_reason, free_evaluation_reset_month,
+                purchased_credits, paid_credits, created_at, updated_at
+              ) VALUES (?, NULL, 'REG-PENDING', 'INTERMEDIATE', 0, 0, 0, 1,
+                'PROFILE_COMPLETION_REQUIRED', ?, 0, 0, ?, ?)
+            `).run(socialUserId, getCurrentServerMonth(), timestamp, timestamp);
+
+            db.prepare(`
+              INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+              VALUES (?, ?, 'SOCIAL_STUDENT_SIGNUP', 'USER', ?, ?)
+            `).run(
+              `log_${crypto.randomBytes(8).toString('hex')}`,
+              socialUserId,
+              socialUserId,
+              `New student account created through ${socialProvider} with profile completion required`
+            );
+
+            db.exec('COMMIT');
+            user = {
+              id: socialUserId,
+              email: normalizedEmail,
+              password_hash: providerMarker,
+              full_name: fullName,
+              role: 'STUDENT' as UserRole,
+              status: 'ACTIVE',
+              mfa_enabled: 0,
+              mfa_phone: null,
+            };
+            createdViaSocialSignup = true;
+
+            // Keep authoritative Firestore records aligned. The existing startup
+            // hydrator remains authoritative; sync failures are visible in logs and
+            // are retried by the established persistence flow.
+            try {
+              const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(socialUserId) as any;
+              const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(socialUserId) as any;
+              if (uRow) await syncRecordToFirestore('users', socialUserId, uRow);
+              if (spRow) await syncRecordToFirestore('student_profiles', socialUserId, spRow);
+            } catch (syncError) {
+              console.warn('[Auth] Social signup Firestore sync warning:', (syncError as any)?.message || 'unknown error');
+            }
+          }
+        } catch (createError) {
+          try { db.exec('ROLLBACK'); } catch {}
+          console.error('[Auth] Social student account creation failed:', (createError as any)?.message || createError);
+          return res.status(500).json({
+            error: 'Could not create your student account safely. Please try again.',
+            code: 'SOCIAL_ACCOUNT_CREATION_FAILED',
+          });
+        }
+      }
       if (!user || user.role !== 'STUDENT') {
         return res.status(401).json({
-          error: 'No existing student account was found for this verified email. Create your student account first, then sign in with the same email.',
+          error: 'No student account is available for this verified social identity.',
           code: 'SOCIAL_ACCOUNT_NOT_REGISTERED',
         });
       }
@@ -1329,6 +1454,12 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     }, sessionId, true);
 
     const isPermanentFree = checkPermanentFreeAccess(user.email);
+    const profileRow = user.role === 'STUDENT'
+      ? db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(user.id) as { icai_registration_number?: string } | undefined
+      : undefined;
+    const registrationNumber = String(profileRow?.icai_registration_number || '').trim().toUpperCase();
+    const requiresProfileCompletion = user.role === 'STUDENT' &&
+      (!registrationNumber || registrationNumber === 'REG-PENDING');
 
     // Audit log
     db.prepare(`
@@ -1370,6 +1501,8 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         mfaVerified: true,
         mfaMandatory: isMandatoryRole,
       },
+      requiresProfileCompletion,
+      createdViaSocialSignup,
     });
   } catch (error: unknown) {
     console.error('Login error:', error);
