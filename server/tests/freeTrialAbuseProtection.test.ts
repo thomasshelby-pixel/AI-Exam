@@ -25,6 +25,7 @@ const staleCounterUserId = 'usr_trial_stale_counter_' + suffix;
 const repairableUserId = 'usr_trial_repairable_' + suffix;
 const duplicateOwnerId = 'usr_trial_dup_owner_' + suffix;
 const duplicateBlockedId = 'usr_trial_dup_blocked_' + suffix;
+const durableBlockedId = 'usr_trial_durable_blocked_' + suffix;
 const nowMonth = getCurrentServerMonth();
 const repairSrnDigits = String(Date.now()).slice(-7);
 const duplicateSrnDigits = String(Number(repairSrnDigits) + 1).slice(-7).padStart(7, '0');
@@ -146,7 +147,24 @@ try {
   const duplicateQuota = ensureMonthlyFreeEvaluationsReset(duplicateBlockedId);
   assert(duplicateQuota.monthlyFreeEvaluationsLimit === 0 && duplicateQuota.freeEvaluationsRemaining === 0, 'Duplicate ICAI identity is not auto-unblocked');
 
+  // Explicit durable identity-claim blocks must not be mistaken for false blocks.
+  const durableDigits = String(Number(repairSrnDigits) + 3).slice(-7).padStart(7, '0');
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
+    VALUES (?, ?, 'test-hash', 'Durably Blocked Student', 'STUDENT', 'ACTIVE', 1)
+  `).run(durableBlockedId, 'trial_durable_blocked_' + suffix + '@example.test');
+  db.prepare(`
+    INSERT INTO student_profiles (
+      user_id, icai_registration_number, ca_level, free_evaluations_used,
+      monthly_free_evaluations_used, monthly_free_evaluations_limit,
+      free_evaluation_reset_month, purchased_credits, paid_credits,
+      free_trial_blocked, free_trial_block_reason
+    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1, 'REUSED_SRN')
+  `).run(durableBlockedId, 'SRO' + durableDigits, nowMonth);
+  const durableQuota = ensureMonthlyFreeEvaluationsReset(durableBlockedId);
+  assert(durableQuota.monthlyFreeEvaluationsLimit === 0 && durableQuota.freeEvaluationsRemaining === 0, 'Explicit durable SRN-claim block is not auto-repaired');
+
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');
 } finally {
-  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, duplicateOwnerId, duplicateBlockedId);
+  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, duplicateOwnerId, duplicateBlockedId, durableBlockedId);
 }
