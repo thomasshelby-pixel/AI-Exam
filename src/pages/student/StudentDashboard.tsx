@@ -519,7 +519,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div>
               <h2 className="font-bold text-sm text-amber-950 dark:text-amber-100">Complete Your Profile</h2>
               <p className="text-xs text-amber-900/80 dark:text-amber-200/80 mt-0.5">
-                Add your ICAI registration number to activate student features. Phone number is optional.
+                Add your valid ICAI registration number to unlock your 2 free full-paper evaluations. Phone number is optional.
               </p>
             </div>
           </div>
@@ -743,6 +743,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Sponsored</span>
+            ) : needsSocialProfileCompletion ? (
+              <span className="text-amber-600 dark:text-amber-400">2 locked</span>
             ) : (
               <span>
                 {metrics.freeEvaluationsRemaining}/2 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">remaining</span>
@@ -763,6 +765,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Full evaluation access active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Via {metrics.instituteName || 'Institute'}</span>
+            ) : needsSocialProfileCompletion ? (
+              <div className="space-y-0.5">
+                <div className="text-amber-700 dark:text-amber-300 font-semibold">
+                  Complete profile to unlock 2 free evaluations
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Add a valid, unused ICAI registration number. Phone is optional.
+                </div>
+                <div className="text-slate-600 dark:text-slate-300">
+                  Paid Credits: <strong className="text-blue-600 dark:text-blue-400">{metrics.purchasedCredits}</strong>
+                </div>
+              </div>
             ) : (
               <div className="space-y-0.5">
                 <div className="text-slate-600 dark:text-slate-300">
