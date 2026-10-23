@@ -6,6 +6,7 @@ import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
 import { requireConfirmedDeletions, type DurableDeletionTarget } from './deletionPersistence.js';
+import { sendEmail } from './emailService.js';
 
 export interface DeleteStudentResult {
   success: boolean;
@@ -351,6 +352,235 @@ export function updateStudentClassification(
       accountClassification: classification,
     },
   };
+}
+
+const SELF_DELETE_OTP_EXPIRY_MS = 10 * 60 * 1000;
+const SELF_DELETE_OTP_RESEND_MS = 60 * 1000;
+const SELF_DELETE_OTP_MAX_ATTEMPTS = 5;
+
+function initSelfDeleteOtpTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS student_account_deletion_otps (
+      user_id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      otp_salt TEXT NOT NULL,
+      attempts_count INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      resend_available_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_student_delete_otp_expiry
+      ON student_account_deletion_otps(expires_at);
+  `);
+}
+
+function isSocialOAuthPasswordMarker(passwordHash: string | null | undefined): boolean {
+  const marker = String(passwordHash || '');
+  return marker.startsWith('GOOGLE_') || marker.startsWith('APPLE_') || marker === 'EXTERNAL_OAUTH';
+}
+
+function maskAccountEmail(email: string): string {
+  const [local, domain] = String(email || '').trim().toLowerCase().split('@');
+  if (!local || !domain) return 'your registered email';
+  if (local.length <= 2) return `${local[0] || '*'}***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+function createSelfDeleteOtpError(message: string, statusCode: number, code: string) {
+  const error: any = new Error(message);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
+
+export function getSelfDeleteVerificationOptions(studentId: string): {
+  email: string;
+  maskedEmail: string;
+  requiresEmailOtp: boolean;
+  verificationMethod: 'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION';
+} {
+  const user = db.prepare(
+    'SELECT email, role, password_hash FROM users WHERE id = ?'
+  ).get(studentId) as { email: string; role: string; password_hash: string } | undefined;
+  if (!user || user.role !== 'STUDENT') {
+    throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
+  }
+
+  const requiresEmailOtp = isSocialOAuthPasswordMarker(user.password_hash);
+  const isPasswordAccount = Boolean(user.password_hash) &&
+    !requiresEmailOtp &&
+    user.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
+
+  return {
+    email: user.email,
+    maskedEmail: maskAccountEmail(user.email),
+    requiresEmailOtp,
+    verificationMethod: requiresEmailOtp ? 'EMAIL_OTP' : (isPasswordAccount ? 'PASSWORD' : 'EMAIL_CONFIRMATION'),
+  };
+}
+
+/**
+ * Sends a short-lived, single-use verification OTP to the account's own registered
+ * email address. Only accounts created with a social OAuth credential marker may
+ * request this challenge; the destination is never accepted from the client.
+ */
+export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
+  success: true;
+  message: string;
+  maskedEmail: string;
+  expiresInSeconds: number;
+  cooldownSeconds: number;
+}> {
+  initSelfDeleteOtpTable();
+
+  const user = db.prepare(
+    'SELECT id, email, full_name, role, status, password_hash FROM users WHERE id = ?'
+  ).get(studentId) as {
+    id: string; email: string; full_name: string; role: string; status: string; password_hash: string;
+  } | undefined;
+  if (!user || user.role !== 'STUDENT') {
+    throw createSelfDeleteOtpError('Student account not found or cannot be deleted through self-service.', 404, 'STUDENT_ACCOUNT_NOT_FOUND');
+  }
+  if (!isSocialOAuthPasswordMarker(user.password_hash)) {
+    throw createSelfDeleteOtpError('Email OTP deletion verification is only available for social-sign-in accounts.', 400, 'EMAIL_OTP_NOT_REQUIRED');
+  }
+  if (user.status === 'DELETED') {
+    throw createSelfDeleteOtpError('This account is already deleted.', 409, 'ACCOUNT_ALREADY_DELETED');
+  }
+
+  const nowMs = Date.now();
+  const existing = db.prepare(
+    'SELECT resend_available_at FROM student_account_deletion_otps WHERE user_id = ?'
+  ).get(studentId) as { resend_available_at: string } | undefined;
+  if (existing) {
+    const resendAt = new Date(existing.resend_available_at).getTime();
+    if (Number.isFinite(resendAt) && nowMs < resendAt) {
+      const error = createSelfDeleteOtpError(
+        `Please wait ${Math.ceil((resendAt - nowMs) / 1000)} seconds before requesting another code.`,
+        429,
+        'OTP_RESEND_COOLDOWN'
+      );
+      throw error;
+    }
+  }
+
+  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const otpHash = crypto.createHash('sha256').update(`${salt}:${code}`).digest('hex');
+  const createdAt = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + SELF_DELETE_OTP_EXPIRY_MS).toISOString();
+  const resendAvailableAt = new Date(nowMs + SELF_DELETE_OTP_RESEND_MS).toISOString();
+  const displayName = String(user.full_name || 'Student').replace(/[<>]/g, '').trim().slice(0, 100) || 'Student';
+
+  const emailResult = await sendEmail({
+    to: user.email,
+    subject: `${code} is your CA Exam Checker AI account deletion code`,
+    text:
+      `Hello ${displayName},\n\n` +
+      `You requested to permanently delete your CA Exam Checker AI student account. Your one-time verification code is: ${code}\n\n` +
+      `This code expires in 10 minutes and can only be used once. Enter it only in the account deletion dialog on caexamcheckerai.com. CA Exam Checker AI support will never ask you to share this code.\n\n` +
+      `If you did not request account deletion, ignore this email and secure your account. No deletion will occur without this code and the explicit DELETE confirmation.\n\n` +
+      `CA Exam Checker AI Support: support@caexamcheckerai.com`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f8fafc;padding:24px;border-radius:12px;color:#0f172a">
+        <div style="background:#172554;color:#fff;border-radius:8px;padding:22px;text-align:center">
+          <h1 style="margin:0;font-size:21px">CA Exam Checker AI</h1>
+          <p style="margin:8px 0 0;color:#bfdbfe">Account deletion verification</p>
+        </div>
+        <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-radius:8px;margin-top:12px">
+          <p>Hello <strong>${displayName}</strong>,</p>
+          <p>A request was made to permanently delete your student account. Enter this one-time code in the account deletion dialog to verify control of your registered email:</p>
+          <div style="margin:24px 0;text-align:center;padding:20px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:8px">
+            <div style="font-family:monospace;font-size:34px;font-weight:800;letter-spacing:7px;color:#1e3a8a">${code}</div>
+            <p style="margin:10px 0 0;color:#64748b;font-size:12px">Expires in 10 minutes • Single-use</p>
+          </div>
+          <p style="font-size:13px;color:#b91c1c"><strong>Security notice:</strong> Your account is not deleted by sending this code. Deletion occurs only after entering the code and typing DELETE in the app.</p>
+          <p style="font-size:12px;color:#64748b">If you did not request this, ignore this message. Need help? support@caexamcheckerai.com</p>
+        </div>
+      </div>
+    `,
+  });
+
+  if (!emailResult?.success) {
+    throw createSelfDeleteOtpError(
+      emailResult?.message || 'Could not send the verification email. Please try again.',
+      503,
+      'OTP_DELIVERY_FAILED'
+    );
+  }
+
+  db.prepare(`
+    INSERT INTO student_account_deletion_otps (
+      user_id, email, otp_hash, otp_salt, attempts_count, max_attempts,
+      created_at, expires_at, resend_available_at
+    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      email = excluded.email,
+      otp_hash = excluded.otp_hash,
+      otp_salt = excluded.otp_salt,
+      attempts_count = 0,
+      max_attempts = excluded.max_attempts,
+      created_at = excluded.created_at,
+      expires_at = excluded.expires_at,
+      resend_available_at = excluded.resend_available_at
+  `).run(
+    studentId, user.email, otpHash, SELF_DELETE_OTP_MAX_ATTEMPTS,
+    createdAt, expiresAt, resendAvailableAt
+  );
+
+  return {
+    success: true,
+    message: `A verification code was sent to ${maskAccountEmail(user.email)}. It expires in 10 minutes.`,
+    maskedEmail: maskAccountEmail(user.email),
+    expiresInSeconds: 600,
+    cooldownSeconds: 60,
+  };
+}
+
+function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string): void {
+  initSelfDeleteOtpTable();
+  const cleanOtp = String(enteredOtp || '').trim();
+  if (!/^\\d{6}$/.test(cleanOtp)) {
+    throw createSelfDeleteOtpError('Enter the 6-digit code sent to your registered email.', 400, 'INVALID_DELETE_OTP');
+  }
+
+  const row = db.prepare(
+    'SELECT otp_hash, otp_salt, attempts_count, max_attempts, expires_at FROM student_account_deletion_otps WHERE user_id = ?'
+  ).get(studentId) as {
+    otp_hash: string; otp_salt: string; attempts_count: number; max_attempts: number; expires_at: string;
+  } | undefined;
+
+  if (!row) {
+    throw createSelfDeleteOtpError('Request a verification code first using Send OTP.', 400, 'DELETE_OTP_NOT_REQUESTED');
+  }
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+    throw createSelfDeleteOtpError('That verification code has expired. Request a new one.', 400, 'EXPIRED_DELETE_OTP');
+  }
+  if (Number(row.attempts_count) >= Number(row.max_attempts)) {
+    db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+    throw createSelfDeleteOtpError('Too many incorrect attempts. Request a new verification code.', 429, 'DELETE_OTP_MAX_ATTEMPTS');
+  }
+
+  const expected = Buffer.from(row.otp_hash, 'hex');
+  const supplied = Buffer.from(crypto.createHash('sha256').update(`${row.otp_salt}:${cleanOtp}`).digest('hex'), 'hex');
+  const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  if (!valid) {
+    const nextAttempts = Number(row.attempts_count) + 1;
+    db.prepare('UPDATE student_account_deletion_otps SET attempts_count = ? WHERE user_id = ?').run(nextAttempts, studentId);
+    throw createSelfDeleteOtpError(
+      nextAttempts >= Number(row.max_attempts)
+        ? 'Too many incorrect attempts. Request a new verification code.'
+        : `Incorrect verification code. ${Number(row.max_attempts) - nextAttempts} attempt(s) remaining.`,
+      nextAttempts >= Number(row.max_attempts) ? 429 : 401,
+      nextAttempts >= Number(row.max_attempts) ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP'
+    );
+  }
+
+  // One-time consumption prevents code reuse for a second deletion attempt.
+  db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
 }
 
 export interface SelfDeleteStudentParams {
