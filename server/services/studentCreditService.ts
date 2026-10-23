@@ -137,6 +137,41 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   const resetMonth = profile.free_evaluation_reset_month;
   const trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
+  // Reconcile the monthly counter against the authoritative consumption ledger.
+  // Both counters are normally changed in the same transaction; a mismatch (for
+  // example, monthly_used=2 while legacy_used=0 and no deductions exist) indicates
+  // stale profile data, not two evaluations consumed. Never repair blocked accounts.
+  if (!trialBlocked && Number(profile.monthly_free_evaluations_limit || 0) > 0 && resetMonth === currentMonth) {
+    const monthStart = `${currentMonth}-01 00:00:00`;
+    const ledgerRows = db.prepare(`
+      SELECT evaluation_id, source, amount
+      FROM credit_ledger
+      WHERE student_id = ?
+        AND evaluation_id IS NOT NULL
+        AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
+        AND datetime(created_at) >= datetime(?)
+      ORDER BY rowid ASC
+    `).all(userId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
+    const latestByEvaluation = new Map<string, { source: string; amount: number }>();
+    for (const row of ledgerRows) latestByEvaluation.set(row.evaluation_id, row);
+    const ledgerUsed = [...latestByEvaluation.values()].filter((row) =>
+      row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
+    ).length;
+    const storedUsed = Math.max(0, Number(profile.monthly_free_evaluations_used) || 0);
+    if (storedUsed !== ledgerUsed && ledgerUsed <= Number(profile.monthly_free_evaluations_limit)) {
+      db.prepare(`
+        UPDATE student_profiles
+        SET monthly_free_evaluations_used = ?,
+            free_evaluations_used = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND free_trial_blocked = 0
+      `).run(ledgerUsed, ledgerUsed, userId);
+      profile.monthly_free_evaluations_used = ledgerUsed;
+      profile.free_evaluations_used = ledgerUsed;
+      syncStudentCreditsToFirestore(userId).catch(() => {});
+    }
+  }
+
   // Keep a blocked account's standard free-trial allowance at zero even after
   // a monthly reset or when a legacy profile still carries a positive quota.
   if (trialBlocked && Number(profile.monthly_free_evaluations_limit || 0) !== 0) {
