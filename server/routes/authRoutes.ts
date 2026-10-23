@@ -901,6 +901,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = 0,
+            free_trial_block_reason = NULL,
             monthly_free_evaluations_used = 0,
             monthly_free_evaluations_limit = 2,
             free_evaluation_reset_month = ?,
@@ -918,6 +919,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = 1,
+            free_trial_block_reason = 'REUSED_SRN',
             monthly_free_evaluations_limit = 0,
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
