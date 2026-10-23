@@ -27,8 +27,11 @@ export function validateClientFirebaseConfig(): ClientFirebaseIdentity {
   }
 
   const authDomain = String(firebaseConfig.authDomain || '').trim();
-  if (!authDomain || (!authDomain.includes(projectId) && !authDomain.includes('firebaseapp.com'))) {
-    errors.push(`Client authDomain "${authDomain}" does not match projectId "${projectId}"`);
+  const isAuthoritativeProjectAuthDomain =
+    authDomain.includes(projectId) || authDomain.includes('firebaseapp.com');
+  const isApprovedCustomAuthDomain = authDomain === 'auth.caexamcheckerai.com';
+  if (!authDomain || (!isAuthoritativeProjectAuthDomain && !isApprovedCustomAuthDomain)) {
+    errors.push(`Client authDomain "${authDomain}" is not an approved authentication domain for project "${projectId}"`);
   }
 
   const appId = String(firebaseConfig.appId || '').trim();
