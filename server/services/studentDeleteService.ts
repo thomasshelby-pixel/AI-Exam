@@ -528,7 +528,7 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
       firestore = getSelfDeleteOtpFirestore();
       if (!firestore) throw new Error('Authoritative OTP store is unavailable.');
       const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
-      const reservation = await runTransaction(firestore, async (transaction) => {
+      const reservation = await firestore.runTransaction(async (transaction) => {
         const existing = await transaction.get(reference);
         if (existing.exists()) {
           const previous = existing.data();
