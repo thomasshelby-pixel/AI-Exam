@@ -117,7 +117,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
 
   const profile = db.prepare(`
     SELECT p.user_id, p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit, p.free_evaluation_reset_month,
-           p.free_evaluations_used, p.purchased_credits, p.paid_credits, p.free_trial_blocked,
+           p.free_evaluations_used, p.purchased_credits, p.paid_credits, p.free_trial_blocked, p.free_trial_block_reason,
            p.icai_registration_number, u.email_verified, u.status AS account_status, u.role AS account_role
     FROM student_profiles p
     JOIN users u ON u.id = p.user_id
@@ -161,6 +161,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
       Number(profile.email_verified) === 1 &&
       profile.account_status === 'ACTIVE' &&
       profile.account_role === 'STUDENT' &&
+      profile.free_trial_block_reason !== 'REUSED_SRN' &&
       /^[A-Z]{3}[0-9]{7}$/.test(srn) &&
       Number(duplicateIdentity.count) === 0;
 
@@ -185,6 +186,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
         const repair = db.prepare(`
           UPDATE student_profiles
           SET free_trial_blocked = 0,
+              free_trial_block_reason = NULL,
               monthly_free_evaluations_used = ?,
               monthly_free_evaluations_limit = 2,
               free_evaluation_reset_month = ?,
@@ -198,6 +200,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
           trialBlocked = false;
           resetMonth = currentMonth;
           profile.free_trial_blocked = 0;
+          profile.free_trial_block_reason = null;
           profile.monthly_free_evaluations_used = ledgerUsed;
           profile.monthly_free_evaluations_limit = 2;
           profile.free_evaluation_reset_month = currentMonth;
