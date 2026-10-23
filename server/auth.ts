@@ -261,6 +261,62 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
 }
 
 /**
+ * Authentication for self-service student account deletion only.
+ *
+ * A previously valid signed session may still need to delete its own account
+ * after the account is marked inactive/disabled or ordinary sessions are revoked.
+ * This middleware validates the signed token and authoritative account ownership,
+ * but deliberately leaves re-authentication (password or one-time email OTP) to
+ * the deletion service. It must only be mounted on the narrowly scoped deletion
+ * endpoints, never on general student routes.
+ */
+export function authenticateSelfDeleteToken(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token && req.headers['cookie']) {
+    token = parseCookie(req.headers['cookie'], 'ca_token');
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Please log in again to verify account ownership before deletion.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { id?: string };
+    if (!decoded?.id) {
+      return res.status(401).json({ error: 'Invalid account-deletion session. Please log in again.' });
+    }
+
+    const user = db.prepare(
+      'SELECT id, email, role, full_name FROM users WHERE id = ?'
+    ).get(decoded.id) as {
+      id: string;
+      email: string;
+      role: UserRole;
+      full_name: string;
+    } | undefined;
+
+    if (!user) {
+      return res.status(401).json({ error: 'Your account could not be found. Please contact support if deletion is incomplete.' });
+    }
+    if (user.role !== 'STUDENT') {
+      return res.status(403).json({ error: 'Only student accounts can use self-service account deletion.' });
+    }
+
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.full_name,
+    };
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired account-deletion session. Please log in again.' });
+  }
+}
+
+/**
  * Dedicated authentication middleware for suspended account revocation appeals.
  * Allows users with status 'SUSPENDED' to access their own appeal endpoints.
  */
