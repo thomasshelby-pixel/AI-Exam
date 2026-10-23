@@ -558,21 +558,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <span>{isLoading ? 'Signing in…' : 'Continue with Google'}</span>
                 </button>
 
-                <button
-                  id="btn-apple-sign-in"
-                  type="button"
-                  onClick={() => handleSocialLogin('apple')}
-                  disabled={isLoading}
-                  className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-950 hover:bg-black dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2.5"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 shrink-0" fill="currentColor">
-                    <path d="M16.37 12.2c.02 2.1 1.85 2.8 1.87 2.81-.02.05-.29 1.02-.96 2.02-.58.87-1.18 1.73-2.12 1.75-.92.02-1.22-.56-2.28-.56s-1.4.54-2.27.58c-.91.03-1.6-.94-2.18-1.8-1.18-1.72-2.08-4.86-.87-6.98.6-1.05 1.68-1.72 2.85-1.74.89-.02 1.73.61 2.28.61.55 0 1.58-.75 2.67-.64.46.02 1.75.19 2.58 1.42-.07.04-1.54.9-1.57 2.53ZM14.62 6.94c.48-.58.8-1.39.71-2.19-.69.03-1.52.46-2.02 1.04-.45.52-.84 1.35-.74 2.14.77.06 1.56-.39 2.05-.99Z"/>
-                  </svg>
-                  <span>{isLoading ? 'Signing in…' : 'Continue with Apple'}</span>
-                </button>
 
                 <p className="text-[10px] leading-relaxed text-center text-slate-500 dark:text-slate-400">
-                  New students can create an account with Google or Apple. After sign-in, complete your ICAI registration number to unlock student features; phone number is optional.
+                  New students can create an account with Google. After sign-in, complete your ICAI registration number to unlock student features; phone number is optional.
                 </p>
               </div>
             </form>
@@ -741,20 +729,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   </svg>
                   <span>{isLoading ? 'Signing up…' : 'Sign up with Google'}</span>
                 </button>
-                <button
-                  id="btn-apple-signup"
-                  type="button"
-                  onClick={() => handleSocialLogin('apple')}
-                  disabled={isLoading}
-                  className="w-full py-2.5 px-4 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-950 hover:bg-black dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs sm:text-sm transition disabled:opacity-50 flex items-center justify-center gap-2.5"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 shrink-0" fill="currentColor">
-                    <path d="M16.37 12.2c.02 2.1 1.85 2.8 1.87 2.81-.02.05-.29 1.02-.96 2.02-.58.87-1.18 1.73-2.12 1.75-.92.02-1.22-.56-2.28-.56s-1.4.54-2.27.58c-.91.03-1.6-.94-2.18-1.8-1.18-1.72-2.08-4.86-.87-6.98.6-1.05 1.68-1.72 2.85-1.74.89-.02 1.73.61 2.28.61.55 0 1.58-.75 2.67-.64.46.02 1.75.19 2.58 1.42-.07.04-1.54.9-1.57 2.53ZM14.62 6.94c.48-.58.8-1.39.71-2.19-.69.03-1.52.46-2.02 1.04-.45.52-.84 1.35-.74 2.14.77.06 1.56-.39 2.05-.99Z"/>
-                  </svg>
-                  <span>{isLoading ? 'Signing up…' : 'Sign up with Apple'}</span>
-                </button>
                 <p className="text-[10px] leading-relaxed text-center text-slate-500 dark:text-slate-400">
-                  Your account will open with a profile-completion prompt. ICAI registration number is required; phone number is optional. Social signup follows the same student eligibility checks.
+                  Your account will open with a profile-completion prompt. ICAI registration number is required; phone number is optional. Google signup follows the same student eligibility checks.
                 </p>
               </div>
 
