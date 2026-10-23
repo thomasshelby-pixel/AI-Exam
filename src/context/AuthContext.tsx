@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { GoogleAuthProvider, OAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { User, UserRole } from '../types/index.js';
 import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken, getScopedTrustToken } from '../api/client.js';
 import { MfaModal } from '../components/auth/MfaModal.js';
-import { logMfaDiagnostic } from '../lib/firebaseAuth.js';
+import { auth as firebaseClientAuth, logMfaDiagnostic } from '../lib/firebaseAuth.js';
 
 export interface SuspendedAccountInfo {
   reason: string;
@@ -67,6 +68,7 @@ interface AuthContextType {
   syncMfaFactor: (phone?: string) => Promise<User>;
   disableMfa: () => Promise<void>;
   login: (email: string, password: string, portalScope?: 'STUDENT' | 'SUPER_ADMIN') => Promise<User>;
+  socialLogin: (provider: 'google' | 'apple') => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
   instituteRegister: (data: {
     instituteName: string;
@@ -656,6 +658,92 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const socialLogin = async (provider: 'google' | 'apple'): Promise<User> => {
+    try {
+      const authProvider = (() => {
+        if (provider === 'google') {
+          const googleProvider = new GoogleAuthProvider();
+          googleProvider.setCustomParameters({ prompt: 'select_account' });
+          return googleProvider;
+        }
+        const appleProvider = new OAuthProvider('apple.com');
+        appleProvider.addScope('email');
+        appleProvider.addScope('name');
+        return appleProvider;
+      })();
+
+      const popupResult = await signInWithPopup(firebaseClientAuth, authProvider);
+      const email = popupResult.user.email?.trim().toLowerCase();
+      if (!email) {
+        throw new Error('The selected provider did not return an email address. Please use email and password instead.');
+      }
+
+      const firebaseIdToken = await popupResult.user.getIdToken(true);
+      const deviceId = getOrCreateDeviceId();
+      const trustToken = getScopedTrustToken(email);
+      const res = await apiRequest<{
+        token: string;
+        user: User;
+        mfaRequired?: boolean;
+        mfaEnrolled?: boolean;
+        mfaState?: string;
+        mfaSessionToken?: string;
+        totpSetup?: any;
+        canonicalPhoneE164?: string;
+        maskedPhone?: string;
+        role?: string;
+        trustToken?: string;
+        deviceTrusted?: boolean;
+      }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          firebaseIdToken,
+          socialProvider: provider,
+          deviceId,
+          trustToken,
+          portalScope: 'STUDENT',
+        }),
+      });
+
+      if (res.mfaRequired && res.mfaSessionToken) {
+        return await new Promise<User>((resolve, reject) => {
+          setMfaChallenge({
+            isOpen: true,
+            mode:
+              res.mfaState === 'MFA_ENROLLED' ||
+              res.mfaState === 'MFA_RECOVERY_REQUIRED' ||
+              res.mfaEnrolled === true
+                ? 'CHALLENGE'
+                : 'ENROLL',
+            mfaSessionToken: res.mfaSessionToken!,
+            totpSetup: res.totpSetup,
+            canonicalPhoneE164: res.canonicalPhoneE164,
+            maskedPhone: res.maskedPhone,
+            role: res.role,
+            onSuccess: (verifiedUser) => resolve(verifiedUser),
+            onCancel: () => reject(new Error('MFA verification was cancelled.')),
+          });
+        });
+      }
+
+      if (res.trustToken) {
+        saveScopedTrustToken(res.user.id, res.user.email, res.trustToken);
+      }
+      localStorage.setItem('ca_exam_checker_token', res.token);
+      setToken(res.token);
+      setUser(res.user);
+      setSuspendedAccount(null);
+      refreshUser().catch(() => {});
+      return res.user;
+    } catch (err: any) {
+      // Do not leave a Firebase-only session behind when the app account is
+      // rejected, suspended, or the app's own MFA challenge is cancelled.
+      await signOut(firebaseClientAuth).catch(() => {});
+      handleSuspension(err) || handleSuspension(err?.data);
+      throw err;
+    }
+  };
+
   const instituteLogin = async (email: string, password: string): Promise<User> => {
     try {
       const deviceId = getOrCreateDeviceId();
@@ -871,6 +959,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await apiRequest('/api/auth/logout', { method: 'POST' }).catch(() => {});
     } finally {
+      await signOut(firebaseClientAuth).catch(() => {});
       localStorage.removeItem('ca_exam_checker_token');
       localStorage.removeItem('ca_totp_enrolled');
       // PRESERVE TRUSTED DEVICE STATE ACROSS LOGOUTS:
@@ -931,6 +1020,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         syncMfaFactor,
         disableMfa,
         login,
+        socialLogin,
         instituteLogin,
         instituteRegister,
         register,
