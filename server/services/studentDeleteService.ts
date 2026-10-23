@@ -588,6 +588,7 @@ export interface SelfDeleteStudentParams {
   confirmationText: string;
   currentPassword?: string;
   emailConfirmation?: string;
+  emailOtp?: string;
   ipAddress?: string | null;
   userAgent?: string | null;
 }
@@ -616,7 +617,7 @@ export interface SelfDeleteStudentResult {
 export async function selfDeleteStudentAccount(
   params: SelfDeleteStudentParams
 ): Promise<SelfDeleteStudentResult> {
-  const { studentId, confirmationText, currentPassword, emailConfirmation, ipAddress, userAgent } = params;
+  const { studentId, confirmationText, currentPassword, emailConfirmation, emailOtp, ipAddress, userAgent } = params;
 
   // 1. Idempotency & Existence Check
   const targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(studentId) as {
@@ -692,12 +693,17 @@ export async function selfDeleteStudentAccount(
   }
 
   // 4. Secure Re-Authentication
-  const isPasswordAccount = targetUser.password_hash &&
-    !targetUser.password_hash.startsWith('GOOGLE_') &&
-    targetUser.password_hash !== 'EXTERNAL_OAUTH' &&
+  const isSocialOAuthAccount = isSocialOAuthPasswordMarker(targetUser.password_hash);
+  const isPasswordAccount = Boolean(targetUser.password_hash) &&
+    !isSocialOAuthAccount &&
     targetUser.password_hash !== 'DISABLED_ACCOUNT_CANNOT_LOGIN';
 
-  if (isPasswordAccount) {
+  if (isSocialOAuthAccount) {
+    // Social accounts must prove control of their registered mailbox via a
+    // fresh, single-use, rate-limited email OTP. Typing the email address alone
+    // is not sufficient authorization for irreversible data deletion.
+    verifyAndConsumeSelfDeleteOtp(studentId, emailOtp || '');
+  } else if (isPasswordAccount) {
     if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.trim() === '') {
       const error: any = new Error('Please enter your current password to verify your identity.');
       error.statusCode = 400;
@@ -710,7 +716,8 @@ export async function selfDeleteStudentAccount(
       throw error;
     }
   } else {
-    // External or Google OAuth user: verify registered email confirmation
+    // Preserve the legacy email-confirmation flow for disabled/no-password accounts
+    // that predate explicit Google/Apple provider markers.
     if (!emailConfirmation || emailConfirmation.trim().toLowerCase() !== targetUser.email.toLowerCase()) {
       const error: any = new Error('Please confirm your registered email address to verify your identity.');
       error.statusCode = 400;
