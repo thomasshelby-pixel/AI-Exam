@@ -284,7 +284,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setDeleteAccountError('Please enter your current password to verify your identity.');
       return;
     }
-    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\\d{6}$/.test(deleteOtp.trim()))) {
+    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^[0-9]{6}$/.test(deleteOtp.trim()))) {
       setDeleteAccountError('Click Send OTP and enter the 6-digit code from your registered email first.');
       return;
     }
@@ -1660,7 +1660,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           autoComplete="one-time-code"
                           maxLength={6}
                           value={deleteOtp}
-                          onChange={(event) => setDeleteOtp(event.target.value.replace(/\\D/g, '').slice(0, 6))}
+                          onChange={(event) => setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
                           placeholder="Enter 6-digit OTP"
                           disabled={isDeletingAccount}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono tracking-[0.25em] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:normal-case placeholder:tracking-normal"
