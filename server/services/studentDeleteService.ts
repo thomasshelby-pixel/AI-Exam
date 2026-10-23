@@ -631,7 +631,7 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
       expires_at = excluded.expires_at,
       resend_available_at = excluded.resend_available_at
   `).run(
-    studentId, user.email, otpHash, SELF_DELETE_OTP_MAX_ATTEMPTS,
+    studentId, user.email, otpHash, salt, SELF_DELETE_OTP_MAX_ATTEMPTS,
     createdAt, expiresAt, resendAvailableAt
   );
 
