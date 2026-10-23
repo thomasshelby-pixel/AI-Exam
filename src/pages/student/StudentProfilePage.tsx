@@ -1801,7 +1801,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   !deleteVerificationLoaded ||
                   deleteConfirmationInput.trim() !== 'DELETE' ||
                   (deleteVerificationMethod === 'PASSWORD' && !deletePassword.trim()) ||
-                  (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\\d{6}$/.test(deleteOtp.trim()))) ||
+                  (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\d{6}$/.test(deleteOtp.trim()))) ||
                   (deleteVerificationMethod === 'EMAIL_CONFIRMATION' && deleteEmailConfirm.trim().toLowerCase() !== deleteRegisteredEmail.trim().toLowerCase())
                 }
                 className="w-full sm:w-auto min-h-10 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
