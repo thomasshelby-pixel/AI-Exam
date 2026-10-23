@@ -8,6 +8,11 @@ runConfig:
   memoryMiB: 1024
 
 env:
+  - variable: GOOGLE_NODEJS_VERSION
+    value: "22.23.0"
+    availability:
+      - BUILD
+      - RUNTIME
   - variable: NODE_ENV
     value: production
     availability:
