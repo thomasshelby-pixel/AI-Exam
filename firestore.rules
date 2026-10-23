@@ -23,6 +23,12 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Account Suspensions & Administrative Enforcement Records
+    match /account_suspensions/{suspensionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Student Profiles
     match /student_profiles/{userId} {
       allow read: if true;

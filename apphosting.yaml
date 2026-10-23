@@ -1,0 +1,39 @@
+# Firebase App Hosting Configuration
+# Controls Cloud Run runtime settings for production deployments
+runConfig:
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 1024
+
+scripts:
+  buildCommand: npm run build
+  runCommand: npm run start
+
+env:
+  - variable: NODE_ENV
+    value: production
+    availability:
+      - RUNTIME
+      - BUILD
+  - variable: SMTP_HOST
+    value: smtp.resend.com
+    availability:
+      - RUNTIME
+  - variable: SMTP_PORT
+    value: "465"
+    availability:
+      - RUNTIME
+  - variable: SMTP_USER
+    value: resend
+    availability:
+      - RUNTIME
+  - variable: SMTP_FROM
+    value: "CA Exam Checker AI <support@caexamcheckerai.com>"
+    availability:
+      - RUNTIME
+  - variable: APP_URL
+    value: https://caexamcheckerai.com
+    availability:
+      - RUNTIME

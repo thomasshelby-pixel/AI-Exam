@@ -519,6 +519,18 @@
     "/system_configuration/{configId}": {
       "schema": { "$ref": "#/entities/SystemConfiguration" },
       "description": "System-wide administrative and AI evaluation model configuration."
+    },
+    "/account_suspensions/{suspensionId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "user_id": { "type": "string" },
+          "status": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      },
+      "description": "Administrative account suspensions and policy enforcement records."
     }
   }
 }

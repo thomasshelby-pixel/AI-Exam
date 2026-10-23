@@ -26,21 +26,32 @@ import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.j
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
 
+let currentStartupStage = 'initialization';
+
 async function startServer() {
+  currentStartupStage = 'port-resolution';
   const PORT = getServerPort();
 
   // Safe startup logging for Cloud Run / Firebase App Hosting
   console.log({
+    stage: currentStartupStage,
     nodeEnv: process.env.NODE_ENV,
     port: PORT,
     host: SERVER_HOST,
     startup: 'server-start',
   });
 
-  // Initialize Database schemas, indices, and baseline ICAI materials
+  // Stage 1: Initialize Database schemas, indices, and baseline ICAI materials
+  currentStartupStage = 'sqlite-schema-init';
+  console.log(`[Startup] Stage 1/5: ${currentStartupStage}`);
   initDatabase();
+
+  currentStartupStage = 'mfa-tables-init';
+  console.log(`[Startup] Stage 2/5: ${currentStartupStage}`);
   initMfaRecoveryTables();
 
+  currentStartupStage = 'express-app-init';
+  console.log(`[Startup] Stage 3/5: ${currentStartupStage}`);
   const app = express();
 
   // Firebase App Hosting sits behind a trusted platform proxy. Trust one proxy hop
@@ -255,7 +266,9 @@ export default {};
     });
   }
 
-  // Hydrate persistent cloud data from Cloud Firestore before binding port
+  // Stage 4: Hydrate persistent cloud data from Cloud Firestore before binding port
+  currentStartupStage = 'firestore-hydration';
+  console.log(`[Startup] Stage 4/5: ${currentStartupStage}`);
   try {
     console.log('[Server] Awaiting durable cloud state hydration from Cloud Firestore before serving traffic...');
     const requireCompleteHydration = isProduction && process.env.NODE_ENV !== 'test';
@@ -276,7 +289,11 @@ export default {};
     console.warn('[Server] Firestore hydration startup note:', err);
   }
 
+  // Stage 5: Bind Express application to port on 0.0.0.0
+  currentStartupStage = 'server-port-listen';
+  console.log(`[Startup] Stage 5/5: ${currentStartupStage}`);
   const server = app.listen(PORT, '0.0.0.0', () => {
+    currentStartupStage = 'running';
     console.log(`Server listening on port ${PORT}`);
     console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
@@ -302,7 +319,13 @@ export default {};
   process.once('SIGINT', () => handleShutdown('SIGINT'));
 }
 
-startServer().catch((err) => {
-  console.error('Fatal server startup error:', err);
+startServer().catch((err: any) => {
+  console.error('[Fatal Server Startup Error]', {
+    stage: currentStartupStage,
+    errorName: err?.name || 'Error',
+    errorMessage: err?.message || String(err),
+    errorCode: err?.code,
+    stack: err?.stack,
+  });
   process.exit(1);
 });
