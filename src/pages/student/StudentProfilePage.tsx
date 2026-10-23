@@ -203,12 +203,94 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [deleteShowPassword, setDeleteShowPassword] = useState<boolean>(false);
   const [deleteEmailConfirm, setDeleteEmailConfirm] = useState<string>('');
   const [deleteConfirmationInput, setDeleteConfirmationInput] = useState<string>('');
+  const [deleteVerificationMethod, setDeleteVerificationMethod] = useState<'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION'>('PASSWORD');
+  const [deleteVerificationLoaded, setDeleteVerificationLoaded] = useState<boolean>(false);
+  const [deleteRegisteredEmail, setDeleteRegisteredEmail] = useState<string>('');
+  const [deleteMaskedEmail, setDeleteMaskedEmail] = useState<string>('');
+  const [deleteOtp, setDeleteOtp] = useState<string>('');
+  const [deleteOtpSent, setDeleteOtpSent] = useState<boolean>(false);
+  const [isSendingDeleteOtp, setIsSendingDeleteOtp] = useState<boolean>(false);
+  const [deleteOtpMessage, setDeleteOtpMessage] = useState<string>('');
   const [isDeletingAccount, setIsDeletingAccount] = useState<boolean>(false);
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
 
+  const handleOpenDeleteModal = async () => {
+    setShowDeleteModal(true);
+    setDeleteVerificationLoaded(false);
+    setDeleteVerificationMethod('PASSWORD');
+    setDeletePassword('');
+    setDeleteEmailConfirm('');
+    setDeleteConfirmationInput('');
+    setDeleteOtp('');
+    setDeleteOtpSent(false);
+    setDeleteOtpMessage('');
+    setDeleteAccountError(null);
+
+    try {
+      const options = await apiRequest<{
+        email: string;
+        maskedEmail: string;
+        requiresEmailOtp: boolean;
+        verificationMethod: 'PASSWORD' | 'EMAIL_OTP' | 'EMAIL_CONFIRMATION';
+      }>('/api/student/delete-account/options');
+      setDeleteVerificationMethod(options.verificationMethod);
+      setDeleteRegisteredEmail(options.email);
+      setDeleteMaskedEmail(options.maskedEmail);
+      setDeleteVerificationLoaded(true);
+    } catch (err: any) {
+      setDeleteAccountError(err?.message || 'Could not load account verification options. Close this dialog and try again.');
+    }
+  };
+
+  const handleSendDeleteOtp = async () => {
+    if (deleteVerificationMethod !== 'EMAIL_OTP' || isSendingDeleteOtp || deleteOtpSent) return;
+    setIsSendingDeleteOtp(true);
+    setDeleteAccountError(null);
+    setDeleteOtpMessage('');
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        message: string;
+        maskedEmail: string;
+        expiresInSeconds: number;
+        cooldownSeconds: number;
+      }>('/api/student/delete-account/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (!result.success) {
+        throw new Error(result.message || 'Could not send the verification code.');
+      }
+      setDeleteOtpSent(true);
+      setDeleteOtp('');
+      setDeleteOtpMessage(result.message || `A code was sent to ${result.maskedEmail || deleteMaskedEmail}. It expires in 10 minutes.`);
+    } catch (err: any) {
+      setDeleteAccountError(err?.message || 'Could not send the verification code. Please try again.');
+    } finally {
+      setIsSendingDeleteOtp(false);
+    }
+  };
+
   const handleConfirmDeleteAccount = async () => {
+    if (!deleteVerificationLoaded) {
+      setDeleteAccountError('Account verification options have not loaded. Close and reopen this dialog to retry.');
+      return;
+    }
     if (deleteConfirmationInput.trim() !== 'DELETE') {
       setDeleteAccountError('Explicit confirmation required. Please type DELETE in all caps to confirm.');
+      return;
+    }
+    if (deleteVerificationMethod === 'PASSWORD' && !deletePassword.trim()) {
+      setDeleteAccountError('Please enter your current password to verify your identity.');
+      return;
+    }
+    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\\d{6}$/.test(deleteOtp.trim()))) {
+      setDeleteAccountError('Click Send OTP and enter the 6-digit code from your registered email first.');
+      return;
+    }
+    if (deleteVerificationMethod === 'EMAIL_CONFIRMATION' &&
+      deleteEmailConfirm.trim().toLowerCase() !== deleteRegisteredEmail.trim().toLowerCase()) {
+      setDeleteAccountError('Please enter your registered email address to verify your identity.');
       return;
     }
 
@@ -220,14 +302,16 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         confirmationText: string;
         currentPassword?: string;
         emailConfirmation?: string;
+        emailOtp?: string;
       } = {
         confirmationText: 'DELETE',
       };
 
-      if (deletePassword.trim()) {
+      if (deleteVerificationMethod === 'PASSWORD') {
         payload.currentPassword = deletePassword.trim();
-      }
-      if (deleteEmailConfirm.trim()) {
+      } else if (deleteVerificationMethod === 'EMAIL_OTP') {
+        payload.emailOtp = deleteOtp.trim();
+      } else {
         payload.emailConfirmation = deleteEmailConfirm.trim();
       }
 
