@@ -73,6 +73,7 @@ interface DashboardData {
   metrics: {
     totalEvaluations: number;
     freeEvaluationsRemaining: number;
+    monthlyFreeEvaluationsLimit?: number;
     purchasedCredits: number;
     expiringSoonCredits?: number;
     earliestExpiryDate?: string | null;
