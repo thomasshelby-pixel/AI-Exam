@@ -533,6 +533,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </section>
       )}
 
+      {profileCompletionSuccess && !needsSocialProfileCompletion && !showCompleteProfileModal && (
+        <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 p-3 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{profileCompletionSuccess}</span>
+          <button
+            type="button"
+            onClick={() => setProfileCompletionSuccess('')}
+            className="ml-auto text-emerald-700 dark:text-emerald-300 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Student Welcome Header Banner */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
