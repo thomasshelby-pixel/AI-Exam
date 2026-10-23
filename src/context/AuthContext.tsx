@@ -711,6 +711,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }),
       });
 
+      // Persist the provider even when the app's own MFA challenge must be completed.
+      localStorage.setItem('ca_exam_checker_auth_provider', provider);
+
       if (res.mfaRequired && res.mfaSessionToken) {
         return await new Promise<User>((resolve, reject) => {
           setMfaChallenge({
