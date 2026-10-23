@@ -705,6 +705,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({
           firebaseIdToken,
           socialProvider: provider,
+          displayName: popupResult.user.displayName || undefined,
           deviceId,
           trustToken,
           portalScope: 'STUDENT',
