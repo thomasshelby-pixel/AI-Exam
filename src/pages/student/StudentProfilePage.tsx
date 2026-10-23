@@ -209,6 +209,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [deleteMaskedEmail, setDeleteMaskedEmail] = useState<string>('');
   const [deleteOtp, setDeleteOtp] = useState<string>('');
   const [deleteOtpSent, setDeleteOtpSent] = useState<boolean>(false);
+  const [deleteOtpVerified, setDeleteOtpVerified] = useState<boolean>(false);
+  const [isVerifyingDeleteOtp, setIsVerifyingDeleteOtp] = useState<boolean>(false);
   const [isSendingDeleteOtp, setIsSendingDeleteOtp] = useState<boolean>(false);
   const [deleteOtpMessage, setDeleteOtpMessage] = useState<string>('');
   const [isDeletingAccount, setIsDeletingAccount] = useState<boolean>(false);
@@ -223,6 +225,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     setDeleteConfirmationInput('');
     setDeleteOtp('');
     setDeleteOtpSent(false);
+    setDeleteOtpVerified(false);
+    setIsVerifyingDeleteOtp(false);
     setDeleteOtpMessage('');
     setDeleteAccountError(null);
 
@@ -262,12 +266,34 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
         throw new Error(result.message || 'Could not send the verification code.');
       }
       setDeleteOtpSent(true);
+      setDeleteOtpVerified(false);
       setDeleteOtp('');
       setDeleteOtpMessage(result.message || `A code was sent to ${result.maskedEmail || deleteMaskedEmail}. It expires in 10 minutes.`);
     } catch (err: any) {
       setDeleteAccountError(err?.message || 'Could not send the verification code. Please try again.');
     } finally {
       setIsSendingDeleteOtp(false);
+    }
+  };
+
+  const handleVerifyDeleteOtp = async () => {
+    if (deleteVerificationMethod !== 'EMAIL_OTP' || !deleteOtpSent || !/^[0-9]{6}$/.test(deleteOtp.trim()) || isVerifyingDeleteOtp) return;
+    setIsVerifyingDeleteOtp(true);
+    setDeleteAccountError(null);
+    setDeleteOtpMessage('');
+    try {
+      const result = await apiRequest<{ success: boolean; message: string }>('/api/student/delete-account/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({ emailOtp: deleteOtp.trim() }),
+      });
+      if (!result.success) throw new Error(result.message || 'Could not verify the code.');
+      setDeleteOtpVerified(true);
+      setDeleteOtpMessage(result.message || 'Email verified. You can now confirm permanent deletion.');
+    } catch (err: any) {
+      setDeleteOtpVerified(false);
+      setDeleteAccountError(err?.message || 'The verification code could not be verified. Check it and try again.');
+    } finally {
+      setIsVerifyingDeleteOtp(false);
     }
   };
 
@@ -284,8 +310,8 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setDeleteAccountError('Please enter your current password to verify your identity.');
       return;
     }
-    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^[0-9]{6}$/.test(deleteOtp.trim()))) {
-      setDeleteAccountError('Click Send OTP and enter the 6-digit code from your registered email first.');
+    if (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !deleteOtpVerified || !/^[0-9]{6}$/.test(deleteOtp.trim()))) {
+      setDeleteAccountError('Send the OTP and verify the 6-digit code before confirming account deletion.');
       return;
     }
     if (deleteVerificationMethod === 'EMAIL_CONFIRMATION' &&
@@ -1533,12 +1559,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       {showDeleteModal && (
         <div
           id="student-delete-account-dialog"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in"
           role="dialog"
           aria-modal="true"
           aria-labelledby="student-delete-dialog-title"
         >
-          <div className="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden text-slate-900 dark:text-white">
+          <div className="w-full max-w-lg max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden text-slate-900 dark:text-white my-auto">
             {/* Header */}
             <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 bg-rose-50/50 dark:bg-rose-950/30 flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -1565,7 +1591,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
 
             {/* Dialog Body */}
-            <div className="p-5 sm:p-6 space-y-4 text-xs">
+            <div className="p-4 sm:p-6 space-y-4 text-xs overflow-y-auto overscroll-contain">
               <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300 space-y-2">
                 <p className="font-semibold text-slate-900 dark:text-white text-xs sm:text-sm">
                   Your account and associated personal data will be permanently deleted. This action cannot be undone.
@@ -1660,11 +1686,23 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           autoComplete="one-time-code"
                           maxLength={6}
                           value={deleteOtp}
-                          onChange={(event) => setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+                          onChange={(event) => { setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6)); setDeleteOtpVerified(false); setDeleteOtpMessage(''); }}
                           placeholder="Enter 6-digit OTP"
                           disabled={isDeletingAccount}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono tracking-[0.25em] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:normal-case placeholder:tracking-normal"
                         />
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <button
+                            id="student-delete-account-verify-otp-btn"
+                            type="button"
+                            onClick={handleVerifyDeleteOtp}
+                            disabled={isVerifyingDeleteOtp || isDeletingAccount || deleteOtpVerified || !/^[0-9]{6}$/.test(deleteOtp.trim())}
+                            className="w-full sm:w-auto rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {isVerifyingDeleteOtp ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                            {isVerifyingDeleteOtp ? 'Verifying…' : deleteOtpVerified ? 'OTP Verified' : 'Verify OTP'}
+                          </button>
+                        </div>
                         <p className="text-[10px] text-slate-500 dark:text-slate-400">The code is single-use. Nothing is deleted until you also type DELETE and submit the final confirmation.</p>
                       </div>
                     )}
@@ -1745,12 +1783,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             </div>
 
             {/* Dialog Footer */}
-            <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row items-center justify-end gap-2.5">
+            <div className="shrink-0 p-3 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => setShowDeleteModal(false)}
                 disabled={isDeletingAccount}
-                className="w-full sm:w-auto px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+                className="w-full sm:w-auto min-h-10 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
               >
                 Cancel
               </button>
@@ -1763,10 +1801,10 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   !deleteVerificationLoaded ||
                   deleteConfirmationInput.trim() !== 'DELETE' ||
                   (deleteVerificationMethod === 'PASSWORD' && !deletePassword.trim()) ||
-                  (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\\d{6}$/.test(deleteOtp.trim()))) ||
+                  (deleteVerificationMethod === 'EMAIL_OTP' && (!deleteOtpSent || !/^\d{6}$/.test(deleteOtp.trim()))) ||
                   (deleteVerificationMethod === 'EMAIL_CONFIRMATION' && deleteEmailConfirm.trim().toLowerCase() !== deleteRegisteredEmail.trim().toLowerCase())
                 }
-                className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto min-h-10 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isDeletingAccount ? (
                   <>

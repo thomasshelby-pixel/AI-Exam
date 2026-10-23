@@ -36,7 +36,7 @@ import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../se
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
-import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
+import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
 import {
@@ -57,6 +57,7 @@ router.use((req: AuthRequest, res: Response, next) => {
   const isSelfDeletePath = req.path === '/delete-account' ||
     req.path === '/delete-account/options' ||
     req.path === '/delete-account/send-otp' ||
+    req.path === '/delete-account/verify-otp' ||
     (req.path === '/account' && req.method === 'DELETE');
   return isSelfDeletePath
     ? authenticateSelfDeleteToken(req, res, next)
@@ -3054,6 +3055,20 @@ router.post('/delete-account/send-otp', otpResendRateLimiter, async (req: AuthRe
     return res.status(error?.statusCode || 500).json({
       success: false,
       error: error?.message || 'Could not send account deletion verification code.',
+      code: error?.code,
+    });
+  }
+});
+
+// Verify the emailed OTP before enabling the irreversible final deletion action.
+router.post('/delete-account/verify-otp', otpResendRateLimiter, async (req: AuthRequest, res: Response) => {
+  try {
+    await verifySelfDeleteEmailOtp(req.user!.id, String(req.body?.emailOtp || ''));
+    return res.json({ success: true, message: 'Email verification successful. You can now confirm permanent deletion.' });
+  } catch (error: any) {
+    return res.status(error?.statusCode || 500).json({
+      success: false,
+      error: error?.message || 'Could not verify the account deletion code.',
       code: error?.code,
     });
   }
