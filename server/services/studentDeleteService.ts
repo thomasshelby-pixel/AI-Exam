@@ -628,48 +628,126 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   };
 }
 
-function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string): void {
+async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: string): Promise<void> {
   initSelfDeleteOtpTable();
   const cleanOtp = String(enteredOtp || '').trim();
-  if (!/^\\d{6}$/.test(cleanOtp)) {
+  if (!/^[0-9]{6}$/.test(cleanOtp)) {
     throw createSelfDeleteOtpError('Enter the 6-digit code sent to your registered email.', 400, 'INVALID_DELETE_OTP');
   }
 
-  const row = db.prepare(
-    'SELECT otp_hash, otp_salt, attempts_count, max_attempts, expires_at FROM student_account_deletion_otps WHERE user_id = ?'
-  ).get(studentId) as {
-    otp_hash: string; otp_salt: string; attempts_count: number; max_attempts: number; expires_at: string;
-  } | undefined;
+  if (isSelfDeleteOtpTestMode()) {
+    const row = db.prepare(
+      'SELECT otp_hash, otp_salt, attempts_count, max_attempts, expires_at FROM student_account_deletion_otps WHERE user_id = ?'
+    ).get(studentId) as {
+      otp_hash: string; otp_salt: string; attempts_count: number; max_attempts: number; expires_at: string;
+    } | undefined;
 
-  if (!row) {
-    throw createSelfDeleteOtpError('Request a verification code first using Send OTP.', 400, 'DELETE_OTP_NOT_REQUESTED');
-  }
-  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    if (!row) {
+      throw createSelfDeleteOtpError('Request a verification code first using Send OTP.', 400, 'DELETE_OTP_NOT_REQUESTED');
+    }
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      throw createSelfDeleteOtpError('That verification code has expired. Request a new one.', 400, 'EXPIRED_DELETE_OTP');
+    }
+    const attempts = Number(row.attempts_count) || 0;
+    const maxAttempts = Number(row.max_attempts) || SELF_DELETE_OTP_MAX_ATTEMPTS;
+    if (attempts >= maxAttempts) {
+      db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      throw createSelfDeleteOtpError('Too many incorrect attempts. Request a new verification code.', 429, 'DELETE_OTP_MAX_ATTEMPTS');
+    }
+
+    const expected = Buffer.from(row.otp_hash, 'hex');
+    const supplied = Buffer.from(crypto.createHash('sha256').update(row.otp_salt + ':' + cleanOtp).digest('hex'), 'hex');
+    const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+    if (!valid) {
+      const nextAttempts = attempts + 1;
+      if (nextAttempts >= maxAttempts) {
+        db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+      } else {
+        db.prepare('UPDATE student_account_deletion_otps SET attempts_count = ? WHERE user_id = ?').run(nextAttempts, studentId);
+      }
+      throw createSelfDeleteOtpError(
+        nextAttempts >= maxAttempts
+          ? 'Too many incorrect attempts. Request a new verification code.'
+          : 'Incorrect verification code. ' + (maxAttempts - nextAttempts) + ' attempt(s) remaining.',
+        nextAttempts >= maxAttempts ? 429 : 401,
+        nextAttempts >= maxAttempts ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP'
+      );
+    }
+
     db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
-    throw createSelfDeleteOtpError('That verification code has expired. Request a new one.', 400, 'EXPIRED_DELETE_OTP');
-  }
-  if (Number(row.attempts_count) >= Number(row.max_attempts)) {
-    db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
-    throw createSelfDeleteOtpError('Too many incorrect attempts. Request a new verification code.', 429, 'DELETE_OTP_MAX_ATTEMPTS');
+    return;
   }
 
-  const expected = Buffer.from(row.otp_hash, 'hex');
-  const supplied = Buffer.from(crypto.createHash('sha256').update(`${row.otp_salt}:${cleanOtp}`).digest('hex'), 'hex');
-  const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
-  if (!valid) {
-    const nextAttempts = Number(row.attempts_count) + 1;
-    db.prepare('UPDATE student_account_deletion_otps SET attempts_count = ? WHERE user_id = ?').run(nextAttempts, studentId);
-    throw createSelfDeleteOtpError(
-      nextAttempts >= Number(row.max_attempts)
-        ? 'Too many incorrect attempts. Request a new verification code.'
-        : `Incorrect verification code. ${Number(row.max_attempts) - nextAttempts} attempt(s) remaining.`,
-      nextAttempts >= Number(row.max_attempts) ? 429 : 401,
-      nextAttempts >= Number(row.max_attempts) ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP'
-    );
+  let firestore: ReturnType<typeof getFirestoreDb>;
+  try {
+    firestore = getFirestoreDb();
+  } catch (error: any) {
+    console.warn('[StudentDelete] OTP verification store initialization failed:', error?.message || 'unknown error');
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
+  }
+  if (!firestore) {
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
   }
 
-  // One-time consumption prevents code reuse for a second deletion attempt.
-  db.prepare('DELETE FROM student_account_deletion_otps WHERE user_id = ?').run(studentId);
+  const otpDocumentId = getSelfDeleteOtpDocId(studentId);
+  const reference = doc(firestore, 'student_account_deletion_otps', otpDocumentId);
+  let outcome: any;
+  try {
+    outcome = await runTransaction(firestore, async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists()) {
+        return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a verification code first using Send OTP.' };
+      }
+
+      const row = snapshot.data();
+      if (String(row.status || '') !== 'PENDING') {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 400, code: 'DELETE_OTP_NOT_REQUESTED', message: 'Request a new verification code using Send OTP.' };
+      }
+      if (new Date(String(row.expires_at || '')).getTime() <= Date.now()) {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 400, code: 'EXPIRED_DELETE_OTP', message: 'That verification code has expired. Request a new one.' };
+      }
+
+      const attempts = Number(row.attempts_count) || 0;
+      const maxAttempts = Number(row.max_attempts) || SELF_DELETE_OTP_MAX_ATTEMPTS;
+      if (attempts >= maxAttempts) {
+        transaction.delete(reference);
+        return { ok: false, statusCode: 429, code: 'DELETE_OTP_MAX_ATTEMPTS', message: 'Too many incorrect attempts. Request a new verification code.' };
+      }
+
+      const expected = Buffer.from(String(row.otp_hash || ''), 'hex');
+      const supplied = Buffer.from(crypto.createHash('sha256').update(String(row.otp_salt || '') + ':' + cleanOtp).digest('hex'), 'hex');
+      const valid = expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+      if (!valid) {
+        const nextAttempts = attempts + 1;
+        if (nextAttempts >= maxAttempts) {
+          transaction.delete(reference);
+        } else {
+          transaction.update(reference, { attempts_count: nextAttempts });
+        }
+        return {
+          ok: false,
+          statusCode: nextAttempts >= maxAttempts ? 429 : 401,
+          code: nextAttempts >= maxAttempts ? 'DELETE_OTP_MAX_ATTEMPTS' : 'INVALID_DELETE_OTP',
+          message: nextAttempts >= maxAttempts
+            ? 'Too many incorrect attempts. Request a new verification code.'
+            : 'Incorrect verification code. ' + (maxAttempts - nextAttempts) + ' attempt(s) remaining.',
+        };
+      }
+
+      transaction.delete(reference);
+      return { ok: true };
+    });
+  } catch (error: any) {
+    console.warn('[StudentDelete] OTP verification transaction failed:', error?.message || 'unknown error');
+    throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
+  }
+
+  if (!outcome.ok) {
+    throw createSelfDeleteOtpError(outcome.message, outcome.statusCode, outcome.code);
+  }
 }
 
 export interface SelfDeleteStudentParams {
@@ -791,7 +869,7 @@ export async function selfDeleteStudentAccount(
     // Social accounts must prove control of their registered mailbox via a
     // fresh, single-use, rate-limited email OTP. Typing the email address alone
     // is not sufficient authorization for irreversible data deletion.
-    verifyAndConsumeSelfDeleteOtp(studentId, emailOtp || '');
+    await verifyAndConsumeSelfDeleteOtp(studentId, emailOtp || '');
   } else if (isPasswordAccount) {
     if (!currentPassword || typeof currentPassword !== 'string' || currentPassword.trim() === '') {
       const error: any = new Error('Please enter your current password to verify your identity.');
