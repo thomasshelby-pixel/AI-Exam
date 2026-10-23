@@ -1,8 +1,9 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { doc, runTransaction } from 'firebase/firestore';
-import { getFirestoreDb } from './firestoreDbService.js';
+import { getApps as getAdminApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getFirestore as getAdminFirestore, type Firestore as AdminFirestore } from 'firebase-admin/firestore';
+import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
 import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
@@ -432,18 +433,30 @@ function isSelfDeleteOtpTestMode(): boolean {
   return process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
 }
 
+function getSelfDeleteOtpFirestore(): AdminFirestore {
+  const { config } = loadAndValidateFirebaseConfig();
+  const appName = 'ca-exam-self-delete-otp';
+  let app = getAdminApps().find((candidate) => candidate.name === appName);
+  if (!app) {
+    app = initializeAdminApp({ projectId: config.projectId }, appName);
+  }
+  return config.firestoreDatabaseId
+    ? getAdminFirestore(app, config.firestoreDatabaseId)
+    : getAdminFirestore(app);
+}
+
 function getSelfDeleteOtpDocId(studentId: string): string {
   const stableKey = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.SESSION_SECRET || 'ca-exam-student-delete-otp-key';
   return crypto.createHmac('sha256', stableKey).update('student-delete-otp:' + studentId).digest('hex');
 }
 
 async function removeReservedSelfDeleteOtp(
-  firestore: NonNullable<ReturnType<typeof getFirestoreDb>>,
+  firestore: AdminFirestore,
   docId: string,
   challengeId: string
 ): Promise<void> {
   try {
-    const reference = doc(firestore, 'student_account_deletion_otps', docId);
+    const reference = firestore.collection('student_account_deletion_otps').doc(docId);
     await runTransaction(firestore, async (transaction) => {
       const snapshot = await transaction.get(reference);
       if (snapshot.exists() && String(snapshot.data()?.challenge_id || '') === challengeId) {
@@ -512,9 +525,9 @@ export async function initiateSelfDeleteEmailOtp(studentId: string): Promise<{
   // one container's local SQLite cache.
   if (!isTestMode) {
     try {
-      firestore = getFirestoreDb();
+      firestore = getSelfDeleteOtpFirestore();
       if (!firestore) throw new Error('Authoritative OTP store is unavailable.');
-      const reference = doc(firestore, 'student_account_deletion_otps', otpDocumentId);
+      const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
       const reservation = await runTransaction(firestore, async (transaction) => {
         const existing = await transaction.get(reference);
         if (existing.exists()) {
@@ -679,9 +692,9 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
     return;
   }
 
-  let firestore: ReturnType<typeof getFirestoreDb>;
+  let firestore: AdminFirestore;
   try {
-    firestore = getFirestoreDb();
+    firestore = getSelfDeleteOtpFirestore();
   } catch (error: any) {
     console.warn('[StudentDelete] OTP verification store initialization failed:', error?.message || 'unknown error');
     throw createSelfDeleteOtpError('Account verification is temporarily unavailable. Please retry shortly.', 503, 'OTP_STORE_UNAVAILABLE');
@@ -691,7 +704,7 @@ async function verifyAndConsumeSelfDeleteOtp(studentId: string, enteredOtp: stri
   }
 
   const otpDocumentId = getSelfDeleteOtpDocId(studentId);
-  const reference = doc(firestore, 'student_account_deletion_otps', otpDocumentId);
+  const reference = firestore.collection('student_account_deletion_otps').doc(otpDocumentId);
   let outcome: any;
   try {
     outcome = await runTransaction(firestore, async (transaction) => {
