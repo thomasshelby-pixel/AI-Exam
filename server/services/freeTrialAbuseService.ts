@@ -20,11 +20,12 @@ export interface FreeTrialEligibilityDecision {
  * Claims hashed browser/device and IP signals in Firestore in one transaction.
  * Raw device identifiers and IP addresses are never persisted.
  *
- * A repeated device identifier blocks the standard free-trial quota. A shared IP
- * address alone is not enough to block a student because students may share home,
- * institute, library, or mobile-carrier networks. IP reuse is still recorded as a
- * risk signal, while paid credits, institute allocations, and promotional grants
- * remain governed by their existing entitlement paths.
+ * Device and IP reuse are recorded as risk signals, but neither alone blocks a
+ * verified student from the standard free-trial quota. Registration already checks
+ * email OTP, unique ICAI registration number, and rate limits; blocking by browser
+ * alone incorrectly denies legitimate students using a shared or previously used
+ * device. A device change during the same signup flow and unavailable required
+ * signals still fail closed. Paid/institute/promo entitlements are unchanged.
  */
 export async function claimFreeTrialEligibility(params: {
   userId: string;
@@ -107,12 +108,16 @@ export async function claimFreeTrialEligibility(params: {
       if (deviceIds.length === 0 || ipAddresses.length === 0) {
         return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' as const };
       }
+      // Reuse is retained as an abuse signal, not an automatic denial. Shared PCs,
+      // coaching-centre labs, family devices, and test accounts can legitimately
+      // reuse a browser identifier. Unique ICAI SRN validation, verified email OTP,
+      // and rate limits are the primary account-creation controls.
       if (reusedDevice) {
-        return { eligible: false, reason: 'REUSED_DEVICE' as const };
+        console.info('[FreeTrialAbuse] Reused device observed; allowing verified signup subject to SRN/OTP/rate limits.', { userId: params.userId });
       }
-      // Do not deny the free trial based only on a reused IP. Shared NAT and
-      // carrier-grade NAT commonly put unrelated students behind the same IP.
-      // A stable device reuse remains the stronger signal for duplicate accounts.
+      if (reusedIp) {
+        console.info('[FreeTrialAbuse] Reused IP observed; allowing verified signup.', { userId: params.userId });
+      }
       return { eligible: true, reason: 'FIRST_CLAIM' as const };
     });
   } catch (error) {
