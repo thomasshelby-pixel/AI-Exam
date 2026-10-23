@@ -22,3 +22,9 @@ env:
     value: "CA Exam Checker AI <support@caexamcheckerai.com>"
   - variable: APP_URL
     value: https://caexamcheckerai.com
+
+# This app has a custom Express server; build and run the compiled server explicitly.
+scripts:
+  buildCommand: npm run build
+  runCommand: node dist/server.cjs
+
