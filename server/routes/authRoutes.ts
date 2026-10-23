@@ -1098,6 +1098,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       mfa_phone?: string | null;
     } | undefined;
     let isAuthenticated = false;
+    let createdViaSocialSignup = false;
 
     if (isSocialLogin) {
       let identity: { email: string; fullName: string; uid: string };
@@ -1116,7 +1117,6 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
       `).get(normalizedEmail) as typeof user;
 
-      let createdViaSocialSignup = false;
       if (user && user.role !== 'STUDENT') {
         return res.status(401).json({
           error: 'This email belongs to a non-student portal. Google and Apple sign-in are available for student accounts only.',
