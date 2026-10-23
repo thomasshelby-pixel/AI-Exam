@@ -20,6 +20,7 @@ import {
   consumeEvaluationEntitlementAtomic,
   getStudentCreditDetailedSummary,
   syncStudentCreditsToFirestore,
+  getCurrentServerMonth,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
@@ -2911,7 +2912,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
         ipAddresses: [req.ip || req.socket.remoteAddress || undefined],
         studentRegistrationNumber: normalizedSrn,
       });
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonth = getCurrentServerMonth();
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = ?,
