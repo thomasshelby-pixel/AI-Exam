@@ -16,7 +16,6 @@ env:
     value: production
     availability:
       - RUNTIME
-      - BUILD
   - variable: SMTP_HOST
     value: smtp.resend.com
     availability:
