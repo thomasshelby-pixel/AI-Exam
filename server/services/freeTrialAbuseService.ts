@@ -7,6 +7,7 @@ export type FreeTrialDecisionReason =
   | 'FIRST_CLAIM'
   | 'REUSED_DEVICE'
   | 'REUSED_IP'
+  | 'REUSED_SRN'
   | 'DEVICE_CHANGED_DURING_SIGNUP'
   | 'NO_RELIABLE_SIGNALS'
   | 'SIGNAL_STORE_UNAVAILABLE';
@@ -24,13 +25,16 @@ export interface FreeTrialEligibilityDecision {
  * verified student from the standard free-trial quota. Registration already checks
  * email OTP, unique ICAI registration number, and rate limits; blocking by browser
  * alone incorrectly denies legitimate students using a shared or previously used
- * device. A device change during the same signup flow and unavailable required
- * signals still fail closed. Paid/institute/promo entitlements are unchanged.
+ * device. A hashed ICAI-registration identity claim prevents re-claiming a trial
+ * after an account has been deleted. Raw SRNs, device IDs, and IP addresses are
+ * never written to Firestore. Device/IP signals are risk telemetry, not an
+ * individual eligibility veto.
  */
 export async function claimFreeTrialEligibility(params: {
   userId: string;
   deviceIds: Array<string | undefined | null>;
   ipAddresses: Array<string | undefined | null>;
+  studentRegistrationNumber?: string | null;
   forceBlock?: boolean;
 }): Promise<FreeTrialEligibilityDecision> {
   const secret = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.SESSION_SECRET || '';
@@ -48,6 +52,8 @@ export async function claimFreeTrialEligibility(params: {
     .map((value) => value.trim().replace(/^::ffff:/i, ''))
     .filter((value) => isIP(value) !== 0))];
 
+  const normalizedSrn = String(params.studentRegistrationNumber || '').trim().toUpperCase();
+  const validSrn = /^[A-Z]{3}\\d{7}$/.test(normalizedSrn);
   const signals = [
     ...deviceIds.map((value) => ({
       type: 'device' as const,
@@ -57,6 +63,10 @@ export async function claimFreeTrialEligibility(params: {
       type: 'ip' as const,
       id: 'ip_' + crypto.createHmac('sha256', secret).update('ip:' + value).digest('hex'),
     })),
+    ...(validSrn ? [{
+      type: 'srn' as const,
+      id: 'srn_' + crypto.createHmac('sha256', secret).update('srn:' + normalizedSrn).digest('hex'),
+    }] : []),
   ];
 
   if (signals.length === 0) {
@@ -86,26 +96,36 @@ export async function claimFreeTrialEligibility(params: {
 
       const reusedDevice = snapshots.some((entry) => entry.type === 'device' && entry.snapshot.exists());
       const reusedIp = snapshots.some((entry) => entry.type === 'ip' && entry.snapshot.exists());
+      const srnClaim = snapshots.find((entry) => entry.type === 'srn');
+      const reusedSrn = Boolean(
+        srnClaim?.snapshot.exists() &&
+        String((srnClaim.snapshot.data() as any)?.userId || '') !== params.userId
+      );
 
-      // Claim any unseen signals even when another signal already disqualifies
-      // this account. This prevents switching networks or browsers after signup.
+      // Claim any unseen signals in one transaction. Only the hashed SRN claim
+      // records an opaque userId association; raw student identifiers are never stored.
       for (const entry of snapshots) {
         if (!entry.snapshot.exists()) {
           transaction.set(entry.ref, {
             signalType: entry.type,
             firstSeenAt: now,
             trialClaimed: true,
+            ...(entry.type === 'srn' ? { userId: params.userId } : {}),
           });
         }
       }
 
-      if (params.forceBlock) {
-        return { eligible: false, reason: 'DEVICE_CHANGED_DURING_SIGNUP' as const };
+      // A repeat claim for the same ICAI registration identity is the strongest
+      // durable duplicate-trial signal, including after a student profile is deleted.
+      if (reusedSrn) {
+        return { eligible: false, reason: 'REUSED_SRN' as const };
       }
-      // For a new free-trial grant, require both a stable browser/device ID and a
-      // valid client IP. Still claim whichever signal is available so future
-      // signups cannot evade checks simply by omitting one of the headers.
-      if (deviceIds.length === 0 || ipAddresses.length === 0) {
+      if (params.forceBlock) {
+        console.info('[FreeTrialAbuse] Device changed during signup; SRN claim is unique.', { userId: params.userId });
+      }
+      // Missing browser/IP signals should not deny an OTP-verified student whose
+      // ICAI SRN is valid and durably claimed. These are risk signals, not identity.
+      if (!validSrn) {
         return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' as const };
       }
       // Reuse is retained as an abuse signal, not an automatic denial. Shared PCs,
@@ -121,7 +141,7 @@ export async function claimFreeTrialEligibility(params: {
       return { eligible: true, reason: 'FIRST_CLAIM' as const };
     });
   } catch (error) {
-    console.warn('[FreeTrialAbuse] Signal claim failed; keeping the free trial disabled for this account:', error);
+    console.warn('[FreeTrialAbuse] Could not persist hashed abuse signals / SRN claim:', error);
     return { eligible: false, reason: 'SIGNAL_STORE_UNAVAILABLE' };
   }
 }
