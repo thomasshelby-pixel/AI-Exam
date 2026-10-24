@@ -26,6 +26,7 @@ const allTestFiles = [
   'mcqDeterministicExtractionAudit.test.ts',
   'mcqAdminReferenceFlow.test.ts',
   'mcqMaterialBulkDeleteAndPracticeFilter.test.ts',
+  'studentCourseAccess.test.ts',
 ];
 const testFiles = process.argv.slice(2).length > 0 ? process.argv.slice(2) : allTestFiles;
 
