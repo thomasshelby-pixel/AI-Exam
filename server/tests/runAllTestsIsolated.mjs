@@ -29,6 +29,7 @@ const allTestFiles = [
   'authRateLimitPolicy.test.ts',
   'rateLimiterClientIp.test.ts',
   'studentCourseAccess.test.ts',
+  'adminNotificationCentre.test.ts',
 ];
 const testFiles = process.argv.slice(2).length > 0 ? process.argv.slice(2) : allTestFiles;
 
