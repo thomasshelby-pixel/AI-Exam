@@ -19,6 +19,7 @@ import mcqRoutes from './server/routes/mcqRoutes.js';
 import featureRoutes from './server/routes/featureRoutes.js';
 import { authenticateToken } from './server/auth.js';
 import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
 import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
@@ -275,6 +276,7 @@ export default {};
     const hydrationPromise = (async () => {
       await hydrateFromFirestore({ requireComplete: requireCompleteHydration });
       await seedBaselineToFirestoreIfEmpty();
+      await hydrateNotificationCentreFromFirestore();
     })();
     const hydrationTimeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Firestore hydration timeout limit (60s) reached')), 60000)
