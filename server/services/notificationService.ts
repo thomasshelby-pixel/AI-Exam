@@ -265,12 +265,16 @@ async function persistNotificationDocument(
   record: Record<string, any>,
 ): Promise<boolean> {
   if (process.env.NODE_ENV !== 'production') return true;
-  try {
-    return await setFirestoreDoc(collectionName, docId, { ...record, id: docId });
-  } catch (error) {
-    console.error(`[NotificationService] Durable write failed for ${collectionName}/${docId}:`, error);
-    return false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (await setFirestoreDoc(collectionName, docId, { ...record, id: docId })) return true;
+    } catch (error) {
+      console.warn(`[NotificationService] Durable write attempt ${attempt} failed for ${collectionName}/${docId}:`, error);
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 150));
   }
+  console.error(`[NotificationService] Durable write exhausted retries for ${collectionName}/${docId}.`);
+  return false;
 }
 
 async function backfillMissingNotificationDocuments(
@@ -422,6 +426,10 @@ export async function hydrateNotificationCentreFromFirestore(): Promise<void> {
     );
   }
 
+  const preferenceFlag = (value: unknown): number => {
+    if (value === undefined || value === null) return 1;
+    return value === true || value === 1 || value === '1' ? 1 : 0;
+  };
   for (const row of remotePreferences) {
     const userId = String(row.user_id || row.userId || row.id || '').trim();
     if (!userId) continue;
@@ -438,9 +446,9 @@ export async function hydrateNotificationCentreFromFirestore(): Promise<void> {
         updated_at = excluded.updated_at
     `).run(
       userId,
-      row.email_notifications_enabled ?? row.emailNotificationsEnabled ? 1 : 0,
-      row.marketing_emails_enabled ?? row.marketingEmailsEnabled ? 1 : 0,
-      row.in_app_notifications_enabled ?? row.inAppNotificationsEnabled ? 1 : 0,
+      preferenceFlag(row.email_notifications_enabled ?? row.emailNotificationsEnabled),
+      preferenceFlag(row.marketing_emails_enabled ?? row.marketingEmailsEnabled),
+      preferenceFlag(row.in_app_notifications_enabled ?? row.inAppNotificationsEnabled),
       normalizeSqlTimestamp(row.updated_at ?? row.updatedAt),
     );
   }
