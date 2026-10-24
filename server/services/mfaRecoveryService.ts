@@ -785,6 +785,9 @@ export function checkMfaRateLimit(identifier: string): {
         remainingAttempts: 0,
       };
     }
+    // The cooldown has elapsed; reset the old counter so the user can retry cleanly.
+    db.prepare('DELETE FROM mfa_rate_limits WHERE identifier = ?').run(identifier);
+    return { allowed: true, remainingAttempts: 5 };
   }
 
   const remaining = Math.max(0, 5 - row.failed_attempts);
