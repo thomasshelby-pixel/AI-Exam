@@ -51,7 +51,7 @@ import {
 } from '../services/mfaRecoveryService.js';
 import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
-import { mfaRecoveryRateLimiter } from '../utils/rateLimiter.js';
+import { mfaRecoveryRateLimiter, mfaEnrollmentVerifyRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -474,11 +474,20 @@ router.get('/setup', async (req: Request, res: Response) => {
  * Finalizes enrollment and activates TOTP MFA for the account.
  * Automatically provisions initial one-time recovery codes and returns them!
  */
-router.post('/enroll/verify', async (req: Request, res: Response) => {
+router.post('/enroll/verify', mfaEnrollmentVerifyRateLimiter, async (req: Request, res: Response) => {
   try {
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
       return res.status(401).json({ error: error || 'Unauthorized' });
+    }
+
+    const rateLimitKey = `mfa_enroll_${user.id}_${req.ip || 'unknown'}`;
+    const rateCheck = checkMfaRateLimit(rateLimitKey);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: 'Too many failed authenticator enrollment attempts. Please wait 15 minutes before trying again.',
+        lockedUntil: rateCheck.lockedUntil,
+      });
     }
 
     const userRow = db.prepare('SELECT pending_totp_secret, totp_secret FROM users WHERE id = ?').get(user.id) as any;
@@ -490,12 +499,20 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'TOTP secret key is required for MFA enrollment.' });
     }
     if (!otpCode || otpCode.length !== 6) {
-      return res.status(400).json({ error: 'Please enter the complete 6-digit verification code from your authenticator app.' });
+      const failed = recordMfaFailedAttempt(rateLimitKey);
+      return res.status(failed.locked ? 429 : 400).json({
+        error: failed.locked
+          ? 'Too many failed authenticator enrollment attempts. Please wait 15 minutes before trying again.'
+          : `Please enter the complete 6-digit verification code from your authenticator app. ${failed.remainingAttempts} attempt(s) remaining.`,
+        remainingAttempts: failed.remainingAttempts,
+        lockedUntil: failed.lockedUntil,
+      });
     }
 
     // Cryptographically verify code against candidate secret with detailed drift diagnostics
     const diag = evaluateRfc6238TotpDiagnostics(candidateSecret, otpCode, 1, 10);
     if (!diag.valid) {
+      const failed = recordMfaFailedAttempt(rateLimitKey);
       // Safe, non-sensitive logging to track server time, candidate secret generation timestamp, and drift window
       logSafeTotpDriftDiagnostics({
         userId: user.id,
@@ -534,11 +551,17 @@ router.post('/enroll/verify', async (req: Request, res: Response) => {
         }),
       });
 
-      return res.status(400).json({
-        error: 'Invalid verification code. Please ensure your authenticator app is synced with the current time and try again.'
+      return res.status(failed.locked ? 429 : 400).json({
+        error: failed.locked
+          ? 'Too many failed authenticator enrollment attempts. Please wait 15 minutes before trying again.'
+          : `Invalid verification code. Please ensure your authenticator app is synced with the current time and try again. ${failed.remainingAttempts} attempt(s) remaining.`,
+        remainingAttempts: failed.remainingAttempts,
+        lockedUntil: failed.lockedUntil,
       });
     }
 
+    // A valid TOTP clears the persistent per-user failure lock before durable writes.
+    clearMfaRateLimit(rateLimitKey);
     const encryptedSecret = encryptMfaSecret(candidateSecret);
     const primaryId = `auth_prim_${user.id}`;
     const enrolledAt = new Date().toISOString();
