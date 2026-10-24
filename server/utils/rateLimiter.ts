@@ -218,7 +218,7 @@ export const otpVerifyRateLimiter = createRateLimiter({
   message: 'Too many verification attempts. Please wait 5 minutes before trying again.',
   keyGenerator: (req) => {
     const ip = getClientIp(req);
-    const email = (req.body?.email || '').toLowerCase().trim();
+    const email = getNormalizedBodyEmail(req);
     return `otp_verify:${ip}:${email || 'none'}`;
   },
 });
@@ -231,7 +231,7 @@ export const otpResendRateLimiter = createRateLimiter({
   message: 'Too many verification code requests. Please wait a few minutes before requesting another code.',
   keyGenerator: (req) => {
     const ip = getClientIp(req);
-    const email = (req.body?.email || '').toLowerCase().trim();
+    const email = getNormalizedBodyEmail(req);
     return `otp_resend:${ip}:${email || 'none'}`;
   },
 });
@@ -244,7 +244,7 @@ export const passwordResetRateLimiter = createRateLimiter({
   message: 'Too many password reset requests. Please wait 15 minutes before submitting another request.',
   keyGenerator: (req) => {
     const ip = getClientIp(req);
-    const email = (req.body?.email || '').toLowerCase().trim();
+    const email = getNormalizedBodyEmail(req);
     return `pwd_reset:${ip}:${email || 'none'}`;
   },
 });
@@ -257,7 +257,7 @@ export const passwordResetTokenVerifyRateLimiter = createRateLimiter({
   message: 'Too many password reset link verification requests. Please wait 5 minutes before trying again.',
   keyGenerator: (req) => {
     const ip = getClientIp(req);
-    const email = (req.body?.email || '').toLowerCase().trim();
+    const email = getNormalizedBodyEmail(req);
     return `pwd_reset_verify:${ip}:${email || 'none'}`;
   },
 });
