@@ -38,6 +38,7 @@ import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
+import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
 import {
@@ -3598,10 +3599,14 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
+router.put('/notifications/:id/read', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
+    const persisted = await syncNotificationReadStateToFirestore(userId, req.params.id);
+    if (!persisted) {
+      return res.status(503).json({ error: 'Read status could not be saved durably. Please retry.', code: 'NOTIFICATION_STATE_PERSISTENCE_FAILED' });
+    }
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Notification read error:', error);
@@ -3609,10 +3614,14 @@ router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
+router.put('/notifications/read-all', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE user_id = ?').run(userId);
+    const persisted = await syncNotificationReadStateToFirestore(userId);
+    if (!persisted) {
+      return res.status(503).json({ error: 'Read statuses could not be saved durably. Please retry.', code: 'NOTIFICATION_STATE_PERSISTENCE_FAILED' });
+    }
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Mark all read error:', error);
