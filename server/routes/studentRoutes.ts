@@ -881,6 +881,67 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
     }
 
+    // Server-side institute material binding: never trust a browser-supplied level
+    // or subject to describe an institute material selected by ID.
+    if (requestedEvalSource === 'INSTITUTE') {
+      const requestedInstituteMaterialId = typeof instituteMaterialId === 'string'
+        ? instituteMaterialId.trim()
+        : '';
+      if (!requestedInstituteMaterialId || !resolvedSponsoringInstituteId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Select a valid institute test paper from your active coaching institute.',
+          code: 'INSTITUTE_MATERIAL_REQUIRED',
+        });
+      }
+
+      const storedInstituteMaterial = db.prepare(`
+        SELECT id, institute_id, level, subject_key, subject_name
+        FROM institute_materials
+        WHERE id = ? AND institute_id = ?
+        LIMIT 1
+      `).get(requestedInstituteMaterialId, resolvedSponsoringInstituteId) as {
+        id: string;
+        institute_id: string;
+        level?: string;
+        subject_key?: string;
+        subject_name?: string;
+      } | undefined;
+
+      if (!storedInstituteMaterial) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected paper does not belong to your active institute.',
+          code: 'INSTITUTE_MATERIAL_ACCESS_DENIED',
+        });
+      }
+
+      const storedMaterialLevel = String(storedInstituteMaterial.level || '').trim().toUpperCase();
+      if (
+        !storedMaterialLevel ||
+        storedMaterialLevel !== String(savedCourse?.ca_level || '').trim().toUpperCase() ||
+        storedMaterialLevel !== rawLevel
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected institute paper belongs to a different CA course. Use a paper that matches your saved profile course.',
+          code: 'INSTITUTE_MATERIAL_COURSE_MISMATCH',
+          accountCourseLevel: savedCourse?.ca_level || null,
+          materialCourseLevel: storedMaterialLevel || null,
+        });
+      }
+
+      const storedSubjectKey = String(storedInstituteMaterial.subject_key || '').trim().toUpperCase();
+      const requestedSubjectKey = String(subjectKey || '').trim().toUpperCase();
+      if (storedSubjectKey && storedSubjectKey !== requestedSubjectKey) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected institute paper does not match the requested subject.',
+          code: 'INSTITUTE_MATERIAL_SUBJECT_MISMATCH',
+        });
+      }
+    }
+
     // 4. Authoritative Reference Material Hard-Gate
     let preloadedMat: any = null;
     if (requestedEvalSource !== 'INSTITUTE') {
