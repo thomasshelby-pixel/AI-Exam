@@ -13,6 +13,8 @@ import {
   getUserNotificationPreferences,
   updateUserNotificationPreferences,
   getTargetUsers,
+  getTargetUsersForBroadcast,
+  estimateRecipientsFromDurableStore,
 } from '../services/notificationService.js';
 
 async function runAdminNotificationCentreVerification() {
@@ -60,6 +62,18 @@ async function runAdminNotificationCentreVerification() {
   // CHECK 1: Target Audience Estimation and Strict Exclusion of Deleted/Tombstoned Accounts
   console.log('[CHECK 1] Testing recipient estimation and tombstone exclusion...');
   const allEstimate = estimateRecipients('ALL');
+  const durableTargetUsers = await getTargetUsersForBroadcast('ALL');
+  const durableEstimate = await estimateRecipientsFromDurableStore('ALL');
+  assert.equal(
+    durableEstimate.total,
+    durableTargetUsers.length,
+    'Recipient preview must use the same recipient source as broadcast dispatch'
+  );
+  assert.equal(
+    durableEstimate.total,
+    allEstimate.total,
+    'In test/development, durable-source targeting must remain consistent with the local audience query'
+  );
   assert.ok(allEstimate.total >= 2, 'Total recipients must include at least 2 test entities');
   assert.ok(allEstimate.studentsCount >= 1, 'Students count must be >= 1');
   assert.ok(allEstimate.institutesCount >= 1, 'Institutes count must be >= 1');
