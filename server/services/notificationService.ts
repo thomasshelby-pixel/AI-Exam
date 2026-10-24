@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
+import { getAllFirestoreDocs, setFirestoreDoc } from './firestoreDbService.js';
 import { sendBroadcastNotificationEmail } from './emailService.js';
 
 export interface TargetAudienceEstimate {
@@ -104,46 +105,391 @@ export function getTargetUsers(targetAudience: string = 'ALL'): TargetUser[] {
 /**
  * Calculates audience estimate and breakdown before dispatching broadcast.
  */
-export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudienceEstimate {
-  const users = getTargetUsers(targetAudience);
-
+function buildAudienceEstimate(users: TargetUser[]): TargetAudienceEstimate {
   let studentsCount = 0;
   let institutesCount = 0;
-  const byLevel = {
-    foundation: 0,
-    intermediate: 0,
-    final: 0,
-    unspecified: 0,
-  };
+  const byLevel = { foundation: 0, intermediate: 0, final: 0, unspecified: 0 };
 
-  for (const u of users) {
-    if (u.role === 'STUDENT') {
+  for (const user of users) {
+    if (user.role === 'STUDENT') {
       studentsCount++;
-      const lvl = (u.ca_level || '').toUpperCase();
-      if (lvl === 'FOUNDATION') byLevel.foundation++;
-      else if (lvl === 'INTERMEDIATE') byLevel.intermediate++;
-      else if (lvl === 'FINAL') byLevel.final++;
+      const level = String(user.ca_level || '').toUpperCase();
+      if (level === 'FOUNDATION') byLevel.foundation++;
+      else if (level === 'INTERMEDIATE') byLevel.intermediate++;
+      else if (level === 'FINAL') byLevel.final++;
       else byLevel.unspecified++;
-    } else if (u.role === 'INSTITUTE_ADMIN') {
+    } else if (user.role === 'INSTITUTE_ADMIN') {
       institutesCount++;
     }
   }
-
-  const sampleRecipients = users.slice(0, 5).map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.full_name || 'User',
-    role: u.role,
-    caLevel: u.ca_level,
-  }));
 
   return {
     total: users.length,
     studentsCount,
     institutesCount,
     byLevel,
-    sampleRecipients,
+    sampleRecipients: users.slice(0, 5).map((user) => ({
+      id: user.id,
+      email: user.email,
+      name: user.full_name || 'User',
+      role: user.role,
+      caLevel: user.ca_level,
+    })),
   };
+}
+
+/**
+ * Resolve the audience from the durable Firestore account/profile source in production.
+ * SQLite remains the development/test source and a fallback only when the Firestore
+ * users collection is genuinely empty. A failed cloud query throws rather than silently
+ * turning an unavailable data source into a zero-recipient campaign.
+ */
+export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL'): Promise<TargetUser[]> {
+  if (process.env.NODE_ENV !== 'production') return getTargetUsers(targetAudience);
+
+  const [firestoreUsers, firestoreProfiles, firestoreTombstones] = await Promise.all([
+    getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('student_profiles', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('tombstones', { failOnError: true }),
+  ]);
+
+  if (firestoreUsers.length === 0) {
+    const localFallback = getTargetUsers(targetAudience);
+    console.warn('[NotificationService] Firestore users collection is empty; using hydrated local users as a temporary fallback.');
+    return localFallback;
+  }
+
+  const profilesByUserId = new Map<string, Record<string, any>>();
+  for (const profile of firestoreProfiles) {
+    const userId = String(profile.user_id || profile.userId || profile.id || '').trim();
+    if (userId) profilesByUserId.set(userId, profile);
+  }
+
+  const blockedIdentifiers = new Set<string>();
+  const addBlocked = (value: unknown) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) blockedIdentifiers.add(normalized);
+  };
+  for (const tombstone of firestoreTombstones) {
+    const collectionName = String(tombstone.collectionName || tombstone.collection_name || '').trim().toLowerCase();
+    const targetId = String(tombstone.targetId || tombstone.target_id || tombstone.entity_id || tombstone.entityId || tombstone.id || '').trim();
+    if (!targetId) continue;
+    addBlocked(targetId);
+    if (collectionName) {
+      addBlocked(`${collectionName}_${targetId}`);
+      addBlocked(`${collectionName}:${targetId}`);
+    }
+  }
+  try {
+    const localTombstones = db.prepare(
+      "SELECT collection_name, entity_id FROM tombstones WHERE collection_name IN ('users', 'students', 'institutes')"
+    ).all() as Array<{ collection_name: string; entity_id: string }>;
+    for (const tombstone of localTombstones) {
+      addBlocked(tombstone.entity_id);
+      addBlocked(`${tombstone.collection_name}_${tombstone.entity_id}`);
+      addBlocked(`${tombstone.collection_name}:${tombstone.entity_id}`);
+    }
+  } catch (error) {
+    console.warn('[NotificationService] Local tombstone lookup warning:', error);
+  }
+
+  const normalizedAudience = String(targetAudience || 'ALL').trim().toUpperCase();
+  const recipients: TargetUser[] = [];
+  for (const record of firestoreUsers) {
+    const id = String(record.id || record.user_id || record.userId || '').trim();
+    const email = String(record.email || '').trim().toLowerCase();
+    const role = String(record.role || record.user_role || 'STUDENT').trim().toUpperCase();
+    const status = String(record.status || 'ACTIVE').trim().toUpperCase();
+    const profile = profilesByUserId.get(id);
+    const caLevel = String(profile?.ca_level || profile?.caLevel || record.ca_level || record.caLevel || '').trim().toUpperCase();
+
+    if (!id || !email || !['STUDENT', 'INSTITUTE_ADMIN'].includes(role) || status === 'DELETED') continue;
+    if (
+      blockedIdentifiers.has(id.toLowerCase()) ||
+      blockedIdentifiers.has(email) ||
+      blockedIdentifiers.has(`users_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`users:${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`students_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`students:${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`institutes_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`institutes:${id.toLowerCase()}`)
+    ) continue;
+
+    if (normalizedAudience === 'STUDENT' && role !== 'STUDENT') continue;
+    if (normalizedAudience === 'INSTITUTE_ADMIN' && role !== 'INSTITUTE_ADMIN') continue;
+    if (normalizedAudience === 'STUDENTS_FOUNDATION' && !(role === 'STUDENT' && caLevel === 'FOUNDATION')) continue;
+    if (normalizedAudience === 'STUDENTS_INTERMEDIATE' && !(role === 'STUDENT' && caLevel === 'INTERMEDIATE')) continue;
+    if (normalizedAudience === 'STUDENTS_FINAL' && !(role === 'STUDENT' && caLevel === 'FINAL')) continue;
+    if (normalizedAudience === 'ALL' && !['STUDENT', 'INSTITUTE_ADMIN'].includes(role)) continue;
+
+    recipients.push({
+      id,
+      email,
+      full_name: String(record.full_name || record.fullName || record.display_name || 'User'),
+      role,
+      ca_level: caLevel || undefined,
+    });
+  }
+
+  return recipients.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+/**
+ * Returns an estimate that is consistent with the durable recipient source used by
+ * broadcast dispatch. This prevents the preview count and actual send count diverging
+ * after App Hosting replaces the local SQLite instance.
+ */
+export async function estimateRecipientsFromDurableStore(targetAudience: string = 'ALL'): Promise<TargetAudienceEstimate> {
+  return buildAudienceEstimate(await getTargetUsersForBroadcast(targetAudience));
+}
+
+export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudienceEstimate {
+  return buildAudienceEstimate(getTargetUsers(targetAudience));
+}
+
+function normalizeSqlTimestamp(value: unknown, fallback: string | null = null): string | null {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'string') return value;
+  if (value instanceof Date) return value.toISOString();
+  const candidate = value as { toDate?: () => Date };
+  if (typeof candidate?.toDate === 'function') {
+    try { return candidate.toDate().toISOString(); } catch { return fallback; }
+  }
+  return String(value);
+}
+
+/** Persist notification-centre records that must survive App Hosting instance replacement. */
+async function persistNotificationDocument(
+  collectionName: string,
+  docId: string,
+  record: Record<string, any>,
+): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production') return true;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (await setFirestoreDoc(collectionName, docId, { ...record, id: docId })) return true;
+    } catch (error) {
+      console.warn(`[NotificationService] Durable write attempt ${attempt} failed for ${collectionName}/${docId}:`, error);
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 150));
+  }
+  console.error(`[NotificationService] Durable write exhausted retries for ${collectionName}/${docId}.`);
+  return false;
+}
+
+async function backfillMissingNotificationDocuments(
+  collectionName: string,
+  rows: Array<Record<string, any>>,
+  remoteIds: Set<string>,
+  getId: (row: Record<string, any>) => string,
+): Promise<void> {
+  const missing = rows.filter((row) => {
+    const id = getId(row);
+    return Boolean(id && !remoteIds.has(id));
+  });
+  for (let index = 0; index < missing.length; index += 40) {
+    const chunk = missing.slice(index, index + 40);
+    const results = await Promise.all(chunk.map(async (row) => {
+      const id = getId(row);
+      return persistNotificationDocument(collectionName, id, row);
+    }));
+    if (results.some((saved) => !saved)) {
+      console.warn(`[NotificationService] Some ${collectionName} records could not be backfilled to Firestore.`);
+    }
+  }
+}
+
+/**
+ * Restore notification-centre state from Firestore before the server begins accepting
+ * traffic, then backfill records that were already present in SQLite before durable
+ * writes were introduced. This prevents campaign counters and notification feeds from
+ * resetting to zero whenever an ephemeral hosting instance is replaced.
+ */
+export async function hydrateNotificationCentreFromFirestore(): Promise<void> {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const [remoteCampaigns, remoteNotifications, remoteLogs, remotePreferences] = await Promise.all([
+    getAllFirestoreDocs<Record<string, any>>('broadcast_campaigns', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('notifications', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('notification_delivery_logs', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('user_notification_preferences', { failOnError: true }),
+  ]);
+
+  const campaignIds = new Set<string>();
+  const notificationIds = new Set<string>();
+  const deliveryLogIds = new Set<string>();
+  const preferenceIds = new Set<string>();
+
+  for (const row of remoteCampaigns) {
+    const id = String(row.id || '').trim();
+    if (!id) continue;
+    campaignIds.add(id);
+    db.prepare(`
+      INSERT INTO broadcast_campaigns (
+        id, title, message, category, priority, target_audience, channels,
+        action_url, action_label, status, total_targeted, in_app_sent, email_sent,
+        email_failed, created_by, sent_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        message = excluded.message,
+        category = excluded.category,
+        priority = excluded.priority,
+        target_audience = excluded.target_audience,
+        channels = excluded.channels,
+        action_url = excluded.action_url,
+        action_label = excluded.action_label,
+        status = excluded.status,
+        total_targeted = excluded.total_targeted,
+        in_app_sent = excluded.in_app_sent,
+        email_sent = excluded.email_sent,
+        email_failed = excluded.email_failed,
+        created_by = excluded.created_by,
+        sent_at = excluded.sent_at
+    `).run(
+      id,
+      String(row.title || 'Notification'),
+      String(row.message || ''),
+      String(row.category || 'ANNOUNCEMENT'),
+      String(row.priority || 'NORMAL'),
+      String(row.target_audience || row.targetAudience || 'ALL'),
+      String(row.channels || 'IN_APP_AND_EMAIL'),
+      row.action_url ?? row.actionUrl ?? null,
+      row.action_label ?? row.actionLabel ?? null,
+      String(row.status || 'COMPLETED'),
+      Number(row.total_targeted ?? row.totalTargeted ?? 0),
+      Number(row.in_app_sent ?? row.inAppSent ?? 0),
+      Number(row.email_sent ?? row.emailSent ?? 0),
+      Number(row.email_failed ?? row.emailFailed ?? 0),
+      row.created_by ?? row.createdBy ?? null,
+      normalizeSqlTimestamp(row.sent_at ?? row.sentAt),
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  for (const row of remoteNotifications) {
+    const id = String(row.id || '').trim();
+    const userId = String(row.user_id || row.userId || '').trim();
+    if (!id || !userId) continue;
+    const activeUser = db.prepare("SELECT id FROM users WHERE id = ? AND status != 'DELETED'").get(userId);
+    if (!activeUser) continue;
+    notificationIds.add(id);
+    db.prepare(`
+      INSERT INTO notifications (
+        id, user_id, title, message, type, priority, category, action_url,
+        action_label, campaign_id, read, is_read, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        message = excluded.message,
+        type = excluded.type,
+        priority = excluded.priority,
+        category = excluded.category,
+        action_url = excluded.action_url,
+        action_label = excluded.action_label,
+        campaign_id = excluded.campaign_id,
+        read = MAX(notifications.read, excluded.read),
+        is_read = MAX(notifications.is_read, excluded.is_read)
+    `).run(
+      id, userId, String(row.title || 'Notification'), String(row.message || ''),
+      String(row.type || 'SYSTEM'), String(row.priority || 'NORMAL'),
+      String(row.category || 'SYSTEM'), row.action_url ?? row.actionUrl ?? null,
+      row.action_label ?? row.actionLabel ?? null, row.campaign_id ?? row.campaignId ?? null,
+      row.read ? 1 : 0, row.is_read ? 1 : (row.read ? 1 : 0),
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  for (const row of remoteLogs) {
+    const id = String(row.id || '').trim();
+    const userId = String(row.user_id || row.userId || '').trim();
+    if (!id || !userId) continue;
+    deliveryLogIds.add(id);
+    db.prepare(`
+      INSERT INTO notification_delivery_logs (
+        id, campaign_id, user_id, recipient_email, recipient_role, channel, status, error_message, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        campaign_id = excluded.campaign_id,
+        recipient_email = excluded.recipient_email,
+        recipient_role = excluded.recipient_role,
+        channel = excluded.channel,
+        status = excluded.status,
+        error_message = excluded.error_message
+    `).run(
+      id, row.campaign_id ?? row.campaignId ?? null, userId,
+      row.recipient_email ?? row.recipientEmail ?? null,
+      row.recipient_role ?? row.recipientRole ?? null,
+      String(row.channel || 'IN_APP'), String(row.status || 'UNKNOWN'),
+      row.error_message ?? row.errorMessage ?? null,
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  const preferenceFlag = (value: unknown): number => {
+    if (value === undefined || value === null) return 1;
+    return value === true || value === 1 || value === '1' ? 1 : 0;
+  };
+  for (const row of remotePreferences) {
+    const userId = String(row.user_id || row.userId || row.id || '').trim();
+    if (!userId) continue;
+    preferenceIds.add(userId);
+    db.prepare(`
+      INSERT INTO user_notification_preferences (
+        user_id, email_notifications_enabled, marketing_emails_enabled,
+        in_app_notifications_enabled, updated_at
+      ) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(user_id) DO UPDATE SET
+        email_notifications_enabled = excluded.email_notifications_enabled,
+        marketing_emails_enabled = excluded.marketing_emails_enabled,
+        in_app_notifications_enabled = excluded.in_app_notifications_enabled,
+        updated_at = excluded.updated_at
+    `).run(
+      userId,
+      preferenceFlag(row.email_notifications_enabled ?? row.emailNotificationsEnabled),
+      preferenceFlag(row.marketing_emails_enabled ?? row.marketingEmailsEnabled),
+      preferenceFlag(row.in_app_notifications_enabled ?? row.inAppNotificationsEnabled),
+      normalizeSqlTimestamp(row.updated_at ?? row.updatedAt),
+    );
+  }
+
+  // Preserve locally existing history from before the Firestore mirror was introduced.
+  const localCampaigns = db.prepare('SELECT * FROM broadcast_campaigns').all() as Array<Record<string, any>>;
+  const localNotifications = db.prepare(`
+    SELECT n.* FROM notifications n
+    INNER JOIN users u ON u.id = n.user_id
+    WHERE u.status != 'DELETED'
+  `).all() as Array<Record<string, any>>;
+  const localLogs = db.prepare(`
+    SELECT l.* FROM notification_delivery_logs l
+    INNER JOIN users u ON u.id = l.user_id
+    WHERE u.status != 'DELETED'
+  `).all() as Array<Record<string, any>>;
+  const localPreferences = db.prepare('SELECT * FROM user_notification_preferences').all() as Array<Record<string, any>>;
+
+  await Promise.all([
+    backfillMissingNotificationDocuments('broadcast_campaigns', localCampaigns, campaignIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('notifications', localNotifications, notificationIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('notification_delivery_logs', localLogs, deliveryLogIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('user_notification_preferences', localPreferences, preferenceIds, (row) => String(row.user_id || '')),
+  ]);
+
+  console.log(`[NotificationService] Restored ${remoteCampaigns.length} campaigns, ${remoteNotifications.length} notifications, ${remoteLogs.length} delivery logs, and ${remotePreferences.length} preference records from Firestore.`);
+}
+
+/** Persist an updated notification read-state so it survives the next deployment. */
+export async function syncNotificationReadStateToFirestore(userId: string, notificationId?: string): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const rows = notificationId
+    ? db.prepare('SELECT * FROM notifications WHERE user_id = ? AND id = ?').all(userId, notificationId) as Array<Record<string, any>>
+    : db.prepare('SELECT * FROM notifications WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
+  let allSaved = true;
+  for (let index = 0; index < rows.length; index += 40) {
+    const chunk = rows.slice(index, index + 40);
+    const saved = await Promise.all(chunk.map((row) => persistNotificationDocument('notifications', String(row.id), row)));
+    if (saved.some((result) => !result)) allSaved = false;
+  }
+  return allSaved;
 }
 
 /**
@@ -226,16 +572,32 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
   emailSent: number;
   emailFailed: number;
   status: string;
+  error?: string;
+  persistenceWarning?: boolean;
 }> {
-  const targetUsers = getTargetUsers(payload.targetAudience);
+  // Resolve the audience from Firestore in production, using the same durable source
+  // as the admin recipient preview. Never record a successful campaign with zero targets.
+  const targetUsers = await getTargetUsersForBroadcast(payload.targetAudience);
   const campaignId = `cmp_${crypto.randomBytes(8).toString('hex')}`;
   const totalTargeted = targetUsers.length;
+
+  if (totalTargeted === 0) {
+    return {
+      success: false,
+      campaignId: '',
+      totalTargeted: 0,
+      inAppSent: 0,
+      emailSent: 0,
+      emailFailed: 0,
+      status: 'NO_RECIPIENTS',
+      error: 'No eligible recipients were found for this audience. Refresh the recipient preview and verify that active users are synced to the database before sending.',
+    };
+  }
 
   const channels = payload.channels || 'IN_APP_AND_EMAIL';
   const category = payload.category || 'ANNOUNCEMENT';
   const priority = payload.priority || 'NORMAL';
 
-  // Record initial broadcast campaign in DB
   db.prepare(`
     INSERT INTO broadcast_campaigns (
       id, title, message, category, priority, target_audience, channels,
@@ -253,8 +615,23 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     payload.actionUrl || null,
     payload.actionLabel || null,
     totalTargeted,
-    payload.adminEmail || payload.adminUserId
+    payload.adminEmail || payload.adminUserId,
   );
+
+  const initialCampaign = db.prepare('SELECT * FROM broadcast_campaigns WHERE id = ?').get(campaignId) as Record<string, any>;
+  if (!(await persistNotificationDocument('broadcast_campaigns', campaignId, initialCampaign))) {
+    db.prepare("UPDATE broadcast_campaigns SET status = 'PERSISTENCE_FAILED' WHERE id = ?").run(campaignId);
+    return {
+      success: false,
+      campaignId,
+      totalTargeted,
+      inAppSent: 0,
+      emailSent: 0,
+      emailFailed: 0,
+      status: 'PERSISTENCE_ERROR',
+      error: 'The broadcast could not be safely recorded in durable storage, so delivery was not started. Please retry after database connectivity is restored.',
+    };
+  }
 
   let inAppSent = 0;
   let emailSent = 0;
@@ -263,22 +640,20 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
   const shouldSendInApp = channels === 'IN_APP' || channels === 'IN_APP_AND_EMAIL';
   const shouldSendEmail = channels === 'EMAIL' || channels === 'IN_APP_AND_EMAIL';
 
-  // Fetch all user notification preferences to respect opt-outs
   const userPreferencesMap = new Map<string, { email: boolean; marketing: boolean; inApp: boolean }>();
   try {
-    const prefs = db.prepare(`SELECT * FROM user_notification_preferences`).all() as any[];
-    for (const p of prefs) {
-      userPreferencesMap.set(p.user_id, {
-        email: p.email_notifications_enabled === 1,
-        marketing: p.marketing_emails_enabled === 1,
-        inApp: p.in_app_notifications_enabled === 1,
+    const preferences = db.prepare('SELECT * FROM user_notification_preferences').all() as any[];
+    for (const preference of preferences) {
+      userPreferencesMap.set(preference.user_id, {
+        email: preference.email_notifications_enabled === 1,
+        marketing: preference.marketing_emails_enabled === 1,
+        inApp: preference.in_app_notifications_enabled === 1,
       });
     }
-  } catch (err) {
-    console.warn('[NotificationService] Preference check warning:', err);
+  } catch (error) {
+    console.warn('[NotificationService] Preference check warning:', error);
   }
 
-  // Prepared statements for batch operations
   const insertNotifStmt = db.prepare(`
     INSERT INTO notifications (
       id, user_id, title, message, type, priority, category, action_url, action_label, campaign_id, is_read, read, created_at
@@ -291,112 +666,122 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
 
-  // Process in chunks of 50 to prevent blocking the event loop
+  const recordDeliveryLog = async (
+    logId: string,
+    user: TargetUser,
+    channel: 'IN_APP' | 'EMAIL',
+    status: string,
+    errorMessage: string | null,
+  ): Promise<void> => {
+    insertDeliveryLogStmt.run(
+      logId,
+      campaignId,
+      user.id,
+      user.email,
+      user.role,
+      channel,
+      status,
+      errorMessage,
+    );
+    const logRow = db.prepare('SELECT * FROM notification_delivery_logs WHERE id = ?').get(logId) as Record<string, any> | undefined;
+    if (logRow && !(await persistNotificationDocument('notification_delivery_logs', logId, logRow))) {
+      // Notification delivery itself is not reclassified based on audit-log persistence.
+      console.error(`[NotificationService] Delivery log ${logId} could not be durably persisted.`);
+    }
+  };
+
   const CHUNK_SIZE = 50;
-  for (let i = 0; i < targetUsers.length; i += CHUNK_SIZE) {
-    const chunk = targetUsers.slice(i, i + CHUNK_SIZE);
+  for (let index = 0; index < targetUsers.length; index += CHUNK_SIZE) {
+    const chunk = targetUsers.slice(index, index + CHUNK_SIZE);
 
-    for (const u of chunk) {
-      const uPrefs = userPreferencesMap.get(u.id);
+    for (const user of chunk) {
+      const preferences = userPreferencesMap.get(user.id);
 
-      // --- IN-APP DISPATCH ---
       if (shouldSendInApp) {
-        const allowInApp = uPrefs ? uPrefs.inApp : true;
-        if (allowInApp) {
+        const allowInApp = preferences ? preferences.inApp : true;
+        if (!allowInApp) {
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
+            'IN_APP',
+            'SKIPPED',
+            'User disabled in-app notifications',
+          );
+        } else {
+          const notificationId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+          let notificationInserted = false;
           try {
-            const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
             insertNotifStmt.run(
-              notifId,
-              u.id,
+              notificationId,
+              user.id,
               payload.title,
               payload.message,
               priority,
               category,
               payload.actionUrl || null,
               payload.actionLabel || null,
-              campaignId
-            );
-            inAppSent++;
-
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
               campaignId,
-              u.id,
-              u.email,
-              u.role,
+            );
+            notificationInserted = true;
+            const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as Record<string, any> | undefined;
+            if (!notificationRow || !(await persistNotificationDocument('notifications', notificationId, notificationRow))) {
+              throw new Error('The notification could not be durably saved to Firestore.');
+            }
+
+            inAppSent++;
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'IN_APP',
               'DELIVERED',
-              null
+              null,
             );
-          } catch (err: any) {
-            console.warn(`[NotificationService] Failed in-app delivery to user ${u.id}:`, err);
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+          } catch (error: any) {
+            if (notificationInserted) {
+              try { db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(notificationId, user.id); } catch {}
+            }
+            console.warn(`[NotificationService] Failed durable in-app delivery to user ${user.id}:`, error);
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'IN_APP',
               'FAILED',
-              err.message
+              error?.message || 'In-app notification persistence failed',
             );
           }
-        } else {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
-            'IN_APP',
-            'SKIPPED',
-            'User disabled in-app notifications'
-          );
         }
       }
 
-      // --- EMAIL DISPATCH ---
       if (shouldSendEmail) {
-        const allowEmail = uPrefs ? uPrefs.email : true;
-        const allowMarketing = uPrefs ? uPrefs.marketing : true;
+        const allowEmail = preferences ? preferences.email : true;
+        const allowMarketing = preferences ? preferences.marketing : true;
 
         if (!allowEmail && priority !== 'URGENT') {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'SKIPPED',
-            'User opted out of email notifications'
+            'User opted out of email notifications',
           );
           continue;
         }
 
         if (category === 'PROMOTIONAL' && !allowMarketing) {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'SKIPPED',
-            'User opted out of marketing emails'
+            'User opted out of marketing emails',
           );
           continue;
         }
 
         try {
-          const emailRes = await sendBroadcastNotificationEmail({
-            recipient: u.email,
-            recipientName: u.full_name || 'Student',
+          const emailResult = await sendBroadcastNotificationEmail({
+            recipient: user.email,
+            recipientName: user.full_name || 'Student',
             title: payload.title,
             message: payload.message,
             category,
@@ -407,58 +792,44 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
             adminId: payload.adminUserId,
           });
 
-          if (emailRes.success) {
+          if (emailResult.success) {
             emailSent++;
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'EMAIL',
-              emailRes.status,
-              emailRes.message || null
+              emailResult.status,
+              emailResult.message || null,
             );
           } else {
             emailFailed++;
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'EMAIL',
               'FAILED',
-              emailRes.message || 'SMTP delivery failure'
+              emailResult.message || 'SMTP delivery failure',
             );
           }
-        } catch (err: any) {
+        } catch (error: any) {
           emailFailed++;
-          console.warn(`[NotificationService] Email delivery failure for ${u.email}:`, err);
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          console.warn(`[NotificationService] Email delivery failure for ${user.email}:`, error);
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'FAILED',
-            err.message
+            error?.message || 'Email delivery failure',
           );
         }
       }
     }
 
-    // Small micro-yield between chunks if more chunks remain
-    if (i + CHUNK_SIZE < targetUsers.length) {
+    if (index + CHUNK_SIZE < targetUsers.length) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
 
-  // Update campaign summary stats
   db.prepare(`
     UPDATE broadcast_campaigns
     SET status = 'COMPLETED',
@@ -469,7 +840,14 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     WHERE id = ?
   `).run(inAppSent, emailSent, emailFailed, campaignId);
 
-  // Write immutable audit log
+  const completedCampaign = db.prepare('SELECT * FROM broadcast_campaigns WHERE id = ?').get(campaignId) as Record<string, any>;
+  const campaignPersisted = await persistNotificationDocument('broadcast_campaigns', campaignId, completedCampaign);
+  if (!campaignPersisted) {
+    // The notification/email attempts have already happened. Do not tell the operator
+    // to resend blindly: that could duplicate user emails or in-app notices.
+    console.error(`[NotificationService] Final campaign summary failed to persist for ${campaignId}.`);
+  }
+
   try {
     const auditId = `audit_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
@@ -489,10 +867,10 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
         inAppSent,
         emailSent,
         emailFailed,
-      })
+      }),
     );
-  } catch (err) {
-    console.warn('[NotificationService] Audit log write warning:', err);
+  } catch (error) {
+    console.warn('[NotificationService] Audit log write warning:', error);
   }
 
   return {
@@ -502,7 +880,8 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     inAppSent,
     emailSent,
     emailFailed,
-    status: 'COMPLETED',
+    status: campaignPersisted ? 'COMPLETED' : 'COMPLETED_WITH_PERSISTENCE_WARNING',
+    persistenceWarning: !campaignPersisted,
   };
 }
 
