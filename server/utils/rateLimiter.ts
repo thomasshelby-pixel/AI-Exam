@@ -257,6 +257,16 @@ export const passwordResetTokenVerifyRateLimiter = createRateLimiter({
   },
 });
 
+// MFA challenge and recovery-code verification: 20 attempts per 15 minutes per IP,
+// backed by the same transactional Firestore counter across production instances.
+export const mfaVerificationRateLimiter = createRateLimiter({
+  sharedStore: true,
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: 'Too many MFA verification requests from this network. Please wait 15 minutes.',
+  keyGenerator: (req) => `mfa_verify:${getClientIp(req)}`,
+});
+
 // MFA enrollment OTP verification: global per-IP cap plus a per-user failed-attempt lockout.
 export const mfaEnrollmentVerifyRateLimiter = createRateLimiter({
   sharedStore: true,
