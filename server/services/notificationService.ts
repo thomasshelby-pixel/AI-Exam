@@ -564,16 +564,32 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
   emailSent: number;
   emailFailed: number;
   status: string;
+  error?: string;
+  persistenceWarning?: boolean;
 }> {
-  const targetUsers = getTargetUsers(payload.targetAudience);
+  // Resolve the audience from Firestore in production, using the same durable source
+  // as the admin recipient preview. Never record a successful campaign with zero targets.
+  const targetUsers = await getTargetUsersForBroadcast(payload.targetAudience);
   const campaignId = `cmp_${crypto.randomBytes(8).toString('hex')}`;
   const totalTargeted = targetUsers.length;
+
+  if (totalTargeted === 0) {
+    return {
+      success: false,
+      campaignId: '',
+      totalTargeted: 0,
+      inAppSent: 0,
+      emailSent: 0,
+      emailFailed: 0,
+      status: 'NO_RECIPIENTS',
+      error: 'No eligible recipients were found for this audience. Refresh the recipient preview and verify that active users are synced to the database before sending.',
+    };
+  }
 
   const channels = payload.channels || 'IN_APP_AND_EMAIL';
   const category = payload.category || 'ANNOUNCEMENT';
   const priority = payload.priority || 'NORMAL';
 
-  // Record initial broadcast campaign in DB
   db.prepare(`
     INSERT INTO broadcast_campaigns (
       id, title, message, category, priority, target_audience, channels,
@@ -591,8 +607,23 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     payload.actionUrl || null,
     payload.actionLabel || null,
     totalTargeted,
-    payload.adminEmail || payload.adminUserId
+    payload.adminEmail || payload.adminUserId,
   );
+
+  const initialCampaign = db.prepare('SELECT * FROM broadcast_campaigns WHERE id = ?').get(campaignId) as Record<string, any>;
+  if (!(await persistNotificationDocument('broadcast_campaigns', campaignId, initialCampaign))) {
+    db.prepare("UPDATE broadcast_campaigns SET status = 'PERSISTENCE_FAILED' WHERE id = ?").run(campaignId);
+    return {
+      success: false,
+      campaignId,
+      totalTargeted,
+      inAppSent: 0,
+      emailSent: 0,
+      emailFailed: 0,
+      status: 'PERSISTENCE_ERROR',
+      error: 'The broadcast could not be safely recorded in durable storage, so delivery was not started. Please retry after database connectivity is restored.',
+    };
+  }
 
   let inAppSent = 0;
   let emailSent = 0;
@@ -601,22 +632,20 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
   const shouldSendInApp = channels === 'IN_APP' || channels === 'IN_APP_AND_EMAIL';
   const shouldSendEmail = channels === 'EMAIL' || channels === 'IN_APP_AND_EMAIL';
 
-  // Fetch all user notification preferences to respect opt-outs
   const userPreferencesMap = new Map<string, { email: boolean; marketing: boolean; inApp: boolean }>();
   try {
-    const prefs = db.prepare(`SELECT * FROM user_notification_preferences`).all() as any[];
-    for (const p of prefs) {
-      userPreferencesMap.set(p.user_id, {
-        email: p.email_notifications_enabled === 1,
-        marketing: p.marketing_emails_enabled === 1,
-        inApp: p.in_app_notifications_enabled === 1,
+    const preferences = db.prepare('SELECT * FROM user_notification_preferences').all() as any[];
+    for (const preference of preferences) {
+      userPreferencesMap.set(preference.user_id, {
+        email: preference.email_notifications_enabled === 1,
+        marketing: preference.marketing_emails_enabled === 1,
+        inApp: preference.in_app_notifications_enabled === 1,
       });
     }
-  } catch (err) {
-    console.warn('[NotificationService] Preference check warning:', err);
+  } catch (error) {
+    console.warn('[NotificationService] Preference check warning:', error);
   }
 
-  // Prepared statements for batch operations
   const insertNotifStmt = db.prepare(`
     INSERT INTO notifications (
       id, user_id, title, message, type, priority, category, action_url, action_label, campaign_id, is_read, read, created_at
@@ -629,112 +658,122 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
 
-  // Process in chunks of 50 to prevent blocking the event loop
+  const recordDeliveryLog = async (
+    logId: string,
+    user: TargetUser,
+    channel: 'IN_APP' | 'EMAIL',
+    status: string,
+    errorMessage: string | null,
+  ): Promise<void> => {
+    insertDeliveryLogStmt.run(
+      logId,
+      campaignId,
+      user.id,
+      user.email,
+      user.role,
+      channel,
+      status,
+      errorMessage,
+    );
+    const logRow = db.prepare('SELECT * FROM notification_delivery_logs WHERE id = ?').get(logId) as Record<string, any> | undefined;
+    if (logRow && !(await persistNotificationDocument('notification_delivery_logs', logId, logRow))) {
+      // Notification delivery itself is not reclassified based on audit-log persistence.
+      console.error(`[NotificationService] Delivery log ${logId} could not be durably persisted.`);
+    }
+  };
+
   const CHUNK_SIZE = 50;
-  for (let i = 0; i < targetUsers.length; i += CHUNK_SIZE) {
-    const chunk = targetUsers.slice(i, i + CHUNK_SIZE);
+  for (let index = 0; index < targetUsers.length; index += CHUNK_SIZE) {
+    const chunk = targetUsers.slice(index, index + CHUNK_SIZE);
 
-    for (const u of chunk) {
-      const uPrefs = userPreferencesMap.get(u.id);
+    for (const user of chunk) {
+      const preferences = userPreferencesMap.get(user.id);
 
-      // --- IN-APP DISPATCH ---
       if (shouldSendInApp) {
-        const allowInApp = uPrefs ? uPrefs.inApp : true;
-        if (allowInApp) {
+        const allowInApp = preferences ? preferences.inApp : true;
+        if (!allowInApp) {
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
+            'IN_APP',
+            'SKIPPED',
+            'User disabled in-app notifications',
+          );
+        } else {
+          const notificationId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+          let notificationInserted = false;
           try {
-            const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
             insertNotifStmt.run(
-              notifId,
-              u.id,
+              notificationId,
+              user.id,
               payload.title,
               payload.message,
               priority,
               category,
               payload.actionUrl || null,
               payload.actionLabel || null,
-              campaignId
-            );
-            inAppSent++;
-
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
               campaignId,
-              u.id,
-              u.email,
-              u.role,
+            );
+            notificationInserted = true;
+            const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as Record<string, any> | undefined;
+            if (!notificationRow || !(await persistNotificationDocument('notifications', notificationId, notificationRow))) {
+              throw new Error('The notification could not be durably saved to Firestore.');
+            }
+
+            inAppSent++;
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'IN_APP',
               'DELIVERED',
-              null
+              null,
             );
-          } catch (err: any) {
-            console.warn(`[NotificationService] Failed in-app delivery to user ${u.id}:`, err);
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+          } catch (error: any) {
+            if (notificationInserted) {
+              try { db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(notificationId, user.id); } catch {}
+            }
+            console.warn(`[NotificationService] Failed durable in-app delivery to user ${user.id}:`, error);
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'IN_APP',
               'FAILED',
-              err.message
+              error?.message || 'In-app notification persistence failed',
             );
           }
-        } else {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
-            'IN_APP',
-            'SKIPPED',
-            'User disabled in-app notifications'
-          );
         }
       }
 
-      // --- EMAIL DISPATCH ---
       if (shouldSendEmail) {
-        const allowEmail = uPrefs ? uPrefs.email : true;
-        const allowMarketing = uPrefs ? uPrefs.marketing : true;
+        const allowEmail = preferences ? preferences.email : true;
+        const allowMarketing = preferences ? preferences.marketing : true;
 
         if (!allowEmail && priority !== 'URGENT') {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'SKIPPED',
-            'User opted out of email notifications'
+            'User opted out of email notifications',
           );
           continue;
         }
 
         if (category === 'PROMOTIONAL' && !allowMarketing) {
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'SKIPPED',
-            'User opted out of marketing emails'
+            'User opted out of marketing emails',
           );
           continue;
         }
 
         try {
-          const emailRes = await sendBroadcastNotificationEmail({
-            recipient: u.email,
-            recipientName: u.full_name || 'Student',
+          const emailResult = await sendBroadcastNotificationEmail({
+            recipient: user.email,
+            recipientName: user.full_name || 'Student',
             title: payload.title,
             message: payload.message,
             category,
@@ -745,58 +784,44 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
             adminId: payload.adminUserId,
           });
 
-          if (emailRes.success) {
+          if (emailResult.success) {
             emailSent++;
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'EMAIL',
-              emailRes.status,
-              emailRes.message || null
+              emailResult.status,
+              emailResult.message || null,
             );
           } else {
             emailFailed++;
-            const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-            insertDeliveryLogStmt.run(
-              logId,
-              campaignId,
-              u.id,
-              u.email,
-              u.role,
+            await recordDeliveryLog(
+              `dlog_${crypto.randomBytes(8).toString('hex')}`,
+              user,
               'EMAIL',
               'FAILED',
-              emailRes.message || 'SMTP delivery failure'
+              emailResult.message || 'SMTP delivery failure',
             );
           }
-        } catch (err: any) {
+        } catch (error: any) {
           emailFailed++;
-          console.warn(`[NotificationService] Email delivery failure for ${u.email}:`, err);
-          const logId = `dlog_${crypto.randomBytes(8).toString('hex')}`;
-          insertDeliveryLogStmt.run(
-            logId,
-            campaignId,
-            u.id,
-            u.email,
-            u.role,
+          console.warn(`[NotificationService] Email delivery failure for ${user.email}:`, error);
+          await recordDeliveryLog(
+            `dlog_${crypto.randomBytes(8).toString('hex')}`,
+            user,
             'EMAIL',
             'FAILED',
-            err.message
+            error?.message || 'Email delivery failure',
           );
         }
       }
     }
 
-    // Small micro-yield between chunks if more chunks remain
-    if (i + CHUNK_SIZE < targetUsers.length) {
+    if (index + CHUNK_SIZE < targetUsers.length) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
 
-  // Update campaign summary stats
   db.prepare(`
     UPDATE broadcast_campaigns
     SET status = 'COMPLETED',
@@ -807,7 +832,14 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     WHERE id = ?
   `).run(inAppSent, emailSent, emailFailed, campaignId);
 
-  // Write immutable audit log
+  const completedCampaign = db.prepare('SELECT * FROM broadcast_campaigns WHERE id = ?').get(campaignId) as Record<string, any>;
+  const campaignPersisted = await persistNotificationDocument('broadcast_campaigns', campaignId, completedCampaign);
+  if (!campaignPersisted) {
+    // The notification/email attempts have already happened. Do not tell the operator
+    // to resend blindly: that could duplicate user emails or in-app notices.
+    console.error(`[NotificationService] Final campaign summary failed to persist for ${campaignId}.`);
+  }
+
   try {
     const auditId = `audit_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
@@ -827,10 +859,10 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
         inAppSent,
         emailSent,
         emailFailed,
-      })
+      }),
     );
-  } catch (err) {
-    console.warn('[NotificationService] Audit log write warning:', err);
+  } catch (error) {
+    console.warn('[NotificationService] Audit log write warning:', error);
   }
 
   return {
@@ -840,7 +872,8 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
     inAppSent,
     emailSent,
     emailFailed,
-    status: 'COMPLETED',
+    status: campaignPersisted ? 'COMPLETED' : 'COMPLETED_WITH_PERSISTENCE_WARNING',
+    persistenceWarning: !campaignPersisted,
   };
 }
 
