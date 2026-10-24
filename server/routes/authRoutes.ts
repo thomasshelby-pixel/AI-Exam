@@ -11,8 +11,7 @@ import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
+import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
 import { isDeviceTrusted, markDeviceAsTrusted, revokeAllDeviceTrust, parseCookieValue, verifyUserDeviceTrust } from '../services/trustService.js';
@@ -280,11 +279,10 @@ async function authenticateWithFirestoreFallback(
   if (!fdb) return null;
 
   try {
-    const usersRef = collection(fdb, 'users');
-    let snap = await getDocs(query(usersRef, where('email', '==', normalizedEmail)));
+    const matchingDocs = await queryFirestoreDocs<any>('users', [{ field: 'email', op: '==', value: normalizedEmail }]);
     let fUserDoc: any = null;
-    if (!snap.empty) {
-      fUserDoc = snap.docs[0].data();
+    if (matchingDocs.length > 0) {
+      fUserDoc = matchingDocs[0];
     } else {
       const allUsers = await getAllFirestoreDocs<any>('users');
       fUserDoc = allUsers.find((u: any) => String(u.email || '').trim().toLowerCase() === normalizedEmail);
@@ -1147,21 +1145,13 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         // Fail closed if an older account exists in Firestore but is not hydrated into
         // the local authoritative account registry. Never create a duplicate account.
         try {
-          const firestore = getFirestoreDb();
-          if (firestore) {
-            const matchingCloudUsers = await getDocs(
-              query(collection(firestore, 'users'), where('email', '==', normalizedEmail))
-            );
-            if (!matchingCloudUsers.empty) {
-              return res.status(409).json({
-                error: 'An account with this email already exists but is not available in the local account registry yet. Please retry shortly or contact support.',
-                code: 'SOCIAL_ACCOUNT_SYNC_PENDING',
-              });
-            }
-          } else {
-            return res.status(503).json({
-              error: 'Account storage is temporarily unavailable. Please try again shortly.',
-              code: 'SOCIAL_ACCOUNT_STORAGE_UNAVAILABLE',
+          const matchingCloudUsers = await queryFirestoreDocs<any>('users', [
+            { field: 'email', op: '==', value: normalizedEmail },
+          ]);
+          if (matchingCloudUsers.length > 0) {
+            return res.status(409).json({
+              error: 'An account with this email already exists but is not available in the local account registry yet. Please retry shortly or contact support.',
+              code: 'SOCIAL_ACCOUNT_SYNC_PENDING',
             });
           }
         } catch (lookupError) {

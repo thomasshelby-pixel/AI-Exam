@@ -531,6 +531,30 @@
         }
       },
       "description": "Administrative account suspensions and policy enforcement records."
+    },
+    "/broadcast_campaigns/{campaignId}": {
+      "schema": { "type": "object" },
+      "description": "Admin notification centre broadcast campaign records."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "type": "object" },
+      "description": "In-app notifications delivered to students and institute administrators."
+    },
+    "/notification_delivery_logs/{logId}": {
+      "schema": { "type": "object" },
+      "description": "Delivery receipts and status logs for sent notification campaigns."
+    },
+    "/user_notification_preferences/{prefId}": {
+      "schema": { "type": "object" },
+      "description": "User notification channel preferences and marketing opt-out status."
+    },
+    "/free_trial_abuse_signals/{signalId}": {
+      "schema": { "type": "object" },
+      "description": "Hashed device, IP, and SRN signals preventing free trial abuse."
+    },
+    "/enrollments/{enrollmentId}": {
+      "schema": { "type": "object" },
+      "description": "Student active enrollment records in coaching institutes."
     }
   }
 }

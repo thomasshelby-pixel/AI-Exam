@@ -272,5 +272,38 @@ service cloud.firestore {
       allow read: if true;
       allow write: if true;
     }
+
+    // Admin Notification Centre & Broadcast Campaigns
+    match /broadcast_campaigns/{campaignId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /notification_delivery_logs/{logId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /user_notification_preferences/{prefId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Free Trial Abuse Prevention Signals (Hashed identifiers only)
+    match /free_trial_abuse_signals/{signalId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Student Institute Enrollments
+    match /enrollments/{enrollmentId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }

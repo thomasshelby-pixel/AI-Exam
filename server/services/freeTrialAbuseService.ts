@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { isIP } from 'node:net';
-import { doc, runTransaction } from 'firebase/firestore';
-import { getFirestoreDb } from './firestoreDbService.js';
+import { runFirestoreTransaction } from './firestoreDbService.js';
 
 export type FreeTrialDecisionReason =
   | 'FIRST_CLAIM'
@@ -74,39 +73,29 @@ export async function claimFreeTrialEligibility(params: {
   }
 
   try {
-    const firestore = getFirestoreDb();
-    if (!firestore) {
-      return { eligible: false, reason: 'SIGNAL_STORE_UNAVAILABLE' };
-    }
-
     const now = new Date().toISOString();
-    return await runTransaction(firestore, async (transaction) => {
-      const refs = signals.map((signal) => ({
-        ...signal,
-        ref: doc(firestore, 'free_trial_abuse_signals', signal.id),
-      }));
-
+    return await runFirestoreTransaction(async (transaction) => {
       const snapshots = [];
-      for (const signal of refs) {
+      for (const signal of signals) {
         snapshots.push({
           ...signal,
-          snapshot: await transaction.get(signal.ref),
+          snapshot: await transaction.get('free_trial_abuse_signals', signal.id),
         });
       }
 
-      const reusedDevice = snapshots.some((entry) => entry.type === 'device' && entry.snapshot.exists());
-      const reusedIp = snapshots.some((entry) => entry.type === 'ip' && entry.snapshot.exists());
+      const reusedDevice = snapshots.some((entry) => entry.type === 'device' && entry.snapshot.exists);
+      const reusedIp = snapshots.some((entry) => entry.type === 'ip' && entry.snapshot.exists);
       const srnClaim = snapshots.find((entry) => entry.type === 'srn');
       const reusedSrn = Boolean(
-        srnClaim?.snapshot.exists() &&
+        srnClaim?.snapshot.exists &&
         String((srnClaim.snapshot.data() as any)?.userId || '') !== params.userId
       );
 
       // Claim any unseen signals in one transaction. Only the hashed SRN claim
       // records an opaque userId association; raw student identifiers are never stored.
       for (const entry of snapshots) {
-        if (!entry.snapshot.exists()) {
-          transaction.set(entry.ref, {
+        if (!entry.snapshot.exists) {
+          transaction.set('free_trial_abuse_signals', entry.id, {
             signalType: entry.type,
             firstSeenAt: now,
             trialClaimed: true,

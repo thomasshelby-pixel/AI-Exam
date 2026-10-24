@@ -1,13 +1,6 @@
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  Firestore,
-} from 'firebase/firestore';
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../db.js';
-import { getFirestoreDb } from './firestoreDbService.js';
+import { getFirestoreDb, queryFirestoreDocs } from './firestoreDbService.js';
 
 export { getFirestoreDb };
 
@@ -37,54 +30,46 @@ export async function validateStudentInstituteEnrollment(
     };
   }
 
-  const firestore = getFirestoreDb();
-
   // 1. Check Firestore 'enrollments' collection
-  if (firestore) {
-    try {
-      const enrollmentsRef = collection(firestore, 'enrollments');
+  try {
+    const variations = [
+      [{ field: 'studentId', op: '==' as const, value: studentId }, { field: 'instituteId', op: '==' as const, value: instituteId }],
+      [{ field: 'student_id', op: '==' as const, value: studentId }, { field: 'institute_id', op: '==' as const, value: instituteId }],
+      [{ field: 'userId', op: '==' as const, value: studentId }, { field: 'instituteId', op: '==' as const, value: instituteId }],
+    ];
 
-      // Check with studentId and instituteId (support both camelCase and snake_case field schemas)
-      const variations = [
-        query(enrollmentsRef, where('studentId', '==', studentId), where('instituteId', '==', instituteId)),
-        query(enrollmentsRef, where('student_id', '==', studentId), where('institute_id', '==', instituteId)),
-        query(enrollmentsRef, where('userId', '==', studentId), where('instituteId', '==', instituteId)),
-      ];
+    for (const filters of variations) {
+      try {
+        const docs = await queryFirestoreDocs('enrollments', filters);
+        if (docs.length > 0) {
+          for (const data of docs) {
+            const rawStatus = (data.status || data.enrollmentStatus || '').toString().toUpperCase();
 
-      for (const q of variations) {
-        try {
-          const snapshot = await getDocs(q);
-          if (!snapshot.empty) {
-            for (const docSnap of snapshot.docs) {
-              const data = docSnap.data();
-              const rawStatus = (data.status || data.enrollmentStatus || '').toString().toUpperCase();
-
-              if (rawStatus === 'ACTIVE') {
-                return {
-                  isValid: true,
-                  source: 'FIRESTORE',
-                  status: 'ACTIVE',
-                  enrollmentData: { id: docSnap.id, ...data },
-                };
-              } else {
-                // An explicit non-active record found in Firestore (e.g., INACTIVE, SUSPENDED, EXPIRED, PENDING)
-                return {
-                  isValid: false,
-                  source: 'FIRESTORE',
-                  status: rawStatus,
-                  reason: `Enrollment in this coaching institute is not active (status: ${rawStatus || 'UNKNOWN'}).`,
-                  enrollmentData: { id: docSnap.id, ...data },
-                };
-              }
+            if (rawStatus === 'ACTIVE') {
+              return {
+                isValid: true,
+                source: 'FIRESTORE',
+                status: 'ACTIVE',
+                enrollmentData: data,
+              };
+            } else {
+              // An explicit non-active record found in Firestore (e.g., INACTIVE, SUSPENDED, EXPIRED, PENDING)
+              return {
+                isValid: false,
+                source: 'FIRESTORE',
+                status: rawStatus,
+                reason: `Enrollment in this coaching institute is not active (status: ${rawStatus || 'UNKNOWN'}).`,
+                enrollmentData: data,
+              };
             }
           }
-        } catch {
-          // Individual query index/field mismatch fallback, try next variation
         }
+      } catch {
+        // Individual query index/field mismatch fallback, try next variation
       }
-    } catch (firestoreErr) {
-      console.warn('[Firestore] Error querying enrollments collection:', firestoreErr);
     }
+  } catch (firestoreErr) {
+    console.warn('[Firestore] Error querying enrollments collection:', firestoreErr);
   }
 
   // 2. Local database validation (institute_memberships) as complementary verification / fallback

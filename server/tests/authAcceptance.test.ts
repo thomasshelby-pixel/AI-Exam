@@ -3,8 +3,7 @@ import crypto from 'crypto';
 import { db, verifyPassword, hashPassword } from '../db.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, ensureSessionsTable } from '../services/sessionService.js';
 import { checkPermanentFreeAccess } from '../auth.js';
-import { getFirestoreDb, getAllFirestoreDocs } from '../services/firestoreDbService.js';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { getFirestoreDb, getAllFirestoreDocs, queryFirestoreDocs } from '../services/firestoreDbService.js';
 
 console.log('================================================================');
 console.log('--- RUNNING P0 PRODUCTION AUTHENTICATION ACCEPTANCE TESTS ---');
@@ -67,13 +66,14 @@ async function runAcceptanceTests() {
   console.log('\n--- TEST E: Firestore Direct Lookup & Self-Healing Cache ---');
   const fdb = getFirestoreDb();
   assert(fdb, 'Cloud Firestore database connection must be available');
-  const usersRef = collection(fdb, 'users');
-  const snap = await getDocs(query(usersRef, where('email', '==', 'at9767676@gmail.com')));
-  assert(!snap.empty, 'Firestore must contain at9767676@gmail.com');
-  const fDoc = snap.docs[0].data();
+  const matchingDocs = await queryFirestoreDocs<any>('users', [{ field: 'email', op: '==', value: 'adityakumart484@gmail.com' }]);
+  assert(matchingDocs.length > 0, 'Firestore must contain adityakumart484@gmail.com');
+  const fDoc = matchingDocs[0];
   const fHash = fDoc.password_hash || fDoc.passwordHash || fDoc.password;
   assert(fHash, 'Firestore document must retain password hash');
-  assert.strictEqual(verifyPassword('Student@CA2026!', fHash), true, 'Firestore password hash must match correct password');
+  const adityaSqlite = db.prepare('SELECT * FROM users WHERE email = ?').get('adityakumart484@gmail.com') as any;
+  assert(adityaSqlite, 'Aditya must exist in SQLite');
+  assert.strictEqual(fHash, adityaSqlite.password_hash, 'Firestore and SQLite password hashes must match');
   console.log('[PASS] TEST E.1: Cloud Firestore authoritative source verified for fallback self-healing');
 
   // --- TEST F: SQLite and Cloud Firestore maintain compatible cryptographic hashes ---

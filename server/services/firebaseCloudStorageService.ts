@@ -7,16 +7,12 @@ import { Storage, type Bucket, type File as GCSFile } from '@google-cloud/storag
 // Ensure stream pipelines do not trigger MaxListenersExceededWarning
 EventEmitter.defaultMaxListeners = 100;
 import {
-  doc,
-  getDoc,
-  setDoc,
-  deleteDoc,
-  collection,
-  query,
-  where,
-  getDocs
-} from 'firebase/firestore';
-import { getFirestoreDb } from './firestoreDbService.js';
+  getFirestoreDoc,
+  setFirestoreDoc,
+  deleteFirestoreDoc,
+  queryFirestoreDocs,
+  getAllFirestoreDocs,
+} from './firestoreDbService.js';
 
 // Configuration
 const DEFAULT_BUCKET = 'gen-lang-client-0211426234.firebasestorage.app';
@@ -324,18 +320,15 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
     ...(options.evaluationId ? { evaluationId: options.evaluationId } : {}),
   };
 
-  const db = getFirestoreDb();
-  if (db) {
-    try {
-      await setDoc(doc(db, 'file_storage_metadata', options.fileId), {
-        ...metadata,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-      console.log(`[CloudFirestore] Stored structured metadata for file ${options.fileId} at path ${storagePath}`);
-    } catch (err) {
-      console.warn(`[CloudFirestore] Warning writing file metadata to Firestore:`, err);
-    }
+  try {
+    await setFirestoreDoc('file_storage_metadata', options.fileId, {
+      ...metadata,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    console.log(`[CloudFirestore] Stored structured metadata for file ${options.fileId} at path ${storagePath}`);
+  } catch (err) {
+    console.warn(`[CloudFirestore] Warning writing file metadata to Firestore:`, err);
   }
 
   return metadata;
@@ -348,18 +341,14 @@ export async function downloadFileFromCloudStorage(
   fileId: string,
   explicitStoragePath?: string
 ): Promise<{ buffer: Buffer; metadata: CloudFileMetadata } | null> {
-  const db = getFirestoreDb();
   let metadata: CloudFileMetadata | null = null;
-
-  if (db) {
-    try {
-      const snap = await getDoc(doc(db, 'file_storage_metadata', fileId));
-      if (snap.exists()) {
-        metadata = snap.data() as CloudFileMetadata;
-      }
-    } catch (err) {
-      console.warn(`[PrivilegedStorage] Error fetching metadata for ${fileId}:`, err);
+  try {
+    const docData = await getFirestoreDoc<CloudFileMetadata>('file_storage_metadata', fileId);
+    if (docData) {
+      metadata = docData;
     }
+  } catch (err) {
+    console.warn(`[PrivilegedStorage] Error fetching metadata for ${fileId}:`, err);
   }
 
   const path = explicitStoragePath || metadata?.storagePath;
@@ -424,14 +413,13 @@ export async function downloadFileFromCloudStorage(
  * Deletes a file permanently from Firebase Cloud Storage and cleans up Firestore metadata.
  */
 export async function deleteFileFromCloudStorage(fileId: string, explicitPath?: string): Promise<boolean> {
-  const db = getFirestoreDb();
   let storagePath = explicitPath;
 
-  if (db && !storagePath) {
+  if (!storagePath) {
     try {
-      const snap = await getDoc(doc(db, 'file_storage_metadata', fileId));
-      if (snap.exists()) {
-        storagePath = snap.data().storagePath;
+      const docData = await getFirestoreDoc<CloudFileMetadata>('file_storage_metadata', fileId);
+      if (docData?.storagePath) {
+        storagePath = docData.storagePath;
       }
     } catch {
       // ignore
@@ -469,13 +457,11 @@ export async function deleteFileFromCloudStorage(fileId: string, explicitPath?: 
   }
 
   // Remove or tombstone the metadata record in Firestore
-  if (db) {
-    try {
-      await deleteDoc(doc(db, 'file_storage_metadata', fileId));
-      console.log(`[CloudFirestore] Removed file metadata document: file_storage_metadata/${fileId}`);
-    } catch (err) {
-      console.warn(`[CloudFirestore] Warning removing file metadata:`, err);
-    }
+  try {
+    await deleteFirestoreDoc('file_storage_metadata', fileId);
+    console.log(`[CloudFirestore] Removed file metadata document: file_storage_metadata/${fileId}`);
+  } catch (err) {
+    console.warn(`[CloudFirestore] Warning removing file metadata:`, err);
   }
 
   return storageDeleted;
@@ -485,26 +471,20 @@ export async function deleteFileFromCloudStorage(fileId: string, explicitPath?: 
  * Deletes all Cloud Storage files associated with an evaluation when it is permanently deleted.
  */
 export async function deleteEvaluationCloudFiles(evaluationId: string): Promise<number> {
-  const db = getFirestoreDb();
   let deletedCount = 0;
 
-  if (db) {
-    try {
-      const q = query(
-        collection(db, 'file_storage_metadata'),
-        where('evaluationId', '==', evaluationId)
-      );
-      const snap = await getDocs(q);
-      console.log(`[PrivilegedStorage] Found ${snap.size} associated files to delete for evaluation ${evaluationId}`);
+  try {
+    const files = await queryFirestoreDocs<CloudFileMetadata>('file_storage_metadata', [
+      { field: 'evaluationId', op: '==', value: evaluationId },
+    ]);
+    console.log(`[PrivilegedStorage] Found ${files.length} associated files to delete for evaluation ${evaluationId}`);
 
-      for (const docSnap of snap.docs) {
-        const data = docSnap.data() as CloudFileMetadata;
-        await deleteFileFromCloudStorage(data.fileId, data.storagePath);
-        deletedCount++;
-      }
-    } catch (err) {
-      console.warn(`[PrivilegedStorage] Error querying evaluation files for ${evaluationId}:`, err);
+    for (const data of files) {
+      await deleteFileFromCloudStorage(data.fileId, data.storagePath);
+      deletedCount++;
     }
+  } catch (err) {
+    console.warn(`[PrivilegedStorage] Error querying evaluation files for ${evaluationId}:`, err);
   }
 
   // Also purge known path keys
@@ -527,48 +507,43 @@ export async function deleteEvaluationCloudFiles(evaluationId: string): Promise<
  * Deletes all Cloud Storage files associated with an ICAI/Institute material.
  */
 export async function deleteMaterialCloudFiles(materialId: string): Promise<number> {
-  const db = getFirestoreDb();
   let deletedCount = 0;
   const processedDocIds = new Set<string>();
 
-  if (db) {
-    try {
-      // 1. Query where materialId == materialId
-      const q = query(
-        collection(db, 'file_storage_metadata'),
-        where('materialId', '==', materialId)
-      );
-      const snap = await getDocs(q);
-      console.log(`[PrivilegedStorage] Found ${snap.size} associated files by query for material ${materialId}`);
+  try {
+    // 1. Query where materialId == materialId
+    const files = await queryFirestoreDocs<CloudFileMetadata>('file_storage_metadata', [
+      { field: 'materialId', op: '==', value: materialId },
+    ]);
+    console.log(`[PrivilegedStorage] Found ${files.length} associated files by query for material ${materialId}`);
 
-      for (const docSnap of snap.docs) {
-        processedDocIds.add(docSnap.id);
-        const data = docSnap.data() as CloudFileMetadata;
-        await deleteFileFromCloudStorage(data.fileId || docSnap.id, data.storagePath);
-        await deleteDoc(doc(db, 'file_storage_metadata', docSnap.id)).catch(() => {});
+    for (const data of files) {
+      const docId = data.fileId || (data as any).id;
+      processedDocIds.add(docId);
+      await deleteFileFromCloudStorage(data.fileId || docId, data.storagePath);
+      await deleteFirestoreDoc('file_storage_metadata', docId).catch(() => {});
+      deletedCount++;
+    }
+
+    // 2. Scan all file_storage_metadata to catch any doc matching materialId in ID, fileId, or path
+    const allFiles = await getAllFirestoreDocs<CloudFileMetadata>('file_storage_metadata');
+    for (const d of allFiles) {
+      const docId = (d as any).id || d.fileId;
+      if (processedDocIds.has(docId)) continue;
+      if (
+        docId?.includes(materialId) ||
+        d.fileId?.includes(materialId) ||
+        d.storagePath?.includes(materialId) ||
+        d.materialId === materialId
+      ) {
+        processedDocIds.add(docId);
+        await deleteFileFromCloudStorage(d.fileId || docId, d.storagePath);
+        await deleteFirestoreDoc('file_storage_metadata', docId).catch(() => {});
         deletedCount++;
       }
-
-      // 2. Scan all file_storage_metadata to catch any doc matching materialId in ID, fileId, or path
-      const allFiles = await getDocs(collection(db, 'file_storage_metadata'));
-      for (const d of allFiles.docs) {
-        if (processedDocIds.has(d.id)) continue;
-        const data = d.data() as CloudFileMetadata;
-        if (
-          d.id.includes(materialId) ||
-          data.fileId?.includes(materialId) ||
-          data.storagePath?.includes(materialId) ||
-          data.materialId === materialId
-        ) {
-          processedDocIds.add(d.id);
-          await deleteFileFromCloudStorage(data.fileId || d.id, data.storagePath);
-          await deleteDoc(doc(db, 'file_storage_metadata', d.id)).catch(() => {});
-          deletedCount++;
-        }
-      }
-    } catch (err) {
-      console.warn(`[PrivilegedStorage] Error querying material files for ${materialId}:`, err);
     }
+  } catch (err) {
+    console.warn(`[PrivilegedStorage] Error querying material files for ${materialId}:`, err);
   }
 
   // Also clean up standard fallback keys
@@ -614,28 +589,23 @@ export async function deleteMaterialCloudFiles(materialId: string): Promise<numb
  * Purges answer sheets, checked copies, reports, student submissions, and documents.
  */
 export async function deleteStudentCloudFiles(studentId: string): Promise<number> {
-  const db = getFirestoreDb();
   let deletedCount = 0;
 
-  if (db) {
-    try {
-      // 1. Query where ownerUserId == studentId
-      const q = query(
-        collection(db, 'file_storage_metadata'),
-        where('ownerUserId', '==', studentId)
-      );
-      const snap = await getDocs(q);
-      console.log(`[PrivilegedStorage] Found ${snap.size} files associated with student ${studentId}`);
+  try {
+    // 1. Query where ownerUserId == studentId
+    const files = await queryFirestoreDocs<CloudFileMetadata>('file_storage_metadata', [
+      { field: 'ownerUserId', op: '==', value: studentId },
+    ]);
+    console.log(`[PrivilegedStorage] Found ${files.length} files associated with student ${studentId}`);
 
-      for (const docSnap of snap.docs) {
-        const data = docSnap.data() as CloudFileMetadata;
-        await deleteFileFromCloudStorage(data.fileId || docSnap.id, data.storagePath);
-        await deleteDoc(doc(db, 'file_storage_metadata', docSnap.id)).catch(() => {});
-        deletedCount++;
-      }
-    } catch (err) {
-      console.warn(`[PrivilegedStorage] Error querying student files for ${studentId}:`, err);
+    for (const data of files) {
+      const docId = data.fileId || (data as any).id;
+      await deleteFileFromCloudStorage(data.fileId || docId, data.storagePath);
+      await deleteFirestoreDoc('file_storage_metadata', docId).catch(() => {});
+      deletedCount++;
     }
+  } catch (err) {
+    console.warn(`[PrivilegedStorage] Error querying student files for ${studentId}:`, err);
   }
 
   // 2. Direct prefix deletion on Google Cloud Storage bucket
@@ -736,17 +706,12 @@ export async function auditStorageConsistency(allMaterials: any[]): Promise<Stor
   }
 
   // 2. Fetch all file_storage_metadata records
-  const db = getFirestoreDb();
   const metadataList: CloudFileMetadata[] = [];
-  if (db) {
-    try {
-      const snap = await getDocs(collection(db, 'file_storage_metadata'));
-      for (const d of snap.docs) {
-        metadataList.push({ id: d.id, ...(d.data() as CloudFileMetadata) } as any);
-      }
-    } catch (fsErr) {
-      console.warn('[PrivilegedStorage] Warning reading file_storage_metadata in audit:', fsErr);
-    }
+  try {
+    const docs = await getAllFirestoreDocs<CloudFileMetadata>('file_storage_metadata');
+    metadataList.push(...docs);
+  } catch (fsErr) {
+    console.warn('[PrivilegedStorage] Warning reading file_storage_metadata in audit:', fsErr);
   }
 
   const metadataPathMap = new Map<string, CloudFileMetadata>();
