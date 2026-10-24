@@ -311,7 +311,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   // Whenever auth/profile data becomes available or changes, keep personal/public
   // evaluation on the saved course. Institute assignments keep their material level.
   useEffect(() => {
-    if (evaluationSource === 'PUBLIC' && accountCourseLevel) {
+    if (accountCourseLevel) {
       setLevel((current) => current === accountCourseLevel ? current : accountCourseLevel);
     }
   }, [evaluationSource, accountCourseLevel]);
@@ -389,19 +389,46 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         );
         const mats = res.materials || [];
         setInstituteMaterials(mats);
-        if (mats.length > 0) {
-          const match = navState.materialId ? mats.find((m: any) => m.id === navState.materialId) : null;
-          const chosen = match || mats[0];
+
+        const requestedMaterial = navState.materialId
+          ? mats.find((material: any) => material.id === navState.materialId)
+          : null;
+        const requestedMaterialLevel = normalizeCourseLevel(requestedMaterial?.level);
+        const requestedMaterialAllowed = Boolean(
+          requestedMaterial &&
+          accountCourseLevel &&
+          requestedMaterialLevel === accountCourseLevel
+        );
+
+        if (requestedMaterial && !requestedMaterialAllowed) {
+          setRequestedCourseLevel(requestedMaterialLevel);
+          setShowCourseAccessNotice(true);
+        }
+
+        const firstAllowedMaterial = accountCourseLevel
+          ? mats.find((material: any) => normalizeCourseLevel(material.level) === accountCourseLevel)
+          : undefined;
+        const chosen = requestedMaterialAllowed
+          ? requestedMaterial
+          : firstAllowedMaterial;
+
+        if (chosen) {
           setSelectedInstituteMaterialId(chosen.id);
-          if (chosen.level) setLevel(chosen.level as CALevel);
+          setLevel(accountCourseLevel || normalizeCourseLevel(chosen.level) || 'INTERMEDIATE');
           if (chosen.subject_key) setSelectedSubjectKey(chosen.subject_key);
+        } else {
+          setSelectedInstituteMaterialId('');
+          if (mats.length > 0) {
+            setRequestedCourseLevel(normalizeCourseLevel(mats[0].level));
+            setShowCourseAccessNotice(true);
+          }
         }
       } catch (err) {
         console.warn('Could not load institute materials:', err);
       }
     };
     fetchInstMaterials();
-  }, [evaluationSource, selectedInstituteId]);
+  }, [evaluationSource, selectedInstituteId, accountCourseLevel]);
 
   // Filter subjects based on level and group
   const filteredSubjects = CA_SUBJECTS.filter((s) => {
@@ -1043,12 +1070,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     <select
                       value={selectedInstituteMaterialId}
                       onChange={(e) => {
-                        setSelectedInstituteMaterialId(e.target.value);
                         const sel = instituteMaterials.find((m) => m.id === e.target.value);
-                        if (sel) {
-                          if (sel.level) setLevel(sel.level as CALevel);
-                          if (sel.subject_key) setSelectedSubjectKey(sel.subject_key);
+                        const requestedLevel = normalizeCourseLevel(sel?.level);
+                        if (!accountCourseLevel || requestedLevel !== accountCourseLevel) {
+                          setRequestedCourseLevel(requestedLevel);
+                          setShowCourseAccessNotice(true);
+                          return;
                         }
+                        setSelectedInstituteMaterialId(e.target.value);
+                        setLevel(accountCourseLevel);
+                        if (sel?.subject_key) setSelectedSubjectKey(sel.subject_key);
                       }}
                       className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-600 focus:bg-white dark:focus:bg-slate-900 font-medium"
                     >
