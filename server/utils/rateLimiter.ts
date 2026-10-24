@@ -141,9 +141,9 @@ function applyRateLimitResult(
 }
 
 /**
- * Creates a rate limiter. Security-sensitive endpoints use a transactional shared
- * Firestore store in production so counters are consistent across server instances.
- * In development/tests, the isolated in-memory store avoids requiring cloud config.
+ * Creates a rate limiter. In production, rate-limit counters use transactional shared
+ * Firestore storage so policies remain consistent across server instances. In development
+ * and tests, the isolated in-memory store avoids requiring cloud configuration.
  */
 export function createRateLimiter(options: RateLimitOptions) {
   const {
@@ -151,7 +151,7 @@ export function createRateLimiter(options: RateLimitOptions) {
     max,
     message = 'Too many requests. Please slow down and try again later.',
     keyGenerator = (req: Request) => getClientIp(req),
-    sharedStore = false,
+    sharedStore = process.env.NODE_ENV === 'production',
   } = options;
 
   return (req: Request, res: Response, next: NextFunction) => {
