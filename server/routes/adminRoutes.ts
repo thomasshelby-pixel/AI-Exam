@@ -86,7 +86,7 @@ import {
   DEFAULT_FALLBACK_CHAIN,
 } from '../models/modelRegistry.js';
 import {
-  estimateRecipients,
+  estimateRecipientsFromDurableStore,
   sendTestNotification,
   createAndDispatchBroadcast,
   getBroadcastCampaigns,
@@ -4240,14 +4240,17 @@ router.get('/notifications/campaigns/:id', (req: AuthRequest, res: Response) => 
 });
 
 // 19.3 Recipient Count & Demographic Estimation
-router.post('/notifications/estimate', (req: AuthRequest, res: Response) => {
+router.post('/notifications/estimate', async (req: AuthRequest, res: Response) => {
   try {
     const { targetAudience } = req.body;
-    const estimate = estimateRecipients(targetAudience || 'ALL');
+    const estimate = await estimateRecipientsFromDurableStore(targetAudience || 'ALL');
     return res.json({ estimate });
   } catch (error: unknown) {
     console.error('Estimate recipients error:', error);
-    return res.status(500).json({ error: 'Failed to estimate recipients' });
+    return res.status(503).json({
+      error: 'Recipient data could not be loaded from the durable database. Please retry before sending.',
+      code: 'NOTIFICATION_AUDIENCE_UNAVAILABLE',
+    });
   }
 });
 
@@ -4334,9 +4337,22 @@ router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) 
       actionLabel: actionLabel?.trim() || undefined,
     });
 
+    if (!result.success) {
+      const statusCode = result.status === 'NO_RECIPIENTS' ? 409 : 503;
+      return res.status(statusCode).json({
+        success: false,
+        error: result.error || 'The broadcast could not be dispatched safely.',
+        ...result,
+      });
+    }
+
+    const dispatchMessage = result.persistenceWarning
+      ? `Broadcast attempted for ${result.totalTargeted} recipients (In-App: ${result.inAppSent}, Email: ${result.emailSent}), but the campaign summary could not be saved durably. Do not resend blindly; inspect the campaign history first.`
+      : `Broadcast successfully dispatched to ${result.totalTargeted} recipients (In-App: ${result.inAppSent}, Email: ${result.emailSent})`;
+
     return res.json({
       success: true,
-      message: `Broadcast successfully dispatched to ${result.totalTargeted} recipients (In-App: ${result.inAppSent}, Email: ${result.emailSent})`,
+      message: dispatchMessage,
       ...result,
     });
   } catch (error: unknown) {

@@ -38,6 +38,7 @@ import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
+import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
 import {
@@ -714,9 +715,30 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Every answer-sheet evaluation must match the student's currently saved CA course.
     // Institute materials are subject to this gate too; institute access never overrides
     // the student's own active course. Course changes do not mutate paid-credit balances.
-    const savedCourse = db.prepare(
-      'SELECT ca_level FROM student_profiles WHERE user_id = ?'
-    ).get(studentId) as { ca_level?: string } | undefined;
+    const savedCourse = db.prepare(`
+      SELECT sp.ca_level, sp.icai_registration_number, u.password_hash
+      FROM student_profiles sp
+      INNER JOIN users u ON u.id = sp.user_id
+      WHERE sp.user_id = ?
+    `).get(studentId) as {
+      ca_level?: string;
+      icai_registration_number?: string;
+      password_hash?: string;
+    } | undefined;
+
+    const oauthProviderMarker = String(savedCourse?.password_hash || '').trim().toUpperCase();
+    const currentSrn = String(savedCourse?.icai_registration_number || '').trim().toUpperCase();
+    const isIncompleteOAuthProfile =
+      (oauthProviderMarker === 'GOOGLE_OAUTH' || oauthProviderMarker === 'APPLE_OAUTH') &&
+      (!currentSrn || currentSrn === 'REG-PENDING');
+    if (isIncompleteOAuthProfile) {
+      return res.status(403).json({
+        success: false,
+        error: 'Complete your Google sign-up profile by selecting your CA course and saving your valid ICAI registration number before evaluating an answer sheet.',
+        code: 'PROFILE_COMPLETION_REQUIRED',
+      });
+    }
+
     const courseAccess = checkStudentEvaluationCourseAccess(savedCourse?.ca_level, rawLevel);
     if (!courseAccess.allowed) {
       const statusCode = courseAccess.code === 'INVALID_REQUESTED_COURSE' ? 400 : 403;
@@ -856,6 +878,67 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         entitlementSource = 'PERSONAL_FREE';
       } else if (personalEntitlement.tier === 'PURCHASED_CREDITS') {
         entitlementSource = 'PERSONAL_PURCHASED_CREDIT';
+      }
+    }
+
+    // Server-side institute material binding: never trust a browser-supplied level
+    // or subject to describe an institute material selected by ID.
+    if (requestedEvalSource === 'INSTITUTE') {
+      const requestedInstituteMaterialId = typeof instituteMaterialId === 'string'
+        ? instituteMaterialId.trim()
+        : '';
+      if (!requestedInstituteMaterialId || !resolvedSponsoringInstituteId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Select a valid institute test paper from your active coaching institute.',
+          code: 'INSTITUTE_MATERIAL_REQUIRED',
+        });
+      }
+
+      const storedInstituteMaterial = db.prepare(`
+        SELECT id, institute_id, level, subject_key, subject_name
+        FROM institute_materials
+        WHERE id = ? AND institute_id = ?
+        LIMIT 1
+      `).get(requestedInstituteMaterialId, resolvedSponsoringInstituteId) as {
+        id: string;
+        institute_id: string;
+        level?: string;
+        subject_key?: string;
+        subject_name?: string;
+      } | undefined;
+
+      if (!storedInstituteMaterial) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected paper does not belong to your active institute.',
+          code: 'INSTITUTE_MATERIAL_ACCESS_DENIED',
+        });
+      }
+
+      const storedMaterialLevel = String(storedInstituteMaterial.level || '').trim().toUpperCase();
+      if (
+        !storedMaterialLevel ||
+        storedMaterialLevel !== String(savedCourse?.ca_level || '').trim().toUpperCase() ||
+        storedMaterialLevel !== rawLevel
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected institute paper belongs to a different CA course. Use a paper that matches your saved profile course.',
+          code: 'INSTITUTE_MATERIAL_COURSE_MISMATCH',
+          accountCourseLevel: savedCourse?.ca_level || null,
+          materialCourseLevel: storedMaterialLevel || null,
+        });
+      }
+
+      const storedSubjectKey = String(storedInstituteMaterial.subject_key || '').trim().toUpperCase();
+      const requestedSubjectKey = String(subjectKey || '').trim().toUpperCase();
+      if (storedSubjectKey && storedSubjectKey !== requestedSubjectKey) {
+        return res.status(403).json({
+          success: false,
+          error: 'The selected institute paper does not match the requested subject.',
+          code: 'INSTITUTE_MATERIAL_SUBJECT_MISMATCH',
+        });
       }
     }
 
@@ -2700,7 +2783,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Access denied: Only student accounts can update student profiles.' });
     }
 
-    const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(studentId) as { role: string } | undefined;
+    const targetUser = db.prepare('SELECT role, password_hash FROM users WHERE id = ?').get(studentId) as { role: string; password_hash?: string } | undefined;
     if (!targetUser || targetUser.role !== 'STUDENT') {
       return res.status(403).json({ error: 'Access denied: Cannot modify non-student accounts via student profile endpoint.' });
     }
@@ -2737,6 +2820,18 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
     ).get(studentId) as { icai_registration_number?: string } | undefined;
     const priorSrn = String(priorProfileForSrn?.icai_registration_number || '').trim().toUpperCase();
     const hadCompletedSrn = Boolean(priorSrn && priorSrn !== 'REG-PENDING');
+    const oauthProviderMarker = String(targetUser.password_hash || '').trim().toUpperCase();
+    const isIncompleteOAuthProfile = !hadCompletedSrn &&
+      (oauthProviderMarker === 'GOOGLE_OAUTH' || oauthProviderMarker === 'APPLE_OAUTH');
+
+    // OAuth profile completion must explicitly capture the student's course. The
+    // legacy INTERMEDIATE default is not accepted as a submitted course choice.
+    if (isIncompleteOAuthProfile && caLevel === undefined) {
+      return res.status(400).json({
+        error: 'Select your current CA course (Foundation, Intermediate, or Final) while completing your social-signup profile.',
+        code: 'CA_LEVEL_REQUIRED_FOR_PROFILE_COMPLETION',
+      });
+    }
 
     if (normalizedSrn !== null && hadCompletedSrn && normalizedSrn !== priorSrn) {
       return res.status(409).json({
@@ -3586,10 +3681,14 @@ router.get('/notifications', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
+router.put('/notifications/:id/read', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
+    const persisted = await syncNotificationReadStateToFirestore(userId, req.params.id);
+    if (!persisted) {
+      return res.status(503).json({ error: 'Read status could not be saved durably. Please retry.', code: 'NOTIFICATION_STATE_PERSISTENCE_FAILED' });
+    }
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Notification read error:', error);
@@ -3597,10 +3696,14 @@ router.put('/notifications/:id/read', (req: AuthRequest, res: Response) => {
   }
 });
 
-router.put('/notifications/read-all', (req: AuthRequest, res: Response) => {
+router.put('/notifications/read-all', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     db.prepare('UPDATE notifications SET read = 1, is_read = 1 WHERE user_id = ?').run(userId);
+    const persisted = await syncNotificationReadStateToFirestore(userId);
+    if (!persisted) {
+      return res.status(503).json({ error: 'Read statuses could not be saved durably. Please retry.', code: 'NOTIFICATION_STATE_PERSISTENCE_FAILED' });
+    }
     return res.json({ success: true });
   } catch (error: unknown) {
     console.error('Mark all read error:', error);
