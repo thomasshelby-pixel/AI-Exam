@@ -28,6 +28,7 @@ const allTestFiles = [
   'mcqMaterialBulkDeleteAndPracticeFilter.test.ts',
   'authRateLimitPolicy.test.ts',
   'rateLimiterClientIp.test.ts',
+  'studentCourseAccess.test.ts',
 ];
 const testFiles = process.argv.slice(2).length > 0 ? process.argv.slice(2) : allTestFiles;
 

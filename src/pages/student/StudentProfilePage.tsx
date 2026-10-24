@@ -1092,6 +1092,9 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                This saved course controls which CA level you can evaluate in Check Answer Sheet and which course-specific combo you can purchase. To change it, select your new level and save the profile. Remaining paid evaluation credits stay in your account after the change.
+              </p>
             </div>
 
             {/* Preferred Subjects / Papers Selector */}

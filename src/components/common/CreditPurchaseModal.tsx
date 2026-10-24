@@ -4,6 +4,23 @@ import { apiRequest } from '../../api/client.js';
 import { X, CheckCircle2, CreditCard, ShieldCheck, Zap, AlertCircle, Layers, Sparkles } from 'lucide-react';
 import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 
+type StudentComboCourse = 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
+
+function normalizeStudentComboCourse(value: unknown): StudentComboCourse | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized === 'FOUNDATION' || normalized === 'INTERMEDIATE' || normalized === 'FINAL'
+    ? normalized
+    : null;
+}
+
+function comboCourseLabel(value: StudentComboCourse | null): string {
+  if (value === 'FOUNDATION') return 'CA Foundation';
+  if (value === 'INTERMEDIATE') return 'CA Intermediate';
+  if (value === 'FINAL') return 'CA Final';
+  return 'your saved CA course';
+}
+
 export interface CreditPurchaseModalInitialConfig {
   tab?: 'COMBO' | 'CUSTOM';
   plan?: 'COMBO_1' | 'COMBO_2';
@@ -59,7 +76,9 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
   onSuccess,
   initialConfig,
 }) => {
-  const { user, refreshUser } = useAuth();
+  const { user, profile, refreshUser } = useAuth();
+  const accountCourseLevel = normalizeStudentComboCourse((profile as any)?.ca_level ?? (profile as any)?.caLevel);
+  const [courseRestrictionNotice, setCourseRestrictionNotice] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'COMBO' | 'CUSTOM'>('COMBO');
   const [comboPlan, setComboPlan] = useState<'COMBO_1' | 'COMBO_2'>('COMBO_1');
   const [comboLevel, setComboLevel] = useState<'FOUNDATION' | 'INTERMEDIATE'>('INTERMEDIATE');
@@ -79,6 +98,24 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
     }
   }, [initialConfig, isOpen]);
 
+  // Course-specific combo products must match the saved profile course.
+  // The general paid-credit balance is deliberately preserved if the student later
+  // changes their course through Edit Profile.
+  useEffect(() => {
+    if (!isOpen || !accountCourseLevel) return;
+    if (accountCourseLevel === 'FINAL') {
+      setActiveTab('CUSTOM');
+      setCourseRestrictionNotice('CA Final is your active course. Foundation/Intermediate combo pricing is not available for Final yet; Custom credits can be used for CA Final evaluations.');
+      return;
+    }
+    setComboLevel(accountCourseLevel);
+    if (initialConfig?.level && initialConfig.level !== accountCourseLevel) {
+      setCourseRestrictionNotice('That combo selection was for ' + comboCourseLabel(initialConfig.level) + '. Your account is set to ' + comboCourseLabel(accountCourseLevel) + ', so the matching combo is selected. To change course, open Profile & Settings and update Target CA Level. Remaining paid credits stay in your account.');
+    } else {
+      setCourseRestrictionNotice('');
+    }
+  }, [accountCourseLevel, isOpen, initialConfig]);
+
   if (!isOpen) return null;
 
   // Custom validation
@@ -94,11 +131,46 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
   // Combo calculation
   const currentCombo = COMBO_PLANS[comboPlan][comboLevel];
 
+  const handleRequestComboLevel = (requested: 'FOUNDATION' | 'INTERMEDIATE') => {
+    if (!accountCourseLevel) {
+      setCourseRestrictionNotice('Could not verify your saved CA course. Please reload your profile and try again.');
+      return;
+    }
+    if (accountCourseLevel === 'FINAL') {
+      setActiveTab('CUSTOM');
+      setCourseRestrictionNotice('CA Final combo plans are not available yet. Custom credits remain available for CA Final.');
+      return;
+    }
+    if (requested !== accountCourseLevel) {
+      setCourseRestrictionNotice('Your account is set to ' + comboCourseLabel(accountCourseLevel) + '. Only that course combo is available. To change course, open Profile & Settings and update Target CA Level; remaining paid credits stay available.');
+      return;
+    }
+    setCourseRestrictionNotice('');
+    setErrorMsg('');
+    setComboLevel(requested);
+  };
+
   // Active summary
   const currentTotalAmount = activeTab === 'COMBO' ? currentCombo.price : customTotalPrice;
   const currentEvaluationsCount = activeTab === 'COMBO' ? currentCombo.evaluations : (isCustomValid ? validatedCustomQty : 0);
 
   const handleCheckout = async () => {
+    if (activeTab === 'COMBO') {
+      if (!accountCourseLevel) {
+        setErrorMsg('Could not verify your saved CA course. Please reload your profile and try again.');
+        return;
+      }
+      if (accountCourseLevel === 'FINAL') {
+        setActiveTab('CUSTOM');
+        setCourseRestrictionNotice('CA Final combo plans are not available yet. Use Custom credits for your active CA Final course.');
+        return;
+      }
+      if (comboLevel !== accountCourseLevel) {
+        setCourseRestrictionNotice('Your account is set to ' + comboCourseLabel(accountCourseLevel) + '. Course-specific combos cannot be purchased for a different course. Change course under Profile & Settings first; remaining paid credits stay in your account.');
+        return;
+      }
+    }
+
     if (!user) {
       setErrorMsg('Please sign in or create a student account to purchase evaluation credits.');
       return;
@@ -248,6 +320,11 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
             <span>{errorMsg}</span>
           </div>
         )}
+        {courseRestrictionNotice && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
+            {courseRestrictionNotice}
+          </div>
+        )}
 
         {successMsg && (
           <div className="mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
@@ -260,7 +337,18 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
         <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-4 border border-slate-200 dark:border-slate-700 text-xs font-bold">
           <button
             type="button"
-            onClick={() => setActiveTab('COMBO')}
+            onClick={() => {
+              if (accountCourseLevel === 'FINAL') {
+                setActiveTab('CUSTOM');
+                setCourseRestrictionNotice('CA Final combo plans are not available yet. Custom credits can be used for your active CA Final course.');
+                return;
+              }
+              if (accountCourseLevel && comboLevel !== accountCourseLevel) {
+                setCourseRestrictionNotice('Your account is set to ' + comboCourseLabel(accountCourseLevel) + '. Choose the matching course combo to continue.');
+                return;
+              }
+              setActiveTab('COMBO');
+            }}
             className={`py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'COMBO'
                 ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
@@ -300,7 +388,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
               <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 dark:bg-slate-800/80 rounded-lg border border-slate-200 dark:border-slate-700">
                 <button
                   type="button"
-                  onClick={() => setComboLevel('FOUNDATION')}
+                  onClick={() => handleRequestComboLevel('FOUNDATION')}
                   className={`py-1.5 px-2 rounded-md text-xs font-bold transition cursor-pointer text-center ${
                     comboLevel === 'FOUNDATION'
                       ? 'bg-blue-600 text-white shadow-xs'
@@ -311,7 +399,7 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setComboLevel('INTERMEDIATE')}
+                  onClick={() => handleRequestComboLevel('INTERMEDIATE')}
                   className={`py-1.5 px-2 rounded-md text-xs font-bold transition cursor-pointer text-center ${
                     comboLevel === 'INTERMEDIATE'
                       ? 'bg-blue-600 text-white shadow-xs'

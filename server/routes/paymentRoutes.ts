@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import { paymentOrderRateLimiter } from '../utils/rateLimiter.js';
+import { db } from '../db.js';
+import { checkComboPurchaseCourseAccess } from '../services/studentCourseAccessService.js';
 import {
   createRazorpayOrder,
   verifyAndFulfillPayment,
@@ -19,11 +21,31 @@ router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (
 
     let orderResult;
     if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
-      const normalizedLevel = courseLevel === 'FOUNDATION' ? 'FOUNDATION' : 'INTERMEDIATE';
+      if (req.user!.role !== 'STUDENT') {
+        return res.status(403).json({
+          error: 'Course-specific student combo plans are available to student accounts only.',
+          code: 'STUDENT_PLAN_REQUIRED',
+        });
+      }
+
+      const savedProfile = db.prepare(
+        'SELECT ca_level FROM student_profiles WHERE user_id = ?'
+      ).get(studentId) as { ca_level?: string } | undefined;
+      const courseAccess = checkComboPurchaseCourseAccess(savedProfile?.ca_level, courseLevel);
+      if (!courseAccess.allowed || !courseAccess.requestedCourseLevel) {
+        const statusCode = courseAccess.code === 'INVALID_REQUESTED_COURSE' ? 400 : 403;
+        return res.status(statusCode).json({
+          error: courseAccess.message || 'This combo plan does not match your active CA course.',
+          code: courseAccess.code,
+          accountCourseLevel: courseAccess.accountCourseLevel,
+          requestedCourseLevel: courseAccess.requestedCourseLevel,
+        });
+      }
+
       orderResult = await createRazorpayOrder({
         studentId,
         purchaseType,
-        courseLevel: normalizedLevel,
+        courseLevel: courseAccess.requestedCourseLevel as 'FOUNDATION' | 'INTERMEDIATE',
       });
     } else {
       // Custom evaluation purchase
