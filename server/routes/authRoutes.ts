@@ -29,6 +29,7 @@ import {
   passwordResetRateLimiter,
   otpVerifyRateLimiter,
   otpResendRateLimiter,
+  passwordResetTokenVerifyRateLimiter,
 } from '../utils/rateLimiter.js';
 import {
   initiateStudentRegistrationOtp,
@@ -2259,7 +2260,7 @@ router.post('/forgot-password', passwordResetRateLimiter, async (req: Request, r
 });
 
 // Verify Password Reset Token
-router.post('/verify-reset-token', (req: Request, res: Response) => {
+router.post('/verify-reset-token', passwordResetTokenVerifyRateLimiter, (req: Request, res: Response) => {
   try {
     const { token, email } = req.body;
     if (!token || !email) {
