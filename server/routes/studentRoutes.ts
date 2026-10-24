@@ -715,9 +715,30 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Every answer-sheet evaluation must match the student's currently saved CA course.
     // Institute materials are subject to this gate too; institute access never overrides
     // the student's own active course. Course changes do not mutate paid-credit balances.
-    const savedCourse = db.prepare(
-      'SELECT ca_level FROM student_profiles WHERE user_id = ?'
-    ).get(studentId) as { ca_level?: string } | undefined;
+    const savedCourse = db.prepare(`
+      SELECT sp.ca_level, sp.icai_registration_number, u.password_hash
+      FROM student_profiles sp
+      INNER JOIN users u ON u.id = sp.user_id
+      WHERE sp.user_id = ?
+    `).get(studentId) as {
+      ca_level?: string;
+      icai_registration_number?: string;
+      password_hash?: string;
+    } | undefined;
+
+    const oauthProviderMarker = String(savedCourse?.password_hash || '').trim().toUpperCase();
+    const currentSrn = String(savedCourse?.icai_registration_number || '').trim().toUpperCase();
+    const isIncompleteOAuthProfile =
+      (oauthProviderMarker === 'GOOGLE_OAUTH' || oauthProviderMarker === 'APPLE_OAUTH') &&
+      (!currentSrn || currentSrn === 'REG-PENDING');
+    if (isIncompleteOAuthProfile) {
+      return res.status(403).json({
+        success: false,
+        error: 'Complete your Google sign-up profile by selecting your CA course and saving your valid ICAI registration number before evaluating an answer sheet.',
+        code: 'PROFILE_COMPLETION_REQUIRED',
+      });
+    }
+
     const courseAccess = checkStudentEvaluationCourseAccess(savedCourse?.ca_level, rawLevel);
     if (!courseAccess.allowed) {
       const statusCode = courseAccess.code === 'INVALID_REQUESTED_COURSE' ? 400 : 403;
