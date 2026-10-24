@@ -387,11 +387,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         const res = await apiRequest<{ materials: any[] }>(
           `/api/student/institute-materials?instituteId=${selectedInstituteId}`
         );
-        const mats = res.materials || [];
-        setInstituteMaterials(mats);
-
+        const allMaterials = res.materials || [];
         const requestedMaterial = navState.materialId
-          ? mats.find((material: any) => material.id === navState.materialId)
+          ? allMaterials.find((material: any) => material.id === navState.materialId)
           : null;
         const requestedMaterialLevel = normalizeCourseLevel(requestedMaterial?.level);
         const requestedMaterialAllowed = Boolean(
@@ -405,12 +403,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           setShowCourseAccessNotice(true);
         }
 
-        const firstAllowedMaterial = accountCourseLevel
-          ? mats.find((material: any) => normalizeCourseLevel(material.level) === accountCourseLevel)
-          : undefined;
+        // Do not expose selectable institute papers from other CA courses.
+        const courseScopedMaterials = accountCourseLevel
+          ? allMaterials.filter((material: any) => normalizeCourseLevel(material.level) === accountCourseLevel)
+          : [];
+        setInstituteMaterials(courseScopedMaterials);
+
         const chosen = requestedMaterialAllowed
           ? requestedMaterial
-          : firstAllowedMaterial;
+          : courseScopedMaterials[0];
 
         if (chosen) {
           setSelectedInstituteMaterialId(chosen.id);
@@ -418,8 +419,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (chosen.subject_key) setSelectedSubjectKey(chosen.subject_key);
         } else {
           setSelectedInstituteMaterialId('');
-          if (mats.length > 0) {
-            setRequestedCourseLevel(normalizeCourseLevel(mats[0].level));
+          if (allMaterials.length > 0) {
+            const otherCourse = normalizeCourseLevel(allMaterials[0].level);
+            setRequestedCourseLevel(otherCourse);
             setShowCourseAccessNotice(true);
           }
         }
