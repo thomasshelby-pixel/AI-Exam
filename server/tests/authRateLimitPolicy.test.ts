@@ -4,6 +4,7 @@ import {
   otpVerifyRateLimiter,
   passwordResetTokenVerifyRateLimiter,
   mfaEnrollmentVerifyRateLimiter,
+  mfaVerificationRateLimiter,
 } from '../utils/rateLimiter.js';
 
 process.env.NODE_ENV = 'test';
@@ -71,10 +72,13 @@ for (let attempt = 0; attempt < 4; attempt += 1) {
 const resetBlocked = invokeLimiter(passwordResetTokenVerifyRateLimiter, '198.51.100.212', 'reset-token@example.com');
 assert.equal(resetBlocked.statusCode, 429);
 
-// MFA enrollment has a shared-store 20-request/IP cap plus a separate per-user
-// five-failed-code/15-minute lockout applied in its route handler.
+// MFA enrollment and challenge/recovery routes have shared-store IP caps plus a
+// separate per-user five-failed-code/15-minute enrollment lockout in the route handler.
 const mfaFirst = invokeLimiter(mfaEnrollmentVerifyRateLimiter, '198.51.100.213');
 assert.equal(mfaFirst.headers['RateLimit-Limit'], '20');
 assert.ok(Number(mfaFirst.headers['RateLimit-Reset']) <= 900);
+const challengeFirst = invokeLimiter(mfaVerificationRateLimiter, '198.51.100.214');
+assert.equal(challengeFirst.headers['RateLimit-Limit'], '20');
+assert.ok(Number(challengeFirst.headers['RateLimit-Reset']) <= 900);
 
 console.log('Auth rate-limit policy tests: OTP 5-minute window, reset-token cap, and MFA enrollment cap passed.');
