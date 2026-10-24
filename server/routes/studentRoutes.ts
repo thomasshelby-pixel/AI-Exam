@@ -36,6 +36,7 @@ import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../se
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
+import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
@@ -708,6 +709,26 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     if (!fileBase64 || !level || !subjectKey || !subjectName) {
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });
+    }
+
+    // Personal/public evaluation is restricted to the student's currently saved CA course.
+    // Institute-sponsored evaluations remain governed by their selected institute material.
+    const requestedSourceForCourseGate = evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
+    if (requestedSourceForCourseGate === 'PUBLIC') {
+      const savedCourse = db.prepare(
+        'SELECT ca_level FROM student_profiles WHERE user_id = ?'
+      ).get(studentId) as { ca_level?: string } | undefined;
+      const courseAccess = checkStudentEvaluationCourseAccess(savedCourse?.ca_level, rawLevel);
+      if (!courseAccess.allowed) {
+        const statusCode = courseAccess.code === 'INVALID_REQUESTED_COURSE' ? 400 : 403;
+        return res.status(statusCode).json({
+          success: false,
+          error: courseAccess.message || 'Your account is not allowed to evaluate this CA course.',
+          code: courseAccess.code,
+          accountCourseLevel: courseAccess.accountCourseLevel,
+          requestedCourseLevel: courseAccess.requestedCourseLevel,
+        });
+      }
     }
 
     const parsedMtpSeries = (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '')
