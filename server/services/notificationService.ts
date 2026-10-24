@@ -524,6 +524,11 @@ export async function sendTestNotification(payload: TestNotificationPayload): Pr
         payload.actionUrl || null,
         payload.actionLabel || null
       );
+      const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notifId) as Record<string, any> | undefined;
+      if (!notificationRow || !(await persistNotificationDocument('notifications', notifId, notificationRow))) {
+        db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(notifId, payload.adminUserId);
+        throw new Error('The test notification could not be saved to durable storage.');
+      }
       inAppStatus = 'DELIVERED';
     } catch (err: any) {
       console.warn('[NotificationService] In-app test notification error:', err);
@@ -553,7 +558,7 @@ export async function sendTestNotification(payload: TestNotificationPayload): Pr
   }
 
   return {
-    success: inAppStatus !== 'FAILED' && emailStatus !== 'FAILED',
+    success: !inAppStatus.startsWith('FAILED') && !emailStatus.startsWith('FAILED'),
     inAppStatus,
     emailStatus,
     message: `Test notification dispatched (In-App: ${inAppStatus}, Email: ${emailStatus})`,
