@@ -38,6 +38,11 @@ export function getClientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || '127.0.0.1';
 }
 
+function getNormalizedBodyEmail(req: Request): string {
+  const email = req.body?.email;
+  return typeof email === 'string' ? email.toLowerCase().trim() : '';
+}
+
 let sharedRateLimitFirestore: AdminFirestore | null = null;
 let lastSharedRateLimitCleanupAt = 0;
 let sharedRateLimitCleanupInFlight = false;
@@ -190,7 +195,7 @@ export const authLoginRateLimiter = createRateLimiter({
   message: 'Too many login attempts from this network. Please wait 15 minutes before trying again.',
   keyGenerator: (req) => {
     const ip = getClientIp(req);
-    const email = (req.body?.email || '').toLowerCase().trim();
+    const email = getNormalizedBodyEmail(req);
     return `login:${ip}:${email || 'none'}`;
   },
 });
