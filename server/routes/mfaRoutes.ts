@@ -51,7 +51,7 @@ import {
 } from '../services/mfaRecoveryService.js';
 import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
-import { mfaRecoveryRateLimiter, mfaEnrollmentVerifyRateLimiter } from '../utils/rateLimiter.js';
+import { mfaRecoveryRateLimiter, mfaEnrollmentVerifyRateLimiter, mfaVerificationRateLimiter } from '../utils/rateLimiter.js';
 
 const router = Router();
 
@@ -252,7 +252,7 @@ router.post('/send-challenge', async (req: Request, res: Response) => {
  * POST /api/auth/mfa/verify-challenge
  * Issues a complete authenticated session after successful TOTP MFA verification.
  */
-router.post('/verify-challenge', async (req: Request, res: Response) => {
+router.post('/verify-challenge', mfaVerificationRateLimiter, async (req: Request, res: Response) => {
   try {
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
@@ -829,7 +829,7 @@ router.get('/recovery-codes/status', authenticateToken, async (req: AuthRequest,
  * Consumes a one-time recovery code during login challenge.
  * Enforces single-use, rate-limits brute force attempts, and issues authenticated session.
  */
-router.post('/recovery-codes/verify', async (req: Request, res: Response) => {
+router.post('/recovery-codes/verify', mfaVerificationRateLimiter, async (req: Request, res: Response) => {
   try {
     const { user, error } = resolveMfaContext(req);
     if (!user || error) {
@@ -1656,8 +1656,8 @@ const handleValidateTotp = async (req: Request, res: Response) => {
   }
 };
 
-router.post('/validate-totp', handleValidateTotp);
-router.post('/trusted-device/validate-totp', handleValidateTotp);
+router.post('/validate-totp', mfaVerificationRateLimiter, handleValidateTotp);
+router.post('/trusted-device/validate-totp', mfaVerificationRateLimiter, handleValidateTotp);
 
 /**
  * POST /api/auth/mfa/trusted-device/revoke
