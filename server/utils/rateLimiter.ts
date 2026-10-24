@@ -39,7 +39,6 @@ export function getClientIp(req: Request): string {
 }
 
 let sharedRateLimitFirestore: AdminFirestore | null = null;
-let sharedRateLimitInitAttempted = false;
 let lastSharedRateLimitCleanupAt = 0;
 let sharedRateLimitCleanupInFlight = false;
 
@@ -54,7 +53,6 @@ function getSharedRateLimitFirestore(): AdminFirestore {
   sharedRateLimitFirestore = config.firestoreDatabaseId
     ? getAdminFirestore(app, config.firestoreDatabaseId)
     : getAdminFirestore(app);
-  sharedRateLimitInitAttempted = true;
   return sharedRateLimitFirestore;
 }
 
