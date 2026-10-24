@@ -247,6 +247,243 @@ export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudien
   return buildAudienceEstimate(getTargetUsers(targetAudience));
 }
 
+function normalizeSqlTimestamp(value: unknown, fallback: string | null = null): string | null {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'string') return value;
+  if (value instanceof Date) return value.toISOString();
+  const candidate = value as { toDate?: () => Date };
+  if (typeof candidate?.toDate === 'function') {
+    try { return candidate.toDate().toISOString(); } catch { return fallback; }
+  }
+  return String(value);
+}
+
+/** Persist notification-centre records that must survive App Hosting instance replacement. */
+async function persistNotificationDocument(
+  collectionName: string,
+  docId: string,
+  record: Record<string, any>,
+): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production') return true;
+  try {
+    return await setFirestoreDoc(collectionName, docId, { ...record, id: docId });
+  } catch (error) {
+    console.error(`[NotificationService] Durable write failed for ${collectionName}/${docId}:`, error);
+    return false;
+  }
+}
+
+async function backfillMissingNotificationDocuments(
+  collectionName: string,
+  rows: Array<Record<string, any>>,
+  remoteIds: Set<string>,
+  getId: (row: Record<string, any>) => string,
+): Promise<void> {
+  const missing = rows.filter((row) => {
+    const id = getId(row);
+    return Boolean(id && !remoteIds.has(id));
+  });
+  for (let index = 0; index < missing.length; index += 40) {
+    const chunk = missing.slice(index, index + 40);
+    const results = await Promise.all(chunk.map(async (row) => {
+      const id = getId(row);
+      return persistNotificationDocument(collectionName, id, row);
+    }));
+    if (results.some((saved) => !saved)) {
+      console.warn(`[NotificationService] Some ${collectionName} records could not be backfilled to Firestore.`);
+    }
+  }
+}
+
+/**
+ * Restore notification-centre state from Firestore before the server begins accepting
+ * traffic, then backfill records that were already present in SQLite before durable
+ * writes were introduced. This prevents campaign counters and notification feeds from
+ * resetting to zero whenever an ephemeral hosting instance is replaced.
+ */
+export async function hydrateNotificationCentreFromFirestore(): Promise<void> {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const [remoteCampaigns, remoteNotifications, remoteLogs, remotePreferences] = await Promise.all([
+    getAllFirestoreDocs<Record<string, any>>('broadcast_campaigns', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('notifications', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('notification_delivery_logs', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('user_notification_preferences', { failOnError: true }),
+  ]);
+
+  const campaignIds = new Set<string>();
+  const notificationIds = new Set<string>();
+  const deliveryLogIds = new Set<string>();
+  const preferenceIds = new Set<string>();
+
+  for (const row of remoteCampaigns) {
+    const id = String(row.id || '').trim();
+    if (!id) continue;
+    campaignIds.add(id);
+    db.prepare(`
+      INSERT INTO broadcast_campaigns (
+        id, title, message, category, priority, target_audience, channels,
+        action_url, action_label, status, total_targeted, in_app_sent, email_sent,
+        email_failed, created_by, sent_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        message = excluded.message,
+        category = excluded.category,
+        priority = excluded.priority,
+        target_audience = excluded.target_audience,
+        channels = excluded.channels,
+        action_url = excluded.action_url,
+        action_label = excluded.action_label,
+        status = excluded.status,
+        total_targeted = excluded.total_targeted,
+        in_app_sent = excluded.in_app_sent,
+        email_sent = excluded.email_sent,
+        email_failed = excluded.email_failed,
+        created_by = excluded.created_by,
+        sent_at = excluded.sent_at
+    `).run(
+      id,
+      String(row.title || 'Notification'),
+      String(row.message || ''),
+      String(row.category || 'ANNOUNCEMENT'),
+      String(row.priority || 'NORMAL'),
+      String(row.target_audience || row.targetAudience || 'ALL'),
+      String(row.channels || 'IN_APP_AND_EMAIL'),
+      row.action_url ?? row.actionUrl ?? null,
+      row.action_label ?? row.actionLabel ?? null,
+      String(row.status || 'COMPLETED'),
+      Number(row.total_targeted ?? row.totalTargeted ?? 0),
+      Number(row.in_app_sent ?? row.inAppSent ?? 0),
+      Number(row.email_sent ?? row.emailSent ?? 0),
+      Number(row.email_failed ?? row.emailFailed ?? 0),
+      row.created_by ?? row.createdBy ?? null,
+      normalizeSqlTimestamp(row.sent_at ?? row.sentAt),
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  for (const row of remoteNotifications) {
+    const id = String(row.id || '').trim();
+    const userId = String(row.user_id || row.userId || '').trim();
+    if (!id || !userId) continue;
+    const activeUser = db.prepare("SELECT id FROM users WHERE id = ? AND status != 'DELETED'").get(userId);
+    if (!activeUser) continue;
+    notificationIds.add(id);
+    db.prepare(`
+      INSERT INTO notifications (
+        id, user_id, title, message, type, priority, category, action_url,
+        action_label, campaign_id, read, is_read, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        message = excluded.message,
+        type = excluded.type,
+        priority = excluded.priority,
+        category = excluded.category,
+        action_url = excluded.action_url,
+        action_label = excluded.action_label,
+        campaign_id = excluded.campaign_id,
+        read = MAX(notifications.read, excluded.read),
+        is_read = MAX(notifications.is_read, excluded.is_read)
+    `).run(
+      id, userId, String(row.title || 'Notification'), String(row.message || ''),
+      String(row.type || 'SYSTEM'), String(row.priority || 'NORMAL'),
+      String(row.category || 'SYSTEM'), row.action_url ?? row.actionUrl ?? null,
+      row.action_label ?? row.actionLabel ?? null, row.campaign_id ?? row.campaignId ?? null,
+      row.read ? 1 : 0, row.is_read ? 1 : (row.read ? 1 : 0),
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  for (const row of remoteLogs) {
+    const id = String(row.id || '').trim();
+    const userId = String(row.user_id || row.userId || '').trim();
+    if (!id || !userId) continue;
+    deliveryLogIds.add(id);
+    db.prepare(`
+      INSERT INTO notification_delivery_logs (
+        id, campaign_id, user_id, recipient_email, recipient_role, channel, status, error_message, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(id) DO UPDATE SET
+        campaign_id = excluded.campaign_id,
+        recipient_email = excluded.recipient_email,
+        recipient_role = excluded.recipient_role,
+        channel = excluded.channel,
+        status = excluded.status,
+        error_message = excluded.error_message
+    `).run(
+      id, row.campaign_id ?? row.campaignId ?? null, userId,
+      row.recipient_email ?? row.recipientEmail ?? null,
+      row.recipient_role ?? row.recipientRole ?? null,
+      String(row.channel || 'IN_APP'), String(row.status || 'UNKNOWN'),
+      row.error_message ?? row.errorMessage ?? null,
+      normalizeSqlTimestamp(row.created_at ?? row.createdAt),
+    );
+  }
+
+  for (const row of remotePreferences) {
+    const userId = String(row.user_id || row.userId || row.id || '').trim();
+    if (!userId) continue;
+    preferenceIds.add(userId);
+    db.prepare(`
+      INSERT INTO user_notification_preferences (
+        user_id, email_notifications_enabled, marketing_emails_enabled,
+        in_app_notifications_enabled, updated_at
+      ) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      ON CONFLICT(user_id) DO UPDATE SET
+        email_notifications_enabled = excluded.email_notifications_enabled,
+        marketing_emails_enabled = excluded.marketing_emails_enabled,
+        in_app_notifications_enabled = excluded.in_app_notifications_enabled,
+        updated_at = excluded.updated_at
+    `).run(
+      userId,
+      row.email_notifications_enabled ?? row.emailNotificationsEnabled ? 1 : 0,
+      row.marketing_emails_enabled ?? row.marketingEmailsEnabled ? 1 : 0,
+      row.in_app_notifications_enabled ?? row.inAppNotificationsEnabled ? 1 : 0,
+      normalizeSqlTimestamp(row.updated_at ?? row.updatedAt),
+    );
+  }
+
+  // Preserve locally existing history from before the Firestore mirror was introduced.
+  const localCampaigns = db.prepare('SELECT * FROM broadcast_campaigns').all() as Array<Record<string, any>>;
+  const localNotifications = db.prepare(`
+    SELECT n.* FROM notifications n
+    INNER JOIN users u ON u.id = n.user_id
+    WHERE u.status != 'DELETED'
+  `).all() as Array<Record<string, any>>;
+  const localLogs = db.prepare(`
+    SELECT l.* FROM notification_delivery_logs l
+    INNER JOIN users u ON u.id = l.user_id
+    WHERE u.status != 'DELETED'
+  `).all() as Array<Record<string, any>>;
+  const localPreferences = db.prepare('SELECT * FROM user_notification_preferences').all() as Array<Record<string, any>>;
+
+  await Promise.all([
+    backfillMissingNotificationDocuments('broadcast_campaigns', localCampaigns, campaignIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('notifications', localNotifications, notificationIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('notification_delivery_logs', localLogs, deliveryLogIds, (row) => String(row.id || '')),
+    backfillMissingNotificationDocuments('user_notification_preferences', localPreferences, preferenceIds, (row) => String(row.user_id || '')),
+  ]);
+
+  console.log(`[NotificationService] Restored ${remoteCampaigns.length} campaigns, ${remoteNotifications.length} notifications, ${remoteLogs.length} delivery logs, and ${remotePreferences.length} preference records from Firestore.`);
+}
+
+/** Persist an updated notification read-state so it survives the next deployment. */
+export async function syncNotificationReadStateToFirestore(userId: string, notificationId?: string): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const rows = notificationId
+    ? db.prepare('SELECT * FROM notifications WHERE user_id = ? AND id = ?').all(userId, notificationId) as Array<Record<string, any>>
+    : db.prepare('SELECT * FROM notifications WHERE user_id = ?').all(userId) as Array<Record<string, any>>;
+  let allSaved = true;
+  for (let index = 0; index < rows.length; index += 40) {
+    const chunk = rows.slice(index, index + 40);
+    const saved = await Promise.all(chunk.map((row) => persistNotificationDocument('notifications', String(row.id), row)));
+    if (saved.some((result) => !result)) allSaved = false;
+  }
+  return allSaved;
+}
+
 /**
  * Sends a single test notification to the designated admin email and account.
  */
