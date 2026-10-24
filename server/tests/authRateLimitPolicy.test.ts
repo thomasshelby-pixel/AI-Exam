@@ -19,7 +19,7 @@ type InvokeResult = {
 function invokeLimiter(
   limiter: (req: Request, res: Response, next: NextFunction) => void,
   ip: string,
-  email = 'student@example.com',
+  email: unknown = 'student@example.com',
 ): InvokeResult {
   const result: InvokeResult = { statusCode: 200, headers: {}, nextCalled: false };
   const req = {
@@ -46,6 +46,11 @@ function invokeLimiter(
   limiter(req, res, (() => { result.nextCalled = true; }) as NextFunction);
   return result;
 }
+
+// Malformed email fields must not crash the limiter before route validation.
+const malformedEmail = invokeLimiter(otpVerifyRateLimiter, '198.51.100.210', { nested: true });
+assert.equal(malformedEmail.statusCode, 200);
+assert.equal(malformedEmail.headers['RateLimit-Limit'], '15');
 
 // Registration OTP verification is 15 attempts per 5 minutes (challenge validity stays 10 minutes).
 const otpIp = '198.51.100.211';
