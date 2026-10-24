@@ -149,6 +149,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [showCompleteProfileModal, setShowCompleteProfileModal] = useState(false);
   const [autoPromptedProfileUserId, setAutoPromptedProfileUserId] = useState<string | null>(null);
   const [profileSrnInput, setProfileSrnInput] = useState('');
+  const [profileCompletionCaLevel, setProfileCompletionCaLevel] = useState<'FOUNDATION' | 'INTERMEDIATE' | 'FINAL' | ''>('');
   const [profilePhoneInput, setProfilePhoneInput] = useState('');
   const [profileCompletionError, setProfileCompletionError] = useState('');
   const [profileCompletionSuccess, setProfileCompletionSuccess] = useState('');
@@ -209,6 +210,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (!profile || !user?.id || !needsSocialProfileCompletion) return;
     if (autoPromptedProfileUserId === user.id) return;
     setProfileSrnInput('');
+    // A new OAuth account must actively choose its course; don't silently accept
+    // the backend's legacy INTERMEDIATE default as the student's selection.
+    setProfileCompletionCaLevel('');
     setProfilePhoneInput(String((profile as any)?.phone || user.phone || ''));
     setProfileCompletionError('');
     setProfileCompletionSuccess('');
@@ -218,6 +222,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const openCompleteProfileModal = () => {
     setProfileSrnInput(normalizedCurrentSrn && normalizedCurrentSrn !== 'REG-PENDING' ? normalizedCurrentSrn : '');
+    setProfileCompletionCaLevel('');
     setProfilePhoneInput(String((profile as any)?.phone || user?.phone || ''));
     setProfileCompletionError('');
     setProfileCompletionSuccess('');
@@ -228,6 +233,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     event.preventDefault();
     setProfileCompletionError('');
     setProfileCompletionSuccess('');
+
+    if (!profileCompletionCaLevel) {
+      setProfileCompletionError('Select your current CA course: Foundation, Intermediate, or Final.');
+      return;
+    }
 
     const srnValidation = validateSrn(profileSrnInput);
     if (!srnValidation.isValid) {
@@ -241,12 +251,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         method: 'PUT',
         body: JSON.stringify({
           icaiRegistrationNumber: srnValidation.normalized,
+          caLevel: profileCompletionCaLevel,
           phone: profilePhoneInput.trim() || '',
         }),
       });
       await refreshUser();
       await fetchDashboard();
-      setProfileCompletionSuccess('Your ICAI registration number has been saved.');
+      setProfileCompletionSuccess('Your CA course and ICAI registration number have been saved.');
       setShowCompleteProfileModal(false);
     } catch (error: any) {
       setProfileCompletionError(error?.message || 'Could not save your profile. Please check the ICAI registration number and try again.');
@@ -1556,16 +1567,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
               <div className="flex-1">
                 <h2 id="social-complete-profile-title" className="font-bold text-lg text-slate-900 dark:text-white">Complete Your Profile</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Add your ICAI registration number to finish setting up your student account.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Choose your current CA course and add your ICAI registration number to finish setting up your student account. Both are required; phone is optional.</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowCompleteProfileModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white"
-                aria-label="Close profile completion"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-300">Required</span>
             </div>
 
             <form onSubmit={handleSaveSocialProfile} className="p-5 space-y-4">
@@ -1581,6 +1585,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <span>{profileCompletionSuccess}</span>
                 </div>
               )}
+
+              <div className="space-y-1.5">
+                <label htmlFor="social-profile-ca-level" className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Current CA Course <span className="text-rose-600">*</span>
+                </label>
+                <select
+                  id="social-profile-ca-level"
+                  value={profileCompletionCaLevel}
+                  onChange={(event) => setProfileCompletionCaLevel(event.target.value as 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL' | '')}
+                  disabled={isSavingProfileCompletion}
+                  required
+                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select your CA course</option>
+                  <option value="FOUNDATION">CA Foundation</option>
+                  <option value="INTERMEDIATE">CA Intermediate</option>
+                  <option value="FINAL">CA Final</option>
+                </select>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Your course controls which answer-sheet evaluations and course-specific plans are available.</p>
+              </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="social-profile-icai-registration" className="block text-xs font-bold text-slate-800 dark:text-slate-200">
@@ -1618,14 +1642,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowCompleteProfileModal(false)}
-                  disabled={isSavingProfileCompletion}
-                  className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300"
-                >
-                  Do This Later
-                </button>
+
                 <button
                   id="social-profile-save-btn"
                   type="submit"
