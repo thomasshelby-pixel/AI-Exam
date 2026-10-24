@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { CA_SUBJECTS, CASubject } from '../../data/caCurriculum.js';
@@ -29,6 +29,21 @@ import {
 } from 'lucide-react';
 import { ExamSelector } from '../../components/common/ExamSelector.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
+
+function normalizeCourseLevel(value: unknown): CALevel | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized === 'FOUNDATION' || normalized === 'INTERMEDIATE' || normalized === 'FINAL'
+    ? normalized
+    : null;
+}
+
+function courseLevelLabel(value: CALevel | null | undefined): string {
+  if (value === 'FOUNDATION') return 'CA Foundation';
+  if (value === 'INTERMEDIATE') return 'CA Intermediate';
+  if (value === 'FINAL') return 'CA Final';
+  return 'a valid CA course';
+}
 
 interface UploadEvaluationProps {
   onEvaluationComplete: (evaluationId: string, result: EvaluationResult) => void;
@@ -103,6 +118,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 }) => {
   const { user, profile, refreshUser } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const navState = (location.state || {}) as {
     initialEvaluationType?: 'PUBLIC' | 'INSTITUTE';
     instituteId?: string;
@@ -121,8 +137,15 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const [selectedInstituteMaterialId, setSelectedInstituteMaterialId] = useState<string>(navState.materialId || '');
   const [loadingEnrollments, setLoadingEnrollments] = useState<boolean>(true);
 
-  // Form states
-  const [level, setLevel] = useState<CALevel>(navState.level || 'INTERMEDIATE');
+  // Form states: public evaluation starts from the course saved on the student's profile.
+  const savedCourseAtMount = normalizeCourseLevel((profile as any)?.ca_level ?? (profile as any)?.caLevel);
+  const initialEvaluationLevel =
+    navState.initialEvaluationType === 'INSTITUTE' && navState.level
+      ? navState.level
+      : (savedCourseAtMount || navState.level || 'INTERMEDIATE');
+  const [level, setLevel] = useState<CALevel>(initialEvaluationLevel);
+  const [showCourseAccessNotice, setShowCourseAccessNotice] = useState<boolean>(false);
+  const [requestedCourseLevel, setRequestedCourseLevel] = useState<CALevel | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<'GROUP_1' | 'GROUP_2' | 'ALL'>('GROUP_1');
   const [selectedSubjectKey, setSelectedSubjectKey] = useState<string>(
     navState.subjectKey || 'inter_advanced_accounting'
@@ -279,8 +302,19 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     purchased_credits?: number;
     paid_credits?: number;
     icai_registration_number?: string;
+    ca_level?: string;
+    caLevel?: string;
     institute_name?: string;
   } | null;
+  const accountCourseLevel = normalizeCourseLevel(studentProfile?.ca_level ?? studentProfile?.caLevel);
+
+  // Whenever auth/profile data becomes available or changes, keep personal/public
+  // evaluation on the saved course. Institute assignments keep their material level.
+  useEffect(() => {
+    if (evaluationSource === 'PUBLIC' && accountCourseLevel) {
+      setLevel((current) => current === accountCourseLevel ? current : accountCourseLevel);
+    }
+  }, [evaluationSource, accountCourseLevel]);
 
   const freeRemaining =
     studentProfile?.free_evaluations_remaining !== undefined
@@ -508,8 +542,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     }
   };
 
+  const handleSelectCourseLevel = (requestedLevel: CALevel) => {
+    if (evaluationSource === 'PUBLIC') {
+      if (!accountCourseLevel || requestedLevel !== accountCourseLevel) {
+        setRequestedCourseLevel(requestedLevel);
+        setShowCourseAccessNotice(true);
+        return;
+      }
+    }
+    setLevel(requestedLevel);
+  };
+
   // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
   const handleCheckAnswerSheetClick = async () => {
+    if (evaluationSource === 'PUBLIC' && (!accountCourseLevel || level !== accountCourseLevel)) {
+      setRequestedCourseLevel(level);
+      setShowCourseAccessNotice(true);
+      return;
+    }
+
     if (!file || !fileBase64) {
       setErrorMessage('Please upload your handwritten CA answer sheet file (PDF or image).');
       return;
@@ -1073,13 +1124,20 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
                 {/* Level selection */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">CA Examination Level</label>
+                  <div className="mb-2 flex flex-col gap-1">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">CA Examination Level</label>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      {accountCourseLevel
+                        ? `Your account is set to ${courseLevelLabel(accountCourseLevel)}. Select another course only from Edit Profile.`
+                        : 'Loading your saved course from your profile…'}
+                    </p>
+                  </div>
                   <div className="grid grid-cols-3 gap-1.5">
                     {(['FOUNDATION', 'INTERMEDIATE', 'FINAL'] as CALevel[]).map((lvl) => (
                       <button
                         key={lvl}
                         type="button"
-                        onClick={() => setLevel(lvl)}
+                        onClick={() => handleSelectCourseLevel(lvl)}
                         className={`py-1.5 px-1 text-xs font-bold rounded-lg border transition text-center cursor-pointer ${
                           level === lvl
                             ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
@@ -1554,6 +1612,68 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Course access notice: personal/public evaluation follows the saved profile course. */}
+      {showCourseAccessNotice && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="course-access-notice-title"
+          onClick={() => setShowCourseAccessNotice(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-2xl space-y-4 text-slate-900 dark:text-white"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-amber-700 dark:text-amber-300">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 id="course-access-notice-title" className="text-base font-bold">Course access restricted</h3>
+                <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                  {accountCourseLevel
+                    ? `Your account is registered for ${courseLevelLabel(accountCourseLevel)}. Check Answer Sheet can evaluate only this course.`
+                    : 'Your saved CA course could not be confirmed. Please open Edit Profile and save your Target CA Level.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close course notice"
+                onClick={() => setShowCourseAccessNotice(false)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {requestedCourseLevel && accountCourseLevel && requestedCourseLevel !== accountCourseLevel && (
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-3 text-xs text-amber-900 dark:text-amber-200">
+                You tried to select {courseLevelLabel(requestedCourseLevel)}. To change your course, go to <strong>Profile &amp; Settings → Target CA Level</strong> and save the change there. Your remaining paid evaluation credits will stay in your account.
+              </div>
+            )}
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCourseAccessNotice(false)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Stay Here
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCourseAccessNotice(false);
+                  navigate('/student/profile');
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2"
+              >
+                Edit Profile <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pro Tips Informational Modal */}
       {showProTipsModal && (
