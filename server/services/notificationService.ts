@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from '../db.js';
+import { getAllFirestoreDocs, setFirestoreDoc } from './firestoreDbService.js';
 import { sendBroadcastNotificationEmail } from './emailService.js';
 
 export interface TargetAudienceEstimate {
@@ -104,46 +105,146 @@ export function getTargetUsers(targetAudience: string = 'ALL'): TargetUser[] {
 /**
  * Calculates audience estimate and breakdown before dispatching broadcast.
  */
-export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudienceEstimate {
-  const users = getTargetUsers(targetAudience);
-
+function buildAudienceEstimate(users: TargetUser[]): TargetAudienceEstimate {
   let studentsCount = 0;
   let institutesCount = 0;
-  const byLevel = {
-    foundation: 0,
-    intermediate: 0,
-    final: 0,
-    unspecified: 0,
-  };
+  const byLevel = { foundation: 0, intermediate: 0, final: 0, unspecified: 0 };
 
-  for (const u of users) {
-    if (u.role === 'STUDENT') {
+  for (const user of users) {
+    if (user.role === 'STUDENT') {
       studentsCount++;
-      const lvl = (u.ca_level || '').toUpperCase();
-      if (lvl === 'FOUNDATION') byLevel.foundation++;
-      else if (lvl === 'INTERMEDIATE') byLevel.intermediate++;
-      else if (lvl === 'FINAL') byLevel.final++;
+      const level = String(user.ca_level || '').toUpperCase();
+      if (level === 'FOUNDATION') byLevel.foundation++;
+      else if (level === 'INTERMEDIATE') byLevel.intermediate++;
+      else if (level === 'FINAL') byLevel.final++;
       else byLevel.unspecified++;
-    } else if (u.role === 'INSTITUTE_ADMIN') {
+    } else if (user.role === 'INSTITUTE_ADMIN') {
       institutesCount++;
     }
   }
-
-  const sampleRecipients = users.slice(0, 5).map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.full_name || 'User',
-    role: u.role,
-    caLevel: u.ca_level,
-  }));
 
   return {
     total: users.length,
     studentsCount,
     institutesCount,
     byLevel,
-    sampleRecipients,
+    sampleRecipients: users.slice(0, 5).map((user) => ({
+      id: user.id,
+      email: user.email,
+      name: user.full_name || 'User',
+      role: user.role,
+      caLevel: user.ca_level,
+    })),
   };
+}
+
+/**
+ * Resolve the audience from the durable Firestore account/profile source in production.
+ * SQLite remains the development/test source and a fallback only when the Firestore
+ * users collection is genuinely empty. A failed cloud query throws rather than silently
+ * turning an unavailable data source into a zero-recipient campaign.
+ */
+export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL'): Promise<TargetUser[]> {
+  if (process.env.NODE_ENV !== 'production') return getTargetUsers(targetAudience);
+
+  const [firestoreUsers, firestoreProfiles, firestoreTombstones] = await Promise.all([
+    getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('student_profiles', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('tombstones', { failOnError: true }),
+  ]);
+
+  if (firestoreUsers.length === 0) {
+    const localFallback = getTargetUsers(targetAudience);
+    console.warn('[NotificationService] Firestore users collection is empty; using hydrated local users as a temporary fallback.');
+    return localFallback;
+  }
+
+  const profilesByUserId = new Map<string, Record<string, any>>();
+  for (const profile of firestoreProfiles) {
+    const userId = String(profile.user_id || profile.userId || profile.id || '').trim();
+    if (userId) profilesByUserId.set(userId, profile);
+  }
+
+  const blockedIdentifiers = new Set<string>();
+  const addBlocked = (value: unknown) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) blockedIdentifiers.add(normalized);
+  };
+  for (const tombstone of firestoreTombstones) {
+    const collectionName = String(tombstone.collectionName || tombstone.collection_name || '').trim().toLowerCase();
+    const targetId = String(tombstone.targetId || tombstone.target_id || tombstone.entity_id || tombstone.entityId || tombstone.id || '').trim();
+    if (!targetId) continue;
+    addBlocked(targetId);
+    if (collectionName) {
+      addBlocked(`${collectionName}_${targetId}`);
+      addBlocked(`${collectionName}:${targetId}`);
+    }
+  }
+  try {
+    const localTombstones = db.prepare(
+      "SELECT collection_name, entity_id FROM tombstones WHERE collection_name IN ('users', 'students', 'institutes')"
+    ).all() as Array<{ collection_name: string; entity_id: string }>;
+    for (const tombstone of localTombstones) {
+      addBlocked(tombstone.entity_id);
+      addBlocked(`${tombstone.collection_name}_${tombstone.entity_id}`);
+      addBlocked(`${tombstone.collection_name}:${tombstone.entity_id}`);
+    }
+  } catch (error) {
+    console.warn('[NotificationService] Local tombstone lookup warning:', error);
+  }
+
+  const normalizedAudience = String(targetAudience || 'ALL').trim().toUpperCase();
+  const recipients: TargetUser[] = [];
+  for (const record of firestoreUsers) {
+    const id = String(record.id || record.user_id || record.userId || '').trim();
+    const email = String(record.email || '').trim().toLowerCase();
+    const role = String(record.role || record.user_role || 'STUDENT').trim().toUpperCase();
+    const status = String(record.status || 'ACTIVE').trim().toUpperCase();
+    const profile = profilesByUserId.get(id);
+    const caLevel = String(profile?.ca_level || profile?.caLevel || record.ca_level || record.caLevel || '').trim().toUpperCase();
+
+    if (!id || !email || !['STUDENT', 'INSTITUTE_ADMIN'].includes(role) || status === 'DELETED') continue;
+    if (
+      blockedIdentifiers.has(id.toLowerCase()) ||
+      blockedIdentifiers.has(email) ||
+      blockedIdentifiers.has(`users_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`users:${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`students_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`students:${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`institutes_${id.toLowerCase()}`) ||
+      blockedIdentifiers.has(`institutes:${id.toLowerCase()}`)
+    ) continue;
+
+    if (normalizedAudience === 'STUDENT' && role !== 'STUDENT') continue;
+    if (normalizedAudience === 'INSTITUTE_ADMIN' && role !== 'INSTITUTE_ADMIN') continue;
+    if (normalizedAudience === 'STUDENTS_FOUNDATION' && !(role === 'STUDENT' && caLevel === 'FOUNDATION')) continue;
+    if (normalizedAudience === 'STUDENTS_INTERMEDIATE' && !(role === 'STUDENT' && caLevel === 'INTERMEDIATE')) continue;
+    if (normalizedAudience === 'STUDENTS_FINAL' && !(role === 'STUDENT' && caLevel === 'FINAL')) continue;
+    if (normalizedAudience === 'ALL' && !['STUDENT', 'INSTITUTE_ADMIN'].includes(role)) continue;
+
+    recipients.push({
+      id,
+      email,
+      full_name: String(record.full_name || record.fullName || record.display_name || 'User'),
+      role,
+      ca_level: caLevel || undefined,
+    });
+  }
+
+  return recipients.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+/**
+ * Returns an estimate that is consistent with the durable recipient source used by
+ * broadcast dispatch. This prevents the preview count and actual send count diverging
+ * after App Hosting replaces the local SQLite instance.
+ */
+export async function estimateRecipientsFromDurableStore(targetAudience: string = 'ALL'): Promise<TargetAudienceEstimate> {
+  return buildAudienceEstimate(await getTargetUsersForBroadcast(targetAudience));
+}
+
+export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudienceEstimate {
+  return buildAudienceEstimate(getTargetUsers(targetAudience));
 }
 
 /**
