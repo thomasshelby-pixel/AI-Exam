@@ -2700,7 +2700,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Access denied: Only student accounts can update student profiles.' });
     }
 
-    const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(studentId) as { role: string } | undefined;
+    const targetUser = db.prepare('SELECT role, password_hash FROM users WHERE id = ?').get(studentId) as { role: string; password_hash?: string } | undefined;
     if (!targetUser || targetUser.role !== 'STUDENT') {
       return res.status(403).json({ error: 'Access denied: Cannot modify non-student accounts via student profile endpoint.' });
     }
@@ -2737,6 +2737,18 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
     ).get(studentId) as { icai_registration_number?: string } | undefined;
     const priorSrn = String(priorProfileForSrn?.icai_registration_number || '').trim().toUpperCase();
     const hadCompletedSrn = Boolean(priorSrn && priorSrn !== 'REG-PENDING');
+    const oauthProviderMarker = String(targetUser.password_hash || '').trim().toUpperCase();
+    const isIncompleteOAuthProfile = !hadCompletedSrn &&
+      (oauthProviderMarker === 'GOOGLE_OAUTH' || oauthProviderMarker === 'APPLE_OAUTH');
+
+    // OAuth profile completion must explicitly capture the student's course. The
+    // legacy INTERMEDIATE default is not accepted as a submitted course choice.
+    if (isIncompleteOAuthProfile && caLevel === undefined) {
+      return res.status(400).json({
+        error: 'Select your current CA course (Foundation, Intermediate, or Final) while completing your social-signup profile.',
+        code: 'CA_LEVEL_REQUIRED_FOR_PROFILE_COMPLETION',
+      });
+    }
 
     if (normalizedSrn !== null && hadCompletedSrn && normalizedSrn !== priorSrn) {
       return res.status(409).json({
