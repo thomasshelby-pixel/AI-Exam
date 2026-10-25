@@ -1,9 +1,9 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { optionalAuthenticateToken, authenticateToken, AuthRequest } from '../auth.js';
-import { isRazorpayConfigured, getRazorpayKeyId } from '../razorpay.js';
-import { recordCreditPurchase, syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
+import { authenticateToken, AuthRequest } from '../auth.js';
+import { isRazorpayConfigured, getRazorpayKeyId, verifyCheckoutPaymentSignature, fulfillPaymentOrder } from '../razorpay.js';
+import { syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
 
 const router = Router();
 
@@ -85,7 +85,7 @@ router.get('/plans', (req: Request, res: Response) => {
       };
     });
 
-    return res.json({ plans });
+    return res.json({ plans, isConfigured: isRazorpayConfigured() });
   } catch (error: unknown) {
     console.error('Fetch pricing plans error:', error);
     return res.status(500).json({
@@ -104,9 +104,21 @@ router.post('/order', authenticateToken, async (req: AuthRequest, res: Response)
       return res.status(400).json({ error: 'planId is required' });
     }
 
+    if (req.user!.role !== 'STUDENT' && req.user!.role !== 'INSTITUTE_ADMIN') {
+      return res.status(403).json({ error: 'This account cannot purchase student or institute plans.' });
+    }
+
     const plan = (db.prepare('SELECT * FROM pricing_plans WHERE id = ? AND is_active = 1').get(planId) as unknown) as PricingPlanRecord | undefined;
     if (!plan) {
       return res.status(404).json({ error: 'Selected pricing plan is not available.' });
+    }
+
+    const expectedCategory = req.user!.role === 'STUDENT' ? 'STUDENT' : 'INSTITUTE';
+    if (plan.category !== expectedCategory) {
+      return res.status(403).json({ error: 'This plan is not available for your account type.' });
+    }
+    if (!Number.isFinite(plan.price_inr) || plan.price_inr <= 0) {
+      return res.status(400).json({ error: 'Free plans are included with eligible signup and cannot be purchased.' });
     }
 
     const amountPaise = plan.price_inr * 100;
@@ -160,6 +172,7 @@ router.post('/order', authenticateToken, async (req: AuthRequest, res: Response)
       amountPaise,
       currency: 'INR',
       keyId,
+      isConfigured: isRazorpayConfigured(),
       planId: plan.id,
       planName: plan.name,
     });
@@ -171,117 +184,186 @@ router.post('/order', authenticateToken, async (req: AuthRequest, res: Response)
 
 // 3. Verify Payment and Activate Plan
 router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response) => {
+  let transactionOpen = false;
   try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, planId } = req.body;
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, planId } = req.body || {};
     const userId = req.user!.id;
+    const role = req.user!.role;
 
     if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature || !planId) {
       return res.status(400).json({ error: 'Missing required payment verification parameters.' });
     }
-
-    const plan = (db.prepare('SELECT * FROM pricing_plans WHERE id = ?').get(planId) as unknown) as PricingPlanRecord | undefined;
-    if (!plan) {
-      return res.status(404).json({ error: 'Plan not found.' });
+    if (role !== 'STUDENT' && role !== 'INSTITUTE_ADMIN') {
+      return res.status(403).json({ error: 'This account cannot activate student or institute plans.' });
     }
-
-    const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
-    if (isRazorpayConfigured()) {
-      const generatedSignature = crypto
-        .createHmac('sha256', keySecret)
-        .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-        .digest('hex');
-
-      if (generatedSignature !== razorpaySignature) {
-        return res.status(400).json({ error: 'Payment signature verification failed. Untrusted payment.' });
-      }
-    }
-
-    // Days to add: 30 for MONTHLY, 365 for ANNUAL
-    const days = plan.billing_period === 'ANNUAL' ? 365 : 30;
-    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-
-    // If user is a student: add credits & set subscription
-    if (req.user!.role === 'STUDENT') {
-      const addedCredits = plan.evaluation_allowance >= 99999 ? 999999 : plan.evaluation_allowance;
-      const lotResult = recordCreditPurchase({
-        userId,
-        creditsPurchased: addedCredits,
-        paymentId: razorpayPaymentId,
-        purchaseDate: new Date(),
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        error: 'Razorpay verification is unavailable because the gateway is not configured. No plan or credits were activated.',
+        code: 'RAZORPAY_NOT_CONFIGURED',
       });
+    }
 
+    const plan = db.prepare(
+      'SELECT * FROM pricing_plans WHERE id = ?'
+    ).get(planId) as unknown as PricingPlanRecord | undefined;
+    if (!plan) return res.status(404).json({ error: 'Plan not found.' });
+
+    const expectedCategory = role === 'STUDENT' ? 'STUDENT' : 'INSTITUTE';
+    if (plan.category !== expectedCategory) {
+      return res.status(403).json({ error: 'This plan is not available for your account type.' });
+    }
+    if (!Number.isFinite(plan.price_inr) || plan.price_inr <= 0) {
+      return res.status(400).json({ error: 'A paid plan is required for payment verification.' });
+    }
+
+    const order = db.prepare(`
+      SELECT id, student_id, quantity, amount_paise, currency, status
+      FROM payment_orders
+      WHERE razorpay_order_id = ? AND student_id = ?
+      LIMIT 1
+    `).get(razorpayOrderId, userId) as {
+      id: string;
+      student_id: string;
+      quantity: number;
+      amount_paise: number;
+      currency: string;
+      status: string;
+    } | undefined;
+
+    if (!order) {
+      return res.status(404).json({ error: 'Payment order not found for this account.' });
+    }
+    if (order.quantity !== plan.evaluation_allowance || order.amount_paise !== plan.price_inr * 100 || order.currency.toUpperCase() !== 'INR') {
+      return res.status(400).json({ error: 'Payment order does not match the selected plan amount and allowance.' });
+    }
+
+    const validSignature = verifyCheckoutPaymentSignature({
+      razorpayOrderId: String(razorpayOrderId),
+      razorpayPaymentId: String(razorpayPaymentId),
+      razorpaySignature: String(razorpaySignature),
+    });
+    if (!validSignature) {
+      if (order.status !== 'SUCCESS') {
+        db.prepare("UPDATE payment_orders SET status = 'FAILED' WHERE id = ? AND status = 'PENDING'").run(order.id);
+      }
+      return res.status(400).json({ error: 'Payment signature verification failed. Untrusted payment.' });
+    }
+
+    // The shared student fulfillment engine is transactional and idempotent. A
+    // retried browser callback cannot grant a second credit lot.
+    if (role === 'STUDENT') {
+      const fulfillment = fulfillPaymentOrder({
+        razorpayOrderId: String(razorpayOrderId),
+        razorpayPaymentId: String(razorpayPaymentId),
+        studentId: userId,
+        signatureRecord: String(razorpaySignature),
+        source: 'CHECKOUT',
+        paymentAmountPaise: order.amount_paise,
+        paymentCurrency: order.currency,
+      });
       await syncStudentCreditsToFirestore(userId);
 
-      const newCredits = lotResult.totalValidCredits;
+      const lot = db.prepare(`
+        SELECT expires_at FROM student_credit_purchases
+        WHERE user_id = ? AND payment_id = ?
+        ORDER BY datetime(created_at) DESC LIMIT 1
+      `).get(userId, razorpayPaymentId) as { expires_at?: string } | undefined;
 
-      // Ledger entry
-      db.prepare(`
-        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, payment_id, note)
-        VALUES (?, ?, ?, 'PURCHASED', ?, ?, ?)
-      `).run(
-        `cld_${crypto.randomBytes(8).toString('hex')}`,
-        userId,
-        addedCredits,
-        newCredits,
-        razorpayPaymentId,
-        `Subscribed to ${plan.name} via Razorpay (${razorpayPaymentId}). Valid for 3 months until ${new Date(lotResult.expiresAt).toLocaleDateString('en-IN')}.`
-      );
-    } else if (req.user!.role === 'INSTITUTE_ADMIN') {
-      // Find institute associated with this user
-      const inst = db.prepare('SELECT id FROM institutes WHERE email = ?').get(req.user!.email) as { id: string } | undefined;
-      if (inst) {
-        db.prepare(`
-          UPDATE institutes
-          SET status = 'ACTIVE',
-              subscription_plan = ?,
-              max_students = ?,
-              subscription_expires_at = ?
-          WHERE id = ?
-        `).run(plan.id, plan.student_capacity, expiresAt, inst.id);
-
-        const subId = `sub_${crypto.randomBytes(8).toString('hex')}`;
-        db.prepare(`
-          INSERT INTO institute_subscriptions (
-            id, institute_id, plan_id, billing_cycle, price_inr, student_capacity,
-            evaluation_allowance, evaluations_used, evaluations_remaining, payment_order_ref,
-            payment_id, start_date, expiry_date, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'ACTIVE')
-        `).run(
-          subId, inst.id, plan.id, plan.billing_period, plan.price_inr, plan.student_capacity,
-          plan.evaluation_allowance, plan.evaluation_allowance, razorpayOrderId, razorpayPaymentId, expiresAt
-        );
-      }
+      return res.json({
+        success: true,
+        alreadyFulfilled: fulfillment.alreadyFulfilled,
+        creditsAdded: fulfillment.creditsAdded,
+        message: fulfillment.alreadyFulfilled
+          ? 'This plan payment was already verified. No duplicate credits were added.'
+          : `Successfully purchased ${plan.name}; ${fulfillment.creditsAdded} evaluation credits were added.`,
+        plan: plan.name,
+        expiresAt: lot?.expires_at || null,
+      });
     }
 
-    // Update payment order status
-    db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE razorpay_order_id = ?").run(razorpayOrderId);
+    // Institute purchases use their own subscription records, but they still
+    // require a user-owned order and an atomic/idempotent transaction.
+    const institute = db.prepare(
+      'SELECT id FROM institutes WHERE email = ? LIMIT 1'
+    ).get(req.user!.email) as { id: string } | undefined;
+    if (!institute) {
+      return res.status(404).json({ error: 'No institute is linked to this administrator account.' });
+    }
 
-    // Record transaction
+    db.exec('BEGIN IMMEDIATE');
+    transactionOpen = true;
+    const currentOrder = db.prepare(
+      'SELECT status FROM payment_orders WHERE id = ? AND student_id = ?'
+    ).get(order.id, userId) as { status: string } | undefined;
+    const existingPayment = db.prepare(`
+      SELECT id, order_id, student_id, razorpay_payment_id
+      FROM payment_transactions
+      WHERE razorpay_payment_id = ? OR idempotency_key = ?
+      LIMIT 1
+    `).get(razorpayPaymentId, `tx_${razorpayPaymentId}`) as {
+      id: string; order_id: string; student_id: string; razorpay_payment_id: string;
+    } | undefined;
+
+    if (currentOrder?.status === 'SUCCESS' || existingPayment) {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      if (currentOrder?.status === 'SUCCESS' && existingPayment?.order_id === razorpayOrderId &&
+          existingPayment?.student_id === userId && existingPayment?.razorpay_payment_id === razorpayPaymentId) {
+        return res.json({ success: true, alreadyFulfilled: true, message: 'This plan payment was already verified.', plan: plan.name });
+      }
+      return res.status(409).json({ error: 'This payment or order has already been processed.' });
+    }
+    if (!currentOrder || currentOrder.status !== 'PENDING') {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
+      return res.status(409).json({ error: 'This payment order is no longer pending.' });
+    }
+
+    const days = plan.billing_period === 'ANNUAL' ? 365 : 30;
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(`
+      UPDATE institutes
+      SET status = 'ACTIVE', subscription_plan = ?, max_students = ?, subscription_expires_at = ?
+      WHERE id = ?
+    `).run(plan.id, plan.student_capacity, expiresAt, institute.id);
+
+    const subId = `sub_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO institute_subscriptions (
+        id, institute_id, plan_id, billing_cycle, price_inr, student_capacity,
+        evaluation_allowance, evaluations_used, evaluations_remaining, payment_order_ref,
+        payment_id, start_date, expiry_date, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, CURRENT_TIMESTAMP, ?, 'ACTIVE')
+    `).run(
+      subId, institute.id, plan.id, plan.billing_period, plan.price_inr, plan.student_capacity,
+      plan.evaluation_allowance, plan.evaluation_allowance, razorpayOrderId, razorpayPaymentId, expiresAt
+    );
+
     const txId = `txn_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
       INSERT INTO payment_transactions (id, order_id, student_id, razorpay_payment_id, razorpay_signature, amount_paise, status, idempotency_key)
       VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?)
-    `).run(txId, razorpayOrderId, userId, razorpayPaymentId, razorpaySignature, plan.price_inr * 100, `tx_${razorpayPaymentId}`);
-
-    // Welcome Notification
+    `).run(txId, order.id, userId, razorpayPaymentId, razorpaySignature, order.amount_paise, `tx_${razorpayPaymentId}`);
+    db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE id = ? AND status = 'PENDING'").run(order.id);
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, 'Subscription Activated', ?, 'CREDIT')
     `).run(
       `notif_${crypto.randomBytes(8).toString('hex')}`,
       userId,
-      `Your subscription to ${plan.name} has been successfully activated. Enjoy your evaluations!`
+      `Your subscription to ${plan.name} has been successfully activated.`
     );
+    db.exec('COMMIT');
+    transactionOpen = false;
 
-    return res.json({
-      success: true,
-      message: `Successfully subscribed to ${plan.name}`,
-      plan: plan.name,
-      expiresAt,
-    });
+    return res.json({ success: true, alreadyFulfilled: false, message: `Successfully subscribed to ${plan.name}`, plan: plan.name, expiresAt });
   } catch (error: unknown) {
+    if (transactionOpen) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+    }
     console.error('Verify plan payment error:', error);
-    return res.status(500).json({ error: 'Failed to verify plan payment.' });
+    const message = error instanceof Error ? error.message : 'Failed to verify plan payment.';
+    return res.status(500).json({ error: message });
   }
 });
 
