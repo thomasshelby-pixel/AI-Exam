@@ -8,6 +8,7 @@ import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 import { contactTicketRateLimiter } from '../utils/rateLimiter.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { COMBO_PLANS, CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 
 const router = Router();
@@ -139,6 +140,30 @@ router.get('/attempts', (req: Request, res: Response) => {
     console.error('Get attempts error:', error);
     return res.status(500).json({ error: 'Failed to retrieve exam attempts' });
   }
+});
+
+// Read-only CA curriculum endpoint shared by web and mobile upload flows.
+// The mobile app consumes canonical keys internally but only renders subject names.
+router.get('/curriculum', (req: Request, res: Response) => {
+  const requestedLevel = String(req.query.level || '').trim().toUpperCase();
+  const levels = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
+  if (requestedLevel && !levels.includes(requestedLevel)) {
+    return res.status(400).json({ error: 'Unsupported CA course level.' });
+  }
+
+  const selectedLevels = requestedLevel ? [requestedLevel] : levels;
+  const subjects = selectedLevels.flatMap((level) => {
+    const course = CA_CURRICULUM[level as keyof typeof CA_CURRICULUM];
+    return course.subjects.map((subject) => ({
+      key: subject.key,
+      name: subject.name,
+      paperNumber: subject.paperNumber,
+      group: subject.group || null,
+      maximumMarks: subject.maximumMarks,
+    }));
+  });
+
+  return res.json({ subjects });
 });
 
 // Institute Pricing Plans
