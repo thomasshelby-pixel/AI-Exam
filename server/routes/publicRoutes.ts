@@ -101,7 +101,7 @@ router.get('/pricing', (req: Request, res: Response) => {
       customPricePerEvaluationINR: CUSTOM_PRICE_PER_EVALUATION_INR,
       maxCustomEvaluationsPerOrder: 500,
       comboPlans: COMBO_PLANS,
-      creditValidityDays: 90,
+      creditValidityMonths: 3,
       autoRenewal: false,
     },
   });
