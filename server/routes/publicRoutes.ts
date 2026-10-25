@@ -8,6 +8,7 @@ import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 import { contactTicketRateLimiter } from '../utils/rateLimiter.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { COMBO_PLANS, CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 
 const router = Router();
 
@@ -91,6 +92,17 @@ router.get('/pricing', (req: Request, res: Response) => {
     instagramUrl: settingsMap.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
     plans,
     institutePlans,
+    // Shared student-app catalogue. These values are imported from the same
+    // server-side pricing constants that create Razorpay orders, so app display
+    // cannot silently drift from checkout amounts.
+    studentEvaluationPricing: {
+      monthlyFreeEvaluations: freeTierEvaluations,
+      customPricePerEvaluationINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+      maxCustomEvaluationsPerOrder: 500,
+      comboPlans: COMBO_PLANS,
+      creditValidityDays: 90,
+      autoRenewal: false,
+    },
   });
 });
 
