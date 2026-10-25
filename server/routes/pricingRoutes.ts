@@ -205,7 +205,7 @@ router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response
 
     const plan = db.prepare(
       'SELECT * FROM pricing_plans WHERE id = ?'
-    ).get(planId) as PricingPlanRecord | undefined;
+    ).get(planId) as unknown as PricingPlanRecord | undefined;
     if (!plan) return res.status(404).json({ error: 'Plan not found.' });
 
     const expectedCategory = role === 'STUDENT' ? 'STUDENT' : 'INSTITUTE';
