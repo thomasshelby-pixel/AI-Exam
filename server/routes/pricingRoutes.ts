@@ -85,7 +85,7 @@ router.get('/plans', (req: Request, res: Response) => {
       };
     });
 
-    return res.json({ plans });
+    return res.json({ plans, isConfigured: isRazorpayConfigured() });
   } catch (error: unknown) {
     console.error('Fetch pricing plans error:', error);
     return res.status(500).json({
