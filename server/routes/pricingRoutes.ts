@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { optionalAuthenticateToken, authenticateToken, AuthRequest } from '../auth.js';
+import { authenticateToken, AuthRequest } from '../auth.js';
 import { isRazorpayConfigured, getRazorpayKeyId, verifyCheckoutPaymentSignature, fulfillPaymentOrder } from '../razorpay.js';
 import { syncStudentCreditsToFirestore } from '../services/studentCreditService.js';
 
