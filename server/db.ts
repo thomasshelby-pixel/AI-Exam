@@ -685,6 +685,17 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
 
+    CREATE TABLE IF NOT EXISTS website_visitor_daily (
+      id TEXT PRIMARY KEY,
+      visitor_id TEXT NOT NULL,
+      visit_date TEXT NOT NULL,
+      first_page_path TEXT NOT NULL DEFAULT '/',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(visitor_id, visit_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_website_visitor_daily_date ON website_visitor_daily(visit_date);
+    CREATE INDEX IF NOT EXISTS idx_website_visitor_daily_visitor ON website_visitor_daily(visitor_id);
+
     CREATE TABLE IF NOT EXISTS trusted_devices (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
