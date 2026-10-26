@@ -6,6 +6,7 @@ interface UsageMetrics {
   apkDownloads: number | null;
   apkDownloadUrl: string;
   apkCountRefreshedAt: string | null;
+  apkDownloadsTrackingStartedAt: string | null;
   activeUsersLast30Minutes: number;
   uniqueVisitorsLast30Days: number;
   uniqueVisitorsAllTime: number;
@@ -46,9 +47,9 @@ export const AdminUsageMetricsPanel: React.FC = () => {
     {
       title: 'Android APK downloads',
       value: metricValue(metrics?.apkDownloads),
-      detail: metrics?.apkCountRefreshedAt
-        ? `Official release count · checked ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}`
-        : 'Download requests; installs are not counted',
+      detail: metrics?.apkDownloadsTrackingStartedAt
+        ? `Website-served downloads since ${metrics.apkDownloadsTrackingStartedAt}${metrics.apkCountRefreshedAt ? ` · refreshed ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}` : ''}`
+        : 'Counting starts after the new download tracker is deployed; installs are not counted',
       icon: Download,
       color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
     },
@@ -83,7 +84,7 @@ export const AdminUsageMetricsPanel: React.FC = () => {
         <div>
           <h2 className="text-base sm:text-lg font-black text-slate-900">Website & Android App Usage</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Actual release downloads, authenticated activity and anonymous public-site visitors.
+            Website-served APK downloads, authenticated activity and anonymous public-site visitors.
           </p>
         </div>
         <button

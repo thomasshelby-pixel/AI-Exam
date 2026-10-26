@@ -703,6 +703,13 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_website_visitor_daily_date ON website_visitor_daily(visit_date);
     CREATE INDEX IF NOT EXISTS idx_website_visitor_daily_visitor ON website_visitor_daily(visitor_id);
 
+    CREATE TABLE IF NOT EXISTS android_apk_download_events (
+      id TEXT PRIMARY KEY,
+      downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      file_size_bytes INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_android_apk_download_events_date ON android_apk_download_events(downloaded_at);
+
     CREATE TABLE IF NOT EXISTS trusted_devices (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
