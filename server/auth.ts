@@ -262,6 +262,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
           UPDATE user_sessions
           SET last_activity_at = CURRENT_TIMESTAMP
           WHERE id = ? AND status = 'ACTIVE'
+            AND datetime(last_activity_at) < datetime('now', '-1 minute')
         `).run(decoded.sessionId);
       } catch (activityError) {
         // Session activity is telemetry only; it must not interrupt authentication.
