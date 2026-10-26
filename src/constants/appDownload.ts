@@ -1,7 +1,5 @@
 /**
- * Public direct download URL for the officially built Android APK.
- * The app repository's Android workflow updates this release asset after a
- * successful trusted main-branch build.
+ * Internal route for the dedicated Android download page.
+ * User-facing navigation must stay on CA Exam Checker AI and never expose the build host.
  */
-export const ANDROID_APK_DOWNLOAD_URL =
-  "https://github.com/thomasshelby-pixel/AI-Exam-App/releases/download/android-latest/Exam-Checker-AI.apk";
+export const ANDROID_APP_DOWNLOAD_PAGE = "/download";
