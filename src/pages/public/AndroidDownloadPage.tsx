@@ -30,24 +30,36 @@ interface AndroidAppMetadata {
 const INSTALL_STEPS = [
   {
     number: '01',
-    title: 'Download the APK',
-    description: 'Tap Download Now. Your browser will download the Exam Checker AI installation file.',
-    icon: Download,
+    title: 'Visit the website',
+    description: 'Open CA Exam Checker AI in your Android phone browser.',
+    icon: Smartphone,
   },
   {
     number: '02',
-    title: 'Open the downloaded file',
-    description: 'When the download finishes, tap the notification or open the file from your Downloads folder.',
-    icon: FileDown,
+    title: 'Choose Android App',
+    description: 'Open the dedicated app download page from the website navigation.',
+    icon: ArrowRight,
   },
   {
     number: '03',
-    title: 'Allow installation if asked',
+    title: 'Tap Download Now',
+    description: 'The official Exam Checker AI APK downloads to your device.',
+    icon: Download,
+  },
+  {
+    number: '04',
+    title: 'Open the downloaded APK',
+    description: 'Tap the download notification or open the APK from your Downloads folder.',
+    icon: FileDown,
+  },
+  {
+    number: '05',
+    title: 'Allow installation if prompted',
     description: 'If Android asks, allow your browser or file manager to install this app, then return to the installer.',
     icon: Settings2,
   },
   {
-    number: '04',
+    number: '06',
     title: 'Install and open',
     description: 'Tap Install, wait for setup to finish, then tap Open to start using Exam Checker AI.',
     icon: PackageCheck,
@@ -235,7 +247,20 @@ export const AndroidDownloadPage: React.FC = () => {
               Follow these steps on your Android phone after the APK download begins.
             </p>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <figure className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/70 p-2 shadow-2xl shadow-blue-950/30 sm:p-3">
+            <img
+              src={`${import.meta.env.BASE_URL}android-installation-guide.svg`}
+              alt="CA Exam Checker AI website and Exam Checker AI Android app: six steps from opening the download page to installing and launching the app."
+              width={1200}
+              height={840}
+              loading="lazy"
+              className="h-auto w-full rounded-xl"
+            />
+            <figcaption className="px-2 pb-2 pt-3 text-center text-xs leading-5 text-slate-400">
+              Website: CA Exam Checker AI · Android app: Exam Checker AI
+            </figcaption>
+          </figure>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {INSTALL_STEPS.map((step) => {
               const Icon = step.icon;
               return (
