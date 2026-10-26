@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
@@ -67,7 +66,7 @@ export const AndroidDownloadPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [metadataError, setMetadataError] = useState('');
 
-  const loadMetadata = async () => {
+  const loadMetadata = useCallback(async () => {
     setLoading(true);
     setMetadataError('');
     try {
@@ -86,11 +85,11 @@ export const AndroidDownloadPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadMetadata();
-  }, []);
+  }, [loadMetadata]);
 
   const size = metadata?.sizeLabel || 'Official APK';
   const updatedAt = formatUpdatedAt(metadata?.updatedAt);
