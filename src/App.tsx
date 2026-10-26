@@ -16,6 +16,7 @@ import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
 import { CreditPurchaseModal } from './components/common/CreditPurchaseModal.js';
 import { LandingPage } from './pages/public/LandingPage.js';
+import { AndroidDownloadPage } from './pages/public/AndroidDownloadPage.js';
 import { PricingPage } from './pages/public/PricingPage.js';
 import { HowItWorksPage } from './pages/public/HowItWorksPage.js';
 import { LegalPage } from './pages/public/LegalPage.js';
@@ -293,6 +294,7 @@ const PublicAndStudentLayout: React.FC<{
   // Derive currentView key for Navbar highlighting
   const pathname = location.pathname;
   let currentView = 'home';
+  if (pathname === '/download') currentView = 'android-download';
   if (pathname === '/how-it-works') currentView = 'how-it-works';
   else if (pathname === '/pricing') currentView = 'pricing';
   else if (pathname === '/reviews') currentView = 'reviews';
@@ -311,6 +313,9 @@ const PublicAndStudentLayout: React.FC<{
       case 'home':
       case 'landing':
         navigate('/');
+        break;
+      case 'android-download':
+        navigate('/download');
         break;
       case 'how-it-works':
         navigate('/how-it-works');
@@ -806,6 +811,15 @@ const AppRoutes: React.FC = () => {
                 onNavigateHowItWorks={() => navigate('/how-it-works')}
                 onNavigateReviews={() => navigate('/reviews')}
               />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/download"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <AndroidDownloadPage />
             </PublicAndStudentLayout>
           }
         />

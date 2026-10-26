@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db } from '../db.js';
@@ -10,6 +11,131 @@ import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
 
 const router = Router();
+
+type PublishedAndroidAsset = {
+  sourceName: string;
+  sizeBytes: number;
+  updatedAt: string | null;
+  expiresAt: number;
+};
+
+let androidAssetCache: PublishedAndroidAsset | null = null;
+
+/**
+ * Resolve the currently published APK without exposing the repository/release URL
+ * to the browser. The public download endpoint below streams this asset through
+ * the CA Exam Checker AI website and sets a human-friendly filename.
+ */
+async function getPublishedAndroidAsset(): Promise<PublishedAndroidAsset> {
+  if (androidAssetCache && androidAssetCache.expiresAt > Date.now()) return androidAssetCache;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(
+      'https://api.github.com/repos/thomasshelby-pixel/AI-Exam-App/releases/tags/android-latest',
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'CA-Exam-Checker-AI-Android-Download',
+        },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) throw new Error('Latest Android build metadata is temporarily unavailable.');
+    const release = await response.json() as {
+      assets?: Array<{ name?: string; size?: number; updated_at?: string }>;
+    };
+    const allowedNames = ['Exam Checker AI.apk', 'Exam-Checker-AI.apk'];
+    const asset = (release.assets || []).find((entry) => allowedNames.includes(String(entry.name || '')));
+    if (!asset?.name || !Number.isFinite(asset.size) || Number(asset.size) <= 0) {
+      throw new Error('The official Android package is not currently available.');
+    }
+
+    androidAssetCache = {
+      sourceName: asset.name,
+      sizeBytes: Number(asset.size),
+      updatedAt: typeof asset.updated_at === 'string' ? asset.updated_at : null,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    };
+    return androidAssetCache;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatApkSize(sizeBytes: number): string {
+  const mb = sizeBytes / (1024 * 1024);
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+}
+
+// Public app metadata used by the dedicated download page.
+router.get('/android-app', async (_req: Request, res: Response) => {
+  try {
+    const asset = await getPublishedAndroidAsset();
+    res.setHeader('Cache-Control', 'public, max-age=120');
+    return res.json({
+      available: true,
+      websiteName: 'CA Exam Checker AI',
+      appName: 'Exam Checker AI',
+      version: '0.1.0',
+      fileName: 'Exam Checker AI.apk',
+      sizeBytes: asset.sizeBytes,
+      sizeLabel: formatApkSize(asset.sizeBytes),
+      updatedAt: asset.updatedAt,
+      downloadPath: '/api/public/download/android',
+    });
+  } catch (error) {
+    console.warn('[AndroidDownload] Could not resolve the latest APK metadata:', error);
+    return res.status(503).json({
+      available: false,
+      error: 'The Android app download is temporarily unavailable. Please try again shortly.',
+    });
+  }
+});
+
+// Serve the published APK from our own domain so visitors never land on GitHub.
+router.get('/download/android', async (_req: Request, res: Response) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const asset = await getPublishedAndroidAsset();
+    const encodedName = encodeURIComponent(asset.sourceName);
+    const sourceUrl = `https://github.com/thomasshelby-pixel/AI-Exam-App/releases/download/android-latest/${encodedName}`;
+    const controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), 45000);
+    const upstream = await fetch(sourceUrl, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'CA-Exam-Checker-AI-Android-Download' },
+      signal: controller.signal,
+    });
+    if (!upstream.ok) {
+      console.warn('[AndroidDownload] The published APK could not be retrieved.');
+      return res.status(502).json({ error: 'The Android app download failed to start. Please try again.' });
+    }
+
+    const bytes = Buffer.from(await upstream.arrayBuffer());
+    // Android APKs are ZIP containers; validate the signature before returning a file.
+    if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+      console.warn('[AndroidDownload] The published package did not have an APK/ZIP signature.');
+      return res.status(502).json({ error: 'The Android package could not be verified. Please try again later.' });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="Exam Checker AI.apk"; filename*=UTF-8\'\'Exam%20Checker%20AI.apk');
+    res.setHeader('Content-Length', String(bytes.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    return res.end(bytes);
+  } catch (error) {
+    console.error('[AndroidDownload] Download request failed:', error);
+    if (!res.headersSent) return res.status(502).json({ error: 'The Android app download is temporarily unavailable. Please try again shortly.' });
+    return res.end();
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+});
 
 // Lightweight anonymous website visitor counter. It stores only a random first-party
 // visitor key, the URL path (without query strings), and the UTC date; no email or IP
