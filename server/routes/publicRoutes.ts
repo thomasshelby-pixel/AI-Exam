@@ -127,6 +127,36 @@ router.get('/download/android', async (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+
+    // Record the download only once the 200 response has fully finished sending.
+    // The metric represents completed website-served download responses, not installs.
+    res.once('finish', () => {
+      const eventId = `apkdl_${crypto.randomUUID()}`;
+      const downloadedAt = new Date().toISOString();
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO android_apk_download_events (id, downloaded_at, file_size_bytes)
+          VALUES (?, ?, ?)
+        `).run(eventId, downloadedAt, bytes.length);
+
+        const event = db.prepare(`
+          SELECT id, downloaded_at, file_size_bytes
+          FROM android_apk_download_events
+          WHERE id = ?
+          LIMIT 1
+        `).get(eventId) as Record<string, unknown> | undefined;
+
+        if (event) {
+          void syncRecordToFirestore('android_apk_download_events', eventId, event).catch((syncError: unknown) => {
+            console.warn('[AndroidDownload] Could not sync download analytics event:', syncError);
+          });
+        }
+      } catch (trackingError) {
+        // A metrics write must never interfere with a completed APK download.
+        console.warn('[AndroidDownload] Could not record completed download:', trackingError);
+      }
+    });
+
     return res.end(bytes);
   } catch (error) {
     console.error('[AndroidDownload] Download request failed:', error);
