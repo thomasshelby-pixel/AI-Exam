@@ -8,9 +8,9 @@ const router = Router();
 router.use(authenticateToken);
 router.use(requireRole('SUPER_ADMIN'));
 
-// Real usage data only: downloads from the published APK release, recent authenticated
-// sessions, anonymized first-party visitor IDs, and completed website-served APK download responses. Download and visitor counts start when tracking
-// is deployed; no historical or synthetic visitor totals are generated.
+// Real usage data only: completed website-served APK responses, recent authenticated
+// activity, and anonymized first-party visitor IDs. Counts start when each tracker deploys;
+// no historical or synthetic visitor totals are generated.
 router.get('/', async (_req: AuthRequest, res: Response) => {
   try {
     const localHeartbeats = db.prepare(`
@@ -54,10 +54,10 @@ router.get('/', async (_req: AuthRequest, res: Response) => {
     const apkCountRefreshedAt = new Date().toISOString();
     const apkDownloadsTrackingStartedAt = [...downloadEvents.values()]
       .map((value) => value.slice(0, 10))
-      .filter((value) => /^\\d{4}-\\d{2}-\\d{2}$/.test(value))
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
       .sort()[0] || null;
 
-        const localRows = db.prepare(`
+    const localRows = db.prepare(`
       SELECT id, visitor_id, visit_date, first_page_path, created_at
       FROM website_visitor_daily
     `).all() as Array<Record<string, unknown>>;
