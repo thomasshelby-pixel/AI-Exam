@@ -5,7 +5,7 @@ import { db } from '../db.js';
 import { getValidAttemptsForLevel } from '../services/attemptService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries, getSubjectKeyCandidates } from '../services/materialLookupService.js';
 import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
-import { contactTicketRateLimiter } from '../utils/rateLimiter.js';
+import { contactTicketRateLimiter, websiteVisitorRateLimiter } from '../utils/rateLimiter.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
 
@@ -14,7 +14,7 @@ const router = Router();
 // Lightweight anonymous website visitor counter. It stores only a random first-party
 // visitor key, the URL path (without query strings), and the UTC date; no email or IP
 // address is stored by this analytics endpoint.
-router.post('/analytics/visit', async (req: Request, res: Response) => {
+router.post('/analytics/visit', websiteVisitorRateLimiter, async (req: Request, res: Response) => {
   const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.trim() : '';
   if (!/^[A-Za-z0-9_-]{16,80}$/.test(visitorId)) {
     return res.status(400).json({ error: 'A valid anonymous visitor identifier is required.' });
