@@ -158,6 +158,12 @@ router.get('/download/android', async (_req: Request, res: Response) => {
     // Record the download only once the 200 response has fully finished sending.
     // The metric represents completed website-served download responses, not installs.
     res.once('finish', () => {
+      // Do not count a response as a completed APK download unless the full
+      // asset was transferred; browsers may terminate or network streams may fail.
+      if (transferredBytes !== asset.sizeBytes) {
+        console.warn('[AndroidDownload] Incomplete APK response was not counted as a completed download.');
+        return;
+      }
       const eventId = `apkdl_${crypto.randomUUID()}`;
       const downloadedAt = new Date().toISOString();
       try {
@@ -190,11 +196,19 @@ router.get('/download/android', async (_req: Request, res: Response) => {
       if (done) break;
       await writeChunk(Buffer.from(value));
     }
+    if (transferredBytes !== asset.sizeBytes) {
+      console.warn('[AndroidDownload] APK stream size did not match the published asset metadata.');
+      res.destroy(new Error('The APK download was incomplete.'));
+      return;
+    }
     return res.end();
   } catch (error) {
     console.error('[AndroidDownload] Download request failed:', error);
     if (!res.headersSent) return res.status(502).json({ error: 'The Android app download is temporarily unavailable. Please try again shortly.' });
-    return res.end();
+    // Once headers/body have started, destroy the response instead of ending a
+    // truncated APK as if it were a successful download.
+    res.destroy(error instanceof Error ? error : undefined);
+    return;
   } finally {
     if (timeout) clearTimeout(timeout);
   }
