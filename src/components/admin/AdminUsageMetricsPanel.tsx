@@ -47,8 +47,8 @@ export const AdminUsageMetricsPanel: React.FC = () => {
       title: 'Android APK downloads',
       value: metricValue(metrics?.apkDownloads),
       detail: metrics?.apkCountRefreshedAt
-        ? `GitHub release count · checked ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}`
-        : 'GitHub release download count; installs are not counted',
+        ? `Official release count · checked ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}`
+        : 'Download requests; installs are not counted',
       icon: Download,
       color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
     },
