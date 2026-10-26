@@ -166,9 +166,9 @@ export const AndroidDownloadPage: React.FC = () => {
             )}
 
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              {/* Keep the download action independent of the metadata lookup. If metadata is
+                  temporarily unavailable, students can still try the real APK endpoint. */}
               <a
-                // Keep the download action independent of the metadata lookup. If metadata is
-                // temporarily unavailable, students can still try the real APK endpoint.
                 href={metadata?.available ? (metadata.downloadPath || '/api/public/download/android') : '/api/public/download/android'}
                 download="Exam Checker AI.apk"
                 className="inline-flex min-h-14 items-center justify-center gap-3 rounded-xl bg-blue-600 px-6 py-4 text-sm font-extrabold text-white shadow-lg shadow-blue-950/40 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950"
