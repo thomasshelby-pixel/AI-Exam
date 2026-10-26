@@ -74,6 +74,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                   Academic Helpdesk
                 </button>
               </li>
+              <li>
+                <Link to="/download" className="hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  Download Android App
+                </Link>
+              </li>
             </ul>
           </div>
 
