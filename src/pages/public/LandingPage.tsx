@@ -14,12 +14,14 @@ import {
   FileCheck2,
   Award,
   Target,
+  Download,
 } from 'lucide-react';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { ComingSoonModal, ComingSoonExamType } from '../../components/common/ComingSoonModal.js';
 import { VerifiedStudentBadge } from '../../components/common/VerifiedBadges.js';
 import { apiRequest } from '../../api/client.js';
 import { StudentReview } from '../../types/index.js';
+import { ANDROID_APK_DOWNLOAD_URL } from '../../constants/appDownload.js';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
@@ -139,6 +141,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <span>How Step Marking Works</span>
           </button>
+
+          <a
+            id="landing-android-download"
+            href={ANDROID_APK_DOWNLOAD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full sm:w-auto px-5 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold text-sm transition border border-emerald-200 dark:border-emerald-800 shadow-sm flex items-center justify-center gap-2"
+            aria-label="Download Exam Checker AI Android APK"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Android App</span>
+          </a>
         </div>
 
         {/* Value trust bullets */}

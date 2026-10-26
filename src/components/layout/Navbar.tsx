@@ -4,6 +4,7 @@ import { useTheme } from '../../context/ThemeContext.js';
 import { featureApi } from '../../api/featureClient.js';
 import { apiRequest } from '../../api/client.js';
 import { BrandLogo } from '../common/BrandLogo';
+import { ANDROID_APK_DOWNLOAD_URL } from '../../constants/appDownload.js';
 import {
   FileCheck2,
   Sparkles,
@@ -20,6 +21,7 @@ import {
   Moon,
   Dna,
   Target,
+  Download,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -217,6 +219,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
 
                 {/* Right-Side Authentication & Theme Controls with Comfortable Spacing */}
                 <div className="flex items-center gap-2.5 xl:gap-3.5 ml-1.5 shrink-0">
+                  <a
+                    id="nav-android-download"
+                    href={ANDROID_APK_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 transition-colors whitespace-nowrap"
+                    aria-label="Download Exam Checker AI Android APK"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Android App
+                  </a>
+
                   {/* Dark Mode Toggle for Unauthenticated Users */}
                   <button
                     id="nav-theme-toggle-btn"
@@ -566,6 +580,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate, onOpenC
               >
                 Support
               </button>
+              <a
+                id="mobile-android-download"
+                href={ANDROID_APK_DOWNLOAD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                aria-label="Download Exam Checker AI Android APK"
+              >
+                <Download className="w-4 h-4" />
+                Download Android App
+              </a>
               <div className="pt-2 flex flex-col gap-2">
                 <button
                   onClick={() => {
