@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from './db.js';
+import { setFirestoreDoc } from './services/firestoreDbService.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
@@ -253,6 +254,47 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       sessionId: decoded.sessionId,
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
+
+    // Track genuine authenticated activity across students, institutes, and admins.
+    // Heartbeats are throttled per account to at most one database write per minute.
+    try {
+      const heartbeatWrite = db.prepare(`
+        INSERT INTO active_user_heartbeats (user_id, last_activity_at)
+        VALUES (?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET last_activity_at = CURRENT_TIMESTAMP
+        WHERE datetime(active_user_heartbeats.last_activity_at) < datetime('now', '-1 minute')
+      `).run(user.id);
+
+      if (Number(heartbeatWrite.changes) > 0) {
+        // Mirror only the throttled heartbeat so usage metrics also work across
+        // more than one hosting instance. Keep the record free of email/IP data.
+        void Promise.resolve()
+          .then(() => setFirestoreDoc('active_user_heartbeats', user.id, {
+            user_id: user.id,
+            last_activity_at: new Date().toISOString(),
+          }))
+          .catch((syncError: unknown) => {
+            console.warn('[Auth] Could not sync activity heartbeat:', syncError);
+          });
+      }
+    } catch (activityError) {
+      // Usage analytics is ancillary; it must never interrupt authentication.
+      console.warn('[Auth] Unable to refresh authenticated activity heartbeat:', activityError);
+    }
+
+    // Keep the per-device session activity timestamp fresh when the token carries a session.
+    if (decoded.sessionId) {
+      try {
+        db.prepare(`
+          UPDATE user_sessions
+          SET last_activity_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'ACTIVE'
+            AND datetime(last_activity_at) < datetime('now', '-1 minute')
+        `).run(decoded.sessionId);
+      } catch (activityError) {
+        console.warn('[Auth] Unable to refresh device session activity timestamp:', activityError);
+      }
+    }
 
     next();
   } catch {

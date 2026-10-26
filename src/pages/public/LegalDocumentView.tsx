@@ -168,6 +168,15 @@ export const LegalDocumentView: React.FC<LegalDocumentViewProps> = ({ activeDocT
               {renderDocumentContent(document.content)}
             </div>
 
+            {activeDocType === 'PRIVACY' && (
+              <section className="mx-6 sm:mx-8 mb-6 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/70 dark:bg-blue-950/30 p-4 sm:p-5 space-y-2">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Website usage analytics</h3>
+                <p className="text-xs sm:text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+                  Public-page visitor counts use a random first-party browser identifier, the public page path without query parameters, and the visit date. This visitor counter does not store your name, email address, answer sheets, or IP address. The identifier is not linked to your student account; clearing site storage or using a private/new browser may count the browser again. Authenticated student, institute, and admin portals are excluded from public visitor totals.
+                </p>
+              </section>
+            )}
+
             {/* Contact & Support Section */}
             <div className="p-6 sm:p-8 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-4">
               <div className="flex items-center gap-2 text-slate-900 dark:text-white">

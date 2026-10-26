@@ -17,6 +17,7 @@ import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
 import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
+import { AdminUsageMetricsPanel } from '../../components/admin/AdminUsageMetricsPanel.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
@@ -1837,6 +1838,8 @@ export const AdminPortal: React.FC = () => {
                       </button>
                     </div>
                   </div>
+
+                  <AdminUsageMetricsPanel />
 
                   {/* Top Stats Metrics */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">

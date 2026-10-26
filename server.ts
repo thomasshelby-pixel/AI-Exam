@@ -11,6 +11,7 @@ import studentRoutes from './server/routes/studentRoutes.js';
 import studyPlannerRoutes from './server/routes/studyPlannerRoutes.js';
 import instituteRoutes from './server/routes/instituteRoutes.js';
 import adminRoutes from './server/routes/adminRoutes.js';
+import usageAnalyticsRoutes from './server/routes/usageAnalyticsRoutes.js';
 import paymentRoutes from './server/routes/paymentRoutes.js';
 import publicRoutes, { getPublicReviewsHandler, votePublicReviewHandler } from './server/routes/publicRoutes.js';
 import pricingRoutes from './server/routes/pricingRoutes.js';
@@ -166,6 +167,7 @@ async function startServer() {
   app.use('/api/student/study-planner', studyPlannerRoutes);
   app.use('/api/student', studentRoutes);
   app.use('/api/institute', instituteRoutes);
+  app.use('/api/admin/usage-metrics', usageAnalyticsRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/payments', paymentRoutes);
   app.use('/api/public', publicRoutes);

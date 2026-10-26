@@ -139,7 +139,7 @@ Official CA Exam Checker AI Instagram
 export const DEFAULT_PRIVACY_POLICY = `CA EXAM CHECKER AI — PRIVACY POLICY
 
 Effective Date: 12 September 2026
-Last Updated: 12 September 2026
+Last Updated: 26 October 2026
 
 This Privacy Policy explains how CA Exam Checker AI collects, uses, stores and protects information when you use the Platform.
 
@@ -242,19 +242,23 @@ The Platform may verify the identity of the requester before processing a reques
 
 We may use cookies, local storage and similar technologies for authentication, security, session management and necessary functionality.
 
-12. CHILDREN
+12. WEBSITE USAGE ANALYTICS
+
+On public website pages, we use a random first-party browser identifier to count visitors in aggregate. The visitor counter stores the random identifier, the first public page path visited that day (without query strings), and the UTC visit date. It does not ask for or store your name, email address, answer sheets, or IP address as part of the visitor record. This identifier is not linked to your student account. Clearing your browser's site storage or using a new/private browser session may cause the same person to be counted as a new browser. These figures therefore represent approximate unique browsers, not verified individuals. The admin dashboard uses aggregated counts for website usage and does not display individual browsing histories.
+
+13. CHILDREN
 
 The Platform is intended for CA examination preparation and may be used by individuals under 18 where legally permitted.
 
 Where applicable law requires parental/guardian involvement or consent for processing a child's personal data, the Platform will follow those requirements.
 
-13. POLICY CHANGES
+14. POLICY CHANGES
 
 We may update this Privacy Policy when our Services, technology, legal obligations or data practices change.
 
 The latest version will display its effective and update dates.
 
-14. CONTACT
+15. CONTACT
 
 For privacy-related inquiries, requests, or questions regarding this Privacy Policy, please reach out to us at:
 
