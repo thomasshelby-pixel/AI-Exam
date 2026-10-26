@@ -685,6 +685,13 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_user_sessions_lookup ON user_sessions(user_id, status, expires_at);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_device ON user_sessions(user_id, device_id);
 
+    CREATE TABLE IF NOT EXISTS active_user_heartbeats (
+      user_id TEXT PRIMARY KEY,
+      last_activity_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_active_user_heartbeats_recent ON active_user_heartbeats(last_activity_at);
+
     CREATE TABLE IF NOT EXISTS website_visitor_daily (
       id TEXT PRIMARY KEY,
       visitor_id TEXT NOT NULL,
