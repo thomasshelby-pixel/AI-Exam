@@ -1227,7 +1227,7 @@ function WebsiteVisitTracker() {
     const pathname = location.pathname || '/';
     // Marketing analytics intentionally excludes authenticated portals so admins,
     // students, and institute staff do not inflate public visitor counts.
-    if (/^\/(admin|super-admin|mcq-admin|student|institute|arena)(\/|$)/i.test(pathname)) return;
+    if (/^\/(admin|super-admin|mcq-admin|mcq-arena|student|institute|arena)(\/|$)/i.test(pathname)) return;
 
     const visitorId = getWebsiteVisitorId();
     // Store route paths only; never send query strings that could contain identifiers.
