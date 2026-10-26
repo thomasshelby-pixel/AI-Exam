@@ -341,3 +341,12 @@ export const mfaRecoveryRateLimiter = createRateLimiter({
   keyGenerator: (req) => `mfa_recovery:${getClientIp(req)}`,
 });
 
+// Public analytics is deliberately tolerant of normal browsing while limiting event floods.
+export const websiteVisitorRateLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 80,
+  message: 'Website analytics is temporarily rate limited.',
+  keyGenerator: (req) => `website_visitor:${getClientIp(req)}`,
+  sharedStore: false,
+});
+
