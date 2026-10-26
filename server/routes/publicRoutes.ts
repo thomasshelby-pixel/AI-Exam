@@ -46,7 +46,9 @@ async function getPublishedAndroidAsset(): Promise<PublishedAndroidAsset> {
     const release = await response.json() as {
       assets?: Array<{ name?: string; size?: number; updated_at?: string }>;
     };
-    const allowedNames = ['Exam Checker AI.apk', 'Exam-Checker-AI.apk'];
+    // GitHub's release asset API normalizes uploaded spaces to dots on some uploads.
+    // The browser-facing Content-Disposition below always uses "Exam Checker AI.apk".
+    const allowedNames = ['Exam Checker AI.apk', 'Exam.Checker.AI.apk', 'Exam-Checker-AI.apk'];
     const asset = (release.assets || []).find((entry) => allowedNames.includes(String(entry.name || '')));
     if (!asset?.name || !Number.isFinite(asset.size) || Number(asset.size) <= 0) {
       throw new Error('The official Android package is not currently available.');
