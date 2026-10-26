@@ -166,21 +166,16 @@ export const AndroidDownloadPage: React.FC = () => {
             )}
 
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              {/* Keep the download action independent of the metadata lookup. If metadata is
+                  temporarily unavailable, students can still try the real APK endpoint. */}
               <a
-                href={metadata?.available ? (metadata.downloadPath || '/api/public/download/android') : undefined}
-                aria-disabled={!metadata?.available || loading}
-                onClick={(event) => {
-                  if (!metadata?.available || loading) event.preventDefault();
-                }}
-                className={`inline-flex min-h-14 items-center justify-center gap-3 rounded-xl px-6 py-4 text-sm font-extrabold shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950 ${
-                  metadata?.available && !loading
-                    ? 'bg-blue-600 text-white shadow-blue-950/40 hover:-translate-y-0.5 hover:bg-blue-500'
-                    : 'cursor-not-allowed bg-slate-700 text-slate-400'
-                }`}
+                href={metadata?.available ? (metadata.downloadPath || '/api/public/download/android') : '/api/public/download/android'}
+                download="Exam Checker AI.apk"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-xl bg-blue-600 px-6 py-4 text-sm font-extrabold text-white shadow-lg shadow-blue-950/40 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950"
               >
                 {loading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
-                <span>{loading ? 'Checking latest version…' : 'Download Now'}</span>
-                {!loading && <ArrowRight className="h-4 w-4" />}
+                <span>Download Now</span>
+                <ArrowRight className="h-4 w-4" />
               </a>
               <a href="#installation" className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-4 text-sm font-bold text-slate-200 transition hover:bg-white/10">
                 Installation guide
