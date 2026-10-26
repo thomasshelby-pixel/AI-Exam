@@ -1196,10 +1196,60 @@ const AppRoutes: React.FC = () => {
   );
 };
 
+let fallbackWebsiteVisitorId = '';
+
+function getWebsiteVisitorId(): string {
+  const storageKey = 'ca_exam_website_visitor_id';
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved && /^[A-Za-z0-9_-]{16,80}$/.test(saved)) return saved;
+  } catch {
+    // Some private browsing modes block localStorage; keep an in-memory ID for this tab.
+    if (fallbackWebsiteVisitorId) return fallbackWebsiteVisitorId;
+  }
+
+  const randomPart = window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  const visitorId = `v_${randomPart}`;
+  try {
+    localStorage.setItem(storageKey, visitorId);
+  } catch {
+    fallbackWebsiteVisitorId = visitorId;
+  }
+  return visitorId;
+}
+
+function WebsiteVisitTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const pathname = location.pathname || '/';
+    // Marketing analytics intentionally excludes authenticated portals so admins,
+    // students, and institute staff do not inflate public visitor counts.
+    if (/^\/(admin|super-admin|mcq-admin|student|institute|arena)(\/|$)/i.test(pathname)) return;
+
+    const visitorId = getWebsiteVisitorId();
+    // Store route paths only; never send query strings that could contain identifiers.
+    void fetch('/api/public/analytics/visit', {
+      method: 'POST',
+      credentials: 'omit',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ visitorId, pagePath: pathname.slice(0, 180) }),
+    }).catch(() => {
+      // Analytics is best-effort and must never block website navigation.
+    });
+  }, [location.pathname]);
+
+  return null;
+}
+
 export default function App() {
   const baseUrl = (import.meta as any).env?.BASE_URL || '/';
   return (
     <BrowserRouter basename={baseUrl}>
+      <WebsiteVisitTracker />
       <ThemeProvider>
         <AuthProvider>
           <AppRoutes />
