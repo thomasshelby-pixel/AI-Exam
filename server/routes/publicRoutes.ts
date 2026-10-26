@@ -11,6 +11,55 @@ import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
 
 const router = Router();
 
+// Lightweight anonymous website visitor counter. It stores only a random first-party
+// visitor key, the URL path (without query strings), and the UTC date; no email or IP
+// address is stored by this analytics endpoint.
+router.post('/analytics/visit', async (req: Request, res: Response) => {
+  const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.trim() : '';
+  if (!/^[A-Za-z0-9_-]{16,80}$/.test(visitorId)) {
+    return res.status(400).json({ error: 'A valid anonymous visitor identifier is required.' });
+  }
+
+  const rawPath = typeof req.body?.pagePath === 'string' ? req.body.pagePath : '/';
+  let pagePath = '/';
+  try {
+    pagePath = new URL(rawPath, 'https://local.invalid').pathname.slice(0, 180) || '/';
+  } catch {
+    pagePath = '/';
+  }
+  if (!pagePath.startsWith('/')) pagePath = '/';
+
+  const visitDate = new Date().toISOString().slice(0, 10);
+  const id = `${visitorId}_${visitDate}`;
+  const createdAt = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO website_visitor_daily (id, visitor_id, visit_date, first_page_path, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, visitorId, visitDate, pagePath, createdAt);
+
+    const event = db.prepare(`
+      SELECT id, visitor_id, visit_date, first_page_path, created_at
+      FROM website_visitor_daily
+      WHERE id = ?
+      LIMIT 1
+    `).get(id) as Record<string, unknown> | undefined;
+
+    if (event) {
+      // Mirror the stable visitor/day record so counts can survive server restarts
+      // and be aggregated across multiple application instances.
+      await syncRecordToFirestore('website_visitor_daily', id, event);
+    }
+
+    return res.status(202).json({ tracked: true });
+  } catch (error) {
+    console.warn('[WebsiteAnalytics] Visitor event could not be recorded:', error);
+    // Analytics should never block a user from viewing the website.
+    return res.status(202).json({ tracked: false });
+  }
+});
+
 // Pricing Information
 router.get('/pricing', (req: Request, res: Response) => {
   const priceSettings = db.prepare('SELECT key, value FROM pricing_settings').all() as { key: string; value: string }[];
