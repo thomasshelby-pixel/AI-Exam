@@ -48,7 +48,7 @@ export const AdminUsageMetricsPanel: React.FC = () => {
       title: 'Android APK downloads',
       value: metricValue(metrics?.apkDownloads),
       detail: metrics?.apkDownloadsTrackingStartedAt
-        ? `Website-served downloads since ${metrics.apkDownloadsTrackingStartedAt} · refreshed ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}`
+        ? `Website-served downloads since ${metrics.apkDownloadsTrackingStartedAt}${metrics.apkCountRefreshedAt ? ` · refreshed ${new Date(metrics.apkCountRefreshedAt).toLocaleTimeString()}` : ''}`
         : 'Counting starts after the new download tracker is deployed; installs are not counted',
       icon: Download,
       color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
