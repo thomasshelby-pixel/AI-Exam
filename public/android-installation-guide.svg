@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840" role="img" aria-labelledby="title desc">
+  <title id="title">CA Exam Checker AI — Exam Checker AI Android installation guide</title>
+  <desc id="desc">Six steps: visit the website, select the Android app, tap Download Now, open the downloaded APK, allow installation if prompted, then install and open Exam Checker AI.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#071226"/><stop offset="1" stop-color="#101c36"/></linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5bb9ff"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe6a6"/><stop offset="1" stop-color="#c79135"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#020817" flood-opacity=".32"/></filter>
+  </defs>
+  <rect width="1200" height="840" rx="30" fill="url(#bg)"/>
+  <circle cx="1085" cy="55" r="175" fill="#2563eb" opacity=".08"/>
+  <circle cx="70" cy="780" r="150" fill="#06b6d4" opacity=".06"/>
+  <rect x="46" y="36" width="1108" height="86" rx="20" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".11"/>
+  <rect x="67" y="54" width="50" height="50" rx="14" fill="url(#blue)"/>
+  <path d="M78 78 Q88 73 92 80 L92 94 Q85 88 78 92Z M92 80 Q100 73 107 78 L107 92 Q99 88 92 94Z" fill="#f8fafc" stroke="#f8fafc" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M79 72 L87 79 L103 62" fill="none" stroke="url(#gold)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="134" y="73" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="800" letter-spacing=".2">CA EXAM CHECKER AI</text>
+  <text x="134" y="98" fill="#94a3b8" font-family="Inter, Arial, sans-serif" font-size="14">Official Android app download guide</text>
+  <rect x="941" y="60" width="188" height="38" rx="19" fill="#0f2f55" stroke="#387fc4" stroke-opacity=".65"/>
+  <circle cx="962" cy="79" r="5" fill="#34d399"/>
+  <text x="978" y="84" fill="#cbe7ff" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700">OFFICIAL DOWNLOAD</text>
+
+  <text x="600" y="178" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="850">Install Exam Checker AI</text>
+  <text x="600" y="213" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="17">Follow these six simple steps on your Android phone</text>
+
+  <g filter="url(#shadow)">
+    <rect x="50" y="252" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+    <rect x="425" y="252" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+    <rect x="800" y="252" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+    <rect x="50" y="491" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+    <rect x="425" y="491" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+    <rect x="800" y="491" width="350" height="215" rx="22" fill="#101f3a" stroke="#29405f"/>
+  </g>
+
+  <!-- step 1: website -->
+  <circle cx="91" cy="295" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="91" y="301" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">01</text>
+  <circle cx="225" cy="321" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <rect x="208" y="307" width="34" height="25" rx="4" fill="none" stroke="#84caff" stroke-width="2.5"/>
+  <path d="M208 314 H242 M217 304 V311 M233 304 V311" stroke="#84caff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <text x="225" y="378" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Visit the website</text>
+  <text x="225" y="408" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">Open CA Exam Checker AI</text>
+  <text x="225" y="430" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">in your phone browser.</text>
+
+  <!-- step 2: choose app -->
+  <circle cx="466" cy="295" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="466" y="301" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">02</text>
+  <circle cx="600" cy="321" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <rect x="587" y="301" width="26" height="40" rx="5" fill="none" stroke="#84caff" stroke-width="2.5"/>
+  <line x1="594" y1="307" x2="606" y2="307" stroke="#84caff" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="600" cy="334" r="2" fill="#84caff"/>
+  <text x="600" y="378" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Choose Android App</text>
+  <text x="600" y="408" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">Open the dedicated app</text>
+  <text x="600" y="430" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">download page.</text>
+
+  <!-- step 3: download now -->
+  <circle cx="841" cy="295" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="841" y="301" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">03</text>
+  <circle cx="975" cy="321" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <path d="M975 300 V324 M965 315 L975 325 L985 315 M960 332 V338 H990 V332" fill="none" stroke="#84caff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="975" y="378" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Tap Download Now</text>
+  <text x="975" y="408" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">The official APK file will</text>
+  <text x="975" y="430" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">download to your device.</text>
+
+  <!-- step 4: open apk -->
+  <circle cx="91" cy="534" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="91" y="540" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">04</text>
+  <circle cx="225" cy="560" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <path d="M214 545 H230 L240 555 V577 H214Z M230 545 V555 H240 M220 563 H234 M220 569 H234" fill="none" stroke="#84caff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+  <text x="225" y="617" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Open the APK</text>
+  <text x="225" y="647" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">Tap the download notification</text>
+  <text x="225" y="669" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">or open it from Downloads.</text>
+
+  <!-- step 5: allow if prompted -->
+  <circle cx="466" cy="534" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="466" y="540" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">05</text>
+  <circle cx="600" cy="560" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <path d="M600 541 L616 547 V559 C616 571 608 578 600 582 C592 578 584 571 584 559 V547Z" fill="none" stroke="#84caff" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M592 559 L598 565 L609 553" fill="none" stroke="#34d399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="600" y="617" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Allow if prompted</text>
+  <text x="600" y="647" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">If Android asks, allow this</text>
+  <text x="600" y="669" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">source to install apps.</text>
+
+  <!-- step 6: install -->
+  <circle cx="841" cy="534" r="21" fill="#143b68" stroke="#3884c5"/>
+  <text x="841" y="540" text-anchor="middle" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800">06</text>
+  <circle cx="975" cy="560" r="34" fill="#0c3155" stroke="#2879b8"/>
+  <path d="M959 562 L970 573 L991 549" fill="none" stroke="#34d399" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="975" y="617" text-anchor="middle" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Install and open</text>
+  <text x="975" y="647" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">Wait until installation finishes,</text>
+  <text x="975" y="669" text-anchor="middle" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="14">then tap Open.</text>
+
+  <rect x="50" y="743" width="1100" height="60" rx="16" fill="#0d2746" stroke="#2d4c70"/>
+  <circle cx="82" cy="773" r="10" fill="#34d399" fill-opacity=".18" stroke="#34d399"/>
+  <path d="M77 773 L81 777 L88 769" fill="none" stroke="#6ee7b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="105" y="768" fill="#dbeafe" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700">Website name: CA Exam Checker AI</text>
+  <text x="105" y="789" fill="#91a7c6" font-family="Inter, Arial, sans-serif" font-size="13">App name: Exam Checker AI</text>
+  <text x="1124" y="780" text-anchor="end" fill="#9fb0c9" font-family="Inter, Arial, sans-serif" font-size="13">Official installation guide</text>
+</svg>
