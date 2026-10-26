@@ -66,13 +66,29 @@ async function getAndroidApkMetrics(): Promise<{ count: number | null; url: stri
 // is deployed; no historical or synthetic visitor totals are generated.
 router.get('/', async (_req: AuthRequest, res: Response) => {
   try {
-    const activeUsers = db.prepare(`
-      SELECT COUNT(DISTINCT h.user_id) AS count
-      FROM active_user_heartbeats h
-      INNER JOIN users u ON u.id = h.user_id
-      WHERE u.status = 'ACTIVE'
-        AND datetime(h.last_activity_at) >= datetime('now', '-30 minutes')
-    `).get() as { count: number };
+    const localHeartbeats = db.prepare(`
+      SELECT user_id, last_activity_at FROM active_user_heartbeats
+    `).all() as Array<{ user_id: string; last_activity_at: string }>;
+    const durableHeartbeats = await getAllFirestoreDocs<Record<string, unknown>>('active_user_heartbeats').catch(() => []);
+    const latestActivity = new Map<string, number>();
+    const addHeartbeat = (row: Record<string, unknown>) => {
+      const userId = String(row.user_id || row.userId || '').trim();
+      const rawTimestamp = row.last_activity_at || row.lastActivityAt;
+      const timestamp = typeof rawTimestamp === 'string' ? Date.parse(rawTimestamp) : Number.NaN;
+      if (!userId || !Number.isFinite(timestamp)) return;
+      latestActivity.set(userId, Math.max(latestActivity.get(userId) || 0, timestamp));
+    };
+    localHeartbeats.forEach(addHeartbeat);
+    durableHeartbeats.forEach(addHeartbeat);
+
+    const activeUserIds = new Set(
+      (db.prepare("SELECT id FROM users WHERE status = 'ACTIVE'").all() as Array<{ id: string }>).map((row) => row.id),
+    );
+    const recentActivityCutoff = Date.now() - 30 * 60 * 1000;
+    let activeUserCount = 0;
+    for (const [userId, lastActivity] of latestActivity) {
+      if (activeUserIds.has(userId) && lastActivity >= recentActivityCutoff) activeUserCount += 1;
+    }
 
     const localRows = db.prepare(`
       SELECT id, visitor_id, visit_date, first_page_path, created_at
@@ -108,7 +124,7 @@ router.get('/', async (_req: AuthRequest, res: Response) => {
       apkDownloads: apk.count,
       apkDownloadUrl: apk.url,
       apkCountRefreshedAt: apk.refreshedAt,
-      activeUsersLast30Minutes: activeUsers.count || 0,
+      activeUsersLast30Minutes: activeUserCount,
       uniqueVisitorsLast30Days: recentVisitors.size,
       uniqueVisitorsAllTime: allVisitors.size,
       visitorDaysLast30Days: recentVisitorDays.size,
