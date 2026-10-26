@@ -21,7 +21,7 @@ import { ComingSoonModal, ComingSoonExamType } from '../../components/common/Com
 import { VerifiedStudentBadge } from '../../components/common/VerifiedBadges.js';
 import { apiRequest } from '../../api/client.js';
 import { StudentReview } from '../../types/index.js';
-import { ANDROID_APK_DOWNLOAD_URL } from '../../constants/appDownload.js';
+import { ANDROID_APP_DOWNLOAD_PAGE } from '../../constants/appDownload.js';
 
 interface LandingPageProps {
   onNavigateRegister: () => void;
@@ -144,9 +144,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           <a
             id="landing-android-download"
-            href={ANDROID_APK_DOWNLOAD_URL}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={ANDROID_APP_DOWNLOAD_PAGE}
             className="w-full sm:w-auto px-5 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold text-sm transition border border-emerald-200 dark:border-emerald-800 shadow-sm flex items-center justify-center gap-2"
             aria-label="Download Exam Checker AI Android APK"
           >
