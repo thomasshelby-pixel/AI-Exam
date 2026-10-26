@@ -254,6 +254,21 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
 
+    // Record authenticated activity so the admin dashboard can report active users
+    // from real sessions, rather than estimating from registered-account counts.
+    if (decoded.sessionId) {
+      try {
+        db.prepare(`
+          UPDATE user_sessions
+          SET last_activity_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'ACTIVE'
+        `).run(decoded.sessionId);
+      } catch (activityError) {
+        // Session activity is telemetry only; it must not interrupt authentication.
+        console.warn('[Auth] Unable to refresh session activity timestamp:', activityError);
+      }
+    }
+
     next();
   } catch {
     return res.status(401).json({ error: 'Session expired or invalid token. Please log in again.' });
