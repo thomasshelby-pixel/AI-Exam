@@ -135,7 +135,7 @@ router.get('/download/android', async (_req: Request, res: Response) => {
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
+});
 
 // Lightweight anonymous website visitor counter. It stores only a random first-party
 // visitor key, the URL path (without query strings), and the UTC date; no email or IP
