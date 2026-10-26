@@ -34,22 +34,23 @@ router.post('/analytics/visit', websiteVisitorRateLimiter, async (req: Request, 
   const createdAt = new Date().toISOString();
 
   try {
-    db.prepare(`
+    const inserted = db.prepare(`
       INSERT OR IGNORE INTO website_visitor_daily (id, visitor_id, visit_date, first_page_path, created_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(id, visitorId, visitDate, pagePath, createdAt);
 
-    const event = db.prepare(`
-      SELECT id, visitor_id, visit_date, first_page_path, created_at
-      FROM website_visitor_daily
-      WHERE id = ?
-      LIMIT 1
-    `).get(id) as Record<string, unknown> | undefined;
+    if (Number(inserted.changes) > 0) {
+      const event = db.prepare(`
+        SELECT id, visitor_id, visit_date, first_page_path, created_at
+        FROM website_visitor_daily
+        WHERE id = ?
+        LIMIT 1
+      `).get(id) as Record<string, unknown> | undefined;
 
-    if (event) {
-      // Mirror the stable visitor/day record so counts can survive server restarts
-      // and be aggregated across multiple application instances.
-      await syncRecordToFirestore('website_visitor_daily', id, event);
+      if (event) {
+        // Mirror one stable record per anonymous visitor/day, not every page refresh.
+        await syncRecordToFirestore('website_visitor_daily', id, event);
+      }
     }
 
     return res.status(202).json({ tracked: true });
