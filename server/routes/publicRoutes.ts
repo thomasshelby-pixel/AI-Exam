@@ -115,20 +115,45 @@ router.get('/download/android', async (_req: Request, res: Response) => {
       return res.status(502).json({ error: 'The Android app download failed to start. Please try again.' });
     }
 
-    const bytes = Buffer.from(await upstream.arrayBuffer());
-    // Android APKs are ZIP containers; validate the signature before returning a file.
-    if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+    const reader = upstream.body?.getReader();
+    if (!reader) {
+      return res.status(502).json({ error: 'The Android app download failed to start. Please try again.' });
+    }
+
+    // Validate the APK signature from the first few bytes, then stream the rest
+    // to the browser instead of waiting for the entire package to buffer in memory.
+    const initialChunks: Buffer[] = [];
+    let initialLength = 0;
+    while (initialLength < 4) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      initialChunks.push(chunk);
+      initialLength += chunk.length;
+    }
+
+    const header = Buffer.concat(initialChunks, initialLength);
+    if (header.length < 4 || header[0] !== 0x50 || header[1] !== 0x4b) {
+      await reader.cancel().catch(() => undefined);
       console.warn('[AndroidDownload] The published package did not have an APK/ZIP signature.');
       return res.status(502).json({ error: 'The Android package could not be verified. Please try again later.' });
     }
 
     res.status(200);
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="Exam Checker AI.apk"; filename*=UTF-8\'\'Exam%20Checker%20AI.apk');
-    res.setHeader('Content-Length', String(bytes.length));
+    res.setHeader('Content-Disposition', "attachment; filename=\"Exam Checker AI.apk\"; filename*=UTF-8''Exam%20Checker%20AI.apk");
+    res.setHeader('Content-Length', String(asset.sizeBytes));
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+
+    let transferredBytes = 0;
+    const writeChunk = async (chunk: Buffer) => {
+      transferredBytes += chunk.length;
+      if (!res.write(chunk)) {
+        await new Promise<void>((resolve) => res.once('drain', resolve));
+      }
+    };
 
     // Record the download only once the 200 response has fully finished sending.
     // The metric represents completed website-served download responses, not installs.
@@ -139,7 +164,7 @@ router.get('/download/android', async (_req: Request, res: Response) => {
         db.prepare(`
           INSERT OR IGNORE INTO android_apk_download_events (id, downloaded_at, file_size_bytes)
           VALUES (?, ?, ?)
-        `).run(eventId, downloadedAt, bytes.length);
+        `).run(eventId, downloadedAt, transferredBytes);
 
         const event = db.prepare(`
           SELECT id, downloaded_at, file_size_bytes
@@ -159,7 +184,13 @@ router.get('/download/android', async (_req: Request, res: Response) => {
       }
     });
 
-    return res.end(bytes);
+    for (const chunk of initialChunks) await writeChunk(chunk);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await writeChunk(Buffer.from(value));
+    }
+    return res.end();
   } catch (error) {
     console.error('[AndroidDownload] Download request failed:', error);
     if (!res.headersSent) return res.status(502).json({ error: 'The Android app download is temporarily unavailable. Please try again shortly.' });
