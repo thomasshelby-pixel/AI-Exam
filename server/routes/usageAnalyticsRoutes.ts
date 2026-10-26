@@ -67,13 +67,11 @@ async function getAndroidApkMetrics(): Promise<{ count: number | null; url: stri
 router.get('/', async (_req: AuthRequest, res: Response) => {
   try {
     const activeUsers = db.prepare(`
-      SELECT COUNT(DISTINCT s.user_id) AS count
-      FROM user_sessions s
-      INNER JOIN users u ON u.id = s.user_id
-      WHERE s.status = 'ACTIVE'
-        AND u.status = 'ACTIVE'
-        AND datetime(s.expires_at) > datetime('now')
-        AND datetime(s.last_activity_at) >= datetime('now', '-30 minutes')
+      SELECT COUNT(DISTINCT h.user_id) AS count
+      FROM active_user_heartbeats h
+      INNER JOIN users u ON u.id = h.user_id
+      WHERE u.status = 'ACTIVE'
+        AND datetime(h.last_activity_at) >= datetime('now', '-30 minutes')
     `).get() as { count: number };
 
     const localRows = db.prepare(`
