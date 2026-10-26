@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { db } from '../db.js';
