@@ -254,8 +254,21 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
 
-    // Record authenticated activity so the admin dashboard can report active users
-    // from real sessions, rather than estimating from registered-account counts.
+    // Track genuine authenticated activity across students, institutes, and admins.
+    // Heartbeats are throttled per account to at most one database write per minute.
+    try {
+      db.prepare(`
+        INSERT INTO active_user_heartbeats (user_id, last_activity_at)
+        VALUES (?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET last_activity_at = CURRENT_TIMESTAMP
+        WHERE datetime(active_user_heartbeats.last_activity_at) < datetime('now', '-1 minute')
+      `).run(user.id);
+    } catch (activityError) {
+      // Usage analytics is ancillary; it must never interrupt authentication.
+      console.warn('[Auth] Unable to refresh authenticated activity heartbeat:', activityError);
+    }
+
+    // Keep the per-device session activity timestamp fresh when the token carries a session.
     if (decoded.sessionId) {
       try {
         db.prepare(`
@@ -265,8 +278,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
             AND datetime(last_activity_at) < datetime('now', '-1 minute')
         `).run(decoded.sessionId);
       } catch (activityError) {
-        // Session activity is telemetry only; it must not interrupt authentication.
-        console.warn('[Auth] Unable to refresh session activity timestamp:', activityError);
+        console.warn('[Auth] Unable to refresh device session activity timestamp:', activityError);
       }
     }
 
