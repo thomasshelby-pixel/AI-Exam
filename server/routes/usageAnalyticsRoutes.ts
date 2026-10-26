@@ -18,7 +18,7 @@ type AndroidApkMetricsCache = {
 let androidApkMetricsCache: AndroidApkMetricsCache | null = null;
 
 async function getAndroidApkMetrics(): Promise<{ count: number | null; url: string; refreshedAt: string | null }> {
-  const fallbackUrl = 'https://github.com/thomasshelby-pixel/AI-Exam-App/releases/download/android-latest/Exam-Checker-AI.apk';
+  const fallbackUrl = 'https://caexamcheckerai.com/api/public/download/android';
   if (androidApkMetricsCache && androidApkMetricsCache.expiresAt > Date.now()) {
     return {
       count: androidApkMetricsCache.count,
@@ -45,9 +45,10 @@ async function getAndroidApkMetrics(): Promise<{ count: number | null; url: stri
     const release = await response.json() as {
       assets?: Array<{ name?: string; download_count?: number; browser_download_url?: string }>;
     };
-    const asset = (release.assets || []).find((item) => item.name === 'Exam-Checker-AI.apk');
+    const assets = release.assets || [];
+    const asset = assets.find((item) => item.name === 'Exam Checker AI.apk') || assets.find((item) => item.name === 'Exam-Checker-AI.apk');
     const count = typeof asset?.download_count === 'number' ? asset.download_count : null;
-    const url = asset?.browser_download_url || fallbackUrl;
+    const url = fallbackUrl;
     const refreshedAt = new Date().toISOString();
     androidApkMetricsCache = { count, url, refreshedAt, expiresAt: Date.now() + 5 * 60 * 1000 };
     return { count, url, refreshedAt };
