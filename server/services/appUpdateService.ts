@@ -174,8 +174,22 @@ export async function publishAppUpdateRelease(releaseId: string, actorId: string
   const channelId = kind === 'APK' ? 'android_current' : 'ota_current';
   const previous = await getPublishedAppRelease(kind);
 
-  if (kind === 'APK' && previous && Number(release.versionCode) <= Number(previous.versionCode)) {
-    throw new Error('Android version code must be higher than the currently published version.');
+  if (kind === 'APK') {
+    // Before the first Admin-managed release there may still be an older APK
+    // installed on student devices. The legacy release used versionCode 1 by
+    // default; enforce a configurable baseline so the first published update
+    // cannot accidentally have the same/lower Android version code.
+    const configuredBaseline = Number(process.env.LEGACY_ANDROID_VERSION_CODE || 1);
+    const safeBaseline = Number.isSafeInteger(configuredBaseline) && configuredBaseline >= 1
+      ? configuredBaseline
+      : 1;
+    const requiredBaseline = Math.max(
+      safeBaseline,
+      previous ? Number(previous.versionCode) || 0 : 0,
+    );
+    if (!Number.isSafeInteger(Number(release.versionCode)) || Number(release.versionCode) <= requiredBaseline) {
+      throw new Error(`Android version code must be higher than the installed/published baseline (${requiredBaseline}).`);
+    }
   }
   if (kind === 'OTA' && previous && compareSemver(release.versionName, previous.versionName) <= 0) {
     throw new Error('OTA bundle version must be newer than the currently published bundle. For a rollback, publish the previous contents under a higher version.');
