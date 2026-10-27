@@ -1,4 +1,5 @@
 import { Router, Response, NextFunction } from 'express';
+import multer from 'multer';
 import crypto from 'node:crypto';
 import { getServerPort } from '../config/serverPort.js';
 import { db, checkDatabaseIntegrity, repairDatabaseFile, checkpointWal, loadEvaluationRunPackage } from '../db.js';
@@ -98,8 +99,91 @@ import {
   previewDeletedAccountReconciliation,
   executeDeletedAccountReconciliation,
 } from '../services/deletedAccountReconciliationService.js';
+import {
+  listAppUpdateReleases,
+  uploadAppUpdateRelease,
+  publishAppUpdateRelease,
+  type AppReleaseKind,
+} from '../services/appUpdateService.js';
 
 const router = Router();
+
+const appUpdateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024, files: 1 },
+});
+
+function receiveAppUpdateFile(req: any, res: Response, next: NextFunction) {
+  appUpdateUpload.single('file')(req, res, (error: any) => {
+    if (error) {
+      const tooLarge = error?.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        success: false,
+        error: tooLarge ? 'The release file exceeds the 100 MB upload limit.' : (error?.message || 'Could not receive the release file.'),
+      });
+    }
+    next();
+  });
+}
+
+// App release management: uploads are drafts until a Super Admin explicitly publishes.
+router.get('/app-updates', async (_req: AuthRequest, res: Response) => {
+  try {
+    const releases = await listAppUpdateReleases();
+    return res.json({ success: true, ...releases });
+  } catch (error: any) {
+    console.error('[AdminRoutes] App update listing failed:', error);
+    return res.status(503).json({ success: false, error: error?.message || 'Could not load app releases.' });
+  }
+});
+
+router.post('/app-updates/upload', receiveAppUpdateFile, async (req: AuthRequest, res: Response) => {
+  try {
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file?.buffer) return res.status(400).json({ success: false, error: 'Choose an APK or OTA ZIP file first.' });
+    const kind = String(req.body?.kind || '').trim().toUpperCase() as AppReleaseKind;
+    if (kind !== 'APK' && kind !== 'OTA') {
+      return res.status(400).json({ success: false, error: 'Release type must be APK or OTA.' });
+    }
+    const versionName = String(req.body?.versionName || '').trim();
+    const versionCodeRaw = String(req.body?.versionCode || '').trim();
+    const result = await uploadAppUpdateRelease({
+      kind,
+      versionName,
+      ...(kind === 'APK' ? { versionCode: Number(versionCodeRaw) } : {}),
+      mandatory: String(req.body?.mandatory || '').toLowerCase() === 'true',
+      releaseNotes: String(req.body?.releaseNotes || ''),
+      otaChecksum: String(req.body?.checksum || ''),
+      buffer: file.buffer,
+      uploadedBy: String(req.user?.id || 'SUPER_ADMIN'),
+    });
+    return res.status(201).json({ success: true, release: result });
+  } catch (error: any) {
+    const message = String(error?.message || 'Could not upload the app release.');
+    const status = /already exists/i.test(message) ? 409
+      : /could not be verified|could not be saved|read-back verification|Cloud Storage/i.test(message) ? 503
+        : 400;
+    console.error('[AdminRoutes] App release upload failed:', error);
+    return res.status(status).json({ success: false, error: message });
+  }
+});
+
+router.post('/app-updates/:releaseId/publish', async (req: AuthRequest, res: Response) => {
+  try {
+    const releaseId = String(req.params.releaseId || '').trim();
+    if (!releaseId || !/^(APK|OTA)-[A-Za-z0-9.+-]+$/.test(releaseId)) {
+      return res.status(400).json({ success: false, error: 'Invalid release identifier.' });
+    }
+    const release = await publishAppUpdateRelease(releaseId, String(req.user?.id || 'SUPER_ADMIN'));
+    return res.json({ success: true, release });
+  } catch (error: any) {
+    const message = String(error?.message || 'Could not publish the app release.');
+    const status = /Only a validated draft|must use|must be newer|version code must/i.test(message) ? 400 : 503;
+    console.error('[AdminRoutes] App release publication failed:', error);
+    return res.status(status).json({ success: false, error: message });
+  }
+});
+
 
 // Preview/execute Firestore cleanup for accounts that already have durable
 // users tombstones. The execute endpoint is explicitly confirmation-gated.
