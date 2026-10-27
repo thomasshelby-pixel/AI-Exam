@@ -887,23 +887,17 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     console.error(`[AsyncEval] Evaluation failed for ${evaluationId}:`, error);
 
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
-
-    // Refund credit/free/promo evaluation atomically if it was already deducted on acceptance
-    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
-      try {
-        refundEvaluationCreditAtomic({
-          userId: studentId,
-          evaluationId,
-          entitlementSource,
-        });
-        await syncStudentCreditsToFirestore(studentId);
-      } catch (refundErr) {
-        console.warn(`[AsyncEval] Refund error on failure for ${evaluationId}:`, refundErr);
-      }
+    const currentStatus = getEvaluationStatus(evaluationId);
+    if (isTerminalEvaluationStatus(currentStatus)) {
+      // A failed/stale worker must never undo a rejection, completed result or review
+      // decision already stored by another request.
+      console.info(`[AsyncEval] Preserving terminal status ${currentStatus} for ${evaluationId}; ignoring stale worker failure.`);
+      return;
     }
 
-    // Mark as failed in DB, NO CREDITS CONSUMED
-    db.prepare(`
+    // Claim the failure transition before refunding. If another request rejects or
+    // completes the evaluation concurrently, this compare-and-set prevents mutation.
+    const failureUpdate = db.prepare(`
       UPDATE evaluations
       SET status = 'FAILED',
           progress_stage = 'FAILED',
@@ -913,7 +907,39 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(errMsg.slice(0, 500), errMsg.slice(0, 500), evaluationId);
+
+    if (failureUpdate.changes !== 1) {
+      const latestStatus = getEvaluationStatus(evaluationId);
+      if (isTerminalEvaluationStatus(latestStatus)) {
+        console.info(`[AsyncEval] Preserving terminal status ${latestStatus} for ${evaluationId} after failure-claim race.`);
+        return;
+      }
+      console.error(`[AsyncEval] Could not claim failure status for ${evaluationId}; status is now ${latestStatus || 'UNKNOWN'}.`);
+      return;
+    }
+
+    // Refund only after successfully recording this job's FAILED transition.
+    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+      try {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId,
+          entitlementSource,
+        });
+        await syncStudentCreditsToFirestore(studentId);
+      } catch (refundErr) {
+        console.warn(`[AsyncEval] Refund error for ${evaluationId}:`, refundErr);
+      }
+    }
+
+    try {
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
+    } catch (syncErr) {
+      console.warn(`[AsyncEval] Could not sync failed evaluation ${evaluationId}:`, syncErr);
+    }
   } finally {
     activeJobs.delete(evaluationId);
   }
