@@ -5,6 +5,7 @@ import { setFirestoreDoc } from './services/firestoreDbService.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
+import { getLegalConsentStatus } from './services/legalConsentService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -254,6 +255,27 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       sessionId: decoded.sessionId,
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
+
+    // Existing student sessions must accept the current published Terms and Privacy
+    // Policy before using protected services. The consent screen endpoints are the
+    // only student API exceptions; this is enforced server-side, not only in React.
+    const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
+    const allowedBeforeLegalConsent = [
+      '/api/auth/legal-consent/status',
+      '/api/auth/legal-consent/accept',
+      '/api/auth/me',
+    ].some((suffix) => requestPath.endsWith(suffix));
+    if (String(effectiveRole || '').toUpperCase() === 'STUDENT' && !allowedBeforeLegalConsent) {
+      const consent = getLegalConsentStatus(user.id, String(effectiveRole));
+      if (consent.needsAcceptance) {
+        return res.status(428).json({
+          success: false,
+          code: 'LEGAL_CONSENT_REQUIRED',
+          error: 'Please review and accept the current Terms & Conditions and Privacy Policy to continue.',
+          legalConsent: consent,
+        });
+      }
+    }
 
     // Track genuine authenticated activity across students, institutes, and admins.
     // Heartbeats are throttled per account to at most one database write per minute.
