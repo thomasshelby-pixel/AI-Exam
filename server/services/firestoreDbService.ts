@@ -470,7 +470,8 @@ export async function getAllFirestoreDocs<T = any>(
 
 export async function queryFirestoreDocs<T = any>(
   collectionName: string,
-  filters: Array<{ field: string; op: '==' | '<=' | '>=' | '<' | '>'; value: any }>
+  filters: Array<{ field: string; op: '==' | '<=' | '>=' | '<' | '>'; value: any }>,
+  options: { failOnError?: boolean } = {},
 ): Promise<T[]> {
   getFirestoreDb();
 
@@ -487,16 +488,18 @@ export async function queryFirestoreDocs<T = any>(
         `queryFirestoreDocs[Admin](${collectionName})`
       );
       if (!snap) {
+        if (options.failOnError) throw new Error(`Firestore query timed out for ${collectionName}.`);
         activeDriverMode = 'CLIENT_SDK';
-        return queryFirestoreDocs<T>(collectionName, filters);
+        return queryFirestoreDocs<T>(collectionName, filters, options);
       }
       return snap.docs.map((d: any) => ({ id: d.id, ...d.data() })) as T[];
     } catch (err: any) {
       if (err?.code === 7 || err?.message?.includes('PERMISSION_DENIED')) {
         activeDriverMode = 'CLIENT_SDK';
-        return queryFirestoreDocs<T>(collectionName, filters);
+        return queryFirestoreDocs<T>(collectionName, filters, options);
       }
       console.warn(`[Firestore] Query error on ${collectionName}:`, err?.message || err);
+      if (options.failOnError) throw err;
       return [];
     }
   }
@@ -509,10 +512,12 @@ export async function queryFirestoreDocs<T = any>(
       return snap.docs.map((d: any) => ({ id: d.id, ...d.data() })) as T[];
     } catch (err) {
       console.warn(`[Firestore] Query error on ${collectionName}:`, err);
+      if (options.failOnError) throw err;
       return [];
     }
   }
 
+  if (options.failOnError) throw new Error(`Firestore is unavailable while querying ${collectionName}.`);
   return [];
 }
 
