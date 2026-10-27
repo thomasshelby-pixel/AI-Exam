@@ -240,6 +240,7 @@ export const AdminNotificationCentre: React.FC = () => {
     }
 
     let cancelled = false;
+    setStudentMatches([]);
     const timer = window.setTimeout(async () => {
       setIsLoadingStudents(true);
       try {
@@ -1158,19 +1159,31 @@ export const AdminNotificationCentre: React.FC = () => {
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Confirm Broadcast Dispatch</h3>
-                <p className="text-xs text-slate-500">Please review before triggering platform dispatch</p>
+                <h3 className="text-base font-bold text-slate-900">
+                  {targetAudience === 'SPECIFIC_STUDENTS' ? 'Confirm Individual Notification' : 'Confirm Broadcast Dispatch'}
+                </h3>
+                <p className="text-xs text-slate-500">Please review the recipients and channels before sending</p>
               </div>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2 text-slate-700">
               <div className="flex justify-between">
                 <span className="text-slate-500">Audience:</span>
-                <span className="font-bold text-slate-900">{targetAudience}</span>
+                <span className="font-bold text-slate-900">{targetAudience === 'SPECIFIC_STUDENTS' ? 'Specific Students' : targetAudience}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Estimated Reach:</span>
+                <span className="text-slate-500">{targetAudience === 'SPECIFIC_STUDENTS' ? 'Selected students:' : 'Estimated Reach:'}</span>
                 <span className="font-bold text-blue-600">{estimate?.total || 0} Recipients</span>
+              </div>
+              {targetAudience === 'SPECIFIC_STUDENTS' && selectedStudents.length > 0 && (
+                <div className="rounded-lg border border-blue-100 bg-white p-2">
+                  <p className="mb-1 font-bold text-slate-700">Recipients</p>
+                  <p className="text-slate-600">
+                    {selectedStudents.slice(0, 5).map((student) => student.name).join(', ')}
+                    {selectedStudents.length > 5 ? ` and ${selectedStudents.length - 5} more` : ''}
+                  </p>
+                </div>
+              )}
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Channels:</span>
