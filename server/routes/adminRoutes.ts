@@ -93,6 +93,8 @@ import {
   getCampaignDetails,
 } from '../services/notificationService.js';
 
+import { getStudentSignupPlatformCounts } from '../services/signupPlatformService.js';
+
 const router = Router();
 
 async function persistUserStatusAndSuspensions(userId: string): Promise<boolean> {
@@ -184,6 +186,7 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
         totalEvaluations: totalEvaluations.count,
         totalRevenueINR: Math.round((totalRevenuePaise.sum || 0) / 100),
         permanentFreeAccounts: permanentFreeCount.count,
+        signupPlatformCounts: getStudentSignupPlatformCounts(),
       },
       recentLogs,
       recentEvaluations,
