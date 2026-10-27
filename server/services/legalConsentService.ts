@@ -134,6 +134,7 @@ export function getLegalConsentStatus(userId: string, role: string = 'STUDENT'):
 
 /** Persist the affirmative choices as server-side, versioned audit records. */
 export function recordCurrentLegalAcceptances(input: LegalConsentAcceptanceInput): Array<Record<string, any>> {
+  ensureCurrentLegalDocuments();
   if (!input.userId || input.termsAccepted !== true || input.privacyAccepted !== true) {
     throw new Error('Both the Terms & Conditions and Privacy Policy must be explicitly accepted.');
   }
