@@ -525,8 +525,12 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
           ) {
-            refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
-            await syncStudentCreditsToFirestore(studentId);
+            try {
+              refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+              await syncStudentCreditsToFirestore(studentId);
+            } catch (refundErr) {
+              console.warn(`[AsyncEval] MTP integrity failure refund error for ${evaluationId}:`, refundErr);
+            }
           }
           const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
           if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
