@@ -644,7 +644,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
 
         // Check for existing local password hash to prevent sparse Firestore doc from overwriting valid credentials
         const existingLocalUser = db.prepare(`
-          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, updated_at
+          SELECT id, password_hash, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, signup_platform, updated_at
           FROM users WHERE id = ? OR lower(email) = ?
         `).get(targetId, normEmail) as {
           id: string;
@@ -653,10 +653,18 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           mfa_enrolled_at: string | null;
           totp_secret: string | null;
           mfa_reset_required: number | null;
+          signup_platform: string | null;
           updated_at: string | null;
         } | undefined;
         const pHash = u.password_hash || u.passwordHash || u.password || existingLocalUser?.password_hash || 'HASHED_PASS';
         const userClassification = u.account_classification || 'NORMAL';
+        const cloudSignupPlatform = String(u.signup_platform || '').toUpperCase();
+        const localSignupPlatform = String(existingLocalUser?.signup_platform || '').toUpperCase();
+        const uSignupPlatform = ['APP', 'WEB'].includes(cloudSignupPlatform)
+          ? cloudSignupPlatform
+          : ['APP', 'WEB'].includes(localSignupPlatform)
+            ? localSignupPlatform
+            : 'UNKNOWN';
 
         // Check for any colliding user in SQLite by email with a different ID
         const collidingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(normEmail, targetId) as { id: string } | undefined;
@@ -679,8 +687,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         const uEmailVerifiedAt = u.email_verified_at || u.created_at || null;
 
         db.prepare(`
-          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, signup_platform, email_verified, email_verified_at, mfa_enabled, mfa_enrolled_at, totp_secret, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?, COALESCE(?, 0), COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
           ON CONFLICT(id) DO UPDATE SET
             email = excluded.email,
             password_hash = CASE
@@ -695,6 +703,11 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             role = excluded.role,
             status = excluded.status,
             account_classification = COALESCE(excluded.account_classification, users.account_classification, 'NORMAL'),
+            signup_platform = CASE
+              WHEN excluded.signup_platform IN ('APP', 'WEB') THEN excluded.signup_platform
+              WHEN users.signup_platform IN ('APP', 'WEB') THEN users.signup_platform
+              ELSE 'UNKNOWN'
+            END,
             email_verified = CASE WHEN users.email_verified = 1 THEN 1 ELSE excluded.email_verified END,
             email_verified_at = COALESCE(users.email_verified_at, excluded.email_verified_at),
             mfa_enabled = CASE
@@ -726,7 +739,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             updated_at = CURRENT_TIMESTAMP
         `).run(
           targetId, normEmail, pHash, u.full_name || '', u.phone || '',
-          targetRole, targetStatus, userClassification,
+          targetRole, targetStatus, userClassification, uSignupPlatform,
           uEmailVerified, uEmailVerifiedAt,
           uMfaEnabled, uMfaEnrolledAt, uTotpSecret, uMfaResetRequired,
           u.created_at || null
