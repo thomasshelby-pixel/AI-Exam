@@ -616,9 +616,14 @@ function requiresDurableAccountPersistence(): boolean {
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel, termsAccepted, privacyAccepted } = req.body;
+    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel, termsAccepted, privacyAccepted, termsVersion, privacyVersion } = req.body;
 
-    if (termsAccepted !== true || privacyAccepted !== true) {
+    if (
+      termsAccepted !== true ||
+      privacyAccepted !== true ||
+      termsVersion !== CURRENT_TERMS_VERSION ||
+      privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
       return res.status(400).json({
         error: 'Before creating an account, please accept the Privacy Policy and all Terms & Conditions using their separate checkboxes.',
         code: 'LEGAL_CONSENT_REQUIRED',
@@ -1358,10 +1363,16 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
       `).get(normalizedEmail) as typeof user;
 
-      if (!user && (termsAccepted !== true || privacyAccepted !== true)) {
+      if (
+        !user &&
+        (termsAccepted !== true ||
+          privacyAccepted !== true ||
+          req.body?.termsVersion !== CURRENT_TERMS_VERSION ||
+          req.body?.privacyVersion !== CURRENT_PRIVACY_VERSION)
+      ) {
         return res.status(400).json({
           error: 'Before creating an account with Google or Apple, please accept the current Privacy Policy and all Terms & Conditions using their separate checkboxes.',
-          code: 'LEGAL_CONSENT_REQUIRED',
+          code: termsAccepted === true && privacyAccepted === true ? 'LEGAL_VERSION_CHANGED' : 'LEGAL_CONSENT_REQUIRED',
         });
       }
 
@@ -1704,7 +1715,13 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     // A registration form may log in an already existing social account. Honor
     // its two explicit checkbox choices if supplied; ordinary sign-in never
     // silently accepts on the user's behalf.
-    if (user.role === 'STUDENT' && termsAccepted === true && privacyAccepted === true) {
+    if (
+      user.role === 'STUDENT' &&
+      termsAccepted === true &&
+      privacyAccepted === true &&
+      req.body?.termsVersion === CURRENT_TERMS_VERSION &&
+      req.body?.privacyVersion === CURRENT_PRIVACY_VERSION
+    ) {
       await persistCurrentLegalAcceptances(user.id, req);
     }
 
