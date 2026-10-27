@@ -108,8 +108,8 @@ export default function AppUpdatesSection() {
       setError('Use a semantic version such as 1.2.3.');
       return;
     }
-    if (kind === 'APK' && (!/^\d+$/.test(versionCode) || Number(versionCode) < 1)) {
-      setError('Android version code must be a positive integer.');
+    if (kind === 'APK' && (!/^\d+$/.test(versionCode) || Number(versionCode) < 2)) {
+      setError('Android version code must be at least 2 and higher than the currently installed release.');
       return;
     }
     if (kind === 'OTA' && !/^[a-f0-9]{64}$/i.test(checksum.trim())) {
@@ -274,6 +274,12 @@ export default function AppUpdatesSection() {
               </label>
             )}
           </div>
+
+          {kind === 'APK' && (
+            <p className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5 text-[11px] leading-5 text-blue-900">
+              The Android build workflow prints the exact values in its log as <code>Android release version: 1.0.N (versionCode N)</code>. Use that version name and version code for the APK you upload. The APK must keep package ID <code>com.caexamchecker.aiapp</code> and the same signing certificate as the installed app.
+            </p>
+          )}
 
           <label className="block text-xs font-bold text-slate-700">
             Release notes
