@@ -93,7 +93,7 @@ import {
   getCampaignDetails,
 } from '../services/notificationService.js';
 
-import { getStudentSignupPlatformCounts } from '../services/signupPlatformService.js';
+import { countStudentSignupPlatformRecords } from '../services/signupPlatformService.js';
 
 const router = Router();
 
@@ -148,10 +148,35 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
 router.use(requireRole('SUPER_ADMIN'));
 
 // 1. Admin Dashboard Overview
-router.get('/dashboard', (req: AuthRequest, res: Response) => {
+router.get('/dashboard', async (req: AuthRequest, res: Response) => {
   try {
-    const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-    const totalStudents = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'STUDENT'").get() as { count: number };
+    // App Hosting can route successive requests to different instances. SQLite is
+    // an instance-local cache, so live account totals and signup-source analytics
+    // must come from the shared Firestore account registry whenever it is available.
+    let accountRecords: Array<Record<string, any>>;
+    let accountMetricsSource: 'FIRESTORE' | 'SQLITE_CACHE_FALLBACK' = 'FIRESTORE';
+    try {
+      accountRecords = await getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true });
+      const localUsersCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
+      if (accountRecords.length === 0 && localUsersCount > 0) {
+        throw new Error('Firestore returned no users while the local account cache is non-empty.');
+      }
+    } catch (cloudAccountReadError) {
+      // Keep the admin dashboard available during a temporary Firestore outage,
+      // but expose the fallback source so stale per-instance counts are not hidden.
+      console.error('[AdminRoutes] Authoritative Firestore account metrics unavailable; using local cache fallback:', cloudAccountReadError);
+      accountMetricsSource = 'SQLITE_CACHE_FALLBACK';
+      accountRecords = db.prepare(
+        'SELECT id, email, role, account_classification, signup_platform FROM users'
+      ).all() as Array<Record<string, any>>;
+    }
+
+    const totalUsersCount = accountRecords.length;
+    const totalStudentsCount = accountRecords.filter(
+      (record) => String(record.role || '').trim().toUpperCase() === 'STUDENT'
+    ).length;
+    const signupPlatformCounts = countStudentSignupPlatformRecords(accountRecords);
+
     const totalInstitutes = db.prepare('SELECT COUNT(*) as count FROM institutes').get() as { count: number };
     const totalEvaluations = db.prepare("SELECT COUNT(*) as count FROM evaluations WHERE status = 'COMPLETED'").get() as { count: number };
     const totalRevenuePaise = db.prepare("SELECT SUM(amount_paise) as sum FROM payment_transactions WHERE status = 'SUCCESS'").get() as { sum: number | null };
@@ -180,13 +205,14 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
 
     return res.json({
       metrics: {
-        totalUsers: totalUsers.count,
-        totalStudents: totalStudents.count,
+        totalUsers: totalUsersCount,
+        totalStudents: totalStudentsCount,
+        accountMetricsSource,
         totalInstitutes: totalInstitutes.count,
         totalEvaluations: totalEvaluations.count,
         totalRevenueINR: Math.round((totalRevenuePaise.sum || 0) / 100),
         permanentFreeAccounts: permanentFreeCount.count,
-        signupPlatformCounts: getStudentSignupPlatformCounts(),
+        signupPlatformCounts,
       },
       recentLogs,
       recentEvaluations,
