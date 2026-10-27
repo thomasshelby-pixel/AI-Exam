@@ -1875,6 +1875,42 @@ export const AdminPortal: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Student registration source: Android app vs website */}
+                  <section className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                      <h3 className="text-sm font-black text-slate-900">Student Sign-ups by Platform</h3>
+                      <span className="text-[11px] text-slate-500">
+                        All-time · {dashboardData.metrics?.signupPlatformCounts?.total || 0} student accounts tracked
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs">
+                        <p className="text-xs text-slate-500 font-semibold">Android App</p>
+                        <p className="text-2xl font-black text-emerald-700 mt-1">
+                          {dashboardData.metrics?.signupPlatformCounts?.app || 0}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">Student accounts created in the app</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border border-blue-200 shadow-xs">
+                        <p className="text-xs text-slate-500 font-semibold">Website</p>
+                        <p className="text-2xl font-black text-blue-700 mt-1">
+                          {dashboardData.metrics?.signupPlatformCounts?.web || 0}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">Student accounts created on the website</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                        <p className="text-xs text-slate-500 font-semibold">Source Not Recorded</p>
+                        <p className="text-2xl font-black text-slate-700 mt-1">
+                          {dashboardData.metrics?.signupPlatformCounts?.unknown || 0}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">Older accounts or source not reliably identified</p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-slate-500">
+                      Counts include student accounts only and exclude test accounts. Existing accounts are not guessed into App or Website; new registrations will be attributed going forward.
+                    </p>
+                  </section>
+
                   {/* Recent Activity & Recent Evaluations */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                     <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-xs">
