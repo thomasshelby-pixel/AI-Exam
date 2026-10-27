@@ -1655,6 +1655,21 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       parseCookieValue(req.headers.cookie, 'ca_trust_token'),
     ].filter(Boolean) as string[];
 
+    // Google signup may continue through the app's separate MFA challenge. Record the
+    // consent submitted on the signup screen before returning that challenge, so a
+    // verified first-time signup does not have to repeat the same acceptance afterward.
+    if (
+      isSocialLogin &&
+      createdViaSocialSignup &&
+      user.role === 'STUDENT' &&
+      termsAccepted === true &&
+      privacyAccepted === true &&
+      req.body?.termsVersion === CURRENT_TERMS_VERSION &&
+      req.body?.privacyVersion === CURRENT_PRIVACY_VERSION
+    ) {
+      await persistCurrentLegalAcceptances(user.id, req);
+    }
+
     // Role-Based MFA Evaluation with Trusted Device Checking:
     // Check if MFA challenge is required or if mandatory enrollment is needed
     const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken, candidateTokens });
@@ -1711,19 +1726,6 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     const effectiveRole: UserRole = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
       ? 'MCQ_ADMIN'
       : user.role;
-
-    // A registration form may log in an already existing social account. Honor
-    // its two explicit checkbox choices if supplied; ordinary sign-in never
-    // silently accepts on the user's behalf.
-    if (
-      user.role === 'STUDENT' &&
-      termsAccepted === true &&
-      privacyAccepted === true &&
-      req.body?.termsVersion === CURRENT_TERMS_VERSION &&
-      req.body?.privacyVersion === CURRENT_PRIVACY_VERSION
-    ) {
-      await persistCurrentLegalAcceptances(user.id, req);
-    }
 
     const token = generateToken({
       id: user.id,
