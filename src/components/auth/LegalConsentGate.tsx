@@ -96,7 +96,7 @@ export const LegalConsentGate: React.FC = () => {
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Policy update · Version 2.0</p>
             <h2 id="legal-consent-title" className="mt-1 text-xl font-black text-slate-900 dark:text-white sm:text-2xl">Please review and accept our updated policies</h2>
             <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-              We have clarified the rules for fair use of both free and paid facilities, how relevant security information may be used to investigate suspected abuse, and the review process before a final suspension or termination.
+              We have clarified the rules for fair use of both free and paid facilities, how relevant security information may be used to investigate suspected abuse, and the review process before a final suspension, termination or account closure/deletion.
             </p>
           </div>
         </div>
@@ -128,7 +128,7 @@ export const LegalConsentGate: React.FC = () => {
             </div>
 
             <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-              <strong>Important fair-use rule:</strong> Misuse of any free, promotional, institute-funded or paid facility—including creating multiple accounts to bypass free-evaluation limits—may result in temporary restrictions during review and, if substantiated, account suspension or termination after notice and a reasonable opportunity to respond. Urgent temporary restrictions may be applied where reasonably necessary to protect security or prevent harm. Unused paid entitlements remain subject to the applicable purchase terms and law; this update does not automatically forfeit them.
+              <strong>Important fair-use rule:</strong> Misuse of any free, promotional, institute-funded or paid facility—including creating multiple accounts to bypass free-evaluation limits—may result in temporary restrictions during review and, if substantiated, account suspension, termination or account closure/deletion after notice and a reasonable opportunity to respond. Urgent temporary restrictions may be applied where reasonably necessary to protect security or prevent harm. Unused paid entitlements remain subject to the applicable purchase terms and law; this update does not automatically forfeit them.
             </div>
 
             <div className="space-y-4">
@@ -154,7 +154,7 @@ export const LegalConsentGate: React.FC = () => {
                   required
                 />
                 <span>
-                  <strong>I agree with all the Terms &amp; Conditions.</strong> I have read the updated <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 underline dark:text-blue-300">Terms &amp; Conditions</a>, including the rules against abusing any free or paid facility and the notice and opportunity-to-respond process before a final suspension or termination, where applicable.
+                  <strong>I agree with all the Terms &amp; Conditions.</strong> I have read the updated <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 underline dark:text-blue-300">Terms &amp; Conditions</a>, including the rules against abusing any free or paid facility and the notice and opportunity-to-respond process before a final suspension, termination or account closure/deletion, where applicable.
                 </span>
               </label>
             </div>
