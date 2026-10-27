@@ -62,6 +62,18 @@ export async function syncStudentReadableIdentityToFirestore(userId: string): Pr
       return false;
     }
 
+    const existingAlias = await getFirestoreDoc<Record<string, any>>(
+      'students_by_code',
+      studentCode,
+      { failOnError: true },
+    );
+    if (existingAlias?.user_id && String(existingAlias.user_id) !== user.id) {
+      console.error(
+        `[FirestoreSync] Student Code collision blocked: ${studentCode} is already linked to a different user.`
+      );
+      return false;
+    }
+
     const aliasSaved = await setFirestoreDoc('students_by_code', studentCode, {
       id: studentCode,
       display_id: studentCode,
