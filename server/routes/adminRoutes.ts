@@ -139,7 +139,7 @@ async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean>
       )
   `).run(
     normalizedReason || 'This evaluation was rejected by validation checks. Please contact support for a review.',
-    normalized.progress_message || 'Evaluation rejected by validation checks',
+    String(normalized.progress_message || 'Evaluation rejected by validation checks'),
     String(evaluation.id)
   );
 
