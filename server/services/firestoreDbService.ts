@@ -191,13 +191,12 @@ export async function setFirestoreDoc(
   if (activeDriverMode === 'ADMIN_SDK' && adminDbInstance) {
     try {
       const docRef = adminDbInstance.collection(collectionName).doc(String(docId));
-      await withTimeout(
+      return await withTimeout(
         docRef.set(cleanData, { merge: true }).then(() => true),
         12000,
         false,
         `setFirestoreDoc[Admin](${collectionName}/${docId})`
       );
-      return true;
     } catch (err: any) {
       // If Admin SDK experienced ADC permission denial in local dev, switch driver to Client SDK
       if (err?.code === 7 || err?.message?.includes('PERMISSION_DENIED')) {
