@@ -276,6 +276,12 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                           )}
                         </div>
                         <span className="text-[10px] text-slate-400 dark:text-slate-500">CA {ev.level}</span>
+                        {ev.status === 'REJECTED' && (
+                          <div className="mt-2 max-w-xl rounded-md border border-rose-200 bg-rose-50 p-2 text-[11px] leading-relaxed text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+                            <span className="font-bold">Rejection reason: </span>
+                            {ev.rejection_reason?.trim() || 'The rejection reason was not recorded. Please contact support for a review.'}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         {isInstitute ? (
@@ -316,20 +322,26 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                         {formatDateIST(ev.created_at)}
                       </td>
                       <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                        {ev.total_marks} / {ev.maximum_marks}
+                        {ev.status === 'COMPLETED' ? `${ev.total_marks} / ${ev.maximum_marks}` : '—'}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">{ev.percentage}%</td>
+                      <td className="py-3 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
+                        {ev.status === 'COMPLETED' ? `${ev.percentage}%` : '—'}
+                      </td>
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            ev.percentage >= 60
+                            ev.status === 'REJECTED' || ev.status === 'FAILED'
+                              ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                              : ev.status !== 'COMPLETED'
+                              ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                              : ev.percentage >= 60
                               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                               : ev.percentage >= 40
                               ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                              : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                           }`}
                         >
-                          {ev.grade || 'Evaluated'}
+                          {ev.status === 'COMPLETED' ? (ev.grade || 'Evaluated') : ev.status.replace(/_/g, ' ')}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
