@@ -733,7 +733,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <span>
                     I agree with all the{' '}
                     <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 dark:text-blue-400 underline">Terms &amp; Conditions</a>,
-                    including the rules against abusing any free or paid facility and the possibility of account suspension or termination after notice and a reasonable opportunity to respond, as applicable.
+                    including the rules against abusing any free or paid facility and possible account suspension, termination or closure/deletion after notice and a reasonable opportunity to respond, as applicable.
                   </span>
                 </label>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400">Current policy version: 2.0 · Effective 27 October 2026</p>
