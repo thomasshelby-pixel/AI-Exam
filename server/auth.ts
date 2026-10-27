@@ -5,6 +5,7 @@ import { setFirestoreDoc } from './services/firestoreDbService.js';
 import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
+import { getRequiredLegalPolicyVersions, hasRequiredLegalPolicyConsent } from './services/requiredLegalConsentService.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
 
@@ -254,6 +255,34 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       sessionId: decoded.sessionId,
       mfaVerified: !!decoded.mfaVerified || deviceIsTrusted,
     };
+
+    // Enforce versioned legal acceptance on all authenticated student APIs. Only
+    // allow the consent/status, public legal, account logout/deletion, and current
+    // profile routes needed to review the documents and make a decision.
+    if (effectiveRole === 'STUDENT' && !hasRequiredLegalPolicyConsent(user.id)) {
+      const routePath = String(req.originalUrl || req.path || '').split('?')[0];
+      const consentExemptPaths = new Set([
+        '/api/auth/me',
+        '/api/auth/legal-consent-status',
+        '/api/auth/accept-required-legal-consent',
+        '/api/auth/logout',
+        '/api/auth/revocation-request',
+        '/api/legal/acknowledge',
+      ]);
+      const canReviewOrExit = consentExemptPaths.has(routePath) ||
+        routePath.startsWith('/api/auth/delete-account') ||
+        routePath.startsWith('/api/auth/account-deletion') ||
+        routePath.startsWith('/api/legal/published');
+
+      if (!canReviewOrExit) {
+        return res.status(428).json({
+          success: false,
+          code: 'LEGAL_CONSENT_REQUIRED',
+          error: 'Please review and accept the current Privacy Policy and Terms & Conditions before continuing.',
+          requiredPolicyVersions: getRequiredLegalPolicyVersions(),
+        });
+      }
+    }
 
     // Track genuine authenticated activity across students, institutes, and admins.
     // Heartbeats are throttled per account to at most one database write per minute.
