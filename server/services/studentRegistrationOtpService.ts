@@ -14,6 +14,8 @@ export interface PendingStudentRegistration {
   deviceId?: string | null;
   clientIp?: string | null;
   signupPlatform?: SignupPlatform;
+  acceptedTermsVersion: string;
+  acceptedPrivacyVersion: string;
   createdAt: string;
   expiresAt: string;
   resendAvailableAt: string;
@@ -171,6 +173,8 @@ export async function initiateStudentRegistrationOtp(params: {
   deviceId?: string;
   clientIp?: string;
   signupPlatform?: SignupPlatform;
+  acceptedTermsVersion: string;
+  acceptedPrivacyVersion: string;
 }): Promise<OtpChallengeResult> {
   initRegistrationOtpTable();
 
@@ -226,6 +230,8 @@ export async function initiateStudentRegistrationOtp(params: {
     deviceId: params.deviceId?.trim().slice(0, 200) || null,
     clientIp: params.clientIp || null,
     signupPlatform: params.signupPlatform || 'UNKNOWN',
+    acceptedTermsVersion: params.acceptedTermsVersion,
+    acceptedPrivacyVersion: params.acceptedPrivacyVersion,
     createdAt,
     expiresAt,
     resendAvailableAt,
