@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { db } from '../db.js';
+import { db, initDatabase } from '../db.js';
 import {
   persistStudentAccountToFirestore,
   type StudentAccountPersistenceAdapter,
 } from '../services/firestoreSyncService.js';
 
 async function run() {
+  initDatabase();
   const suffix = randomBytes(6).toString('hex');
   const userId = `usr_cloud_persistence_test_${suffix}`;
   const email = `cloud-persistence-${suffix}@example.test`;
