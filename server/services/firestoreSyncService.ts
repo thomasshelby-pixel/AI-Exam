@@ -44,8 +44,15 @@ export async function syncStudentReadableIdentityToFirestore(userId: string): Pr
     if (isLocalTombstoned('users', userId) || await isTombstoned('users', userId)) return false;
 
     const user = db.prepare(
-      "SELECT id, role, status, created_at FROM users WHERE id = ?"
-    ).get(userId) as { id: string; role: string; status: string; created_at: string | null } | undefined;
+      "SELECT id, full_name, email, role, status, created_at FROM users WHERE id = ?"
+    ).get(userId) as {
+      id: string;
+      full_name: string;
+      email: string;
+      role: string;
+      status: string;
+      created_at: string | null;
+    } | undefined;
     if (!user || String(user.role || '').toUpperCase() !== 'STUDENT') return false;
 
     const profile = db.prepare(
@@ -78,6 +85,7 @@ export async function syncStudentReadableIdentityToFirestore(userId: string): Pr
       id: studentCode,
       display_id: studentCode,
       student_code: studentCode,
+      student_name: user.full_name || null,
       user_id: user.id,
       role: 'STUDENT',
       status: user.status || 'ACTIVE',
@@ -93,6 +101,7 @@ export async function syncStudentReadableIdentityToFirestore(userId: string): Pr
       setFirestoreDoc('trusted_devices', device.id, {
         student_code: studentCode,
         display_id: studentCode,
+        student_name: user.full_name || null,
       })
     ));
 
