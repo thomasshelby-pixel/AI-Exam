@@ -55,6 +55,7 @@ import {
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
 import { executeServerMfaReset } from '../services/mfaRecoveryService.js';
+import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import {
   auditStorageConsistency,
   inspectCloudStorageStatus,
@@ -108,6 +109,84 @@ import {
 } from '../services/appUpdateService.js';
 
 const router = Router();
+
+/**
+ * Heal legacy evaluation rows where a persisted rejection marker survived but an old
+ * worker/Firestore snapshot rewrote status back to PROCESSING or COMPLETED.
+ */
+async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean> {
+  const normalized = normalizeEvaluationRejectionStatus(evaluation);
+  const currentStatus = String(evaluation?.status || '').trim().toUpperCase();
+  const currentReason = String(evaluation?.rejection_reason || '').trim();
+  const normalizedReason = String(normalized?.rejection_reason || '').trim();
+
+  if (String(normalized?.status || '').toUpperCase() !== 'REJECTED') return false;
+  if (currentStatus === 'REJECTED' && currentReason === normalizedReason) return false;
+
+  const update = db.prepare(`
+    UPDATE evaluations
+    SET status = 'REJECTED',
+        rejection_reason = COALESCE(NULLIF(TRIM(rejection_reason), ''), ?),
+        progress_stage = 'REJECTED',
+        progress_percentage = 100,
+        progress_message = ?,
+        completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND (
+        UPPER(COALESCE(status, '')) <> 'REJECTED'
+        OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NULL
+      )
+  `).run(
+    normalizedReason || 'This evaluation was rejected by validation checks. Please contact support for a review.',
+    String(normalized.progress_message || 'Evaluation rejected by validation checks'),
+    String(evaluation.id)
+  );
+
+  if (update.changes !== 1) return false;
+
+  const repaired = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(String(evaluation.id)) as any;
+  if (!repaired) return false;
+
+  const studentId = String(repaired.student_id || '').trim();
+  if (studentId) {
+    const reason = String(repaired.rejection_reason || normalizedReason).trim();
+    const notificationId = `notif_eval_rejected_${repaired.id}`;
+    const notificationMessage = `Your evaluation for ${String(repaired.subject_name || 'the selected paper')} was rejected. Reason: ${reason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
+    db.prepare(`
+      INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
+    `).run(notificationId, studentId, notificationMessage);
+
+    const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
+    if (notification) await syncRecordToFirestore('notifications', notificationId, notification);
+  }
+
+  await syncRecordToFirestore('evaluations', String(repaired.id), repaired);
+  console.warn(`[AdminEvaluations] Restored REJECTED status for ${repaired.id} from persisted rejection markers.`);
+  return true;
+}
+
+async function repairStaleRejectedEvaluationStatuses(): Promise<void> {
+  const staleRows = db.prepare(`
+    SELECT * FROM evaluations
+    WHERE UPPER(COALESCE(status, '')) <> 'REJECTED'
+      AND (
+        UPPER(COALESCE(document_validation_status, '')) IN ('DUPLICATE_ACCOUNT_UPLOAD', 'REJECTED')
+        OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
+      )
+    ORDER BY created_at DESC
+    LIMIT 1000
+  `).all() as any[];
+
+  for (const evaluation of staleRows) {
+    try {
+      await repairRejectedEvaluationStatus(evaluation);
+    } catch (error) {
+      console.warn('[AdminEvaluations] Could not repair a legacy rejection status:', evaluation?.id, error);
+    }
+  }
+}
 
 const appUpdateUpload = multer({
   storage: multer.memoryStorage(),
@@ -2926,14 +3005,15 @@ router.put('/model-answers/:id', (req: AuthRequest, res: Response) => {
 });
 
 // 15. Evaluations Management
-router.get('/evaluations', (req: AuthRequest, res: Response) => {
+router.get('/evaluations', async (req: AuthRequest, res: Response) => {
   try {
+    await repairStaleRejectedEvaluationStatuses();
     const { status, level, search, classification, source } = req.query;
     let query = `
       SELECT e.id, e.display_id, e.evaluation_sequence, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
              e.paper, e.attempt, COALESCE(e.evaluation_source, 'PUBLIC') as evaluation_source, e.institute_id, e.sponsoring_institute_id,
              e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
-             e.grade, e.confidence_score, e.status, e.document_validation_status,
+             e.grade, e.confidence_score, e.status, e.document_validation_status, e.rejection_reason,
              e.original_filename, COALESCE(e.account_classification, 'NORMAL') as account_classification,
              e.created_at, e.completed_at,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
@@ -2996,6 +3076,18 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const evaluationId = String(evaluation.id);
+    const canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
+    if (String(canonicalStatus.status || '').toUpperCase() === 'REJECTED') {
+      await repairRejectedEvaluationStatus(evaluation);
+      return res.status(409).json({
+        error: 'This evaluation has a persisted rejection decision and cannot be recovered or reprocessed. Review the rejection reason instead.',
+        code: 'REJECTED_EVALUATION_NOT_RECOVERABLE',
+        evaluationId,
+        status: 'REJECTED',
+        rejection_reason: canonicalStatus.rejection_reason || evaluation.error_message || null,
+      });
+    }
+
     if (isEvaluationJobActive(evaluationId)) {
       return res.status(409).json({
         error: 'This evaluation is already running. Wait for its status to update before retrying.',

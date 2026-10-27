@@ -16,6 +16,7 @@ import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
 import { syncMaterialRowToSqlite, normalizeMtpSeries } from './materialLookupService.js';
 import { isEntityTombstoned } from './deletionPersistence.js';
+import { normalizeEvaluationRejectionStatus } from './evaluationStatusService.js';
 
 import { initMfaRecoveryTables, fixInconsistentAdminMfaStates } from './mfaRecoveryService.js';
 import { decryptMfaSecret } from './mfaCryptoService.js';
@@ -1295,6 +1296,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         continue;
       }
       try {
+        const normalizedEvaluation = normalizeEvaluationRejectionStatus(ev);
         db.prepare(`
           INSERT INTO evaluations (
             id, display_id, evaluation_sequence, student_id, institute_id, sponsoring_institute_id, batch_id,
@@ -1337,8 +1339,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ev.checking_mode || 'STANDARD', ev.evaluation_source || 'PUBLIC', ev.material_source || 'GLOBAL',
           ev.entitlement_source || 'PERSONAL_FREE', ev.consumed_from_institute_allocation || 0, ev.consumed_from_personal_credits || 0,
           ev.total_marks !== undefined ? ev.total_marks : null, ev.maximum_marks || 100, ev.percentage !== undefined ? ev.percentage : null,
-          ev.grade || null, ev.confidence_score || null, ev.status || 'COMPLETED', ev.result_json || null,
-          ev.error_message || null, ev.document_validation_status || 'VERIFIED', ev.rejection_reason || null,
+          ev.grade || null, ev.confidence_score || null, String(normalizedEvaluation.status || 'COMPLETED'), ev.result_json || null,
+          ev.error_message || null, ev.document_validation_status || 'VERIFIED', String(normalizedEvaluation.rejection_reason || '').trim() || null,
           ev.original_filename || 'student_answer_sheet.pdf',
           ev.current_evaluation_version_id || ev.evaluation_version || 'v1',
           ev.evaluation_version || 'v1',
@@ -1348,8 +1350,48 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ev.admin_reviewer_email || null,
           ev.admin_review_notes || null,
           ev.account_classification || 'NORMAL',
-          ev.created_at || new Date().toISOString(), ev.completed_at || null
+          ev.created_at || new Date().toISOString(), (typeof normalizedEvaluation.completed_at === 'string' ? normalizedEvaluation.completed_at : ev.completed_at || null)
         );
+
+        if (String(normalizedEvaluation.status || '').toUpperCase() === 'REJECTED' &&
+            String(ev.status || '').toUpperCase() !== 'REJECTED') {
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'REJECTED',
+                rejection_reason = ?,
+                progress_stage = 'REJECTED',
+                progress_percentage = 100,
+                progress_message = ?,
+                completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(
+            String(normalizedEvaluation.rejection_reason || '').trim() || null,
+            String(normalizedEvaluation.progress_message || 'Evaluation rejected by validation checks'),
+            ev.id
+          );
+
+          // Heal the durable record too, so the next restart cannot resurrect the
+          // stale PROCESSING status from Firestore.
+          const repairedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(ev.id) as any;
+          if (repairedEvaluation) {
+            const rejectedStudentId = String(repairedEvaluation.student_id || '').trim();
+            if (rejectedStudentId) {
+              const rejectionReason = String(repairedEvaluation.rejection_reason || '').trim() ||
+                'This evaluation was rejected by validation checks. Please contact support for a review.';
+              const notificationId = `notif_eval_rejected_${ev.id}`;
+              const notificationMessage = `Your evaluation for ${String(repairedEvaluation.subject_name || 'the selected paper')} was rejected. Reason: ${rejectionReason}\\n\\nIf you believe this decision is incorrect, please contact support for a review.`;
+              db.prepare(`
+                INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
+                VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
+              `).run(notificationId, rejectedStudentId, notificationMessage);
+              const rejectionNotification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
+              if (rejectionNotification) await syncRecordToFirestore('notifications', notificationId, rejectionNotification);
+            }
+            await syncRecordToFirestore('evaluations', ev.id, repairedEvaluation);
+          }
+          console.warn(`[FirestoreSync] Restored terminal REJECTED state for evaluation ${ev.id} from persisted rejection markers.`);
+        }
         evHydrated++;
       } catch (evErr) {
         console.warn(`[FirestoreSync] Failed to insert evaluation ${ev.id}:`, evErr);
