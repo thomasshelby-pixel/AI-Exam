@@ -740,7 +740,7 @@ router.post('/sync-factor', async (req: Request, res: Response) => {
       created_at: new Date().toISOString(),
     }).catch(() => {});
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const session = await issueAuthenticatedSession(req, res, user);
 
     return res.json({
       success: true,
@@ -874,7 +874,7 @@ router.post('/recovery-codes/verify', mfaVerificationRateLimiter, async (req: Re
       });
     }
 
-    const session = issueAuthenticatedSession(req, res, user);
+    const session = await issueAuthenticatedSession(req, res, user);
 
     return res.json({
       success: true,
@@ -1422,7 +1422,7 @@ const handleValidateTotp = async (req: Request, res: Response) => {
     // If device is already trusted, bypass TOTP validation immediately!
     const alreadyTrusted = Boolean(deviceId && trustToken && isDeviceTrusted(user.id, deviceId, trustToken));
     if (alreadyTrusted) {
-      const session = issueAuthenticatedSession(req, res, user);
+      const session = await issueAuthenticatedSession(req, res, user);
 
       logMfaAudit({
         userId: user.id,
