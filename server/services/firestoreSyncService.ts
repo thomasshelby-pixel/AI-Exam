@@ -31,6 +31,107 @@ export function safeSqliteString(val: any): string | null {
 }
 
 /**
+ * Publishes a readable lookup document keyed by the Student Code shown in the
+ * website and app (for example students_by_code/ST-K7P4), while preserving the
+ * internal users/{usr_...} ID used by foreign keys, sessions, payments and evaluations.
+ *
+ * Device/IP details remain in trusted_devices; this function only stamps their
+ * documents with the Student Code so an administrator can cross-reference them.
+ */
+export async function syncStudentReadableIdentityToFirestore(userId: string): Promise<boolean> {
+  try {
+    if (!userId || !getFirestoreDb()) return false;
+    if (isLocalTombstoned('users', userId) || await isTombstoned('users', userId)) return false;
+
+    const user = db.prepare(
+      "SELECT id, role, status, created_at FROM users WHERE id = ?"
+    ).get(userId) as { id: string; role: string; status: string; created_at: string | null } | undefined;
+    if (!user || String(user.role || '').toUpperCase() !== 'STUDENT') return false;
+
+    const profile = db.prepare(
+      "SELECT student_code, created_at FROM student_profiles WHERE user_id = ?"
+    ).get(userId) as { student_code: string | null; created_at: string | null } | undefined;
+    const studentCode = String(profile?.student_code || '').trim().toUpperCase();
+
+    // Never publish placeholder codes or create a misleading alias.
+    if (
+      !/^ST-[A-Z0-9]{3,20}$/.test(studentCode) ||
+      studentCode === 'ST-PENDING' ||
+      studentCode === 'ST-GEN0'
+    ) {
+      return false;
+    }
+
+    const aliasSaved = await setFirestoreDoc('students_by_code', studentCode, {
+      id: studentCode,
+      display_id: studentCode,
+      student_code: studentCode,
+      user_id: user.id,
+      role: 'STUDENT',
+      status: user.status || 'ACTIVE',
+      created_at: user.created_at || profile?.created_at || null,
+    });
+
+    // Device documents already contain device ID/name, user-agent, IP, trust state,
+    // and timestamps. Add the human-facing code without copying IPs elsewhere.
+    const trustedDeviceRows = db.prepare(
+      'SELECT id FROM trusted_devices WHERE user_id = ?'
+    ).all(userId) as Array<{ id: string }>;
+    const deviceSyncResults = await Promise.all(trustedDeviceRows.map((device) =>
+      setFirestoreDoc('trusted_devices', device.id, {
+        student_code: studentCode,
+        display_id: studentCode,
+      })
+    ));
+
+    if (!aliasSaved || deviceSyncResults.some((saved) => !saved)) {
+      console.warn(`[FirestoreSync] Readable Student Code index partially synced for ${userId} (${studentCode}).`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn(`[FirestoreSync] Failed to publish readable Student Code index for ${userId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Backfills human-readable Student Code lookup documents for existing students.
+ * Runs as a best-effort post-startup reconciliation so it cannot delay service readiness.
+ */
+export async function syncAllStudentReadableIdentityViewsToFirestore(): Promise<number> {
+  try {
+    if (!getFirestoreDb()) return 0;
+    const students = db.prepare(`
+      SELECT u.id
+      FROM users u
+      JOIN student_profiles p ON p.user_id = u.id
+      WHERE u.role = 'STUDENT'
+        AND p.student_code IS NOT NULL
+        AND TRIM(p.student_code) <> ''
+        AND UPPER(TRIM(p.student_code)) NOT IN ('ST-PENDING', 'ST-GEN0')
+        AND COALESCE(u.account_classification, 'NORMAL') <> 'TEST'
+      ORDER BY u.created_at ASC
+    `).all() as Array<{ id: string }>;
+
+    let nextIndex = 0;
+    let syncedCount = 0;
+    const workerCount = Math.min(8, students.length);
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (nextIndex < students.length) {
+        const current = students[nextIndex++];
+        if (await syncStudentReadableIdentityToFirestore(current.id)) syncedCount++;
+      }
+    }));
+    console.info(`[FirestoreSync] Readable Student Code index backfill finished: ${syncedCount}/${students.length} student(s).`);
+    return syncedCount;
+  } catch (error) {
+    console.warn('[FirestoreSync] Readable Student Code index backfill failed:', error);
+    return 0;
+  }
+}
+
+/**
  * Asynchronously mirrors an inserted or updated record from SQLite to Cloud Firestore.
  * Ensures local SQLite data cannot overwrite newer Firestore data or resurrect tombstoned records.
  */
@@ -81,7 +182,18 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
         }
       }
     }
-    await setFirestoreDoc(collectionName, id, data);
+    const saved = await setFirestoreDoc(collectionName, id, data);
+    if (saved) {
+      const identityUserId =
+        collectionName === 'trusted_devices'
+          ? String(data.user_id || existingDoc?.user_id || '')
+          : (collectionName === 'users' || collectionName === 'student_profiles')
+            ? id
+            : '';
+      if (identityUserId && ['users', 'student_profiles', 'trusted_devices'].includes(collectionName)) {
+        await syncStudentReadableIdentityToFirestore(identityUserId);
+      }
+    }
   } catch (err) {
     console.warn(`[FirestoreSync] Failed to sync ${collectionName}/${id}:`, err);
   }
