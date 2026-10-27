@@ -804,6 +804,8 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       deviceId: payload.deviceId || currentDeviceId,
       clientIp,
       signupPlatform: payload.signupPlatform || getSignupPlatform(req),
+      acceptedTermsVersion: String(payload.acceptedTermsVersion || ''),
+      acceptedPrivacyVersion: String(payload.acceptedPrivacyVersion || ''),
     });
 
     if (!otpResult.success) {
@@ -850,6 +852,16 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const regData = verification.registrationData;
+    const currentPolicyVersions = getRequiredLegalPolicyVersions();
+    if (
+      regData.acceptedTermsVersion !== currentPolicyVersions.TERMS ||
+      regData.acceptedPrivacyVersion !== currentPolicyVersions.PRIVACY
+    ) {
+      return res.status(409).json({
+        error: 'The Privacy Policy or Terms & Conditions changed while your registration was pending. Please return to registration, review the current documents, accept both checkboxes, and request a new verification code.',
+        code: 'LEGAL_POLICY_VERSION_CHANGED',
+      });
+    }
 
     // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
@@ -989,6 +1001,15 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         getCurrentServerMonth()
       );
 
+      // Persist explicit acceptance of the exact policy versions shown during signup.
+      recordRequiredLegalPolicyConsent({
+        userId,
+        termsVersion: regData.acceptedTermsVersion,
+        privacyVersion: regData.acceptedPrivacyVersion,
+        ipAddress: req.ip || regData.clientIp || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+
       // If promo campaign was valid and claimed, insert redemption record transactionally
       if (promoCampaign) {
         const redemptionId = `red_${rawReferralCode.toLowerCase()}_${userId}`;
@@ -1034,6 +1055,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // durable cloud copy. This prevents ephemeral runtime SQLite data from becoming
     // the only copy and disappearing when the server instance restarts.
     const initialPersistence = await persistStudentAccountToFirestore(userId);
+    await syncRequiredPolicyAcknowledgements(userId);
     if (initialPersistence !== 'persisted' && requiresDurableAccountPersistence()) {
       console.error('[Auth] Registration persistence gate failed:', { userId, result: initialPersistence });
       return res.status(503).json({
