@@ -125,7 +125,7 @@ export interface UploadOptions {
   instituteId?: string;
   materialId?: string;
   evaluationId?: string;
-  category?: 'EVALUATION_ORIGINAL' | 'EVALUATION_CHECKED_COPY' | 'EVALUATION_REPORT' | 'MATERIAL_QUESTION_PAPER' | 'MATERIAL_MODEL_ANSWER' | 'MATERIAL_MARKING_SCHEME' | 'MATERIAL_PRIVATE_INSTITUTE' | 'GENERAL_DOCUMENT';
+  category?: 'EVALUATION_ORIGINAL' | 'EVALUATION_CHECKED_COPY' | 'EVALUATION_REPORT' | 'MATERIAL_QUESTION_PAPER' | 'MATERIAL_MODEL_ANSWER' | 'MATERIAL_MARKING_SCHEME' | 'MATERIAL_PRIVATE_INSTITUTE' | 'APP_RELEASE_APK' | 'APP_RELEASE_OTA' | 'GENERAL_DOCUMENT';
 }
 
 /**
@@ -142,6 +142,14 @@ export function buildStoragePath(options: UploadOptions): string {
   const evaluationId = options.evaluationId || 'eval_general';
   const materialId = options.materialId || 'mat_general';
   const instituteId = options.instituteId || 'inst_general';
+
+  if (options.category === 'APP_RELEASE_APK') {
+    return `app_releases/android/${safeFilename}`;
+  }
+
+  if (options.category === 'APP_RELEASE_OTA') {
+    return `app_releases/ota/${safeFilename}`;
+  }
 
   if (options.category === 'EVALUATION_REPORT') {
     return `evaluation_reports/${studentId}/${evaluationId}/${safeFilename}`;
