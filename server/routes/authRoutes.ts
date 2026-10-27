@@ -1660,7 +1660,6 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     // verified first-time signup does not have to repeat the same acceptance afterward.
     if (
       isSocialLogin &&
-      createdViaSocialSignup &&
       user.role === 'STUDENT' &&
       termsAccepted === true &&
       privacyAccepted === true &&
