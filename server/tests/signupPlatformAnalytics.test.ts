@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import {
+  countStudentSignupPlatformRecords,
   getStudentSignupPlatformCounts,
   resolveSignupPlatform,
 } from '../services/signupPlatformService.js';
@@ -33,6 +34,16 @@ async function run() {
     assert.equal(after.web, before.web + 1, 'one WEB sign-up should be counted');
     assert.equal(after.unknown, before.unknown + 1, 'unattributed account should remain UNKNOWN');
     assert.equal(after.total, before.total + 3, 'TEST accounts must be excluded from source totals');
+
+    const cloudSnapshotCounts = countStudentSignupPlatformRecords([
+      { role: 'STUDENT', account_classification: 'NORMAL', signup_platform: 'APP' },
+      { role: 'STUDENT', account_classification: 'NORMAL', signup_platform: 'WEB' },
+      { role: 'STUDENT', account_classification: 'NORMAL', signup_platform: 'UNKNOWN' },
+      { role: 'STUDENT', account_classification: 'TEST', signup_platform: 'APP' },
+      { role: 'SUPER_ADMIN', account_classification: 'NORMAL', signup_platform: 'APP' },
+    ]);
+    assert.deepEqual(cloudSnapshotCounts, { app: 1, web: 1, unknown: 1, total: 3 },
+      'authoritative Firestore account snapshots should count student sources and exclude test/admin accounts');
 
     assert.equal(resolveSignupPlatform({ clientPlatform: 'android_app' }), 'APP');
     assert.equal(resolveSignupPlatform({ clientPlatform: 'WEB' }), 'WEB');
