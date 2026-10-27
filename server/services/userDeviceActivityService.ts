@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { getFirestoreDb, getFirestoreDoc, setFirestoreDoc } from './firestoreDbService.js';
+import { getFirestoreDb, getFirestoreDoc, setFirestoreDoc, setFirestoreDocInDatabase } from './firestoreDbService.js';
+
+const APP_DEVICE_ACTIVITY_DATABASE_ID = String(
+  process.env.APP_DEVICE_ACTIVITY_FIRESTORE_DATABASE_ID ||
+  'ai-studio-aiexamapp-84322cc5-3d67-4034-bd47-214b89165488'
+).trim();
 
 export type DeviceActivityPlatform = 'APP' | 'WEB' | 'UNKNOWN';
 
@@ -94,6 +99,22 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
       login_count: loginCount,
     };
 
+    if (payload.platform === 'APP') {
+      // The app and website intentionally use separate named Firestore databases.
+      // App-originated activity belongs in the app database, not the website database.
+      const saved = await setFirestoreDocInDatabase(
+        APP_DEVICE_ACTIVITY_DATABASE_ID,
+        'user_device_activity',
+        documentId,
+        payload,
+      );
+      if (!saved) {
+        console.warn('[DeviceActivity] App login telemetry was not saved to the app Firestore database.');
+      }
+      return saved;
+    }
+
+    // Website and unattributed legacy clients remain in the website-configured database.
     return await setFirestoreDoc('user_device_activity', documentId, payload);
   } catch (error) {
     console.warn('[DeviceActivity] Failed to record sign-in metadata:', error);
