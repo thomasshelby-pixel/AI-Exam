@@ -84,6 +84,46 @@ export function getStudentOwnershipParams(studentId: string, studentEmail: strin
 }
 
 /**
+ * Persist the student-facing rejection reason and notify the owning student. The
+ * deterministic notification ID makes repeated rejection handling idempotent.
+ */
+async function persistEvaluationRejectionAndNotify(
+  studentId: string,
+  evaluationId: string,
+  subjectName: string,
+  reason: string,
+): Promise<void> {
+  const safeReason = String(reason || '').trim().slice(0, 1500) ||
+    'The submission did not pass the evaluation checks. Please contact support for a review.';
+  const notificationId = `notif_eval_rejected_${evaluationId}`;
+  const notificationMessage = `Your evaluation for ${String(subjectName || 'the selected paper').trim()} was rejected. Reason: ${safeReason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
+
+  try {
+    db.prepare(`
+      UPDATE evaluations
+      SET rejection_reason = COALESCE(NULLIF(TRIM(rejection_reason), ''), ?),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND UPPER(COALESCE(status, '')) = 'REJECTED'
+    `).run(safeReason, evaluationId);
+
+    db.prepare(`
+      INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
+      VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
+    `).run(notificationId, studentId, notificationMessage);
+
+    const evaluationRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+    const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
+
+    // Rejected evaluations and their notices must survive runtime replacement. The
+    // Firestore sync layer gives terminal REJECTED status precedence over stale jobs.
+    if (evaluationRow) await syncRecordToFirestore('evaluations', evaluationId, evaluationRow);
+    if (notificationRow) await syncRecordToFirestore('notifications', notificationId, notificationRow);
+  } catch (error) {
+    console.warn('[StudentRoutes] Could not persist rejection detail/notification:', evaluationId, error);
+  }
+}
+
+/**
  * Authoritative check across student_disclaimer_acknowledgements and student_disclaimers
  */
 export function isStudentDisclaimerAcknowledged(studentId: string, studentEmail: string, version: string = CURRENT_DISCLAIMER_VERSION): boolean {
@@ -1153,6 +1193,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         WHERE id = ?
       `).run(rejectReason, evaluationId);
 
+      await persistEvaluationRejectionAndNotify(studentId, evaluationId, subjectName, rejectReason);
+
       // CRITICAL: DO NOT CONSUME CREDITS OR FREE EVALUATIONS!
       return res.status(400).json({
         error: rejectReason,
@@ -1182,6 +1224,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         SET status = 'REJECTED', document_validation_status = 'REJECTED', rejection_reason = ?, completed_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(rejectReason, evaluationId);
+
+      await persistEvaluationRejectionAndNotify(studentId, evaluationId, subjectName, rejectReason);
 
       // CRITICAL: STOP IMMEDIATELY. DO NOT CONSUME CREDITS, FREE EVALUATION, OR INSTITUTE QUOTA!
       return res.status(400).json({
@@ -1275,13 +1319,16 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           UPDATE evaluations
           SET status = 'REJECTED',
               document_validation_status = 'DUPLICATE_ACCOUNT_UPLOAD',
+              rejection_reason = ?,
               error_message = ?,
               progress_stage = 'REJECTED',
               progress_message = 'Duplicate answer-sheet upload across accounts',
               completed_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(message, evaluationId);
+        `).run(message, message, evaluationId);
+
+        await persistEvaluationRejectionAndNotify(studentId, evaluationId, subjectName, message);
 
         return res.status(409).json({
           error: message,
