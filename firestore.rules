@@ -244,6 +244,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Every successful sign-in writes device/IP/user-agent metadata here.
+    // These records are server-side security telemetry and must not be exposed
+    // to direct Firebase clients. Firebase Admin SDK access is unaffected.
+    match /user_device_activity/{activityId} {
+      allow read, write: if false;
+    }
+
     // MCQ Materials & Questions (Source documents and question pool)
     match /mcq_materials/{materialId} {
       allow read: if true;
