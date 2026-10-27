@@ -6,6 +6,7 @@ import { getFirestore as getAdminFirestore, type Firestore as AdminFirestore } f
 import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
 import { db, verifyPassword, isTombstoned } from '../db.js';
 import { permanentlyDeleteFromFirestore } from './firestoreSyncService.js';
+import { cleanupTombstonedStudentAccount } from './deletedAccountReconciliationService.js';
 import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import { revokeAllSessionsForUser } from './sessionService.js';
 import { requireConfirmedDeletions, type DurableDeletionTarget } from './deletionPersistence.js';
@@ -114,7 +115,16 @@ export async function deleteStudentAccount(
   db.prepare("UPDATE users SET status = 'DELETING', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(studentId);
   revokeAllSessionsForUser(studentId);
   await requireConfirmedDeletions(durableDeleteTargets, permanentlyDeleteFromFirestore);
-  
+  try {
+    // Finish related Firestore and Cloud Storage cleanup before removing the local
+    // account. This is scoped to this already-tombstoned account only.
+    await cleanupTombstonedStudentAccount(studentId, { id: actor.id, email: actor.email });
+  } catch (cleanupError: any) {
+    cleanupError.statusCode = cleanupError.statusCode || 503;
+    cleanupError.message = `Account deletion is incomplete because related cloud records could not all be reconciled. Retry safely. ${cleanupError.message || ''}`.trim();
+    throw cleanupError;
+  }
+
   const uploadDirs = [
     path.join(process.cwd(), 'uploads'),
     path.join(process.cwd(), 'data', 'uploads'),
@@ -972,6 +982,7 @@ export async function selfDeleteStudentAccount(
   ] as DurableDeletionTarget[];
   try {
     await requireConfirmedDeletions(durableDeleteTargets, permanentlyDeleteFromFirestore);
+    await cleanupTombstonedStudentAccount(studentId, { id: studentId, email: targetUser.email });
   } catch (deleteError: any) {
     const failureMessage = `Account deletion is incomplete. The account remains blocked in DELETING state; retry after persistence is available or contact support. ${deleteError?.message || ''}`.trim();
     db.prepare("UPDATE account_deletion_requests SET status = 'DELETION_FAILED', error_message = ? WHERE id = ?").run(failureMessage, requestId);
@@ -1006,16 +1017,6 @@ export async function selfDeleteStudentAccount(
         console.warn(`[StudentSelfDelete] Error scanning dir ${dir}:`, dirErr);
       }
     }
-  }
-
-  // Cloud Storage Cleanup for evaluations and student documents
-  try {
-    for (const ev of studentEvaluations) {
-      await deleteEvaluationCloudFiles(ev.id);
-    }
-    await deleteStudentCloudFiles(studentId);
-  } catch (cloudErr) {
-    console.warn(`[StudentSelfDelete] Cloud storage deletion non-blocking warning:`, cloudErr);
   }
 
   // 7. Query redemptions, payment records, memberships for summary
