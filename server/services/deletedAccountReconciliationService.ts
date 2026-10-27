@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { deleteFileFromCloudStorage } from './firebaseCloudStorageService.js';
-import { deleteEvaluationCloudFiles, deleteStudentCloudFiles } from './persistentStorageService.js';
 import {
   deleteFirestoreDocInDatabase,
   getAllFirestoreDocs,
@@ -70,7 +69,7 @@ export interface DeletedAccountReconciliationPreview {
  * It intentionally never infers deletion from a missing SQLite row, because
  * SQLite is a per-instance cache and is not a safe cross-instance source of truth.
  */
-async function buildCleanupPlan(): Promise<{
+async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
   preview: DeletedAccountReconciliationPreview;
   targets: CleanupTarget[];
   fileTargets: Array<{ fileId: string; storagePath?: string; userId: string }>;
@@ -79,7 +78,9 @@ async function buildCleanupPlan(): Promise<{
   evaluationsByUser: Map<string, string[]>;
 }> {
   const tombstones = await getAllFirestoreDocs<FirestoreDoc>('tombstones', { failOnError: true });
-  const tombstonedUserIds = [...new Set(tombstones.map(getUserIdFromTombstone).filter((id): id is string => Boolean(id)))];
+  const allTombstonedUserIds = [...new Set(tombstones.map(getUserIdFromTombstone).filter((id): id is string => Boolean(id)))];
+  const only = onlyUserIds?.length ? new Set(onlyUserIds) : null;
+  const tombstonedUserIds = only ? allTombstonedUserIds.filter((id) => only.has(id)) : allTombstonedUserIds;
   const targets: CleanupTarget[] = [];
   const fileTargets: Array<{ fileId: string; storagePath?: string; userId: string }> = [];
   const evaluationsByUser = new Map<string, string[]>();
@@ -218,7 +219,7 @@ export async function previewDeletedAccountReconciliation(): Promise<DeletedAcco
 export async function executeDeletedAccountReconciliation(actor: {
   id: string;
   email?: string;
-}): Promise<{
+}, onlyUserIds?: string[]): Promise<{
   runId: string;
   deletedDocuments: number;
   deletedCloudFiles: number;
@@ -226,7 +227,7 @@ export async function executeDeletedAccountReconciliation(actor: {
   skippedAccounts: number;
   preview: DeletedAccountReconciliationPreview;
 }> {
-  const plan = await buildCleanupPlan();
+  const plan = await buildCleanupPlan(onlyUserIds);
   const { preview } = plan;
   const runId = `deleted_cleanup_${crypto.randomBytes(10).toString('hex')}`;
   const deletedByCollection: Record<string, number> = {};
@@ -255,25 +256,6 @@ export async function executeDeletedAccountReconciliation(actor: {
     if (deleted) {
       deletedDocuments += 1;
       deletedByCollection[target.collectionName] = (deletedByCollection[target.collectionName] || 0) + 1;
-    }
-  }
-
-  // Cloud helper catches most underlying errors; explicitly re-run the evaluation
-  // and owner cleanup to remove files whose metadata was created by older flows.
-  for (const userId of plan.tombstonedUserIds) {
-    for (const evaluationId of plan.evaluationsByUser.get(userId) || []) {
-      try {
-        await deleteEvaluationCloudFiles(evaluationId);
-      } catch (error) {
-        preview.warnings.push(`Evaluation file cleanup failed for ${evaluationId}.`);
-        console.warn('[DeletedAccountReconciliation] Evaluation file cleanup failed:', error);
-      }
-    }
-    try {
-      await deleteStudentCloudFiles(userId);
-    } catch (error) {
-      preview.warnings.push(`Student file cleanup failed for ${userId}.`);
-      console.warn('[DeletedAccountReconciliation] Student file cleanup failed:', error);
     }
   }
 
@@ -330,4 +312,19 @@ export async function executeDeletedAccountReconciliation(actor: {
     skippedAccounts,
     preview,
   };
+}
+
+/** Runs the same verified cleanup for one account after its tombstones are written. */
+export async function cleanupTombstonedStudentAccount(
+  userId: string,
+  actor: { id: string; email?: string },
+): Promise<void> {
+  const plan = await buildCleanupPlan([userId]);
+  if (!plan.tombstonedUserIds.includes(userId)) {
+    throw new Error(`Refusing account cleanup: no durable users tombstone exists for ${userId}.`);
+  }
+  const result = await executeDeletedAccountReconciliation(actor, [userId]);
+  if (result.skippedAccounts > 0) {
+    throw new Error(`Account cleanup left a Firestore users record behind for ${userId}; reconciliation must be retried.`);
+  }
 }
