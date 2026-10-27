@@ -80,7 +80,7 @@ function ensureCurrentPublishedLegalDocument(
     WHERE id = ? AND doc_type = ? AND status = 'PUBLISHED'
   `).run(content, targetVersion, updatedOn, updatedOn, changelog, document.id, docType);
 
-  const updated = db.prepare('SELECT * FROM legal_documents WHERE id = ?').get(document.id) as LegalDocumentRecord | undefined;
+  const updated = db.prepare('SELECT * FROM legal_documents WHERE id = ?').get(document.id) as unknown as LegalDocumentRecord | undefined;
   if (updated) {
     void syncRecordToFirestore('legal_documents', updated.id, updated as unknown as Record<string, any>)
       .catch((error: unknown) => console.warn('[LegalRoutes] Could not mirror legal amendment to Firestore:', error));
