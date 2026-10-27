@@ -320,15 +320,37 @@ export async function uploadFileToCloudStorage(options: UploadOptions): Promise<
     ...(options.evaluationId ? { evaluationId: options.evaluationId } : {}),
   };
 
+  let metadataSaved = false;
   try {
-    await setFirestoreDoc('file_storage_metadata', options.fileId, {
+    metadataSaved = await setFirestoreDoc('file_storage_metadata', options.fileId, {
       ...metadata,
       createdAt: nowIso,
       updatedAt: nowIso,
     });
-    console.log(`[CloudFirestore] Stored structured metadata for file ${options.fileId} at path ${storagePath}`);
+    if (!metadataSaved) {
+      console.warn(`[CloudFirestore] Firestore did not confirm metadata for file ${options.fileId}.`);
+    } else {
+      console.log(`[CloudFirestore] Stored structured metadata for file ${options.fileId} at path ${storagePath}`);
+    }
   } catch (err) {
     console.warn(`[CloudFirestore] Warning writing file metadata to Firestore:`, err);
+  }
+
+  // A cloud object without its Firestore pointer is not considered durable: the
+  // application would not be able to resolve it from another backend instance.
+  // Remove that orphan if possible and let persistentStorageService retain its
+  // local/SQLite fallback instead of silently claiming an ACTIVE cloud record.
+  if (!metadataSaved) {
+    if (uploadSuccess) {
+      try {
+        await getStorageBucket(configuredBucket).file(storagePath).delete({ ignoreNotFound: true });
+        console.warn(`[PrivilegedStorage] Removed unindexed cloud object ${storagePath} because metadata persistence was not confirmed.`);
+      } catch (cleanupError) {
+        console.warn(`[PrivilegedStorage] Could not remove unindexed cloud object ${storagePath}:`, cleanupError);
+      }
+    }
+    metadata.status = 'STORAGE_UNAVAILABLE';
+    metadata.errorMessage = metadata.errorMessage || 'File metadata could not be confirmed in Firestore.';
   }
 
   return metadata;
