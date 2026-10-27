@@ -94,8 +94,51 @@ import {
 } from '../services/notificationService.js';
 
 import { countStudentSignupPlatformRecords } from '../services/signupPlatformService.js';
+import {
+  previewDeletedAccountReconciliation,
+  executeDeletedAccountReconciliation,
+} from '../services/deletedAccountReconciliationService.js';
 
 const router = Router();
+
+// Preview/execute Firestore cleanup for accounts that already have durable
+// users tombstones. The execute endpoint is explicitly confirmation-gated.
+router.get('/deleted-accounts/reconcile', async (_req: AuthRequest, res: Response) => {
+  try {
+    const preview = await previewDeletedAccountReconciliation();
+    return res.json({ success: true, preview });
+  } catch (error: any) {
+    console.error('[AdminRoutes] Deleted-account reconciliation preview failed:', error);
+    return res.status(503).json({
+      success: false,
+      error: error?.message || 'Could not inspect deleted-account records safely.',
+    });
+  }
+});
+
+router.post('/deleted-accounts/reconcile', async (req: AuthRequest, res: Response) => {
+  const confirmation = String(req.body?.confirmation || '').trim();
+  if (confirmation !== 'RECONCILE_DELETED_ACCOUNTS') {
+    return res.status(400).json({
+      success: false,
+      error: 'Type RECONCILE_DELETED_ACCOUNTS to confirm the cleanup.',
+    });
+  }
+
+  try {
+    const result = await executeDeletedAccountReconciliation({
+      id: String(req.user?.id || ''),
+      email: String(req.user?.email || ''),
+    });
+    return res.json({ success: true, result });
+  } catch (error: any) {
+    console.error('[AdminRoutes] Deleted-account reconciliation failed:', error);
+    return res.status(503).json({
+      success: false,
+      error: error?.message || 'Deleted-account cleanup could not be completed safely.',
+    });
+  }
+});
 
 async function persistUserStatusAndSuspensions(userId: string): Promise<boolean> {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, unknown> | undefined;
