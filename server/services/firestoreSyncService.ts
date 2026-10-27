@@ -6,6 +6,7 @@ import {
   setFirestoreDoc,
   setFirestoreDocsAtomically,
   getFirestoreDoc,
+  queryFirestoreDocs,
   deleteFirestoreDoc,
   getAllFirestoreDocs,
   recordTombstone,
@@ -86,6 +87,176 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
   }
 }
 
+
+/**
+ * Restore a student that already exists in authoritative Firestore but is missing
+ * from the current runtime's SQLite database. This prevents a server restart or
+ * lost local volume from making an existing email look available for registration.
+ *
+ * Nothing is recreated when the cloud account/profile is missing, tombstoned,
+ * ambiguous, or unreadable; callers must fail closed rather than create a duplicate.
+ */
+export type StudentAccountRecoveryResult =
+  | 'recovered'
+  | 'not-found'
+  | 'incomplete'
+  | 'conflict'
+  | 'unconfigured'
+  | 'failed';
+
+export interface StudentAccountRecoveryAdapter {
+  isConfigured(): boolean;
+  findUsersByEmail(email: string): Promise<Array<Record<string, any>>>;
+  getDocument<T>(collectionName: string, id: string, options?: { failOnError?: boolean }): Promise<T | null>;
+  isTombstoned(collectionName: string, id: string): Promise<boolean>;
+}
+
+const defaultStudentAccountRecoveryAdapter: StudentAccountRecoveryAdapter = {
+  isConfigured: () => {
+    try {
+      if (!fs.existsSync(path.resolve(process.cwd(), 'firebase-applet-config.json'))) return false;
+      return getFirestoreDb() !== null;
+    } catch {
+      return false;
+    }
+  },
+  findUsersByEmail: (email) => queryFirestoreDocs<Record<string, any>>(
+    'users',
+    [{ field: 'email', op: '==', value: email }],
+    { failOnError: true },
+  ),
+  getDocument: getFirestoreDoc,
+  isTombstoned,
+};
+
+function insertCloudRecordIntoLocalSqlite(
+  tableName: 'users' | 'student_profiles',
+  record: Record<string, any>,
+): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  const allowedColumns = new Set(columns.map((column) => column.name));
+  const entries = Object.entries(record).filter(([key, value]) =>
+    allowedColumns.has(key) && value !== undefined && key !== '_updatedAt'
+  );
+  if (!entries.length) throw new Error(`No compatible fields found for local ${tableName} recovery.`);
+
+  const fieldNames = entries.map(([key]) => `"${key}"`).join(', ');
+  const placeholders = entries.map(() => '?').join(', ');
+  const values = entries.map(([, value]) => {
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    if (value && typeof value === 'object') return JSON.stringify(value);
+    return value;
+  });
+  db.prepare(`INSERT INTO ${tableName} (${fieldNames}) VALUES (${placeholders})`).run(...values);
+}
+
+export async function recoverStudentAccountFromFirestoreByEmail(
+  email: string,
+  adapter: StudentAccountRecoveryAdapter = defaultStudentAccountRecoveryAdapter,
+): Promise<StudentAccountRecoveryResult> {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) return 'not-found';
+
+  try {
+    if (!adapter.isConfigured()) return 'unconfigured';
+
+    // Use a strict query: a read error must never be mistaken for "no account exists".
+    const matchingUsers = (await adapter.findUsersByEmail(normalizedEmail))
+      .filter((record) => String(record.email || '').trim().toLowerCase() === normalizedEmail);
+    if (matchingUsers.length === 0) return 'not-found';
+    if (matchingUsers.length !== 1) return 'conflict';
+
+    const user = matchingUsers[0];
+    const userId = String(user.id || user.userId || '').trim();
+    if (
+      !userId ||
+      String(user.email || '').trim().toLowerCase() !== normalizedEmail ||
+      String(user.role || '').toUpperCase() !== 'STUDENT' ||
+      typeof user.password_hash !== 'string' ||
+      !user.password_hash ||
+      typeof user.full_name !== 'string' ||
+      user.full_name.trim().length < 2
+    ) {
+      return 'incomplete';
+    }
+
+    if (
+      isLocalTombstoned('users', userId) ||
+      isLocalTombstoned('student_profiles', userId) ||
+      await adapter.isTombstoned('users', userId) ||
+      await adapter.isTombstoned('student_profiles', userId)
+    ) {
+      console.warn(`[FirestoreSync] Refusing to recover tombstoned student account ${userId}.`);
+      return 'conflict';
+    }
+
+    const profile = await adapter.getDocument<Record<string, any>>(
+      'student_profiles',
+      userId,
+      { failOnError: true },
+    );
+    if (
+      !profile ||
+      String(profile.user_id || '') !== userId ||
+      !String(profile.icai_registration_number || '').trim() ||
+      !['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile.ca_level || '').toUpperCase())
+    ) {
+      return 'incomplete';
+    }
+
+    const existingById = db.prepare('SELECT id, email FROM users WHERE id = ?').get(userId) as { id: string; email: string } | undefined;
+    const existingByEmail = db.prepare('SELECT id, email FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; email: string } | undefined;
+    if (existingById || existingByEmail) {
+      if (
+        existingById?.id === userId &&
+        String(existingById.email || '').trim().toLowerCase() === normalizedEmail &&
+        (!existingByEmail || existingByEmail.id === userId)
+      ) {
+        return 'recovered';
+      }
+      return 'conflict';
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      // Re-check after acquiring the write lock to avoid racing with a parallel signup.
+      const racedUser = db.prepare('SELECT id, email FROM users WHERE lower(email) = ? OR id = ?')
+        .get(normalizedEmail, userId) as { id: string; email: string } | undefined;
+      if (racedUser) {
+        db.exec('ROLLBACK');
+        return racedUser.id === userId && String(racedUser.email || '').trim().toLowerCase() === normalizedEmail
+          ? 'recovered'
+          : 'conflict';
+      }
+
+      insertCloudRecordIntoLocalSqlite('users', { ...user, id: userId, email: normalizedEmail });
+      insertCloudRecordIntoLocalSqlite('student_profiles', { ...profile, user_id: userId });
+
+      const localUser = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(userId) as any;
+      const localProfile = db.prepare('SELECT user_id, icai_registration_number, ca_level FROM student_profiles WHERE user_id = ?').get(userId) as any;
+      if (
+        localUser?.id !== userId ||
+        String(localUser.email || '').trim().toLowerCase() !== normalizedEmail ||
+        String(localUser.role || '').toUpperCase() !== 'STUDENT' ||
+        localProfile?.user_id !== userId ||
+        String(localProfile.icai_registration_number || '').trim() !== String(profile.icai_registration_number || '').trim() ||
+        String(localProfile.ca_level || '').toUpperCase() !== String(profile.ca_level || '').toUpperCase()
+      ) {
+        throw new Error('Local SQLite read-back verification failed after account recovery.');
+      }
+
+      db.exec('COMMIT');
+      console.info(`[FirestoreSync] Recovered existing student account from Firestore into runtime SQLite: ${userId}`);
+      return 'recovered';
+    } catch (transactionError) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw transactionError;
+    }
+  } catch (error) {
+    console.warn('[FirestoreSync] Could not recover student account from Firestore:', error);
+    return 'failed';
+  }
+}
 
 /**
  * Persist a newly registered student and their profile as one durable Firestore
