@@ -29,7 +29,9 @@ export interface BroadcastPayload {
   message: string;
   category: 'ANNOUNCEMENT' | 'EXAM_ALERT' | 'FEATURE_UPDATE' | 'MAINTENANCE' | 'URGENT_ALERT' | 'PROMOTIONAL' | 'GENERAL';
   priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
-  targetAudience: 'ALL' | 'STUDENT' | 'INSTITUTE_ADMIN' | 'STUDENTS_FOUNDATION' | 'STUDENTS_INTERMEDIATE' | 'STUDENTS_FINAL';
+  targetAudience: 'ALL' | 'STUDENT' | 'INSTITUTE_ADMIN' | 'STUDENTS_FOUNDATION' | 'STUDENTS_INTERMEDIATE' | 'STUDENTS_FINAL' | 'SPECIFIC_STUDENTS';
+  /** Explicit student account IDs; accepted only for SPECIFIC_STUDENTS. */
+  targetUserIds?: string[];
   channels: 'IN_APP' | 'EMAIL' | 'IN_APP_AND_EMAIL';
   actionUrl?: string;
   actionLabel?: string;
@@ -53,22 +55,30 @@ interface TargetUser {
   full_name: string;
   role: string;
   ca_level?: string;
+  icai_registration_number?: string;
 }
 
 /**
  * Resolves non-deleted, active candidate users for a given target audience specification.
  * Strictly filters out tombstoned accounts.
  */
-export function getTargetUsers(targetAudience: string = 'ALL'): TargetUser[] {
+export function getTargetUsers(targetAudience: string = 'ALL', targetUserIds: string[] = []): TargetUser[] {
+  const normalizedAudience = (targetAudience || 'ALL').toUpperCase();
+  if (normalizedAudience === 'SPECIFIC_STUDENTS') {
+    const selectedIds = new Set((Array.isArray(targetUserIds) ? targetUserIds : []).map((id) => String(id || '').trim()).filter(Boolean));
+    if (selectedIds.size === 0) return [];
+    // Resolve explicit recipients through the existing active-student filter so deleted
+    // or tombstoned accounts can never be selected for a notification.
+    return getTargetUsers('STUDENT').filter((user) => selectedIds.has(user.id));
+  }
+
   let baseQuery = `
-    SELECT u.id, u.email, u.full_name, u.role, sp.ca_level
+    SELECT u.id, u.email, u.full_name, u.role, sp.ca_level, sp.icai_registration_number
     FROM users u
     LEFT JOIN student_profiles sp ON sp.user_id = u.id
     WHERE u.status != 'DELETED'
       AND u.id NOT IN (SELECT entity_id FROM tombstones WHERE collection_name IN ('users', 'students', 'institutes'))
   `;
-
-  const normalizedAudience = (targetAudience || 'ALL').toUpperCase();
 
   switch (normalizedAudience) {
     case 'STUDENT':
@@ -144,8 +154,8 @@ function buildAudienceEstimate(users: TargetUser[]): TargetAudienceEstimate {
  * users collection is genuinely empty. A failed cloud query throws rather than silently
  * turning an unavailable data source into a zero-recipient campaign.
  */
-export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL'): Promise<TargetUser[]> {
-  if (process.env.NODE_ENV !== 'production') return getTargetUsers(targetAudience);
+export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL', targetUserIds: string[] = []): Promise<TargetUser[]> {
+  if (process.env.NODE_ENV !== 'production') return getTargetUsers(targetAudience, targetUserIds);
 
   const [firestoreUsers, firestoreProfiles, firestoreTombstones] = await Promise.all([
     getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true }),
@@ -154,7 +164,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
   ]);
 
   if (firestoreUsers.length === 0) {
-    const localFallback = getTargetUsers(targetAudience);
+    const localFallback = getTargetUsers(targetAudience, targetUserIds);
     console.warn('[NotificationService] Firestore users collection is empty; using hydrated local users as a temporary fallback.');
     return localFallback;
   }
@@ -194,6 +204,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
   }
 
   const normalizedAudience = String(targetAudience || 'ALL').trim().toUpperCase();
+  const selectedStudentIds = new Set((Array.isArray(targetUserIds) ? targetUserIds : []).map((selectedId) => String(selectedId || '').trim()).filter(Boolean));
   const recipients: TargetUser[] = [];
   for (const record of firestoreUsers) {
     const id = String(record.id || record.user_id || record.userId || '').trim();
@@ -202,6 +213,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
     const status = String(record.status || 'ACTIVE').trim().toUpperCase();
     const profile = profilesByUserId.get(id);
     const caLevel = String(profile?.ca_level || profile?.caLevel || record.ca_level || record.caLevel || '').trim().toUpperCase();
+    const icaiRegistrationNumber = String(profile?.icai_registration_number || profile?.icaiRegistrationNumber || record.icai_registration_number || record.icaiRegistrationNumber || '').trim();
 
     if (!id || !email || !['STUDENT', 'INSTITUTE_ADMIN'].includes(role) || status === 'DELETED') continue;
     if (
@@ -215,6 +227,9 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
       blockedIdentifiers.has(`institutes:${id.toLowerCase()}`)
     ) continue;
 
+    if (normalizedAudience === 'SPECIFIC_STUDENTS') {
+      if (role !== 'STUDENT' || !selectedStudentIds.has(id)) continue;
+    }
     if (normalizedAudience === 'STUDENT' && role !== 'STUDENT') continue;
     if (normalizedAudience === 'INSTITUTE_ADMIN' && role !== 'INSTITUTE_ADMIN') continue;
     if (normalizedAudience === 'STUDENTS_FOUNDATION' && !(role === 'STUDENT' && caLevel === 'FOUNDATION')) continue;
@@ -228,6 +243,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
       full_name: String(record.full_name || record.fullName || record.display_name || 'User'),
       role,
       ca_level: caLevel || undefined,
+      icai_registration_number: icaiRegistrationNumber || undefined,
     });
   }
 
@@ -239,12 +255,12 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL')
  * broadcast dispatch. This prevents the preview count and actual send count diverging
  * after App Hosting replaces the local SQLite instance.
  */
-export async function estimateRecipientsFromDurableStore(targetAudience: string = 'ALL'): Promise<TargetAudienceEstimate> {
-  return buildAudienceEstimate(await getTargetUsersForBroadcast(targetAudience));
+export async function estimateRecipientsFromDurableStore(targetAudience: string = 'ALL', targetUserIds: string[] = []): Promise<TargetAudienceEstimate> {
+  return buildAudienceEstimate(await getTargetUsersForBroadcast(targetAudience, targetUserIds));
 }
 
-export function estimateRecipients(targetAudience: string = 'ALL'): TargetAudienceEstimate {
-  return buildAudienceEstimate(getTargetUsers(targetAudience));
+export function estimateRecipients(targetAudience: string = 'ALL', targetUserIds: string[] = []): TargetAudienceEstimate {
+  return buildAudienceEstimate(getTargetUsers(targetAudience, targetUserIds));
 }
 
 function normalizeSqlTimestamp(value: unknown, fallback: string | null = null): string | null {
@@ -582,7 +598,7 @@ export async function createAndDispatchBroadcast(payload: BroadcastPayload): Pro
 }> {
   // Resolve the audience from Firestore in production, using the same durable source
   // as the admin recipient preview. Never record a successful campaign with zero targets.
-  const targetUsers = await getTargetUsersForBroadcast(payload.targetAudience);
+  const targetUsers = await getTargetUsersForBroadcast(payload.targetAudience, payload.targetUserIds || []);
   const campaignId = `cmp_${crypto.randomBytes(8).toString('hex')}`;
   const totalTargeted = targetUsers.length;
 

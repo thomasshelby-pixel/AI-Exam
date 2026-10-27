@@ -75,8 +75,20 @@ export interface EvaluationJobData {
 // This prevents extra model calls on the normal evaluation path by default.
 const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED === 'true';
 
-// In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId
+// In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId.
 const activeJobs = new Map<string, Promise<void>>();
+const TERMINAL_EVALUATION_STATUSES = new Set([
+  'COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED',
+]);
+
+function isTerminalEvaluationStatus(status: unknown): boolean {
+  return TERMINAL_EVALUATION_STATUSES.has(String(status || '').toUpperCase());
+}
+
+function getEvaluationStatus(evaluationId: string): string {
+  const row = db.prepare('SELECT status FROM evaluations WHERE id = ?').get(evaluationId) as { status?: string } | undefined;
+  return String(row?.status || '').toUpperCase();
+}
 
 export function isEvaluationJobActive(evaluationId: string): boolean {
   return activeJobs.has(evaluationId);
@@ -90,7 +102,7 @@ export function updateEvaluationProgress(
   message: string
 ) {
   try {
-    db.prepare(`
+    const update = db.prepare(`
       UPDATE evaluations
       SET status = ?,
           progress_stage = ?,
@@ -98,8 +110,14 @@ export function updateEvaluationProgress(
           progress_message = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(status, stage, Math.min(100, Math.max(0, Math.round(percentage))), message, evaluationId);
+
+    if (update.changes !== 1 && isTerminalEvaluationStatus(getEvaluationStatus(evaluationId))) {
+      throw new Error(`TERMINAL_EVALUATION_STATE_PRESERVED:${getEvaluationStatus(evaluationId)}`);
+    }
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('TERMINAL_EVALUATION_STATE_PRESERVED:')) throw err;
     console.warn(`[AsyncEval] Error updating progress for ${evaluationId}:`, err);
   }
 }
@@ -207,12 +225,48 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     try {
       enforceEvaluationEvidencePackageMtpGate(evidencePackage);
     } catch (gateErr: any) {
-      console.error(`[AsyncEval] Integrity Gate Mismatch for evaluation ${evaluationId}:`, gateErr.message);
-      db.prepare(`
+      const gateReason = String(gateErr?.message || 'Reference-material integrity check failed.').slice(0, 500);
+      const studentFacingReason = 'The selected question paper, suggested answer or marking scheme did not pass the reference-material integrity checks. Please verify your selected exam attempt and paper, or contact support for a review.';
+      console.error(`[AsyncEval] Integrity Gate Mismatch for evaluation ${evaluationId}:`, gateReason);
+      const rejectionUpdate = db.prepare(`
         UPDATE evaluations
-        SET status = 'REJECTED', rejection_reason = ?, completed_at = CURRENT_TIMESTAMP
+        SET status = 'REJECTED',
+            rejection_reason = ?,
+            error_message = ?,
+            progress_stage = 'REJECTED',
+            progress_percentage = 100,
+            progress_message = 'Reference material verification failed',
+            completed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(gateErr.message, evaluationId);
+          AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
+      `).run(studentFacingReason, gateReason, evaluationId);
+
+      if (rejectionUpdate.changes === 1) {
+        const notificationId = `notif_eval_rejected_${evaluationId}`;
+        const notificationMessage = `Your evaluation for ${subjectName || 'the selected paper'} was rejected. Reason: ${studentFacingReason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
+        db.prepare(`
+          INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
+          VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
+        `).run(notificationId, studentId, notificationMessage);
+
+        const rejectedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+        const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
+        if (rejectedRow) await syncRecordToFirestore('evaluations', evaluationId, rejectedRow);
+        if (notificationRow) await syncRecordToFirestore('notifications', notificationId, notificationRow);
+
+        // The integrity gate can run after an entitlement was accepted. Refund only if
+        // this worker established the rejection transition, avoiding duplicate refunds.
+        if (job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+          (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+          try {
+            refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+            await syncStudentCreditsToFirestore(studentId);
+          } catch (refundErr) {
+            console.warn(`[AsyncEval] Rejection refund error for ${evaluationId}:`, refundErr);
+          }
+        }
+      }
       throw gateErr;
     }
 
@@ -451,7 +505,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       if (!isSeriesValid || !matchesDb || !matchesMaterial) {
         const mismatchErr = `CRITICAL_INTEGRITY_VIOLATION: MTP Series mismatch detected (Job: ${jobSeries}, DB: ${dbSeries}, Material: ${materialSeries}). Evaluation halted to protect academic validity.`;
         console.error(`[AsyncEval] ${mismatchErr}`);
-        db.prepare(`
+        const failureClaim = db.prepare(`
           UPDATE evaluations
           SET status = 'FAILED',
               progress_stage = 'FAILED',
@@ -461,14 +515,25 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
               completed_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
+            AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
         `).run(mismatchErr, mismatchErr, evaluationId);
-        // The upload may already have consumed a personal entitlement. A source
-        // binding failure is a protected system failure, so return that credit.
-        if (
-          job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-          (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
-        ) {
-          refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+
+        // A concurrent terminal decision wins. Only refund if this worker actually
+        // claimed the FAILED transition.
+        if (failureClaim.changes === 1) {
+          if (
+            job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+            (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+          ) {
+            try {
+              refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+              await syncStudentCreditsToFirestore(studentId);
+            } catch (refundErr) {
+              console.warn(`[AsyncEval] MTP integrity failure refund error for ${evaluationId}:`, refundErr);
+            }
+          }
+          const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+          if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
         }
         return;
       }
@@ -573,7 +638,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.info(`[AsyncEval] Evaluation ${evaluationId} status: NEEDS_REVIEW (${reviewErrors.length} critical validation items flagged)`);
     }
 
-    db.prepare(`
+    const finalizationUpdate = db.prepare(`
       UPDATE evaluations
       SET status = ?,
           certification_status = ?,
@@ -614,6 +679,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(
       finalStatus,
       finalStatus === 'COMPLETED' ? 'CERTIFIED' : 'REVIEW_REQUIRED',
@@ -672,6 +738,15 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       durablePackagePersisted ? 1 : 0,
       evaluationId
     );
+
+    if (finalizationUpdate.changes !== 1) {
+      const latestStatus = getEvaluationStatus(evaluationId);
+      if (isTerminalEvaluationStatus(latestStatus)) {
+        console.info(`[AsyncEval] Preserving terminal state ${latestStatus} for ${evaluationId}; stale job finalization was ignored.`);
+        return;
+      }
+      throw new Error(`Could not finalize evaluation ${evaluationId}; current status is ${latestStatus || 'UNKNOWN'}.`);
+    }
 
     if (finalStatus !== 'COMPLETED') {
       // The personal entitlement was charged when the upload was accepted.
@@ -836,23 +911,17 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     console.error(`[AsyncEval] Evaluation failed for ${evaluationId}:`, error);
 
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
-
-    // Refund credit/free/promo evaluation atomically if it was already deducted on acceptance
-    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
-      try {
-        refundEvaluationCreditAtomic({
-          userId: studentId,
-          evaluationId,
-          entitlementSource,
-        });
-        await syncStudentCreditsToFirestore(studentId);
-      } catch (refundErr) {
-        console.warn(`[AsyncEval] Refund error on failure for ${evaluationId}:`, refundErr);
-      }
+    const currentStatus = getEvaluationStatus(evaluationId);
+    if (isTerminalEvaluationStatus(currentStatus)) {
+      // A failed/stale worker must never undo a rejection, completed result or review
+      // decision already stored by another request.
+      console.info(`[AsyncEval] Preserving terminal status ${currentStatus} for ${evaluationId}; ignoring stale worker failure.`);
+      return;
     }
 
-    // Mark as failed in DB, NO CREDITS CONSUMED
-    db.prepare(`
+    // Claim the failure transition before refunding. If another request rejects or
+    // completes the evaluation concurrently, this compare-and-set prevents mutation.
+    const failureUpdate = db.prepare(`
       UPDATE evaluations
       SET status = 'FAILED',
           progress_stage = 'FAILED',
@@ -862,7 +931,39 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           completed_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(errMsg.slice(0, 500), errMsg.slice(0, 500), evaluationId);
+
+    if (failureUpdate.changes !== 1) {
+      const latestStatus = getEvaluationStatus(evaluationId);
+      if (isTerminalEvaluationStatus(latestStatus)) {
+        console.info(`[AsyncEval] Preserving terminal status ${latestStatus} for ${evaluationId} after failure-claim race.`);
+        return;
+      }
+      console.error(`[AsyncEval] Could not claim failure status for ${evaluationId}; status is now ${latestStatus || 'UNKNOWN'}.`);
+      return;
+    }
+
+    // Refund only after successfully recording this job's FAILED transition.
+    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+      try {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId,
+          entitlementSource,
+        });
+        await syncStudentCreditsToFirestore(studentId);
+      } catch (refundErr) {
+        console.warn(`[AsyncEval] Refund error for ${evaluationId}:`, refundErr);
+      }
+    }
+
+    try {
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
+    } catch (syncErr) {
+      console.warn(`[AsyncEval] Could not sync failed evaluation ${evaluationId}:`, syncErr);
+    }
   } finally {
     activeJobs.delete(evaluationId);
   }

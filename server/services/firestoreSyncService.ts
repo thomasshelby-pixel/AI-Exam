@@ -178,6 +178,9 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
             console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
             return;
           }
+        } else if (collectionName === 'evaluations' && String(data.status || '').toUpperCase() === 'REJECTED') {
+          // Rejection is a terminal safety decision. A stale cloud snapshot with a
+          // newer timestamp must not resurrect the evaluation as PROCESSING.
         } else if (collectionName === 'student_profiles') {
           const localPurchased = typeof data.purchased_credits === 'number' ? data.purchased_credits : 999999;
           const fsPurchased = typeof existingDoc.purchased_credits === 'number' ? existingDoc.purchased_credits : 999999;

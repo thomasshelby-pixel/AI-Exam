@@ -161,6 +161,34 @@ async function runAdminNotificationCentreVerification() {
   assert.strictEqual(studentNotif.read, 0);
   assert.strictEqual(studentNotif.is_read, 0);
 
+  // CHECK 3b: Targeted notifications must reach only explicitly selected students.
+  console.log('[CHECK 3b] Testing one-student notification targeting...');
+  const individualTitle = `Individual Student Notice #${Date.now()}`;
+  const individualResult = await createAndDispatchBroadcast({
+    adminUserId: testAdminId,
+    adminEmail: testAdminEmail,
+    title: individualTitle,
+    message: 'This notification is intended for the selected student only.',
+    category: 'ANNOUNCEMENT',
+    priority: 'NORMAL',
+    targetAudience: 'SPECIFIC_STUDENTS',
+    targetUserIds: [sampleStudentId],
+    channels: 'IN_APP',
+  });
+
+  assert.strictEqual(individualResult.success, true, 'Targeted notification must dispatch successfully');
+  assert.strictEqual(individualResult.totalTargeted, 1, 'Explicitly selected student is the only target');
+  assert.strictEqual(individualResult.inAppSent, 1, 'Exactly one in-app notification is delivered');
+  const individualRecipients = db.prepare(
+    'SELECT DISTINCT user_id FROM notifications WHERE campaign_id = ?'
+  ).all(individualResult.campaignId) as Array<{ user_id: string }>;
+  assert.deepStrictEqual(
+    individualRecipients.map((row) => row.user_id),
+    [sampleStudentId],
+    'No unselected student or institute administrator receives the targeted notification'
+  );
+  console.log('[PASS] Individual student notification targeting verified.');
+
   // Verify audit log record
   const auditRow = db.prepare(`
     SELECT * FROM audit_logs WHERE action = 'ADMIN_BROADCAST_SENT' ORDER BY created_at DESC LIMIT 1

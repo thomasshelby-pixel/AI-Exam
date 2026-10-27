@@ -58,6 +58,14 @@ interface CampaignMetrics {
   activeAudienceReach: number;
 }
 
+interface StudentRecipient {
+  id: string;
+  name: string;
+  email: string;
+  caLevel?: string;
+  icaiRegistrationNumber?: string;
+}
+
 interface TargetEstimate {
   total: number;
   studentsCount: number;
@@ -97,6 +105,10 @@ export const AdminNotificationCentre: React.FC = () => {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [targetAudience, setTargetAudience] = useState<string>('ALL');
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [studentMatches, setStudentMatches] = useState<StudentRecipient[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<StudentRecipient[]>([]);
+  const [isLoadingStudents, setIsLoadingStudents] = useState<boolean>(false);
   const [channels, setChannels] = useState<string>('IN_APP_AND_EMAIL');
   const [priority, setPriority] = useState<string>('NORMAL');
   const [category, setCategory] = useState<string>('ANNOUNCEMENT');
@@ -141,12 +153,12 @@ export const AdminNotificationCentre: React.FC = () => {
   };
 
   // Fetch Audience Estimate
-  const fetchEstimate = useCallback(async (aud: string) => {
+  const fetchEstimate = useCallback(async (aud: string, targetUserIds: string[] = []) => {
     try {
       setIsEstimating(true);
       const res = await apiRequest<{ estimate: TargetEstimate }>('/api/admin/notifications/estimate', {
         method: 'POST',
-        body: JSON.stringify({ targetAudience: aud }),
+        body: JSON.stringify({ targetAudience: aud, targetUserIds }),
       });
       setEstimate(res.estimate);
     } catch (err: any) {
@@ -214,8 +226,43 @@ export const AdminNotificationCentre: React.FC = () => {
 
   // Initial loads
   useEffect(() => {
-    fetchEstimate(targetAudience);
-  }, [targetAudience, fetchEstimate]);
+    fetchEstimate(targetAudience, selectedStudents.map((student) => student.id));
+  }, [targetAudience, selectedStudents, fetchEstimate]);
+
+  // Search the authoritative backend for eligible student accounts. The backend
+  // enforces active-student filtering; this list is not used as a client-side ACL.
+  useEffect(() => {
+    const query = studentSearch.trim();
+    if (targetAudience !== 'SPECIFIC_STUDENTS' || query.length < 2) {
+      setStudentMatches([]);
+      setIsLoadingStudents(false);
+      return;
+    }
+
+    let cancelled = false;
+    setStudentMatches([]);
+    const timer = window.setTimeout(async () => {
+      setIsLoadingStudents(true);
+      try {
+        const res = await apiRequest<{ students: StudentRecipient[] }>(
+          `/api/admin/notifications/students?search=${encodeURIComponent(query)}`
+        );
+        if (!cancelled) setStudentMatches(res.students || []);
+      } catch (err) {
+        if (!cancelled) {
+          setStudentMatches([]);
+          console.warn('Failed to search notification recipients:', err);
+        }
+      } finally {
+        if (!cancelled) setIsLoadingStudents(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [targetAudience, studentSearch]);
 
   useEffect(() => {
     if (activeTab === 'campaigns') {
@@ -262,6 +309,10 @@ export const AdminNotificationCentre: React.FC = () => {
 
   // Handle Full Production Broadcast
   const handleDispatchBroadcast = async () => {
+    if (targetAudience === 'SPECIFIC_STUDENTS' && selectedStudents.length === 0) {
+      showToast('error', 'Select at least one student before sending an individual notification.');
+      return;
+    }
     if (!title.trim() || title.trim().length < 3) {
       showToast('error', 'Title must be at least 3 characters long');
       return;
@@ -279,6 +330,9 @@ export const AdminNotificationCentre: React.FC = () => {
           title: title.trim(),
           message: message.trim(),
           targetAudience,
+          targetUserIds: targetAudience === 'SPECIFIC_STUDENTS'
+            ? selectedStudents.map((student) => student.id)
+            : [],
           channels,
           priority,
           category,
@@ -295,6 +349,9 @@ export const AdminNotificationCentre: React.FC = () => {
         setMessage('');
         setActionLabel('');
         setActionUrl('');
+        setSelectedStudents([]);
+        setStudentSearch('');
+        setStudentMatches([]);
         // Switch to history tab to view progress
         setActiveTab('campaigns');
         fetchCampaigns(1);
@@ -394,7 +451,7 @@ export const AdminNotificationCentre: React.FC = () => {
             onClick={() => {
               if (activeTab === 'campaigns') fetchCampaigns(campaignPage);
               else if (activeTab === 'feed') fetchFeed();
-              else fetchEstimate(targetAudience);
+              else fetchEstimate(targetAudience, selectedStudents.map((student) => student.id));
             }}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-2 border border-slate-700 cursor-pointer"
             title="Refresh Notification Data"
@@ -515,7 +572,15 @@ export const AdminNotificationCentre: React.FC = () => {
                 </label>
                 <select
                   value={targetAudience}
-                  onChange={(e) => setTargetAudience(e.target.value)}
+                  onChange={(e) => {
+                    const nextAudience = e.target.value;
+                    setTargetAudience(nextAudience);
+                    if (nextAudience !== 'SPECIFIC_STUDENTS') {
+                      setSelectedStudents([]);
+                      setStudentSearch('');
+                      setStudentMatches([]);
+                    }
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="ALL">All Students & Institute Admins (Default Audience)</option>
@@ -524,7 +589,89 @@ export const AdminNotificationCentre: React.FC = () => {
                   <option value="STUDENTS_FINAL">Students — Final Only</option>
                   <option value="STUDENTS_FOUNDATION">Students — Foundation Only</option>
                   <option value="INSTITUTE_ADMIN">Institute Administrators Only</option>
+                  <option value="SPECIFIC_STUDENTS">Specific Student(s) — Individual Notification</option>
                 </select>
+
+                {targetAudience === 'SPECIFIC_STUDENTS' && (
+                  <div className="mt-3 space-y-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
+                    <div>
+                      <label htmlFor="notification-student-search" className="mb-1.5 block text-xs font-bold text-slate-800">
+                        Find student by name, email or ICAI registration number
+                      </label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input
+                          id="notification-student-search"
+                          type="search"
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          placeholder="Type at least 2 characters…"
+                          className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        Search returns eligible student accounts only. Select one or more recipients below.
+                      </p>
+                    </div>
+
+                    {selectedStudents.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                          <span>Selected students</span>
+                          <span>{selectedStudents.length} selected</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedStudents.map((student) => (
+                            <div key={student.id} className="flex max-w-full items-center gap-2 rounded-lg border border-blue-200 bg-white px-2.5 py-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-bold text-slate-900">{student.name}</p>
+                                <p className="truncate text-[10px] text-slate-500">{student.email}</p>
+                              </div>
+                              <button
+                                type="button"
+                                aria-label={`Remove ${student.name} from recipients`}
+                                onClick={() => setSelectedStudents((current) => current.filter((item) => item.id !== student.id))}
+                                className="shrink-0 rounded p-1 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {isLoadingStudents && (
+                      <p className="text-xs text-slate-500">Searching eligible students…</p>
+                    )}
+                    {!isLoadingStudents && studentSearch.trim().length >= 2 && studentMatches.filter((student) => !selectedStudents.some((selected) => selected.id === student.id)).length === 0 && (
+                      <p className="text-xs text-slate-500">No additional matching students found.</p>
+                    )}
+                    {studentMatches.filter((student) => !selectedStudents.some((selected) => selected.id === student.id)).length > 0 && (
+                      <div className="max-h-52 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1">
+                        {studentMatches
+                          .filter((student) => !selectedStudents.some((selected) => selected.id === student.id))
+                          .map((student) => (
+                            <button
+                              key={student.id}
+                              type="button"
+                              onClick={() => setSelectedStudents((current) => current.some((item) => item.id === student.id) ? current : [...current, student])}
+                              className="flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-blue-50"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-bold text-slate-900">{student.name}</span>
+                                <span className="block truncate text-[10px] text-slate-600">{student.email}</span>
+                                <span className="block truncate text-[10px] text-slate-500">
+                                  {[student.caLevel, student.icaiRegistrationNumber ? `ICAI: ${student.icaiRegistrationNumber}` : ''].filter(Boolean).join(' · ')}
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-[10px] font-bold text-blue-700">Add</span>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Audience breakdown pill badge */}
                 {estimate && (
@@ -1012,20 +1159,31 @@ export const AdminNotificationCentre: React.FC = () => {
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Confirm Broadcast Dispatch</h3>
-                <p className="text-xs text-slate-500">Please review before triggering platform dispatch</p>
+                <h3 className="text-base font-bold text-slate-900">
+                  {targetAudience === 'SPECIFIC_STUDENTS' ? 'Confirm Individual Notification' : 'Confirm Broadcast Dispatch'}
+                </h3>
+                <p className="text-xs text-slate-500">Please review the recipients and channels before sending</p>
               </div>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2 text-slate-700">
               <div className="flex justify-between">
                 <span className="text-slate-500">Audience:</span>
-                <span className="font-bold text-slate-900">{targetAudience}</span>
+                <span className="font-bold text-slate-900">{targetAudience === 'SPECIFIC_STUDENTS' ? 'Specific Students' : targetAudience}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Estimated Reach:</span>
+                <span className="text-slate-500">{targetAudience === 'SPECIFIC_STUDENTS' ? 'Selected students:' : 'Estimated Reach:'}</span>
                 <span className="font-bold text-blue-600">{estimate?.total || 0} Recipients</span>
               </div>
+              {targetAudience === 'SPECIFIC_STUDENTS' && selectedStudents.length > 0 && (
+                <div className="rounded-lg border border-blue-100 bg-white p-2">
+                  <p className="mb-1 font-bold text-slate-700">Recipients</p>
+                  <p className="text-slate-600">
+                    {selectedStudents.slice(0, 5).map((student) => student.name).join(', ')}
+                    {selectedStudents.length > 5 ? ` and ${selectedStudents.length - 5} more` : ''}
+                  </p>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-500">Channels:</span>
                 <span className="font-bold text-slate-900">{channels}</span>
