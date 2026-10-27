@@ -14,8 +14,7 @@ import {
   CURRENT_PRIVACY_VERSION,
   CURRENT_TERMS_UPDATED_ON,
   CURRENT_PRIVACY_UPDATED_ON,
-  getLegalConsentStatus,
-  recordCurrentLegalAcceptances,
+  ensureCurrentLegalDocuments,
 } from '../services/legalConsentService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 
@@ -175,6 +174,7 @@ export function formatLegalContent(content: string, settings: Record<string, str
  * Returns the currently active PUBLISHED legal document for TERMS, PRIVACY, or REFUND.
  */
 router.get('/published/:docType', (req, res) => {
+  ensureCurrentLegalDocuments();
   const rawType = (req.params.docType || '').toUpperCase();
   let docType: 'TERMS' | 'PRIVACY' | 'REFUND' = 'TERMS';
   if (rawType.includes('PRIVACY')) docType = 'PRIVACY';
@@ -237,17 +237,19 @@ router.get('/published/:docType', (req, res) => {
  * Returns all three active published legal documents and settings for rapid navigation.
  */
 router.get('/published-all', (req, res) => {
+  ensureCurrentLegalDocuments();
   const settings = getPublicLegalSettings();
   const types: Array<'TERMS' | 'PRIVACY' | 'REFUND'> = ['TERMS', 'PRIVACY', 'REFUND'];
   const documents: Record<string, any> = {};
 
   for (const t of types) {
-    const doc = db.prepare(`
+    const storedDoc = db.prepare(`
       SELECT * FROM legal_documents
       WHERE doc_type = ? AND status = 'PUBLISHED'
       ORDER BY published_at DESC, updated_at DESC
       LIMIT 1
     `).get(t) as unknown as LegalDocumentRecord | undefined;
+    const doc = storedDoc ? ensureCurrentPublishedLegalDocument(storedDoc, t) : undefined;
 
     if (doc) {
       documents[t] = {
@@ -270,9 +272,9 @@ router.get('/published-all', (req, res) => {
         id: `${t.toLowerCase()}_v1_0`,
         doc_type: t,
         title: defaultTitle,
-        version: '1.0',
-        effective_date: '12 September 2026',
-        last_updated_date: '12 September 2026',
+        version: t === 'TERMS' ? CURRENT_TERMS_VERSION : t === 'PRIVACY' ? CURRENT_PRIVACY_VERSION : '1.0',
+        effective_date: t === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : t === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
+        last_updated_date: t === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : t === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
         content: formatLegalContent(defaultContent, settings),
         raw_content: defaultContent,
         status: 'PUBLISHED',
