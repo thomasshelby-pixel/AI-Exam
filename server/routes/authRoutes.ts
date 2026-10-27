@@ -40,6 +40,11 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import {
+  getRequiredLegalPolicyVersions,
+  hasRequiredLegalPolicyConsent,
+  recordRequiredLegalPolicyConsent,
+} from '../services/requiredLegalConsentService.js';
 
 const router = Router();
 
@@ -50,6 +55,27 @@ function getSignupPlatform(req: Request) {
     origin: req.headers.origin,
     referer: req.headers.referer,
   });
+}
+
+async function syncRequiredPolicyAcknowledgements(userId: string): Promise<void> {
+  for (const docType of ['TERMS', 'PRIVACY'] as const) {
+    const versions = getRequiredLegalPolicyVersions();
+    const row = db.prepare(`
+      SELECT * FROM legal_acknowledgements
+      WHERE user_id = ? AND doc_type = ? AND version = ?
+      ORDER BY acknowledged_at DESC LIMIT 1
+    `).get(userId, docType, versions[docType]) as any;
+    if (row) {
+      await syncRecordToFirestore('legal_acknowledgements', String(row.id), {
+        ...row,
+        user_id: userId,
+        doc_type: docType,
+        version: versions[docType],
+      }).catch((error: unknown) => {
+        console.warn('[Auth] Could not sync legal acknowledgement:', docType, error);
+      });
+    }
+  }
 }
 
 function inferAuthProvider(passwordHash?: string | null): 'password' | 'google' | 'apple' {
@@ -559,6 +585,14 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
   try {
     const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
 
+    if (req.body?.privacyPolicyConsent !== true || req.body?.termsAccepted !== true) {
+      return res.status(400).json({
+        error: 'Please read and accept the Privacy Policy and all Terms & Conditions before creating a student account.',
+        code: 'LEGAL_CONSENT_REQUIRED',
+      });
+    }
+    const acceptedPolicyVersions = getRequiredLegalPolicyVersions();
+
     if (!email || !password || !fullName || !icaiRegistrationNumber) {
       return res.status(400).json({ error: 'Please provide all required fields (Name, Email, Password, ICAI Registration Number).' });
     }
@@ -702,6 +736,8 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       deviceId,
       clientIp,
       signupPlatform: getSignupPlatform(req),
+      acceptedTermsVersion: acceptedPolicyVersions.TERMS,
+      acceptedPrivacyVersion: acceptedPolicyVersions.PRIVACY,
     });
 
     if (!otpResult.success) {
