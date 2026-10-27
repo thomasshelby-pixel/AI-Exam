@@ -128,13 +128,16 @@ export async function getPersistentFile(
   const safeFileId = path.basename(fileId).replace(/[^a-zA-Z0-9._\-]/g, '');
   const safeFilename = preferredFilename ? sanitizeFilename(preferredFilename) : `${safeFileId}.pdf`;
 
-  // 1. Check local working directories first
+  // 1. Check the single current working cache, then legacy duplicate paths
+  // left by older releases so historical documents remain accessible.
   const candidatePaths = [
     path.join(UPLOADS_DIR, safeFilename),
-    path.join(DATA_UPLOADS_DIR, safeFilename),
+    path.join(UPLOADS_DIR, `${safeFileId}.pdf`),
     path.join(UPLOADS_DIR, `${safeFileId}_original.pdf`),
     path.join(UPLOADS_DIR, `${safeFileId}_checked_copy.pdf`),
     path.join(UPLOADS_DIR, `${safeFileId}_report.pdf`),
+    path.join(DATA_UPLOADS_DIR, safeFilename),
+    path.join(DATA_UPLOADS_DIR, `${safeFileId}.pdf`),
     path.join(DATA_UPLOADS_DIR, `${safeFileId}_original.pdf`),
     path.join(DATA_UPLOADS_DIR, `${safeFileId}_checked_copy.pdf`),
     path.join(DATA_UPLOADS_DIR, `${safeFileId}_report.pdf`),
@@ -182,24 +185,23 @@ export async function getPersistentFile(
   try {
     const downloaded = await downloadFileFromCloudStorage(fileId);
     if (downloaded && downloaded.buffer.length > 0) {
-      // Repopulate local working directory and SQLite
+      // Recreate only a single local working cache. The durable file remains
+      // canonical in Cloud Storage, so downloading it must not create SQLite blobs
+      // or a second local copy.
       try {
-        const targetFilename = downloaded.metadata?.originalFilename
+        const metadataFilename = downloaded.metadata?.originalFilename
           ? sanitizeFilename(downloaded.metadata.originalFilename)
           : safeFilename;
-        const targetPath = path.join(UPLOADS_DIR, targetFilename);
-        fs.writeFileSync(targetPath, downloaded.buffer);
-        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, targetFilename), downloaded.buffer);
-
-        // Also save to SQLite blob table for instant offline recovery
-        db.prepare(`
-          INSERT INTO persistent_file_blobs (
-            file_id, filename, mime_type, file_size, category, data, updated_at
-          ) VALUES (?, ?, ?, ?, 'GENERAL_DOCUMENT', ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(file_id) DO UPDATE SET data = excluded.data, file_size = excluded.file_size, updated_at = CURRENT_TIMESTAMP
-        `).run(safeFileId, targetFilename, downloaded.metadata?.mimeType || 'application/pdf', downloaded.buffer.length, downloaded.buffer);
+        const isEvaluationFile = /_(?:original|checked_copy|report)$/.test(safeFileId);
+        const targetFilename = isEvaluationFile ? `${safeFileId}.pdf` : metadataFilename;
+        fs.writeFileSync(path.join(UPLOADS_DIR, targetFilename), downloaded.buffer);
+        try {
+          db.prepare('DELETE FROM persistent_file_blobs WHERE file_id = ? OR file_id = ?').run(safeFileId, fileId);
+        } catch {
+          // Legacy fallback removal is best-effort after verified cloud download.
+        }
       } catch {
-        // ignore
+        // The downloaded response remains valid even if cache hydration fails.
       }
       return downloaded;
     }
