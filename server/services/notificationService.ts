@@ -164,7 +164,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL',
   ]);
 
   if (firestoreUsers.length === 0) {
-    const localFallback = getTargetUsers(targetAudience);
+    const localFallback = getTargetUsers(targetAudience, targetUserIds);
     console.warn('[NotificationService] Firestore users collection is empty; using hydrated local users as a temporary fallback.');
     return localFallback;
   }
@@ -204,6 +204,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL',
   }
 
   const normalizedAudience = String(targetAudience || 'ALL').trim().toUpperCase();
+  const selectedStudentIds = new Set((Array.isArray(targetUserIds) ? targetUserIds : []).map((selectedId) => String(selectedId || '').trim()).filter(Boolean));
   const recipients: TargetUser[] = [];
   for (const record of firestoreUsers) {
     const id = String(record.id || record.user_id || record.userId || '').trim();
@@ -227,8 +228,7 @@ export async function getTargetUsersForBroadcast(targetAudience: string = 'ALL',
     ) continue;
 
     if (normalizedAudience === 'SPECIFIC_STUDENTS') {
-      const selectedIds = new Set((Array.isArray(targetUserIds) ? targetUserIds : []).map((selectedId) => String(selectedId || '').trim()).filter(Boolean));
-      if (role !== 'STUDENT' || !selectedIds.has(id)) continue;
+      if (role !== 'STUDENT' || !selectedStudentIds.has(id)) continue;
     }
     if (normalizedAudience === 'STUDENT' && role !== 'STUDENT') continue;
     if (normalizedAudience === 'INSTITUTE_ADMIN' && role !== 'INSTITUTE_ADMIN') continue;
