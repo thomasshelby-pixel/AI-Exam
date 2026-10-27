@@ -38,8 +38,18 @@ import {
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
+import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 
 const router = Router();
+
+function getSignupPlatform(req: Request) {
+  return resolveSignupPlatform({
+    clientPlatform: req.headers['x-client-platform'],
+    userAgent: req.headers['user-agent'],
+    origin: req.headers.origin,
+    referer: req.headers.referer,
+  });
+}
 
 function inferAuthProvider(passwordHash?: string | null): 'password' | 'google' | 'apple' {
   const marker = String(passwordHash || '');
@@ -683,6 +693,7 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       referralCode: rawReferralCode || null,
       deviceId,
       clientIp,
+      signupPlatform: getSignupPlatform(req),
     });
 
     if (!otpResult.success) {
@@ -748,6 +759,7 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       referralCode: payload.referralCode,
       deviceId: payload.deviceId || currentDeviceId,
       clientIp,
+      signupPlatform: payload.signupPlatform || getSignupPlatform(req),
     });
 
     if (!otpResult.success) {
@@ -848,6 +860,9 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const signupPlatform = regData.signupPlatform && regData.signupPlatform !== 'UNKNOWN'
+      ? regData.signupPlatform
+      : getSignupPlatform(req);
     const role: UserRole = 'STUDENT';
     const rawReferralCode = regData.referralCode || '';
 
@@ -902,8 +917,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       db.prepare(`
         INSERT INTO users (
           id, email, password_hash, full_name, phone, role, status,
-          email_verified, email_verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          email_verified, email_verified_at, signup_platform, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `).run(
         userId,
         normalizedEmail,
@@ -911,7 +926,8 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         regData.fullName.trim(),
         regData.phone?.trim() || null,
         role,
-        nowIso
+        nowIso,
+        signupPlatform
       );
 
       // Insert student profile with permanent unique student code
@@ -1296,9 +1312,9 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
             db.prepare(`
               INSERT INTO users (
                 id, email, password_hash, full_name, phone, role, status,
-                account_classification, email_verified, email_verified_at, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, NULL, 'STUDENT', 'ACTIVE', 'NORMAL', 1, ?, ?, ?)
-            `).run(socialUserId, normalizedEmail, providerMarker, fullName, timestamp, timestamp, timestamp);
+                account_classification, email_verified, email_verified_at, signup_platform, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, NULL, 'STUDENT', 'ACTIVE', 'NORMAL', 1, ?, ?, ?, ?)
+            `).run(socialUserId, normalizedEmail, providerMarker, fullName, timestamp, getSignupPlatform(req), timestamp, timestamp);
 
             db.prepare(`
               INSERT INTO student_profiles (
