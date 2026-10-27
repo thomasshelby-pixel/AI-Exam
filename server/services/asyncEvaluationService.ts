@@ -614,7 +614,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.info(`[AsyncEval] Evaluation ${evaluationId} status: NEEDS_REVIEW (${reviewErrors.length} critical validation items flagged)`);
     }
 
-    db.prepare(`
+    const finalizationUpdate = db.prepare(`
       UPDATE evaluations
       SET status = ?,
           certification_status = ?,
@@ -715,9 +715,13 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       evaluationId
     );
 
-    if (isTerminalEvaluationStatus(getEvaluationStatus(evaluationId))) {
-      console.info(`[AsyncEval] Preserving terminal state ${getEvaluationStatus(evaluationId)} for ${evaluationId}; no credits or reports will be changed by this job.`);
-      return;
+    if (finalizationUpdate.changes !== 1) {
+      const latestStatus = getEvaluationStatus(evaluationId);
+      if (isTerminalEvaluationStatus(latestStatus)) {
+        console.info(`[AsyncEval] Preserving terminal state ${latestStatus} for ${evaluationId}; stale job finalization was ignored.`);
+        return;
+      }
+      throw new Error(`Could not finalize evaluation ${evaluationId}; current status is ${latestStatus || 'UNKNOWN'}.`);
     }
 
     if (finalStatus !== 'COMPLETED') {
