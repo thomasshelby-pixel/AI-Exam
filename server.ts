@@ -19,7 +19,11 @@ import legalRoutes from './server/routes/legalRoutes.js';
 import mcqRoutes from './server/routes/mcqRoutes.js';
 import featureRoutes from './server/routes/featureRoutes.js';
 import { authenticateToken } from './server/auth.js';
-import { hydrateFromFirestore, seedBaselineToFirestoreIfEmpty } from './server/services/firestoreSyncService.js';
+import {
+  hydrateFromFirestore,
+  seedBaselineToFirestoreIfEmpty,
+  syncAllStudentReadableIdentityViewsToFirestore,
+} from './server/services/firestoreSyncService.js';
 import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
 import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
@@ -301,6 +305,16 @@ export default {};
     console.log(`Server listening on port ${PORT}`);
     console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
+
+  // Best-effort reconciliation for existing students. This does not block server
+  // readiness and creates readable students_by_code/{ST-...} lookup documents.
+  void syncAllStudentReadableIdentityViewsToFirestore()
+    .then((count) => {
+      console.log(`[Startup] Readable Student Code index reconciled for ${count} student(s).`);
+    })
+    .catch((error) => {
+      console.warn('[Startup] Student Code index reconciliation failed:', error);
+    });
 
   const handleShutdown = (signal: string) => {
     console.log(`[Server] Graceful shutdown initiated (${signal}).`);
