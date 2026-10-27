@@ -52,6 +52,8 @@ import {
 import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
 import { mfaRecoveryRateLimiter, mfaEnrollmentVerifyRateLimiter, mfaVerificationRateLimiter } from '../utils/rateLimiter.js';
+import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 
 const router = Router();
 
@@ -131,12 +133,12 @@ function resolveMfaContext(req: Request): {
 /**
  * Helper to issue an authenticated token & set cookies after successful factor verification
  */
-function issueAuthenticatedSession(
+async function issueAuthenticatedSession(
   req: Request,
   res: Response,
   user: { id: string; email: string; role: UserRole; full_name: string },
   options?: { rememberDevice?: boolean }
-) {
+): Promise<{ token: string; trustToken?: string; deviceId: string; expiresAt?: string; deviceTrusted: boolean }> {
   const sessionId = `sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const token = generateToken(
     {
@@ -214,6 +216,25 @@ function issueAuthenticatedSession(
     sameSite: cookieSameSite,
     maxAge: 365 * 24 * 60 * 60 * 1000,
     path: '/',
+  });
+
+  // Every successful MFA completion is captured in user_device_activity,
+  // separately from trusted_devices (which records only deliberately trusted devices).
+  await recordUserDeviceActivity({
+    userId: user.id,
+    email: user.email,
+    fullName: user.full_name,
+    role: user.role,
+    deviceId,
+    deviceName,
+    userAgent: req.headers['user-agent'],
+    ipAddress: req.ip,
+    platform: resolveSignupPlatform({
+      clientPlatform: req.headers['x-client-platform'],
+      userAgent: req.headers['user-agent'],
+      origin: req.headers.origin,
+      referer: req.headers.referer,
+    }),
   });
 
   return { token, trustToken, deviceId, expiresAt, deviceTrusted: Boolean(trustToken) };
@@ -424,7 +445,7 @@ router.post('/verify-challenge', mfaVerificationRateLimiter, async (req: Request
     });
 
     const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
-    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
+    const session = await issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
@@ -653,7 +674,7 @@ router.post('/enroll/verify', mfaEnrollmentVerifyRateLimiter, async (req: Reques
     });
 
     const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
-    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
+    const session = await issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     return res.json({
       success: true,
@@ -1599,7 +1620,7 @@ const handleValidateTotp = async (req: Request, res: Response) => {
 
     // Issue authenticated session and conditionally mark device as trusted
     const rememberDevice = req.body?.rememberDevice !== false && req.body?.trustDevice !== false;
-    const session = issueAuthenticatedSession(req, res, user, { rememberDevice });
+    const session = await issueAuthenticatedSession(req, res, user, { rememberDevice });
 
     // Atomically ensure mfa_enabled is 1 and mfa_reset_required is cleared in database
     try {
