@@ -1043,7 +1043,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       fs.writeFileSync(originalFilePath, pdfBuf);
 
       // Persist to Firebase Cloud Storage (Metadata in Cloud Firestore)
-      savePersistentFile(
+      await savePersistentFile(
         `${evaluationId}_original`,
         `${evaluationId}_original.pdf`,
         'application/pdf',
@@ -1983,12 +1983,37 @@ router.get(
         originalPdfBuffer
       );
 
-      // Cache on disk
+      // Cache one working copy and persist the canonical checked PDF to the
+      // shared Cloud Storage bucket so either the website or Android app can
+      // retrieve it through the same authenticated download endpoint.
       try {
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
         fs.writeFileSync(checkedFilePath, checkedCopyBuffer);
       } catch {
-        // ignore
+        // The response can still be returned if the local working cache is unavailable.
+      }
+
+      try {
+        const savedCheckedCopy = await savePersistentFile(
+          `${realEvaluationId}_checked_copy`,
+          `Checked_Copy_${evalDisplayId}.pdf`,
+          'application/pdf',
+          checkedCopyBuffer,
+          'EVALUATION_CHECKED_COPY',
+          {
+            ownerUserId: record.student_id,
+            evaluationId: realEvaluationId,
+            instituteId: record.institute_id || null,
+          }
+        );
+        if (savedCheckedCopy.status !== 'ACTIVE') {
+          console.warn('[StudentRoutes] Checked copy was generated but shared Cloud Storage persistence is unavailable.', {
+            evaluationId: realEvaluationId,
+            status: savedCheckedCopy.status,
+          });
+        }
+      } catch (storageError) {
+        console.warn('[StudentRoutes] Checked copy persistence failed:', storageError);
       }
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -2183,7 +2208,7 @@ router.get(
       );
 
       // Persist generated report to Firebase Cloud Storage
-      savePersistentFile(
+      await savePersistentFile(
         `${realEvaluationId}_report`,
         `Evaluation_Report_${evalDisplayId}.pdf`,
         'application/pdf',
@@ -2315,7 +2340,7 @@ router.get(
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
       fs.writeFileSync(originalFilePath, originalPdfBuffer);
-      savePersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`, 'application/pdf', originalPdfBuffer, 'EVALUATION_ORIGINAL', {
+      await savePersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`, 'application/pdf', originalPdfBuffer, 'EVALUATION_ORIGINAL', {
         ownerUserId: record.student_id,
         evaluationId,
       }).catch(() => {});
@@ -4130,7 +4155,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    savePersistentFile(
+    await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
@@ -4273,7 +4298,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    savePersistentFile(
+    await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
