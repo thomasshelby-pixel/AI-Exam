@@ -258,7 +258,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         // The integrity gate can run after an entitlement was accepted. Refund only if
         // this worker established the rejection transition, avoiding duplicate refunds.
         if (job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-          ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource)) {
+          (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
           try {
             refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
             await syncStudentCreditsToFirestore(studentId);
