@@ -3013,7 +3013,7 @@ router.get('/evaluations', async (req: AuthRequest, res: Response) => {
       SELECT e.id, e.display_id, e.evaluation_sequence, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
              e.paper, e.attempt, COALESCE(e.evaluation_source, 'PUBLIC') as evaluation_source, e.institute_id, e.sponsoring_institute_id,
              e.entitlement_source, e.checking_mode, e.total_marks, e.maximum_marks, e.percentage,
-             e.grade, e.confidence_score, e.status, e.document_validation_status,
+             e.grade, e.confidence_score, e.status, e.document_validation_status, e.rejection_reason,
              e.original_filename, COALESCE(e.account_classification, 'NORMAL') as account_classification,
              e.created_at, e.completed_at,
              COALESCE(u.full_name, 'Student Candidate') as student_name,
