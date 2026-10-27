@@ -6,7 +6,16 @@ import {
   DEFAULT_PRIVACY_POLICY,
   DEFAULT_REFUND_POLICY,
   DEFAULT_LEGAL_SETTINGS,
+  LEGAL_TERMS_ADDENDUM,
+  LEGAL_PRIVACY_ADDENDUM,
 } from '../services/legalConstants.js';
+import {
+  CURRENT_TERMS_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_UPDATED_ON,
+  CURRENT_PRIVACY_UPDATED_ON,
+  ensureCurrentLegalDocuments,
+} from '../services/legalConsentService.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 
 const router = Router();
@@ -25,6 +34,59 @@ export interface LegalDocumentRecord {
   created_at: string;
   updated_at: string;
   published_at?: string;
+}
+
+function ensureCurrentPublishedLegalDocument(
+  document: LegalDocumentRecord,
+  docType: 'TERMS' | 'PRIVACY' | 'REFUND',
+): LegalDocumentRecord {
+  if (docType === 'REFUND') return document;
+
+  const terms = docType === 'TERMS';
+  const amendment = terms ? LEGAL_TERMS_ADDENDUM : LEGAL_PRIVACY_ADDENDUM;
+  const currentVersion = terms ? CURRENT_TERMS_VERSION : CURRENT_PRIVACY_VERSION;
+  const updatedOn = terms ? CURRENT_TERMS_UPDATED_ON : CURRENT_PRIVACY_UPDATED_ON;
+  const marker = terms
+    ? '16. FAIR USE, ANTI-ABUSE AND REVIEW BEFORE FINAL TERMINATION'
+    : '16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW';
+  const currentNumericVersion = Number.parseFloat(currentVersion);
+  const documentNumericVersion = Number.parseFloat(String(document.version || '0'));
+  const versionIsOlder = !Number.isFinite(documentNumericVersion) || documentNumericVersion < currentNumericVersion;
+  const amendmentMissing = !String(document.content || '').includes(marker);
+
+  if (!versionIsOlder && !amendmentMissing) return document;
+
+  const content = amendmentMissing
+    ? `${String(document.content || '').trim()}\n\n${amendment}\n`
+    : String(document.content || '');
+  const targetVersion = Number.isFinite(documentNumericVersion) && documentNumericVersion > currentNumericVersion
+    ? document.version
+    : currentVersion;
+  const changelogEntry = terms
+    ? 'Fair-use enforcement, free/paid facility abuse, and notice/opportunity-to-respond review clause.'
+    : 'Disclosure of account/security data used to prevent and investigate suspected free or paid facility abuse.';
+  const changelog = String(document.changelog || '').includes(changelogEntry)
+    ? document.changelog
+    : [String(document.changelog || '').trim(), changelogEntry].filter(Boolean).join(' | ');
+
+  db.prepare(`
+    UPDATE legal_documents
+    SET content = ?,
+        version = ?,
+        effective_date = ?,
+        last_updated_date = ?,
+        changelog = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND doc_type = ? AND status = 'PUBLISHED'
+  `).run(content, targetVersion, updatedOn, updatedOn, changelog, document.id, docType);
+
+  const updated = db.prepare('SELECT * FROM legal_documents WHERE id = ?').get(document.id) as unknown as LegalDocumentRecord | undefined;
+  if (updated) {
+    void syncRecordToFirestore('legal_documents', updated.id, updated as unknown as Record<string, any>)
+      .catch((error: unknown) => console.warn('[LegalRoutes] Could not mirror legal amendment to Firestore:', error));
+    return updated;
+  }
+  return { ...document, content, version: targetVersion, effective_date: updatedOn, last_updated_date: updatedOn, changelog };
 }
 
 export function getLegalSettings(): Record<string, string> {
@@ -112,18 +174,20 @@ export function formatLegalContent(content: string, settings: Record<string, str
  * Returns the currently active PUBLISHED legal document for TERMS, PRIVACY, or REFUND.
  */
 router.get('/published/:docType', (req, res) => {
+  ensureCurrentLegalDocuments();
   const rawType = (req.params.docType || '').toUpperCase();
   let docType: 'TERMS' | 'PRIVACY' | 'REFUND' = 'TERMS';
   if (rawType.includes('PRIVACY')) docType = 'PRIVACY';
   else if (rawType.includes('REFUND') || rawType.includes('CANCELLATION')) docType = 'REFUND';
   else docType = 'TERMS';
 
-  const doc = db.prepare(`
+  const storedDoc = db.prepare(`
     SELECT * FROM legal_documents
     WHERE doc_type = ? AND status = 'PUBLISHED'
     ORDER BY published_at DESC, updated_at DESC
     LIMIT 1
   `).get(docType) as unknown as LegalDocumentRecord | undefined;
+  const doc = storedDoc ? ensureCurrentPublishedLegalDocument(storedDoc, docType) : undefined;
 
   const settings = getPublicLegalSettings();
 
@@ -145,9 +209,9 @@ router.get('/published/:docType', (req, res) => {
         id: `${docType.toLowerCase()}_v1_0`,
         doc_type: docType,
         title: fallbackTitle,
-        version: '1.0',
-        effective_date: '12 September 2026',
-        last_updated_date: '12 September 2026',
+        version: docType === 'TERMS' ? CURRENT_TERMS_VERSION : docType === 'PRIVACY' ? CURRENT_PRIVACY_VERSION : '1.0',
+        effective_date: docType === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : docType === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
+        last_updated_date: docType === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : docType === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
         content: formatLegalContent(fallbackContent, settings),
         raw_content: fallbackContent,
         status: 'PUBLISHED',
@@ -173,17 +237,19 @@ router.get('/published/:docType', (req, res) => {
  * Returns all three active published legal documents and settings for rapid navigation.
  */
 router.get('/published-all', (req, res) => {
+  ensureCurrentLegalDocuments();
   const settings = getPublicLegalSettings();
   const types: Array<'TERMS' | 'PRIVACY' | 'REFUND'> = ['TERMS', 'PRIVACY', 'REFUND'];
   const documents: Record<string, any> = {};
 
   for (const t of types) {
-    const doc = db.prepare(`
+    const storedDoc = db.prepare(`
       SELECT * FROM legal_documents
       WHERE doc_type = ? AND status = 'PUBLISHED'
       ORDER BY published_at DESC, updated_at DESC
       LIMIT 1
     `).get(t) as unknown as LegalDocumentRecord | undefined;
+    const doc = storedDoc ? ensureCurrentPublishedLegalDocument(storedDoc, t) : undefined;
 
     if (doc) {
       documents[t] = {
@@ -206,9 +272,9 @@ router.get('/published-all', (req, res) => {
         id: `${t.toLowerCase()}_v1_0`,
         doc_type: t,
         title: defaultTitle,
-        version: '1.0',
-        effective_date: '12 September 2026',
-        last_updated_date: '12 September 2026',
+        version: t === 'TERMS' ? CURRENT_TERMS_VERSION : t === 'PRIVACY' ? CURRENT_PRIVACY_VERSION : '1.0',
+        effective_date: t === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : t === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
+        last_updated_date: t === 'TERMS' ? CURRENT_TERMS_UPDATED_ON : t === 'PRIVACY' ? CURRENT_PRIVACY_UPDATED_ON : '12 September 2026',
         content: formatLegalContent(defaultContent, settings),
         raw_content: defaultContent,
         status: 'PUBLISHED',

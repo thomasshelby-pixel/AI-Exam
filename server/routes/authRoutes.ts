@@ -40,8 +40,67 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import {
+  CURRENT_TERMS_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  getLegalConsentStatus,
+  recordCurrentLegalAcceptances,
+} from '../services/legalConsentService.js';
 
 const router = Router();
+
+async function persistCurrentLegalAcceptances(userId: string, req: Request): Promise<void> {
+  const rows = recordCurrentLegalAcceptances({
+    userId,
+    termsAccepted: true,
+    privacyAccepted: true,
+    ipAddress: req.ip || req.socket.remoteAddress || null,
+    userAgent: String(req.headers['user-agent'] || ''),
+  });
+  await Promise.allSettled(rows.map((row) => syncRecordToFirestore('legal_acknowledgements', String(row.id), row)));
+}
+
+router.get('/legal-consent/status', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({ success: true, legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)) });
+});
+
+router.post('/legal-consent/accept', authenticateToken, async (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  if (String(req.user.role || '').toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ error: 'Legal re-acceptance is only required for student accounts.' });
+  }
+
+  const { termsAccepted, privacyAccepted, termsVersion, privacyVersion } = req.body || {};
+  if (termsAccepted !== true || privacyAccepted !== true) {
+    return res.status(400).json({
+      error: 'Please tick both separate checkboxes: Terms & Conditions and Privacy Policy.',
+      code: 'LEGAL_CONSENT_REQUIRED',
+    });
+  }
+  if (termsVersion !== CURRENT_TERMS_VERSION || privacyVersion !== CURRENT_PRIVACY_VERSION) {
+    return res.status(409).json({
+      error: 'The legal documents have changed. Refresh this screen and review the latest versions before accepting.',
+      code: 'LEGAL_VERSION_CHANGED',
+      legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)),
+    });
+  }
+
+  try {
+    await persistCurrentLegalAcceptances(req.user.id, req);
+    return res.json({
+      success: true,
+      message: 'Your acceptance has been recorded.',
+      legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)),
+    });
+  } catch (error) {
+    console.error('[LegalConsent] Could not persist current acceptance:', error);
+    return res.status(503).json({
+      error: 'We could not securely record your acceptance. Please retry.',
+      code: 'LEGAL_CONSENT_PERSISTENCE_FAILED',
+    });
+  }
+});
 
 function getSignupPlatform(req: Request) {
   return resolveSignupPlatform({
@@ -557,7 +616,19 @@ function requiresDurableAccountPersistence(): boolean {
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
+    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel, termsAccepted, privacyAccepted, termsVersion, privacyVersion } = req.body;
+
+    if (
+      termsAccepted !== true ||
+      privacyAccepted !== true ||
+      termsVersion !== CURRENT_TERMS_VERSION ||
+      privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
+      return res.status(400).json({
+        error: 'Before creating an account, please accept the Privacy Policy and all Terms & Conditions using their separate checkboxes.',
+        code: 'LEGAL_CONSENT_REQUIRED',
+      });
+    }
 
     if (!email || !password || !fullName || !icaiRegistrationNumber) {
       return res.status(400).json({ error: 'Please provide all required fields (Name, Email, Password, ICAI Registration Number).' });
@@ -702,6 +773,10 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       deviceId,
       clientIp,
       signupPlatform: getSignupPlatform(req),
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_TERMS_VERSION,
+      privacyVersion: CURRENT_PRIVACY_VERSION,
     });
 
     if (!otpResult.success) {
@@ -753,6 +828,17 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
+    if (
+      payload.termsAccepted !== true ||
+      payload.privacyAccepted !== true ||
+      payload.termsVersion !== CURRENT_TERMS_VERSION ||
+      payload.privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
+      return res.status(409).json({
+        error: 'Your pending registration was started under an older consent state. Please restart registration and tick both current policy checkboxes.',
+        code: 'LEGAL_POLICY_UPDATED',
+      });
+    }
     const clientIp = req.ip || undefined;
     const deviceHeader = req.headers['x-device-id'];
     const currentDeviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
@@ -768,6 +854,10 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       deviceId: payload.deviceId || currentDeviceId,
       clientIp,
       signupPlatform: payload.signupPlatform || getSignupPlatform(req),
+      termsAccepted: payload.termsAccepted === true,
+      privacyAccepted: payload.privacyAccepted === true,
+      termsVersion: String(payload.termsVersion || ''),
+      privacyVersion: String(payload.privacyVersion || ''),
     });
 
     if (!otpResult.success) {
@@ -814,6 +904,18 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const regData = verification.registrationData;
+
+    if (
+      regData.termsAccepted !== true ||
+      regData.privacyAccepted !== true ||
+      regData.termsVersion !== CURRENT_TERMS_VERSION ||
+      regData.privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
+      return res.status(409).json({
+        error: 'The Terms & Conditions or Privacy Policy changed while you were verifying your email. Please restart registration and review the latest documents.',
+        code: 'LEGAL_POLICY_UPDATED',
+      });
+    }
 
     // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
@@ -1165,6 +1267,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         : `New verified student account registered; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
+    // The two checkbox choices were submitted before the OTP was issued. Record the
+    // exact current versions only after account creation and durable profile persistence.
+    await persistCurrentLegalAcceptances(userId, req);
+
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
     const isPermanentFree = checkPermanentFreeAccess(normalizedEmail);
 
@@ -1209,7 +1315,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 // Normal Professional SaaS Login (Server-Side RBAC)
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, firebaseIdToken, socialProvider, displayName: requestedDisplayName } = req.body || {};
+    const { email, password, firebaseIdToken, socialProvider, displayName: requestedDisplayName, termsAccepted, privacyAccepted } = req.body || {};
     const portalScope = parseAuthPortalScope(req.body?.portalScope);
     const isSocialLogin = typeof firebaseIdToken === 'string' && firebaseIdToken.trim().length > 0;
 
@@ -1256,6 +1362,19 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       user = db.prepare(`
         SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
       `).get(normalizedEmail) as typeof user;
+
+      if (
+        !user &&
+        (termsAccepted !== true ||
+          privacyAccepted !== true ||
+          req.body?.termsVersion !== CURRENT_TERMS_VERSION ||
+          req.body?.privacyVersion !== CURRENT_PRIVACY_VERSION)
+      ) {
+        return res.status(400).json({
+          error: 'Before creating an account with Google or Apple, please accept the current Privacy Policy and all Terms & Conditions using their separate checkboxes.',
+          code: termsAccepted === true && privacyAccepted === true ? 'LEGAL_VERSION_CHANGED' : 'LEGAL_CONSENT_REQUIRED',
+        });
+      }
 
       if (user && user.role !== 'STUDENT') {
         return res.status(401).json({
@@ -1536,6 +1655,20 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       parseCookieValue(req.headers.cookie, 'ca_trust_token'),
     ].filter(Boolean) as string[];
 
+    // Google signup may continue through the app's separate MFA challenge. Record the
+    // consent submitted on the signup screen before returning that challenge, so a
+    // verified first-time signup does not have to repeat the same acceptance afterward.
+    if (
+      isSocialLogin &&
+      user.role === 'STUDENT' &&
+      termsAccepted === true &&
+      privacyAccepted === true &&
+      req.body?.termsVersion === CURRENT_TERMS_VERSION &&
+      req.body?.privacyVersion === CURRENT_PRIVACY_VERSION
+    ) {
+      await persistCurrentLegalAcceptances(user.id, req);
+    }
+
     // Role-Based MFA Evaluation with Trusted Device Checking:
     // Check if MFA challenge is required or if mandatory enrollment is needed
     const mfaCheck = await evaluateMfaRequirementForLogin(user, { deviceId, trustToken, candidateTokens });
@@ -1666,6 +1799,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       },
       requiresProfileCompletion,
       createdViaSocialSignup,
+      legalConsent: getLegalConsentStatus(user.id, String(effectiveRole)),
     });
   } catch (error: unknown) {
     console.error('Login error:', error);

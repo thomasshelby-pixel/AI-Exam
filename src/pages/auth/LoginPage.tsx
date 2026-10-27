@@ -58,6 +58,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [icaiRegNo, setIcaiRegNo] = useState('');
   const [caLevel, setCaLevel] = useState<'FOUNDATION' | 'INTERMEDIATE' | 'FINAL'>('INTERMEDIATE');
   const [referralCode, setReferralCode] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   // OTP Verification states for new student registrations
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
@@ -82,9 +84,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const handleSocialLogin = async (provider: 'google' | 'apple') => {
     setErrorMessage('');
+    if (mode === 'register' && (!termsAccepted || !privacyAccepted)) {
+      setErrorMessage('Please accept both the Privacy Policy and all Terms & Conditions before creating your account.');
+      return;
+    }
     setIsLoading(true);
     try {
-      const loggedInUser = await socialLogin(provider);
+      const consent = mode === 'register'
+        ? { termsAccepted: true, privacyAccepted: true, termsVersion: '2.0', privacyVersion: '2.0' }
+        : undefined;
+      const loggedInUser = await socialLogin(provider, undefined, consent);
       onSuccess(loggedInUser);
     } catch (err: any) {
       if (
@@ -148,6 +157,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     setErrorMessage('');
 
+    if (!termsAccepted || !privacyAccepted) {
+      setErrorMessage('Please tick both checkboxes: Privacy Policy consent and agreement to all Terms & Conditions.');
+      return;
+    }
+
     const srnValidation = validateSrn(icaiRegNo);
     if (!srnValidation.isValid) {
       setErrorMessage(srnValidation.error || 'Please provide a valid ICAI Registration Number (e.g. CRO0123456).');
@@ -170,6 +184,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         icaiRegistrationNumber: srnValidation.normalized,
         caLevel,
         referralCode: referralCode.trim() || undefined,
+        termsAccepted: true,
+        privacyAccepted: true,
+        termsVersion: '2.0',
+        privacyVersion: '2.0',
       });
 
       if (data.requiresOtpVerification) {
@@ -689,6 +707,38 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
               </div>
 
+              <div className="space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-3">
+                <label className="flex items-start gap-2.5 text-xs leading-relaxed text-slate-700 dark:text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={privacyAccepted}
+                    onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
+                    required
+                  />
+                  <span>
+                    I have read and consent to the updated{' '}
+                    <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 dark:text-blue-400 underline">Privacy Policy</a>,
+                    including the use of relevant account, usage, device and security information to detect and investigate suspected misuse.
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 text-xs leading-relaxed text-slate-700 dark:text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => setTermsAccepted(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
+                    required
+                  />
+                  <span>
+                    I agree with all the{' '}
+                    <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 dark:text-blue-400 underline">Terms &amp; Conditions</a>,
+                    including the rules against abusing any free or paid facility and possible account suspension, termination or closure/deletion after notice and a reasonable opportunity to respond, as applicable.
+                  </span>
+                </label>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Current policy version: 2.0 · Effective 27 October 2026</p>
+              </div>
+
               <button
                 id="btn-register-submit"
                 type="submit"
@@ -734,16 +784,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </p>
               </div>
 
-              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 pt-1">
-                By creating an account, you agree to our{' '}
-                <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
-                  Terms of Service
-                </a>{' '}
-                and{' '}
-                <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
-                  Privacy Policy
-                </a>
-                .
+              <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 pt-1">
+                Your choices are recorded with the accepted document versions and timestamp. You can review either document before selecting the checkbox.
               </p>
             </form>
           </div>

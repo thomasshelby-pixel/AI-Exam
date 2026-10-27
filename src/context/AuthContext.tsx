@@ -69,7 +69,11 @@ interface AuthContextType {
   syncMfaFactor: (phone?: string) => Promise<User>;
   disableMfa: () => Promise<void>;
   login: (email: string, password: string, portalScope?: 'STUDENT' | 'SUPER_ADMIN') => Promise<User>;
-  socialLogin: (provider: 'google' | 'apple') => Promise<User>;
+  socialLogin: (
+    provider: 'google' | 'apple',
+    expectedEmail?: string,
+    consent?: { termsAccepted: boolean; privacyAccepted: boolean; termsVersion: string; privacyVersion: string }
+  ) => Promise<User>;
   instituteLogin: (email: string, password: string) => Promise<User>;
   instituteRegister: (data: {
     instituteName: string;
@@ -88,6 +92,10 @@ interface AuthContextType {
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
+    termsAccepted?: boolean;
+    privacyAccepted?: boolean;
+    termsVersion?: string;
+    privacyVersion?: string;
   }) => Promise<User>;
   initiateRegister: (data: {
     email: string;
@@ -97,6 +105,10 @@ interface AuthContextType {
     icaiRegistrationNumber: string;
     caLevel: string;
     referralCode?: string;
+    termsAccepted?: boolean;
+    privacyAccepted?: boolean;
+    termsVersion?: string;
+    privacyVersion?: string;
   }) => Promise<{ requiresOtpVerification: boolean; email: string; emailMasked: string; cooldownSeconds: number; expiresInSeconds: number; message: string }>;
   verifyRegisterOtp: (email: string, otp: string) => Promise<User>;
   resendRegisterOtp: (email: string) => Promise<{ success: boolean; message: string; cooldownSeconds: number }>;
@@ -661,7 +673,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const socialLogin = async (provider: 'google' | 'apple', expectedEmail?: string): Promise<User> => {
+  const socialLogin = async (
+    provider: 'google' | 'apple',
+    expectedEmail?: string,
+    consent?: { termsAccepted: boolean; privacyAccepted: boolean; termsVersion: string; privacyVersion: string }
+  ): Promise<User> => {
     try {
       const authProvider = (() => {
         if (provider === 'google') {
@@ -709,6 +725,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           deviceId,
           trustToken,
           portalScope: 'STUDENT',
+          ...(consent || {}),
         }),
       });
 
