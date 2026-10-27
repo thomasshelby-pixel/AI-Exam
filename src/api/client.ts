@@ -116,8 +116,9 @@ export async function apiRequest<T = unknown>(
   const trustToken = typeof window !== 'undefined' ? (getScopedTrustToken() || localStorage.getItem('ca_device_trust_token')) : null;
   const deviceId = getOrCreateDeviceId();
 
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormDataBody ? {} : { 'Content-Type': 'application/json' }),
     'X-Device-Id': deviceId,
     ...(options.headers as Record<string, string>),
     // Explicit attribution for new website student registrations.
