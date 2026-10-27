@@ -8,7 +8,14 @@ import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries, getSubjectKe
 import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 import { contactTicketRateLimiter, websiteVisitorRateLimiter } from '../utils/rateLimiter.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
-import { getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { getAllFirestoreDocs, getFirestoreDoc } from '../services/firestoreDbService.js';
+import {
+  getPublishedAppRelease,
+  getDownloadableAppRelease,
+  downloadAppUpdateRelease,
+  shouldServeOtaUpdate,
+  ANDROID_PACKAGE_ID,
+} from '../services/appUpdateService.js';
 
 const router = Router();
 
@@ -71,8 +78,57 @@ function formatApkSize(sizeBytes: number): string {
   return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
+function recordCompletedAndroidDownload(transferredBytes: number): void {
+  const eventId = `apkdl_${crypto.randomUUID()}`;
+  const downloadedAt = new Date().toISOString();
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO android_apk_download_events (id, downloaded_at, file_size_bytes)
+      VALUES (?, ?, ?)
+    `).run(eventId, downloadedAt, transferredBytes);
+    const event = db.prepare(`
+      SELECT id, downloaded_at, file_size_bytes
+      FROM android_apk_download_events
+      WHERE id = ?
+      LIMIT 1
+    `).get(eventId) as Record<string, unknown> | undefined;
+    if (event) {
+      void syncRecordToFirestore('android_apk_download_events', eventId, event).catch((syncError: unknown) => {
+        console.warn('[AndroidDownload] Could not sync download analytics event:', syncError);
+      });
+    }
+  } catch (trackingError) {
+    console.warn('[AndroidDownload] Could not record completed download:', trackingError);
+  }
+}
+
 // Public app metadata used by the dedicated download page.
 router.get('/android-app', async (_req: Request, res: Response) => {
+  try {
+    const release = await getPublishedAppRelease('APK');
+    if (release) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({
+        available: true,
+        websiteName: 'CA Exam Checker AI',
+        appName: 'Exam Checker AI',
+        packageId: ANDROID_PACKAGE_ID,
+        version: release.versionName,
+        versionName: release.versionName,
+        versionCode: release.versionCode,
+        mandatory: release.mandatory,
+        releaseNotes: release.releaseNotes,
+        fileName: 'Exam Checker AI.apk',
+        sizeBytes: release.sizeBytes,
+        sizeLabel: formatApkSize(release.sizeBytes),
+        updatedAt: release.publishedAt || release.uploadedAt,
+        downloadPath: `/api/public/download/android?versionCode=${release.versionCode}`,
+      });
+    }
+  } catch (error) {
+    console.warn('[AndroidDownload] Admin-published APK metadata is temporarily unavailable; checking the legacy release:', error);
+  }
+
   try {
     const asset = await getPublishedAndroidAsset();
     res.setHeader('Cache-Control', 'public, max-age=120');
@@ -80,7 +136,9 @@ router.get('/android-app', async (_req: Request, res: Response) => {
       available: true,
       websiteName: 'CA Exam Checker AI',
       appName: 'Exam Checker AI',
+      packageId: ANDROID_PACKAGE_ID,
       version: '0.1.0',
+      versionName: '0.1.0',
       fileName: 'Exam Checker AI.apk',
       sizeBytes: asset.sizeBytes,
       sizeLabel: formatApkSize(asset.sizeBytes),
@@ -96,10 +154,102 @@ router.get('/android-app', async (_req: Request, res: Response) => {
   }
 });
 
+// Native Android app checks this endpoint at launch to decide whether to show an APK update prompt.
+router.get('/android-app/update', async (_req: Request, res: Response) => {
+  try {
+    const release = await getPublishedAppRelease('APK');
+    res.setHeader('Cache-Control', 'no-store');
+    if (!release) {
+      return res.json({ available: false, packageId: ANDROID_PACKAGE_ID });
+    }
+    return res.json({
+      available: true,
+      packageId: ANDROID_PACKAGE_ID,
+      versionName: release.versionName,
+      versionCode: release.versionCode,
+      mandatory: release.mandatory,
+      releaseNotes: release.releaseNotes,
+      sizeBytes: release.sizeBytes,
+      sizeLabel: formatApkSize(release.sizeBytes),
+      checksum: release.checksum,
+      publishedAt: release.publishedAt || release.uploadedAt,
+      downloadPath: `/api/public/download/android?versionCode=${release.versionCode}`,
+    });
+  } catch (error) {
+    console.warn('[AndroidDownload] Update manifest lookup failed:', error);
+    return res.status(503).json({ available: false, error: 'Update check is temporarily unavailable.' });
+  }
+});
+
+// Self-hosted Capgo OTA update manifest. It receives CapacitorUpdater's device/app
+// info payload and returns a bundle only for this Android package when a newer
+// semver release is published.
+router.post('/app-updates/ota', async (req: Request, res: Response) => {
+  try {
+    const release = await getPublishedAppRelease('OTA');
+    res.setHeader('Cache-Control', 'no-store');
+    if (!shouldServeOtaUpdate((req.body || {}) as Record<string, unknown>, release)) {
+      return res.json({});
+    }
+    return res.json({
+      version: release!.versionName,
+      url: `https://caexamcheckerai.com/api/public/app-updates/ota/bundle/${encodeURIComponent(release!.versionName)}`,
+      checksum: release!.checksum,
+    });
+  } catch (error) {
+    console.warn('[AppUpdates] OTA manifest request failed:', error);
+    // A server-side error should not brick an app; return no update and allow the
+    // currently installed bundle to continue running.
+    return res.json({});
+  }
+});
+
+router.get('/app-updates/ota/bundle/:version', async (req: Request, res: Response) => {
+  try {
+    const release = await getDownloadableAppRelease('OTA', String(req.params.version || ''));
+    if (!release) return res.status(404).json({ error: 'OTA bundle not found or not published.' });
+    const bundle = await downloadAppUpdateRelease(release);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', String(bundle.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bundle);
+  } catch (error) {
+    console.error('[AppUpdates] OTA bundle download failed:', error);
+    return res.status(502).json({ error: 'The live-update bundle could not be verified or downloaded.' });
+  }
+});
+
 // Serve the published APK from our own domain so visitors never land on GitHub.
-router.get('/download/android', async (_req: Request, res: Response) => {
+router.get('/download/android', async (req: Request, res: Response) => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
+    const requestedVersionCode = String(req.query.versionCode || '').trim();
+    let adminRelease = null;
+    if (requestedVersionCode) {
+      adminRelease = await getDownloadableAppRelease('APK', requestedVersionCode);
+      if (!adminRelease) return res.status(404).json({ error: 'That APK release is not available.' });
+    } else {
+      adminRelease = await getPublishedAppRelease('APK');
+    }
+
+    if (adminRelease) {
+      const buffer = await downloadAppUpdateRelease(adminRelease);
+      if (buffer.length !== adminRelease.sizeBytes || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+        return res.status(502).json({ error: 'The published Android package failed integrity verification.' });
+      }
+      res.status(200);
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', "attachment; filename=\"Exam Checker AI.apk\"; filename*=UTF-8''Exam%20Checker%20AI.apk");
+      res.setHeader('Content-Length', String(buffer.length));
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.once('finish', () => {
+        if (res.statusCode === 200) recordCompletedAndroidDownload(buffer.length);
+      });
+      return res.end(buffer);
+    }
+
     const asset = await getPublishedAndroidAsset();
     const encodedName = encodeURIComponent(asset.sourceName);
     const sourceUrl = `https://github.com/thomasshelby-pixel/AI-Exam-App/releases/download/android-latest/${encodedName}`;
@@ -155,39 +305,13 @@ router.get('/download/android', async (_req: Request, res: Response) => {
       }
     };
 
-    // Record the download only once the 200 response has fully finished sending.
-    // The metric represents completed website-served download responses, not installs.
+    // Count completed downloads only after the whole asset was transferred.
     res.once('finish', () => {
-      // Do not count a response as a completed APK download unless the full
-      // asset was transferred; browsers may terminate or network streams may fail.
       if (transferredBytes !== asset.sizeBytes) {
         console.warn('[AndroidDownload] Incomplete APK response was not counted as a completed download.');
         return;
       }
-      const eventId = `apkdl_${crypto.randomUUID()}`;
-      const downloadedAt = new Date().toISOString();
-      try {
-        db.prepare(`
-          INSERT OR IGNORE INTO android_apk_download_events (id, downloaded_at, file_size_bytes)
-          VALUES (?, ?, ?)
-        `).run(eventId, downloadedAt, transferredBytes);
-
-        const event = db.prepare(`
-          SELECT id, downloaded_at, file_size_bytes
-          FROM android_apk_download_events
-          WHERE id = ?
-          LIMIT 1
-        `).get(eventId) as Record<string, unknown> | undefined;
-
-        if (event) {
-          void syncRecordToFirestore('android_apk_download_events', eventId, event).catch((syncError: unknown) => {
-            console.warn('[AndroidDownload] Could not sync download analytics event:', syncError);
-          });
-        }
-      } catch (trackingError) {
-        // A metrics write must never interfere with a completed APK download.
-        console.warn('[AndroidDownload] Could not record completed download:', trackingError);
-      }
+      recordCompletedAndroidDownload(transferredBytes);
     });
 
     for (const chunk of initialChunks) await writeChunk(chunk);
