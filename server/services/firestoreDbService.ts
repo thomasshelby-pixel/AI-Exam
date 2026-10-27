@@ -179,6 +179,52 @@ async function withTimeout<T>(
  * currently configured Firebase project. Use for explicitly separated app/site
  * telemetry stores. Never fall back across databases after a target write fails.
  */
+/**
+ * Reads from an explicit named Firestore database using server credentials.
+ * If the target is the configured primary database, reuse the normal reader.
+ */
+export async function getFirestoreDocInDatabase<T = any>(
+  databaseId: string,
+  collectionName: string,
+  docId: string,
+): Promise<T | null> {
+  if (!databaseId?.trim() || !collectionName?.trim() || !docId?.trim()) return null;
+
+  getFirestoreDb();
+  if (activeDriverMode === 'OFFLINE') return null;
+  const { config } = loadAndValidateFirebaseConfig();
+  const primaryDatabaseId = String(config.firestoreDatabaseId || '(default)').trim();
+  const targetDatabaseId = databaseId.trim();
+
+  if (targetDatabaseId === primaryDatabaseId) {
+    return getFirestoreDoc<T>(collectionName, docId);
+  }
+
+  if (activeDriverMode === 'ADMIN_SDK' && adminDbInstance) {
+    try {
+      const app = getAdminApps().length ? getAdminApp() : null;
+      if (!app) return null;
+      const targetDb = targetDatabaseId === '(default)'
+        ? getAdminFirestore(app)
+        : getAdminFirestore(app, targetDatabaseId);
+      const snapshot = await withTimeout(
+        targetDb.collection(collectionName).doc(String(docId)).get(),
+        12000,
+        null as any,
+        `getFirestoreDocInDatabase[Admin](${targetDatabaseId}/${collectionName}/${docId})`,
+      );
+      if (!snapshot) return null;
+      return snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as T) : null;
+    } catch (error) {
+      console.warn(`[Firestore] Failed to read ${collectionName}/${docId} from named database ${targetDatabaseId}:`, error);
+      return null;
+    }
+  }
+
+  console.warn(`[Firestore] Cannot safely read server-owned collection ${collectionName} from secondary database ${targetDatabaseId} without Admin SDK.`);
+  return null;
+}
+
 export async function setFirestoreDocInDatabase(
   databaseId: string,
   collectionName: string,
