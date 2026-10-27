@@ -124,7 +124,15 @@ export const LegalConsentGate: React.FC = () => {
     }
   };
 
-  if (!isAuthenticated || !user || !isStudent(user.role) || (!checking && !status?.needsAcceptance && !pageError)) {
+  // A cached accepted status should remain hidden during background revalidation;
+  // otherwise returning from a policy tab briefly renders a dialog with no checkboxes.
+  if (
+    !isAuthenticated ||
+    !user ||
+    !isStudent(user.role) ||
+    (status && !status.needsAcceptance && !pageError) ||
+    (!status && !checking && !pageError)
+  ) {
     return null;
   }
 
