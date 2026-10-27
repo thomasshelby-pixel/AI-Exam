@@ -40,8 +40,67 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import {
+  CURRENT_TERMS_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  getLegalConsentStatus,
+  recordCurrentLegalAcceptances,
+} from '../services/legalConsentService.js';
 
 const router = Router();
+
+async function persistCurrentLegalAcceptances(userId: string, req: Request): Promise<void> {
+  const rows = recordCurrentLegalAcceptances({
+    userId,
+    termsAccepted: true,
+    privacyAccepted: true,
+    ipAddress: req.ip || req.socket.remoteAddress || null,
+    userAgent: String(req.headers['user-agent'] || ''),
+  });
+  await Promise.allSettled(rows.map((row) => syncRecordToFirestore('legal_acknowledgements', String(row.id), row)));
+}
+
+router.get('/legal-consent/status', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({ success: true, legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)) });
+});
+
+router.post('/legal-consent/accept', authenticateToken, async (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  if (String(req.user.role || '').toUpperCase() !== 'STUDENT') {
+    return res.status(403).json({ error: 'Legal re-acceptance is only required for student accounts.' });
+  }
+
+  const { termsAccepted, privacyAccepted, termsVersion, privacyVersion } = req.body || {};
+  if (termsAccepted !== true || privacyAccepted !== true) {
+    return res.status(400).json({
+      error: 'Please tick both separate checkboxes: Terms & Conditions and Privacy Policy.',
+      code: 'LEGAL_CONSENT_REQUIRED',
+    });
+  }
+  if (termsVersion !== CURRENT_TERMS_VERSION || privacyVersion !== CURRENT_PRIVACY_VERSION) {
+    return res.status(409).json({
+      error: 'The legal documents have changed. Refresh this screen and review the latest versions before accepting.',
+      code: 'LEGAL_VERSION_CHANGED',
+      legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)),
+    });
+  }
+
+  try {
+    await persistCurrentLegalAcceptances(req.user.id, req);
+    return res.json({
+      success: true,
+      message: 'Your acceptance has been recorded.',
+      legalConsent: getLegalConsentStatus(req.user.id, String(req.user.role)),
+    });
+  } catch (error) {
+    console.error('[LegalConsent] Could not persist current acceptance:', error);
+    return res.status(503).json({
+      error: 'We could not securely record your acceptance. Please retry.',
+      code: 'LEGAL_CONSENT_PERSISTENCE_FAILED',
+    });
+  }
+});
 
 function getSignupPlatform(req: Request) {
   return resolveSignupPlatform({
@@ -557,7 +616,14 @@ function requiresDurableAccountPersistence(): boolean {
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel } = req.body;
+    const { email, password, fullName, phone, icaiRegistrationNumber, caLevel, termsAccepted, privacyAccepted } = req.body;
+
+    if (termsAccepted !== true || privacyAccepted !== true) {
+      return res.status(400).json({
+        error: 'Before creating an account, please accept the Privacy Policy and all Terms & Conditions using their separate checkboxes.',
+        code: 'LEGAL_CONSENT_REQUIRED',
+      });
+    }
 
     if (!email || !password || !fullName || !icaiRegistrationNumber) {
       return res.status(400).json({ error: 'Please provide all required fields (Name, Email, Password, ICAI Registration Number).' });
@@ -702,6 +768,10 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
       deviceId,
       clientIp,
       signupPlatform: getSignupPlatform(req),
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_TERMS_VERSION,
+      privacyVersion: CURRENT_PRIVACY_VERSION,
     });
 
     if (!otpResult.success) {
@@ -768,6 +838,10 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
       deviceId: payload.deviceId || currentDeviceId,
       clientIp,
       signupPlatform: payload.signupPlatform || getSignupPlatform(req),
+      termsAccepted: payload.termsAccepted === true,
+      privacyAccepted: payload.privacyAccepted === true,
+      termsVersion: String(payload.termsVersion || ''),
+      privacyVersion: String(payload.privacyVersion || ''),
     });
 
     if (!otpResult.success) {
