@@ -152,10 +152,23 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
       { failOnError: true },
     ),
   ));
+  const deletionAuditContext = new Map<string, { email?: string; displayName?: string }>();
   for (const audit of deletionAudits.flat()) {
     const entityType = String(audit.entity_type || '').trim().toUpperCase();
     const userId = String(audit.entity_id || '').trim();
     if (!userId || (entityType && entityType !== 'USER')) continue;
+
+    let details: Record<string, any> = {};
+    try {
+      details = typeof audit.details === 'string' ? JSON.parse(audit.details) : (audit.details || {});
+    } catch {
+      details = {};
+    }
+    const previousContext = deletionAuditContext.get(userId) || {};
+    deletionAuditContext.set(userId, {
+      email: String(details.deletedStudentEmail || details.studentEmail || audit.email || previousContext.email || '').trim().toLowerCase() || undefined,
+      displayName: String(details.deletedStudentName || details.studentName || previousContext.displayName || '').trim() || undefined,
+    });
 
     const user = cloudUsersById.get(userId);
     if (user && String(user.role || '').trim().toUpperCase() !== 'STUDENT') continue;
@@ -193,8 +206,9 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
   for (const userId of tombstonedUserIds) {
     const user = await getFirestoreDoc<FirestoreDoc>('users', userId, { failOnError: true });
     const profile = await getFirestoreDoc<FirestoreDoc>('student_profiles', userId, { failOnError: true });
-    const email = String(user?.email || profile?.email || '').trim().toLowerCase() || null;
-    const displayName = String(user?.full_name || profile?.full_name || '').trim() || null;
+    const auditContext = deletionAuditContext.get(userId);
+    const email = String(user?.email || profile?.email || auditContext?.email || '').trim().toLowerCase() || null;
+    const displayName = String(user?.full_name || profile?.full_name || auditContext?.displayName || '').trim() || null;
     const userTargets = new Map<string, CleanupTarget>();
 
     const addTarget = (collectionName: string, docId: string, file = false) => {
