@@ -3808,28 +3808,28 @@ export function seedLegalDocuments() {
     // 2. Seed default published documents if none exist for doc_type
     const defaultDocs = [
       {
-        id: 'terms_v1_0',
+        id: 'terms_v2_0',
         doc_type: 'TERMS',
         title: 'CA EXAM CHECKER AI — TERMS OF SERVICE',
-        version: '1.0',
-        effective_date: '12 September 2026',
-        last_updated_date: '12 September 2026',
+        version: '2.0',
+        effective_date: '27 October 2026',
+        last_updated_date: '27 October 2026',
         content: DEFAULT_TERMS_OF_SERVICE,
         status: 'PUBLISHED',
-        changelog: 'Official v1.0 baseline Terms of Service for CA Exam Checker AI.',
+        changelog: 'Version 2.0: clarifies fair use across free and paid services and adds notice, opportunity to respond and review before final account enforcement.',
         published_by: 'system@caexamchecker.ai',
         published_at: '2026-09-12T00:00:00.000Z',
       },
       {
-        id: 'privacy_v1_0',
+        id: 'privacy_v2_0',
         doc_type: 'PRIVACY',
         title: 'CA EXAM CHECKER AI — PRIVACY POLICY',
-        version: '1.0',
-        effective_date: '12 September 2026',
-        last_updated_date: '12 September 2026',
+        version: '2.0',
+        effective_date: '27 October 2026',
+        last_updated_date: '27 October 2026',
         content: DEFAULT_PRIVACY_POLICY,
         status: 'PUBLISHED',
-        changelog: 'Official v1.0 baseline Privacy Policy for CA Exam Checker AI.',
+        changelog: 'Version 2.0: explains processing of relevant account, security and transaction records for fair-use enforcement, abuse prevention and appeals.',
         published_by: 'system@caexamchecker.ai',
         published_at: '2026-09-12T00:00:00.000Z',
       },
@@ -3849,7 +3849,7 @@ export function seedLegalDocuments() {
     ];
 
     for (const doc of defaultDocs) {
-      const existing = db.prepare('SELECT id, content FROM legal_documents WHERE doc_type = ? AND status = ?').get(doc.doc_type, 'PUBLISHED') as { id: string; content: string } | undefined;
+      const existing = db.prepare('SELECT id, content FROM legal_documents WHERE doc_type = ? AND version = ? AND status = ?').get(doc.doc_type, doc.version, 'PUBLISHED') as { id: string; content: string } | undefined;
       if (!existing) {
         db.prepare(`
           INSERT INTO legal_documents (
