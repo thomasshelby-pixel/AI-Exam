@@ -3,6 +3,7 @@ import { db, initDatabase } from '../db.js';
 import { authenticateToken, generateToken } from '../auth.js';
 import studentRoutes from '../routes/studentRoutes.js';
 import { persistStudentProfileEditToFirestore } from '../services/firestoreSyncService.js';
+import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from '../services/legalConsentService.js';
 
 async function run() {
   initDatabase();
@@ -23,6 +24,19 @@ async function run() {
       free_evaluations_used, purchased_credits, paid_credits
     ) VALUES (?, 'CRO0123456', 'INTERMEDIATE', 'Test City', '["Taxation"]', 1, 7, 7)
   `).run(studentId);
+
+  // Authenticated student requests now require acceptance of both current legal
+  // documents. Give the fixture an explicit acceptance so this test exercises
+  // profile persistence rather than the separate legal-consent gate.
+  for (const [docType, version] of [
+    ['TERMS', CURRENT_TERMS_VERSION],
+    ['PRIVACY', CURRENT_PRIVACY_VERSION],
+  ] as const) {
+    db.prepare(`
+      INSERT INTO legal_acknowledgements (id, user_id, doc_type, version, acknowledged_at, user_agent)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'student-profile-course-test')
+    `).run(`ack_${studentId}_${docType}`, studentId, docType, version);
+  }
   db.prepare(`
     INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
     VALUES (?, ?, 'test-hash', 'Other Student', '', 'STUDENT', 'ACTIVE')
@@ -169,6 +183,7 @@ async function run() {
     console.log('[PASS] Student course update persists, reloads, rejects unauthorized/invalid values, preserves history and entitlements, and overrides stale cloud course data.');
   } finally {
     db.prepare('DELETE FROM evaluations WHERE id = ?').run(evaluationId);
+    db.prepare('DELETE FROM legal_acknowledgements WHERE user_id = ?').run(studentId);
     db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?)').run(studentId, otherStudentId);
     db.prepare('DELETE FROM users WHERE id IN (?, ?)').run(studentId, otherStudentId);
   }
