@@ -232,9 +232,16 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    // Trusted-device records contain IP addresses, user-agent strings, device IDs,
+    // and trust-token hashes. Only the trusted server Admin SDK should access these.
+    // Admin SDK calls bypass Firestore Security Rules; direct client access is denied.
     match /trusted_devices/{deviceId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if false;
+    }
+
+    // Human-readable Student Code index is for server-side/admin-console use only.
+    match /students_by_code/{studentCode} {
+      allow read, write: if false;
     }
 
     // MCQ Materials & Questions (Source documents and question pool)
