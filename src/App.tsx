@@ -12,6 +12,7 @@ import { ShieldAlert, Clock } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
 import { ThemeProvider } from './context/ThemeContext.js';
+import { LegalConsentGate } from './components/auth/LegalConsentGate.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
 import { CreditPurchaseModal } from './components/common/CreditPurchaseModal.js';
@@ -1277,6 +1278,7 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <AppRoutes />
+          <LegalConsentGate />
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
