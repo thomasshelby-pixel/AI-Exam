@@ -1432,6 +1432,8 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
             };
             createdViaSocialSignup = true;
 
+            await syncRequiredPolicyAcknowledgements(socialUserId);
+
             // Durable account persistence is verified below before any session
             // is issued. Best-effort sync here could otherwise report successful
             // sign-up while another App Hosting instance cannot see this account.
@@ -1668,6 +1670,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       ? 'MCQ_ADMIN'
       : user.role;
 
+    const requiresPolicyAcceptance = user.role === 'STUDENT' && !hasRequiredLegalPolicyConsent(user.id);
     const token = generateToken({
       id: user.id,
       email: user.email,
@@ -1733,6 +1736,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         status: user.status,
         authProvider: isSocialLogin ? socialProvider : inferAuthProvider(user.password_hash),
         requiresProfileCompletion,
+        requiresPolicyAcceptance,
         hasPermanentFreeAccess: isPermanentFree,
         mfaEnabled: authMfa.mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
@@ -2183,6 +2187,64 @@ router.post('/revocation-request', authenticateRevocationToken, (req: AuthReques
   }
 });
 
+// Current mandatory student legal-consent status. Public policy documents are
+// available through /api/legal/published/:docType before or after sign-in.
+router.get('/legal-consent-status', authenticateToken, (req: AuthRequest, res: Response) => {
+  const requiredPolicyVersions = getRequiredLegalPolicyVersions();
+  const isStudent = req.user?.role === 'STUDENT';
+  const requiresPolicyAcceptance = Boolean(isStudent && !hasRequiredLegalPolicyConsent(req.user!.id));
+  return res.json({
+    success: true,
+    requiresPolicyAcceptance,
+    requiredPolicyVersions,
+  });
+});
+
+// Record explicit acceptance of the current Terms and Privacy versions. The server
+// stamps the versions, timestamp, IP and user-agent; clients cannot choose old versions.
+router.post('/accept-required-legal-consent', authenticateToken, async (req: AuthRequest, res: Response) => {
+  if (req.user?.role !== 'STUDENT') {
+    return res.status(403).json({ error: 'This acceptance flow is for student accounts only.' });
+  }
+  if (req.body?.privacyPolicyConsent !== true || req.body?.termsAccepted !== true) {
+    return res.status(400).json({
+      error: 'Both checkboxes are required: Privacy Policy consent and agreement to all Terms & Conditions.',
+      code: 'LEGAL_CONSENT_REQUIRED',
+    });
+  }
+
+  const versions = getRequiredLegalPolicyVersions();
+  try {
+    recordRequiredLegalPolicyConsent({
+      userId: req.user.id,
+      termsVersion: versions.TERMS,
+      privacyVersion: versions.PRIVACY,
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+    });
+    await syncRequiredPolicyAcknowledgements(req.user.id);
+    return res.json({
+      success: true,
+      requiresPolicyAcceptance: false,
+      acceptedPolicyVersions: versions,
+      message: 'Your acceptance has been recorded. You may continue using CA Exam Checker AI.',
+    });
+  } catch (error: any) {
+    if (error?.message === 'LEGAL_POLICY_VERSION_CHANGED') {
+      return res.status(409).json({
+        error: 'The policy version changed. Please reload the documents and accept the current versions.',
+        code: 'LEGAL_POLICY_VERSION_CHANGED',
+        requiredPolicyVersions: getRequiredLegalPolicyVersions(),
+      });
+    }
+    console.error('[Auth] Could not record required legal consent:', error);
+    return res.status(500).json({
+      error: 'We could not securely record your acceptance. Please retry.',
+      code: 'LEGAL_CONSENT_PERSISTENCE_FAILED',
+    });
+  }
+});
+
 // Get Current User Profile & Entitlements (Returns { user: null } gracefully if unauthenticated)
 router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -2286,6 +2348,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
 
     const meProfileSrn = String((profileData as any)?.icai_registration_number || (profileData as any)?.icaiRegistrationNumber || '').trim().toUpperCase();
     const meRequiresProfileCompletion = user.role === 'STUDENT' && (!meProfileSrn || meProfileSrn === 'REG-PENDING');
+    const meRequiresPolicyAcceptance = user.role === 'STUDENT' && !hasRequiredLegalPolicyConsent(user.id);
     const meAuthProvider = inferAuthProvider(user.password_hash);
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
@@ -2336,6 +2399,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         createdAt: user.created_at,
         authProvider: meAuthProvider,
         requiresProfileCompletion: meRequiresProfileCompletion,
+        requiresPolicyAcceptance: meRequiresPolicyAcceptance,
         hasPermanentFreeAccess: isPermanentFree,
         mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
