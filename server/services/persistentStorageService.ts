@@ -17,12 +17,12 @@ import { sanitizeFilename } from '../utils/fileValidation.js';
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 const DATA_UPLOADS_DIR = path.join(process.cwd(), 'data', 'uploads');
 
-// Ensure local temporary working directory exists if needed for stream conversion
+// Only the current working-cache directory is created for new files.
+// DATA_UPLOADS_DIR remains read/deletion-only for legacy files from older builds.
 try {
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  if (!fs.existsSync(DATA_UPLOADS_DIR)) fs.mkdirSync(DATA_UPLOADS_DIR, { recursive: true });
 } catch (err) {
-  console.warn('[PersistentStorage] Notice creating directory:', err);
+  console.warn('[PersistentStorage] Notice creating working-cache directory:', err);
 }
 
 export type StoredFileMetadata = CloudFileMetadata;
@@ -168,11 +168,12 @@ export async function getPersistentFile(
     if (blobRow && blobRow.data) {
       const buf = Buffer.isBuffer(blobRow.data) ? blobRow.data : Buffer.from(blobRow.data);
       if (buf.length > 0) {
-        // Restore local working disk caches
+        // Recover from a legacy SQLite backup into one working-cache file.
         try {
-          const targetFilename = blobRow.filename || safeFilename;
+          const targetFilename = /_(?:original|checked_copy|report)$/.test(safeFileId)
+            ? `${safeFileId}.pdf`
+            : (blobRow.filename || safeFilename);
           fs.writeFileSync(path.join(UPLOADS_DIR, targetFilename), buf);
-          fs.writeFileSync(path.join(DATA_UPLOADS_DIR, targetFilename), buf);
         } catch {}
         return { buffer: buf };
       }
