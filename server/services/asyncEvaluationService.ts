@@ -493,23 +493,31 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       if (!isSeriesValid || !matchesDb || !matchesMaterial) {
         const mismatchErr = `CRITICAL_INTEGRITY_VIOLATION: MTP Series mismatch detected (Job: ${jobSeries}, DB: ${dbSeries}, Material: ${materialSeries}). Evaluation halted to protect academic validity.`;
         console.error(`[AsyncEval] ${mismatchErr}`);
-        db.prepare(`
+        const failureClaim = db.prepare(`
           UPDATE evaluations
-          SET progress_stage = 'ERROR_DETECTED',
+          SET status = 'FAILED',
+              progress_stage = 'FAILED',
               progress_percentage = 0,
               progress_message = ?,
               error_message = ?,
+              completed_at = CURRENT_TIMESTAMP,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
             AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
         `).run(mismatchErr, mismatchErr, evaluationId);
-        // The upload may already have consumed a personal entitlement. A source
-        // binding failure is a protected system failure, so return that credit.
-        if (
-          job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-          (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
-        ) {
-          refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+
+        // A concurrent terminal decision wins. Only refund if this worker actually
+        // claimed the FAILED transition.
+        if (failureClaim.changes === 1) {
+          if (
+            job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+            (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+          ) {
+            refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+            await syncStudentCreditsToFirestore(studentId);
+          }
+          const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+          if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
         }
         return;
       }
