@@ -49,26 +49,46 @@ export interface StudentSignupPlatformCounts {
   total: number;
 }
 
+export interface StudentSignupPlatformRecord {
+  role?: unknown;
+  account_classification?: unknown;
+  signup_platform?: unknown;
+}
+
 /**
- * Counts student accounts by recorded signup source. Synthetic/test accounts
- * are excluded. Legacy records without source metadata remain in UNKNOWN.
+ * Counts signup sources from a supplied account snapshot. Production callers
+ * should pass the authoritative Firestore users collection rather than a
+ * per-instance SQLite cache.
+ */
+export function countStudentSignupPlatformRecords(
+  records: readonly StudentSignupPlatformRecord[],
+): StudentSignupPlatformCounts {
+  const students = records.filter((record) => {
+    const role = String(record.role || '').trim().toUpperCase();
+    const classification = String(record.account_classification || 'NORMAL').trim().toUpperCase();
+    return role === 'STUDENT' && classification !== 'TEST';
+  });
+
+  const counts: StudentSignupPlatformCounts = { app: 0, web: 0, unknown: 0, total: students.length };
+  for (const student of students) {
+    const platform = String(student.signup_platform || 'UNKNOWN').trim().toUpperCase();
+    if (platform === 'APP') counts.app += 1;
+    else if (platform === 'WEB') counts.web += 1;
+    else counts.unknown += 1;
+  }
+  return counts;
+}
+
+/**
+ * Local-cache compatibility helper retained for existing tests and local tools.
+ * Production dashboard counts should use countStudentSignupPlatformRecords with
+ * a fresh Firestore account snapshot.
  */
 export function getStudentSignupPlatformCounts(): StudentSignupPlatformCounts {
-  const result = db.prepare(`
-    SELECT
-      COUNT(*) AS total,
-      SUM(CASE WHEN UPPER(COALESCE(signup_platform, 'UNKNOWN')) = 'APP' THEN 1 ELSE 0 END) AS app,
-      SUM(CASE WHEN UPPER(COALESCE(signup_platform, 'UNKNOWN')) = 'WEB' THEN 1 ELSE 0 END) AS web,
-      SUM(CASE WHEN UPPER(COALESCE(signup_platform, 'UNKNOWN')) NOT IN ('APP', 'WEB') THEN 1 ELSE 0 END) AS unknown
+  const records = db.prepare(`
+    SELECT role, account_classification, signup_platform
     FROM users
     WHERE role = 'STUDENT'
-      AND COALESCE(account_classification, 'NORMAL') <> 'TEST'
-  `).get() as { total?: number; app?: number; web?: number; unknown?: number };
-
-  return {
-    app: Number(result.app || 0),
-    web: Number(result.web || 0),
-    unknown: Number(result.unknown || 0),
-    total: Number(result.total || 0),
-  };
+  `).all() as StudentSignupPlatformRecord[];
+  return countStudentSignupPlatformRecords(records);
 }
