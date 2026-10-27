@@ -823,6 +823,17 @@ router.post('/resend-otp', otpResendRateLimiter, async (req: Request, res: Respo
     }
 
     const payload = JSON.parse(pendingRow.payload_json);
+    if (
+      payload.termsAccepted !== true ||
+      payload.privacyAccepted !== true ||
+      payload.termsVersion !== CURRENT_TERMS_VERSION ||
+      payload.privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
+      return res.status(409).json({
+        error: 'Your pending registration was started under an older consent state. Please restart registration and tick both current policy checkboxes.',
+        code: 'LEGAL_POLICY_UPDATED',
+      });
+    }
     const clientIp = req.ip || undefined;
     const deviceHeader = req.headers['x-device-id'];
     const currentDeviceId = typeof deviceHeader === 'string' ? deviceHeader.trim().slice(0, 200) : undefined;
@@ -888,6 +899,18 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     const regData = verification.registrationData;
+
+    if (
+      regData.termsAccepted !== true ||
+      regData.privacyAccepted !== true ||
+      regData.termsVersion !== CURRENT_TERMS_VERSION ||
+      regData.privacyVersion !== CURRENT_PRIVACY_VERSION
+    ) {
+      return res.status(409).json({
+        error: 'The Terms & Conditions or Privacy Policy changed while you were verifying your email. Please restart registration and review the latest documents.',
+        code: 'LEGAL_POLICY_UPDATED',
+      });
+    }
 
     // Recheck the SRN after OTP verification; email ownership alone must not create a duplicate student.
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
@@ -1239,6 +1262,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         : `New verified student account registered; standard free trial ${freeTrialGranted ? 'granted' : 'blocked (' + freeTrialDecision.reason + ')'}`
     );
 
+    // The two checkbox choices were submitted before the OTP was issued. Record the
+    // exact current versions only after account creation and durable profile persistence.
+    await persistCurrentLegalAcceptances(userId, req);
+
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
     const isPermanentFree = checkPermanentFreeAccess(normalizedEmail);
 
@@ -1283,7 +1310,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
 // Normal Professional SaaS Login (Server-Side RBAC)
 router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, firebaseIdToken, socialProvider, displayName: requestedDisplayName } = req.body || {};
+    const { email, password, firebaseIdToken, socialProvider, displayName: requestedDisplayName, termsAccepted, privacyAccepted } = req.body || {};
     const portalScope = parseAuthPortalScope(req.body?.portalScope);
     const isSocialLogin = typeof firebaseIdToken === 'string' && firebaseIdToken.trim().length > 0;
 
@@ -1330,6 +1357,13 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       user = db.prepare(`
         SELECT id, email, password_hash, full_name, role, status, mfa_enabled, mfa_phone FROM users WHERE lower(email) = ?
       `).get(normalizedEmail) as typeof user;
+
+      if (!user && (termsAccepted !== true || privacyAccepted !== true)) {
+        return res.status(400).json({
+          error: 'Before creating an account with Google or Apple, please accept the current Privacy Policy and all Terms & Conditions using their separate checkboxes.',
+          code: 'LEGAL_CONSENT_REQUIRED',
+        });
+      }
 
       if (user && user.role !== 'STUDENT') {
         return res.status(401).json({
