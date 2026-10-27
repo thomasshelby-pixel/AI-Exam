@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { apiRequest, ApiError } from '../../api/client.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { ShieldCheck, FileText, LockKeyhole, Loader2, RefreshCw } from 'lucide-react';
@@ -16,6 +17,9 @@ const isStudent = (role: unknown) => String(role || '').toUpperCase() === 'STUDE
 
 export const LegalConsentGate: React.FC = () => {
   const { user, token, isAuthenticated, isLoading: authLoading } = useAuth();
+  const location = useLocation();
+  const latestStatusRequest = useRef(0);
+  const statusOwner = useRef<string | null>(null);
   const [status, setStatus] = useState<LegalConsentStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [pageError, setPageError] = useState('');
@@ -24,11 +28,25 @@ export const LegalConsentGate: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   const loadStatus = useCallback(async () => {
+    const requestId = ++latestStatusRequest.current;
+
     if (authLoading || !isAuthenticated || !token || !user || !isStudent(user.role)) {
+      statusOwner.current = null;
       setStatus(null);
       setPageError('');
+      setTermsAccepted(false);
+      setPrivacyAccepted(false);
       setChecking(false);
       return;
+    }
+
+    // Never reuse another account's result or checkbox choices after logout/account switching.
+    const userId = String(user.id || '');
+    if (statusOwner.current !== userId) {
+      statusOwner.current = userId;
+      setStatus(null);
+      setTermsAccepted(false);
+      setPrivacyAccepted(false);
     }
 
     setChecking(true);
@@ -37,21 +55,39 @@ export const LegalConsentGate: React.FC = () => {
       const response = await apiRequest<{ success: boolean; legalConsent: LegalConsentStatus }>(
         '/api/auth/legal-consent/status'
       );
-      setStatus(response.legalConsent);
+      if (requestId === latestStatusRequest.current) {
+        setStatus(response.legalConsent);
+      }
     } catch (error) {
+      if (requestId !== latestStatusRequest.current) return;
       if (error instanceof ApiError && error.status === 401) {
+        // Do not silently hide the mandatory gate when the server cannot verify this session.
         setStatus(null);
+        setPageError('Your sign-in session could not be verified. Please sign in again, then review the current policies.');
       } else {
         setPageError(error instanceof Error ? error.message : 'Could not verify the current policy acceptance.');
       }
     } finally {
-      setChecking(false);
+      if (requestId === latestStatusRequest.current) setChecking(false);
     }
   }, [authLoading, isAuthenticated, token, user]);
 
   useEffect(() => {
     void loadStatus();
-  }, [loadStatus]);
+
+    // Policy links may open a separate tab (or a WebView may return to this page).
+    // Re-check server truth whenever this tab becomes visible or navigation returns.
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') void loadStatus();
+    };
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
+  }, [loadStatus, location.pathname]);
 
   const acceptPolicies = async () => {
     if (!status || !termsAccepted || !privacyAccepted || saving) return;
@@ -126,10 +162,10 @@ export const LegalConsentGate: React.FC = () => {
         {status?.needsAcceptance && (
           <>
             <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-bold text-slate-800 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">
+              <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-bold text-slate-800 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">
                 <FileText className="h-4 w-4 text-blue-600" /> Read Terms &amp; Conditions v{status.termsVersion}
               </a>
-              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-bold text-slate-800 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">
+              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-bold text-slate-800 hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">
                 <LockKeyhole className="h-4 w-4 text-blue-600" /> Read Privacy Policy v{status.privacyVersion}
               </a>
             </div>
@@ -148,7 +184,7 @@ export const LegalConsentGate: React.FC = () => {
                   required
                 />
                 <span>
-                  I have read and consent to the updated <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 underline dark:text-blue-300">Privacy Policy</a>, including the use of relevant account, usage, device and security information to detect and investigate suspected misuse.
+                  I have read and consent to the updated <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="font-bold text-blue-700 underline dark:text-blue-300">Privacy Policy</a>, including the use of relevant account, usage, device and security information to detect and investigate suspected misuse.
                 </span>
               </label>
 
@@ -161,7 +197,7 @@ export const LegalConsentGate: React.FC = () => {
                   required
                 />
                 <span>
-                  <strong>I agree with all the Terms &amp; Conditions.</strong> I have read the updated <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-bold text-blue-700 underline dark:text-blue-300">Terms &amp; Conditions</a>, including the rules against abusing any free or paid facility and the notice and opportunity-to-respond process before a final suspension, termination or account closure/deletion, where applicable.
+                  <strong>I agree with all the Terms &amp; Conditions.</strong> I have read the updated <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="font-bold text-blue-700 underline dark:text-blue-300">Terms &amp; Conditions</a>, including the rules against abusing any free or paid facility and the notice and opportunity-to-respond process before a final suspension, termination or account closure/deletion, where applicable.
                 </span>
               </label>
             </div>
