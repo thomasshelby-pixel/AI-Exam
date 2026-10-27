@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,7 +13,7 @@ import {
   Smartphone,
   Upload,
 } from 'lucide-react';
-import { apiRequest } from '@/api/client';
+import { apiRequest } from '../../api/client.js';
 
 type ReleaseKind = 'APK' | 'OTA';
 type ReleaseStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
@@ -96,7 +96,7 @@ export default function AppUpdatesSection() {
     void refresh();
   }, [refresh]);
 
-  const uploadDraft = async (event: React.FormEvent) => {
+  const uploadDraft = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
     setSuccess('');
