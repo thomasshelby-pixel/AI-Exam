@@ -1339,8 +1339,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ev.checking_mode || 'STANDARD', ev.evaluation_source || 'PUBLIC', ev.material_source || 'GLOBAL',
           ev.entitlement_source || 'PERSONAL_FREE', ev.consumed_from_institute_allocation || 0, ev.consumed_from_personal_credits || 0,
           ev.total_marks !== undefined ? ev.total_marks : null, ev.maximum_marks || 100, ev.percentage !== undefined ? ev.percentage : null,
-          ev.grade || null, ev.confidence_score || null, normalizedEvaluation.status || 'COMPLETED', ev.result_json || null,
-          ev.error_message || null, ev.document_validation_status || 'VERIFIED', normalizedEvaluation.rejection_reason || null,
+          ev.grade || null, ev.confidence_score || null, String(normalizedEvaluation.status || 'COMPLETED'), ev.result_json || null,
+          ev.error_message || null, ev.document_validation_status || 'VERIFIED', String(normalizedEvaluation.rejection_reason || '').trim() || null,
           ev.original_filename || 'student_answer_sheet.pdf',
           ev.current_evaluation_version_id || ev.evaluation_version || 'v1',
           ev.evaluation_version || 'v1',
@@ -1350,7 +1350,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ev.admin_reviewer_email || null,
           ev.admin_review_notes || null,
           ev.account_classification || 'NORMAL',
-          ev.created_at || new Date().toISOString(), normalizedEvaluation.completed_at || ev.completed_at || null
+          ev.created_at || new Date().toISOString(), (typeof normalizedEvaluation.completed_at === 'string' ? normalizedEvaluation.completed_at : ev.completed_at || null)
         );
 
         if (String(normalizedEvaluation.status || '').toUpperCase() === 'REJECTED' &&
@@ -1366,8 +1366,8 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
           `).run(
-            normalizedEvaluation.rejection_reason,
-            normalizedEvaluation.progress_message || 'Evaluation rejected by validation checks',
+            String(normalizedEvaluation.rejection_reason || '').trim() || null,
+            String(normalizedEvaluation.progress_message || 'Evaluation rejected by validation checks'),
             ev.id
           );
 
