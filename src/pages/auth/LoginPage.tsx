@@ -718,7 +718,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   />
                   <span>
                     I have read and consent to the updated{' '}
-                    <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 dark:text-blue-400 underline">Privacy Policy</a>,
+                    <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="font-semibold text-blue-600 dark:text-blue-400 underline">Privacy Policy</a>,
                     including the use of relevant account, usage, device and security information to detect and investigate suspected misuse.
                   </span>
                 </label>
@@ -732,7 +732,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   />
                   <span>
                     I agree with all the{' '}
-                    <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 dark:text-blue-400 underline">Terms &amp; Conditions</a>,
+                    <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="font-semibold text-blue-600 dark:text-blue-400 underline">Terms &amp; Conditions</a>,
                     including the rules against abusing any free or paid facility and possible account suspension, termination or closure/deletion after notice and a reasonable opportunity to respond, as applicable.
                   </span>
                 </label>
