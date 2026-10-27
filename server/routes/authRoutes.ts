@@ -10,7 +10,7 @@ import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSessio
 import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
-import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { syncRecordToFirestore, persistStudentAccountToFirestore } from '../services/firestoreSyncService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
@@ -528,6 +528,14 @@ function studentSrnConflictResponse(res: Response, conflict: { kind: 'EXACT' | '
   });
 }
 
+
+function requiresDurableAccountPersistence(): boolean {
+  return process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.FIREBASE_APP_HOSTING) ||
+    process.env.USE_FIREBASE_ADMIN === 'true' ||
+    Boolean(process.env.K_SERVICE && !process.env.K_SERVICE.startsWith('ais-dev'));
+}
+
 // Student Registration: Step 1 - Validate inputs and dispatch secure 6-digit OTP to inbox
 router.post('/register', authRegisterRateLimiter, async (req: Request, res: Response) => {
   try {
@@ -744,8 +752,20 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     if (verifiedSrnConflict) return studentSrnConflictResponse(res, verifiedSrnConflict);
 
     // Check existing email again to eliminate race condition duplicates
-    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
+    const existing = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; role: string } | undefined;
     if (existing) {
+      // A previous registration may exist in the current runtime but have missed
+      // its cloud mirror. Retry durable persistence before telling the student to sign in.
+      if (String(existing.role || '').toUpperCase() === 'STUDENT') {
+        const recovered = await persistStudentAccountToFirestore(existing.id);
+        if (recovered !== 'persisted' && requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'We found your account but could not confirm its durable cloud save. Please retry shortly; do not register with a different email.',
+            code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+            retryable: true,
+          });
+        }
+      }
       return res.status(400).json({
         error: 'An account with this email address already exists. Please sign in.',
         code: 'ALREADY_EXISTS',
@@ -873,6 +893,19 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       try { db.exec('ROLLBACK'); } catch {}
       console.error('Registration activation transaction error:', txErr);
       return res.status(500).json({ error: 'Failed to complete student account activation. Please try again.' });
+    }
+
+    // Do not acknowledge registration until the student and profile have a verified
+    // durable cloud copy. This prevents ephemeral runtime SQLite data from becoming
+    // the only copy and disappearing when the server instance restarts.
+    const initialPersistence = await persistStudentAccountToFirestore(userId);
+    if (initialPersistence !== 'persisted' && requiresDurableAccountPersistence()) {
+      console.error('[Auth] Registration persistence gate failed:', { userId, result: initialPersistence });
+      return res.status(503).json({
+        error: 'Your account could not be safely saved yet. Please retry shortly; your registration will only complete after the account is stored securely.',
+        code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+        retryable: true,
+      });
     }
 
     // The account has passed email OTP verification and the ICAI SRN was rechecked
@@ -1036,14 +1069,16 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     const token = generateToken({ id: userId, email: normalizedEmail, role, fullName: regData.fullName.trim() });
     const isPermanentFree = checkPermanentFreeAccess(normalizedEmail);
 
-    // Sync newly registered user and profile to Cloud Firestore immediately
-    try {
-      const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-      const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as any;
-      if (uRow) await syncRecordToFirestore('users', userId, uRow);
-      if (spRow) await syncRecordToFirestore('student_profiles', userId, spRow);
-    } catch (syncErr) {
-      console.warn('[Auth] Register firestore sync warning:', syncErr);
+    // Persist the post-eligibility profile state as well (including the free-trial quota)
+    // and verify it from Firestore before sending the successful registration response.
+    const finalPersistence = await persistStudentAccountToFirestore(userId);
+    if (finalPersistence !== 'persisted' && requiresDurableAccountPersistence()) {
+      console.error('[Auth] Final registration persistence gate failed:', { userId, result: finalPersistence });
+      return res.status(503).json({
+        error: 'Your account is saved, but we could not confirm the final account setup yet. Please retry shortly or sign in again.',
+        code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+        retryable: true,
+      });
     }
 
     res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
