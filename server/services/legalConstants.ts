@@ -1,7 +1,7 @@
 export const DEFAULT_TERMS_OF_SERVICE = `CA EXAM CHECKER AI — TERMS OF SERVICE
 
-Effective Date: 12 September 2026
-Last Updated: 12 September 2026
+Effective Date: 27 October 2026
+Last Updated: 27 October 2026
 
 Welcome to CA Exam Checker AI ("CA Exam Checker AI", "Platform", "we", "us" or "our").
 
@@ -77,25 +77,34 @@ Evaluation credit purchases are final and non-refundable after successful paymen
 
 If payment is deducted but the purchased entitlement is not successfully provided because of a verified technical/payment failure, the transaction may be investigated and corrected or refunded as applicable.
 
-9. PROHIBITED ACTIVITIES
+9. FAIR USE AND PROHIBITED ACTIVITIES
 
-Users must not:
-- bypass security or access controls;
-- manipulate marks, credits or payments;
-- access another user's or institute's private information;
-- abuse promotional offers;
-- upload malware;
-- attempt unauthorized access;
-- reverse engineer or misuse the Platform;
-- use the Platform for unlawful activities.
+All Platform facilities are subject to fair-use rules, whether provided free of charge, through a free trial, with promotional benefits, through purchased credits or subscriptions, or through an institute-sponsored plan. Paying for a service does not authorize misuse of that service.
 
-10. SUSPENSION AND TERMINATION
+Prohibited conduct includes:
+- creating, controlling or using multiple accounts to obtain extra free evaluations, bypass trial limits, evade restrictions or otherwise obtain a benefit not intended for that account;
+- submitting the same answer sheet through different accounts or using another person's identity, email address or ICAI registration details to bypass limits;
+- abusing free trials, promotional offers, coupons, institute allocations, credits, subscriptions or payment/refund processes;
+- manipulating marks, credits, entitlements, account status or payment records;
+- bypassing security, rate limits, access controls or account restrictions;
+- accessing another user's or institute's private information without authorization;
+- using automation, scripts or other methods to disrupt, overload or exploit the Platform;
+- uploading malware, unlawful content or unauthorized documents; or
+- attempting unauthorized access, reverse engineering for misuse, fraud or other unlawful activities.
 
-We may suspend or terminate access where necessary because of fraud, abuse, security risks, unlawful activity, payment misuse or material violation of these Terms.
+A suspected violation is not, by itself, a final finding of wrongdoing. We may review relevant account, device, transaction, submission and security records to investigate suspected abuse, subject to our Privacy Policy and applicable law.
 
-Where applicable, users may be provided with a reason and an appropriate review/revocation mechanism.
+10. FAIR PROCESS, SUSPENSION AND TERMINATION
 
-Suspension does not automatically reset purchased-credit expiry dates or subscription periods.
+Where we believe an account may have materially abused any free or paid facility, we will ordinarily provide the user with a notice describing the concern and a reasonable opportunity to respond and explain their position (an opportunity of being heard) before making a final decision to suspend or terminate the account.
+
+We will consider the user's response and relevant available information before reaching a final decision. If a violation is substantiated, we may impose a proportionate measure, including warnings, restrictions, suspension or termination/deletion of the account, as permitted by applicable law and these Terms.
+
+Where reasonably necessary to protect users, the Platform, data or an ongoing investigation, we may apply a temporary protective restriction while the review is pending. We will provide notice and a meaningful opportunity to respond as soon as reasonably practicable. A temporary restriction is not a final determination.
+
+The user may contact support to request a review and should include the account email and relevant submission or transaction reference. We will review the request through an appropriate process.
+
+A restriction or termination does not automatically cancel or reset the stated expiry of purchased credits or subscriptions. Any remaining paid entitlement, refund, or financial adjustment will be handled under the applicable plan, Refund Policy and applicable law. Nothing in these Terms is intended to remove a right that cannot legally be excluded.
 
 11. INTELLECTUAL PROPERTY
 
@@ -125,7 +134,7 @@ Material changes will be communicated through appropriate means.
 
 These Terms of Service are governed by and construed in accordance with the applicable laws of India.
 
-15. CONTACT
+16. CONTACT
 
 For questions, support, or notices regarding these Terms, please contact our official support channels:
 
@@ -138,8 +147,8 @@ Official CA Exam Checker AI Instagram
 
 export const DEFAULT_PRIVACY_POLICY = `CA EXAM CHECKER AI — PRIVACY POLICY
 
-Effective Date: 12 September 2026
-Last Updated: 26 October 2026
+Effective Date: 27 October 2026
+Last Updated: 27 October 2026
 
 This Privacy Policy explains how CA Exam Checker AI collects, uses, stores and protects information when you use the Platform.
 
@@ -177,7 +186,15 @@ We use information to:
 - maintain evaluation and audit records;
 - comply with applicable legal obligations.
 
-4. AI PROCESSING
+4. FAIR-USE, SECURITY AND ABUSE PREVENTION
+
+We may process relevant account and security information to protect free and paid facilities against duplicate-account abuse, misuse of free trials, promotional or paid credits, suspicious submissions, payment manipulation and attempts to bypass account limits. This may include account identifiers, verified email and ICAI registration details, submission/reference identifiers, entitlement and transaction history, device/browser security signals, login/session records and relevant audit events.
+
+These checks are used for security, fraud prevention, service integrity, support and enforcement of the Terms of Service. We seek to use information relevant to the concern and to restrict access to authorized personnel. Automated or risk-based signals may trigger a review, but a suspected violation should not be treated as a final finding without the applicable review process.
+
+If a policy decision is being considered, we may use relevant records to explain the concern, receive the user's response, review the case and document the outcome. Records may be retained as reasonably necessary for security, appeals, disputes, legal obligations and prevention of repeated abuse, subject to applicable law.
+
+5. AI PROCESSING
 
 Uploaded answer sheets and relevant reference material may be processed by AI systems to provide the requested evaluation.
 
@@ -185,13 +202,13 @@ Depending on the Platform configuration, third-party AI providers may process in
 
 We do not represent AI-generated evaluations as infallible.
 
-5. UPLOADED DOCUMENTS
+6. UPLOADED DOCUMENTS
 
 Answer sheets, checked copies, reports and other permitted documents may be stored securely for providing the Services and maintaining relevant evaluation history.
 
 Institute materials are access-controlled and are not intended to be shared with unauthorized institutes or users.
 
-6. PAYMENTS
+7. PAYMENTS
 
 Payments may be processed through authorized payment providers such as Razorpay.
 
@@ -199,7 +216,7 @@ We use payment information necessary to verify transactions, issue credits/subsc
 
 CA Exam Checker AI does not intentionally store full payment-instrument credentials such as card numbers or CVV on its own systems.
 
-7. DATA SHARING
+8. DATA SHARING
 
 We may provide necessary information to trusted service providers that help operate the Platform, including:
 - cloud hosting/storage providers;
@@ -212,19 +229,19 @@ We may also disclose information where required by applicable law, legal process
 
 We do not sell student answer sheets or personal information as a standalone commercial product.
 
-8. DATA SECURITY
+9. DATA SECURITY
 
 We use reasonable technical and organizational safeguards appropriate to the information processed, including access controls, authentication, secure storage, encryption in transit, file validation and security/audit mechanisms.
 
 No online service can guarantee absolute security.
 
-9. RETENTION AND DELETION
+10. RETENTION AND DELETION
 
 We retain information for as long as reasonably necessary to provide the Services, maintain evaluation history, handle payments/disputes, maintain security, comply with legal obligations and protect legitimate business interests.
 
 Users may request account/data deletion, subject to applicable law and information that must be retained for legitimate legal, financial, security or audit purposes.
 
-10. YOUR DATA RIGHTS
+11. YOUR DATA RIGHTS
 
 Subject to applicable law, users may have rights regarding their personal information, including applicable rights to:
 - access information;
@@ -238,21 +255,21 @@ support@caexamcheckerai.com
 
 The Platform may verify the identity of the requester before processing a request.
 
-11. COOKIES AND SESSIONS
+12. COOKIES AND SESSIONS
 
 We may use cookies, local storage and similar technologies for authentication, security, session management and necessary functionality.
 
-12. WEBSITE USAGE ANALYTICS
+13. WEBSITE USAGE ANALYTICS
 
 On public website pages, we use a random first-party browser identifier to count visitors in aggregate. The visitor counter stores the random identifier, the first public page path visited that day (without query strings), and the UTC visit date. It does not ask for or store your name, email address, answer sheets, or IP address as part of the visitor record. This identifier is not linked to your student account. Clearing your browser's site storage or using a new/private browser session may cause the same person to be counted as a new browser. These figures therefore represent approximate unique browsers, not verified individuals. The admin dashboard uses aggregated counts for website usage and does not display individual browsing histories.
 
-13. CHILDREN
+14. CHILDREN
 
 The Platform is intended for CA examination preparation and may be used by individuals under 18 where legally permitted.
 
 Where applicable law requires parental/guardian involvement or consent for processing a child's personal data, the Platform will follow those requirements.
 
-14. POLICY CHANGES
+15. POLICY CHANGES
 
 We may update this Privacy Policy when our Services, technology, legal obligations or data practices change.
 
