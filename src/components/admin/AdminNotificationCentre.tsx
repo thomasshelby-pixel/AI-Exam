@@ -1184,7 +1184,6 @@ export const AdminNotificationCentre: React.FC = () => {
                   </p>
                 </div>
               )}
-              </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Channels:</span>
                 <span className="font-bold text-slate-900">{channels}</span>
