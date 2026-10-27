@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { sendEmail } from './emailService.js';
+import type { SignupPlatform } from './signupPlatformService.js';
 
 export interface PendingStudentRegistration {
   email: string;
@@ -12,6 +13,7 @@ export interface PendingStudentRegistration {
   referralCode?: string | null;
   deviceId?: string | null;
   clientIp?: string | null;
+  signupPlatform?: SignupPlatform;
   createdAt: string;
   expiresAt: string;
   resendAvailableAt: string;
@@ -168,6 +170,7 @@ export async function initiateStudentRegistrationOtp(params: {
   referralCode?: string | null;
   deviceId?: string;
   clientIp?: string;
+  signupPlatform?: SignupPlatform;
 }): Promise<OtpChallengeResult> {
   initRegistrationOtpTable();
 
@@ -222,6 +225,7 @@ export async function initiateStudentRegistrationOtp(params: {
     referralCode: params.referralCode?.trim() || null,
     deviceId: params.deviceId?.trim().slice(0, 200) || null,
     clientIp: params.clientIp || null,
+    signupPlatform: params.signupPlatform || 'UNKNOWN',
     createdAt,
     expiresAt,
     resendAvailableAt,
