@@ -48,57 +48,18 @@ export async function savePersistentFile(
   const safeFilename = sanitizeFilename(filename);
   const safeFileId = path.basename(fileId).replace(/[^a-zA-Z0-9._\-]/g, '');
 
-  // 1. Immediately cache locally to ensure local resilience and fast zero-latency serving
+  // Keep one local working copy for PDF processing. The durable file is the
+  // canonical Cloud Storage object; do not mirror every file into two local
+  // directories plus SQLite when cloud persistence succeeds.
+  const isEvaluationFile = category === 'EVALUATION_ORIGINAL' ||
+    category === 'EVALUATION_CHECKED_COPY' ||
+    category === 'EVALUATION_REPORT';
+  const localFilename = isEvaluationFile ? `${safeFileId}.pdf` : safeFilename;
   try {
-    if (!fs.existsSync(UPLOADS_DIR)) {
-      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    }
-    if (!fs.existsSync(DATA_UPLOADS_DIR)) {
-      fs.mkdirSync(DATA_UPLOADS_DIR, { recursive: true });
-    }
-    const localPath1 = path.join(UPLOADS_DIR, safeFilename);
-    fs.writeFileSync(localPath1, buffer);
-    const localPath2 = path.join(DATA_UPLOADS_DIR, safeFilename);
-    fs.writeFileSync(localPath2, buffer);
-    if (safeFilename !== `${safeFileId}.pdf`) {
-      try {
-        fs.writeFileSync(path.join(UPLOADS_DIR, `${safeFileId}.pdf`), buffer);
-        fs.writeFileSync(path.join(DATA_UPLOADS_DIR, `${safeFileId}.pdf`), buffer);
-      } catch {
-        // ignore alias write
-      }
-    }
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(UPLOADS_DIR, localFilename), buffer);
   } catch (err) {
-    console.warn('[PersistentStorage] Warning writing local cache:', err);
-  }
-
-  // 2. Persistently backup binary to durable SQLite persistent_file_blobs table
-  try {
-    db.prepare(`
-      INSERT INTO persistent_file_blobs (
-        file_id, filename, mime_type, file_size, category, owner_user_id, evaluation_id, data, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(file_id) DO UPDATE SET
-        filename = excluded.filename,
-        mime_type = excluded.mime_type,
-        file_size = excluded.file_size,
-        category = excluded.category,
-        owner_user_id = excluded.owner_user_id,
-        evaluation_id = excluded.evaluation_id,
-        data = excluded.data,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      safeFileId,
-      safeFilename,
-      mimeType,
-      buffer.length,
-      category,
-      context?.ownerUserId || null,
-      context?.evaluationId || (safeFileId.startsWith('eval_') ? safeFileId.split('_')[0] + '_' + safeFileId.split('_')[1] : null),
-      buffer
-    );
-  } catch (dbErr) {
-    console.warn('[PersistentStorage] Notice writing blob to SQLite table:', dbErr);
+    console.warn('[PersistentStorage] Warning writing local working cache:', err);
   }
 
   const uploadOptions: UploadOptions = {
@@ -113,9 +74,44 @@ export async function savePersistentFile(
     category,
   };
 
-  // 3. Upload / mirror to Firebase Cloud Storage & record structured metadata in Firestore
+  // Cloud Storage is the single durable file store. Keep a SQLite BLOB only
+  // when the cloud object cannot be durably used, as a fallback for recovery.
   const metadata = await uploadFileToCloudStorage(uploadOptions);
-
+  if (metadata.status === 'ACTIVE') {
+    try {
+      db.prepare('DELETE FROM persistent_file_blobs WHERE file_id = ?').run(safeFileId);
+    } catch (dbErr) {
+      console.warn('[PersistentStorage] Could not remove obsolete SQLite file duplicate:', dbErr);
+    }
+  } else {
+    try {
+      db.prepare(`
+        INSERT INTO persistent_file_blobs (
+          file_id, filename, mime_type, file_size, category, owner_user_id, evaluation_id, data, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(file_id) DO UPDATE SET
+          filename = excluded.filename,
+          mime_type = excluded.mime_type,
+          file_size = excluded.file_size,
+          category = excluded.category,
+          owner_user_id = excluded.owner_user_id,
+          evaluation_id = excluded.evaluation_id,
+          data = excluded.data,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        safeFileId,
+        safeFilename,
+        mimeType,
+        buffer.length,
+        category,
+        context?.ownerUserId || null,
+        context?.evaluationId || (safeFileId.startsWith('eval_') ? safeFileId.split('_')[0] + '_' + safeFileId.split('_')[1] : null),
+        buffer
+      );
+    } catch (dbErr) {
+      console.warn('[PersistentStorage] Could not preserve SQLite fallback blob because cloud storage is unavailable:', dbErr);
+    }
+  }
   return metadata;
 }
 
