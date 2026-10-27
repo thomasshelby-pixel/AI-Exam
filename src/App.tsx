@@ -102,6 +102,7 @@ const EvaluationReportWrapper: React.FC = () => {
       const res = await apiRequest<{
         evaluation: {
           status?: string;
+          rejection_reason?: string;
           error_message?: string;
           raw_result_json?: string;
           resultJson?: EvaluationResult;
@@ -113,6 +114,14 @@ const EvaluationReportWrapper: React.FC = () => {
       if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
         navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true, state: location.state });
       }
+      if (evalData?.status === 'REJECTED') {
+        setError(
+          `Evaluation rejected. Reason: ${evalData.rejection_reason || 'The rejection reason was not recorded. Please contact support for a review.'}`
+        );
+        setLoading(false);
+        return;
+      }
+
       if (evalData?.resultJson) {
         setReport(evalData.resultJson);
         setLoading(false);
