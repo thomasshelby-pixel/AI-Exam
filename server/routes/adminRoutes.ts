@@ -127,7 +127,7 @@ function receiveAppUpdateFile(req: any, res: Response, next: NextFunction) {
 }
 
 // App release management: uploads are drafts until a Super Admin explicitly publishes.
-router.get('/app-updates', async (_req: AuthRequest, res: Response) => {
+router.get('/app-updates', authenticateToken, requireRole('SUPER_ADMIN'), async (_req: AuthRequest, res: Response) => {
   try {
     const releases = await listAppUpdateReleases();
     return res.json({ success: true, ...releases });
@@ -137,7 +137,7 @@ router.get('/app-updates', async (_req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/app-updates/upload', receiveAppUpdateFile, async (req: AuthRequest, res: Response) => {
+router.post('/app-updates/upload', authenticateToken, requireRole('SUPER_ADMIN'), receiveAppUpdateFile, async (req: AuthRequest, res: Response) => {
   try {
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!file?.buffer) return res.status(400).json({ success: false, error: 'Choose an APK or OTA ZIP file first.' });
@@ -168,7 +168,7 @@ router.post('/app-updates/upload', receiveAppUpdateFile, async (req: AuthRequest
   }
 });
 
-router.post('/app-updates/:releaseId/publish', async (req: AuthRequest, res: Response) => {
+router.post('/app-updates/:releaseId/publish', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const releaseId = String(req.params.releaseId || '').trim();
     if (!releaseId || !/^(APK|OTA)-[A-Za-z0-9.+-]+$/.test(releaseId)) {
@@ -187,7 +187,7 @@ router.post('/app-updates/:releaseId/publish', async (req: AuthRequest, res: Res
 
 // Preview/execute Firestore cleanup for accounts that already have durable
 // users tombstones. The execute endpoint is explicitly confirmation-gated.
-router.get('/deleted-accounts/reconcile', async (_req: AuthRequest, res: Response) => {
+router.get('/deleted-accounts/reconcile', authenticateToken, requireRole('SUPER_ADMIN'), async (_req: AuthRequest, res: Response) => {
   try {
     const preview = await previewDeletedAccountReconciliation();
     return res.json({ success: true, preview });
@@ -200,7 +200,7 @@ router.get('/deleted-accounts/reconcile', async (_req: AuthRequest, res: Respons
   }
 });
 
-router.post('/deleted-accounts/reconcile', async (req: AuthRequest, res: Response) => {
+router.post('/deleted-accounts/reconcile', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   const confirmation = String(req.body?.confirmation || '').trim();
   if (confirmation !== 'RECONCILE_DELETED_ACCOUNTS') {
     return res.status(400).json({
