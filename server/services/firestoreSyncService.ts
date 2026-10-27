@@ -1641,7 +1641,32 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
     }
 
-    // 10. Hydrate Legal Documents
+    // 10. Hydrate versioned legal acknowledgements. These records determine whether
+    // existing students must accept current Terms and Privacy versions after login.
+    // Preserve acknowledgements so stale cloud snapshots cannot rewrite timestamps.
+    const legalAcknowledgements = await readDocs<any>('legal_acknowledgements');
+    for (const acknowledgement of legalAcknowledgements) {
+      try {
+        db.prepare(`
+          INSERT INTO legal_acknowledgements (
+            id, user_id, doc_type, version, acknowledged_at, ip_address, user_agent
+          ) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?)
+          ON CONFLICT(id) DO NOTHING
+        `).run(
+          acknowledgement.id,
+          acknowledgement.user_id,
+          String(acknowledgement.doc_type || '').toUpperCase(),
+          String(acknowledgement.version || ''),
+          acknowledgement.acknowledged_at || null,
+          acknowledgement.ip_address || null,
+          acknowledgement.user_agent || null
+        );
+      } catch (acknowledgementError) {
+        console.warn('[FirestoreSync] Failed to hydrate legal acknowledgement:', acknowledgement?.id, acknowledgementError);
+      }
+    }
+
+    // 11. Hydrate Legal Documents
     const legalDocs = await readDocs<any>('legal_documents');
     for (const ld of legalDocs) {
       try {
