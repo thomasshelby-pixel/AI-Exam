@@ -39,6 +39,7 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCur
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
+import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
 
 const router = Router();
 
@@ -1614,6 +1615,20 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       cookieHeaders.push(`ca_trust_token=${encodeURIComponent(resolvedTrustToken)}; Path=/; HttpOnly; Max-Age=${365 * 24 * 3600}${cookieSuffix}`);
     }
     res.setHeader('Set-Cookie', cookieHeaders);
+
+    // Record all successful logins, not only devices explicitly trusted after MFA.
+    // This writes to a separate restricted collection and never changes trust status.
+    await recordUserDeviceActivity({
+      userId: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      role: user.role,
+      deviceId,
+      deviceName: req.body?.deviceName || getSafeDeviceName(req.headers['user-agent']),
+      userAgent: req.headers['user-agent'],
+      ipAddress: req.ip,
+      platform: getSignupPlatform(req),
+    });
 
     return res.json({
       token,
