@@ -78,7 +78,7 @@ export default function DeletedAccountCleanupSection() {
     }
     const accountCount = preview?.tombstonedAccountCount || 0;
     if (accountCount === 0) {
-      setError('No confirmed tombstoned accounts were found. Nothing will be deleted.');
+      setError('No confirmed deleted accounts were found. Nothing will be deleted.');
       return;
     }
     setExecuting(true);
@@ -110,7 +110,7 @@ export default function DeletedAccountCleanupSection() {
         <div>
           <div className="flex items-center gap-2 text-rose-700"><ShieldAlert className="h-5 w-5" /><span className="text-xs font-bold uppercase tracking-[0.16em]">Data Integrity</span></div>
           <h1 className="mt-1 text-2xl font-black text-slate-900">Deleted Account Cleanup</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">Find Firestore records that remain for accounts with durable deletion tombstones, including student-code aliases, device activity and linked file metadata.</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">Find leftover Firestore records for accounts with a deletion tombstone or explicit legacy deletion status/audit evidence, including student-code aliases, device activity and linked file metadata.</p>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading || executing} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh preview
@@ -121,7 +121,7 @@ export default function DeletedAccountCleanupSection() {
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
         <div>
           <p className="font-bold">Safe-scope cleanup only</p>
-          <p className="mt-1 text-xs leading-5">The tool only touches IDs with a durable <code>users</code> tombstone. It does not infer that an account is deleted just because it is missing from one instance's SQLite cache. Successful payment/audit retention records and tombstones are preserved. Preview first, then type the confirmation phrase to execute.</p>
+          <p className="mt-1 text-xs leading-5">The tool targets accounts with a durable <code>users</code> tombstone, an explicit <code>DELETING</code>/<code>DELETED</code> status, or a student-deletion audit record. It never infers deletion merely because an account is missing from one instance's SQLite cache. Legacy candidates get a verified tombstone before cleanup; payment/audit retention records and tombstones are preserved. Preview first, then type the confirmation phrase to execute.</p>
         </div>
       </div>
 
@@ -129,7 +129,7 @@ export default function DeletedAccountCleanupSection() {
       {success && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><span>{success}</span></div>}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <CountTile label="Tombstoned accounts" value={preview?.tombstonedAccountCount || 0} icon={<ShieldAlert className="h-4 w-4" />} />
+        <CountTile label="Confirmed deleted accounts" value={preview?.tombstonedAccountCount || 0} icon={<ShieldAlert className="h-4 w-4" />} />
         <CountTile label="Linked Firestore records" value={preview?.linkedDocumentCount || 0} icon={<ClipboardCheck className="h-4 w-4" />} />
         <CountTile label="Cloud file metadata" value={preview?.cloudFileMetadataCount || 0} icon={<Trash2 className="h-4 w-4" />} />
         <CountTile label="Legacy app activity" value={preview?.legacyAppActivityCount || 0} icon={<RefreshCw className="h-4 w-4" />} />
@@ -142,9 +142,9 @@ export default function DeletedAccountCleanupSection() {
             <p className="mt-1 text-xs text-slate-500">Generated {preview?.generatedAt ? new Date(preview.generatedAt).toLocaleString() : '—'}</p>
           </div>
           {loading && !preview ? (
-            <div className="flex items-center justify-center gap-2 p-10 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Scanning tombstoned account references…</div>
+            <div className="flex items-center justify-center gap-2 p-10 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" /> Scanning confirmed deleted-account references…</div>
           ) : !preview?.accounts?.length ? (
-            <div className="p-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-slate-700">No tombstoned student accounts require cleanup.</p></div>
+            <div className="p-10 text-center"><CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" /><p className="mt-2 text-sm font-semibold text-slate-700">No confirmed deleted student accounts require cleanup.</p></div>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -187,7 +187,7 @@ export default function DeletedAccountCleanupSection() {
             <div><h2 className="font-extrabold text-slate-900">Execute reconciliation</h2><p className="mt-1 text-xs text-slate-500">This permanently removes matched cloud records.</p></div>
           </div>
           <div className="mt-4 space-y-3 text-xs leading-5 text-slate-600">
-            <p>Before execution, the server reloads tombstones and reconstructs the cleanup plan from the authoritative shared Firestore database.</p>
+            <p>Before execution, the server reloads tombstones, legacy deletion markers and matching student-deletion audit records, then reconstructs the plan from shared Firestore.</p>
             <p>Payment transaction/audit records and tombstones are intentionally retained. Missing legacy activity that cannot be accessed is reported as a warning.</p>
           </div>
           {lastResult && (
