@@ -75,12 +75,68 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
   fileTargets: Array<{ fileId: string; storagePath?: string; userId: string }>;
   legacyActivityIds: string[];
   tombstonedUserIds: string[];
+  missingUserTombstoneIds: string[];
   evaluationsByUser: Map<string, string[]>;
 }> {
   const tombstones = await getAllFirestoreDocs<FirestoreDoc>('tombstones', { failOnError: true });
-  const allTombstonedUserIds = [...new Set(tombstones.map(getUserIdFromTombstone).filter((id): id is string => Boolean(id)))];
+  const durableUserTombstoneIds = new Set(
+    tombstones.map(getUserIdFromTombstone).filter((id): id is string => Boolean(id)),
+  );
+
+  // Older delete paths sometimes removed only the local account or wrote a
+  // DELETING status before the cloud tombstone could be created. Recover only
+  // accounts with explicit deletion evidence—never infer deletion merely because
+  // an ID is absent from one instance's SQLite cache.
+  const cloudUsers = await getAllFirestoreDocs<FirestoreDoc>('users', { failOnError: true });
+  const cloudUsersById = new Map(cloudUsers.map((user) => [String(user.id || '').trim(), user]));
+  const confirmedCandidateIds = new Set<string>(durableUserTombstoneIds);
+  const legacyMarkedStatuses = new Set(['DELETING', 'DELETED']);
+  for (const user of cloudUsers) {
+    const id = String(user.id || '').trim();
+    if (id && legacyMarkedStatuses.has(String(user.status || '').trim().toUpperCase())) {
+      confirmedCandidateIds.add(id);
+    }
+  }
+
+  const deletionActions = [
+    'DELETE_STUDENT_ACCOUNT',
+    'SUPER_ADMIN_PERMANENT_DELETE_STUDENT',
+    'STUDENT_SELF_DELETE_ACCOUNT',
+  ];
+  const deletionAudits = await Promise.all(deletionActions.map((action) =>
+    queryFirestoreDocs<FirestoreDoc>(
+      'audit_logs',
+      [{ field: 'action', op: '==', value: action }],
+      { failOnError: true },
+    ),
+  ));
+  for (const audit of deletionAudits.flat()) {
+    const entityType = String(audit.entity_type || '').trim().toUpperCase();
+    const userId = String(audit.entity_id || '').trim();
+    if (!userId || (entityType && entityType !== 'USER')) continue;
+
+    const user = cloudUsersById.get(userId);
+    if (user && String(user.role || '').trim().toUpperCase() !== 'STUDENT') continue;
+
+    // Protect against a rare ID reuse: if the current account was created after
+    // the historical deletion audit, it is a new account and must not be purged.
+    const auditTimestamp = Date.parse(String(audit.created_at || audit.deletedAt || ''));
+    const userCreatedTimestamp = Date.parse(String(user?.created_at || ''));
+    if (
+      user &&
+      Number.isFinite(auditTimestamp) &&
+      Number.isFinite(userCreatedTimestamp) &&
+      userCreatedTimestamp > auditTimestamp
+    ) {
+      continue;
+    }
+    confirmedCandidateIds.add(userId);
+  }
+
   const only = onlyUserIds?.length ? new Set(onlyUserIds) : null;
-  const tombstonedUserIds = only ? allTombstonedUserIds.filter((id) => only.has(id)) : allTombstonedUserIds;
+  const confirmedUserIds = [...confirmedCandidateIds];
+  const tombstonedUserIds = only ? confirmedUserIds.filter((id) => only.has(id)) : confirmedUserIds;
+  const missingUserTombstoneIds = tombstonedUserIds.filter((id) => !durableUserTombstoneIds.has(id));
   const targets: CleanupTarget[] = [];
   const fileTargets: Array<{ fileId: string; storagePath?: string; userId: string }> = [];
   const evaluationsByUser = new Map<string, string[]>();
@@ -191,6 +247,12 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
     }
   }
 
+  if (missingUserTombstoneIds.length > 0) {
+    warnings.push(
+      `${missingUserTombstoneIds.length} confirmed legacy deletion candidate(s) lack a durable users tombstone. Execution will create and verify tombstones before cleanup.`,
+    );
+  }
+
   const cloudFileMetadataCount = fileTargets.length;
   return {
     preview: {
@@ -207,6 +269,7 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
     fileTargets,
     legacyActivityIds,
     tombstonedUserIds,
+    missingUserTombstoneIds,
     evaluationsByUser,
   };
 }
@@ -235,6 +298,17 @@ export async function executeDeletedAccountReconciliation(actor: {
   let deletedCloudFiles = 0;
   let deletedLegacyActivity = 0;
   let skippedAccounts = 0;
+
+  // Bootstrap durable tombstones for legacy candidates before any linked record
+  // is removed. A future startup/hydration must not recreate these accounts.
+  for (const userId of plan.missingUserTombstoneIds) {
+    await permanentlyDeleteFromFirestore(
+      'users',
+      userId,
+      safeReason(userId),
+      { failOnError: true },
+    );
+  }
 
   // Remove underlying Cloud Storage files first. If access is denied, keep the
   // associated account metadata in the report rather than silently claiming success.
