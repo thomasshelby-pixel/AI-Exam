@@ -175,10 +175,10 @@ export async function initiateStudentRegistrationOtp(params: {
   deviceId?: string;
   clientIp?: string;
   signupPlatform?: SignupPlatform;
-  termsAccepted: boolean;
-  privacyAccepted: boolean;
-  termsVersion: string;
-  privacyVersion: string;
+  termsAccepted?: boolean;
+  privacyAccepted?: boolean;
+  termsVersion?: string;
+  privacyVersion?: string;
 }): Promise<OtpChallengeResult> {
   initRegistrationOtpTable();
 
