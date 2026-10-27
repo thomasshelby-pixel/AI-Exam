@@ -1468,7 +1468,13 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     let query = `
       SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
-             e.rejection_reason, e.created_at, e.completed_at,
+             CASE
+               WHEN UPPER(COALESCE(e.status, '')) = 'REJECTED'
+                 AND UPPER(COALESCE(e.document_validation_status, '')) = 'DUPLICATE_ACCOUNT_UPLOAD'
+               THEN COALESCE(NULLIF(TRIM(e.rejection_reason), ''), NULLIF(TRIM(e.error_message), ''))
+               ELSE e.rejection_reason
+             END AS rejection_reason,
+             e.created_at, e.completed_at,
              e.evaluation_source, e.material_source, e.sponsoring_institute_id,
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
              e.institute_id, e.batch_id,
