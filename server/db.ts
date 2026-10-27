@@ -184,6 +184,7 @@ export function initDatabase() {
       role TEXT NOT NULL DEFAULT 'STUDENT',
       status TEXT NOT NULL DEFAULT 'ACTIVE',
       account_classification TEXT NOT NULL DEFAULT 'NORMAL',
+      signup_platform TEXT NOT NULL DEFAULT 'UNKNOWN',
       email_verified INTEGER NOT NULL DEFAULT 0,
       email_verified_at TEXT,
       mfa_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1113,6 +1114,13 @@ function runMigrations() {
       CREATE INDEX IF NOT EXISTS idx_evaluations_package_id ON evaluations(evaluation_run_package_id);
       CREATE INDEX IF NOT EXISTS idx_evaluations_certification ON evaluations(certification_status);
     `);
+  } catch {}
+
+  // Signup source tracking for Web vs Android App registrations.
+  // Existing accounts stay UNKNOWN unless their original source is reliably known.
+  addColumnIfNotExists('users', 'signup_platform', "TEXT NOT NULL DEFAULT 'UNKNOWN'");
+  try {
+    db.exec("CREATE INDEX IF NOT EXISTS idx_users_signup_platform_created_at ON users(signup_platform, created_at)");
   } catch {}
 
   // Role-Based MFA columns on users
