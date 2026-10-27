@@ -1701,6 +1701,13 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       ? 'MCQ_ADMIN'
       : user.role;
 
+    // A registration form may log in an already existing social account. Honor
+    // its two explicit checkbox choices if supplied; ordinary sign-in never
+    // silently accepts on the user's behalf.
+    if (user.role === 'STUDENT' && termsAccepted === true && privacyAccepted === true) {
+      await persistCurrentLegalAcceptances(user.id, req);
+    }
+
     const token = generateToken({
       id: user.id,
       email: user.email,
@@ -1774,6 +1781,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       },
       requiresProfileCompletion,
       createdViaSocialSignup,
+      legalConsent: getLegalConsentStatus(user.id, String(effectiveRole)),
     });
   } catch (error: unknown) {
     console.error('Login error:', error);
