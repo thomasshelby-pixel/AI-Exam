@@ -23,7 +23,7 @@ const INVALID_DOCUMENT_REASON =
  * decision. Background jobs and stale Firestore snapshots must not turn it back
  * into PROCESSING/QUEUED or a completed score.
  */
-export function normalizeEvaluationRejectionStatus<T extends EvaluationStatusLike>(evaluation: T): T {
+export function normalizeEvaluationRejectionStatus(evaluation: EvaluationStatusLike): EvaluationStatusLike {
   const documentStatus = String(evaluation.document_validation_status || '').trim().toUpperCase();
   const currentStatus = String(evaluation.status || '').trim().toUpperCase();
   const rejectionReason = String(evaluation.rejection_reason || '').trim();
