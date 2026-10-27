@@ -319,11 +319,10 @@ export async function cleanupTombstonedStudentAccount(
   userId: string,
   actor: { id: string; email?: string },
 ): Promise<void> {
-  const plan = await buildCleanupPlan([userId]);
-  if (!plan.tombstonedUserIds.includes(userId)) {
+  const result = await executeDeletedAccountReconciliation(actor, [userId]);
+  if (result.preview.tombstonedAccountCount === 0) {
     throw new Error(`Refusing account cleanup: no durable users tombstone exists for ${userId}.`);
   }
-  const result = await executeDeletedAccountReconciliation(actor, [userId]);
   if (result.skippedAccounts > 0) {
     throw new Error(`Account cleanup left a Firestore users record behind for ${userId}; reconciliation must be retried.`);
   }
