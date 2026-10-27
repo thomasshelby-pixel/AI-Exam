@@ -64,10 +64,43 @@ export interface DeletedAccountReconciliationPreview {
   warnings: string[];
 }
 
+const PROTECTED_ACCOUNT_IDS = new Set([
+  'usr_super_admin_001',
+  'usr_mcq_admin_priyatca15',
+  'usr_user_at9767',
+  'usr_student_demo_001',
+]);
+const PROTECTED_ACCOUNT_EMAILS = new Set([
+  'support@caexamcheckerai.com',
+  'caexamchecker.support@gmail.com',
+  'at9767676@gmail.com',
+  'student@caexamchecker.ai',
+  'priyatca15@gmail.com',
+]);
+
+function isProtectedAccount(
+  userId: string,
+  user?: FirestoreDoc | null,
+  audit?: FirestoreDoc,
+): boolean {
+  if (PROTECTED_ACCOUNT_IDS.has(userId)) return true;
+  const userEmail = String(user?.email || '').trim().toLowerCase();
+  if (userEmail && PROTECTED_ACCOUNT_EMAILS.has(userEmail)) return true;
+  try {
+    const details = typeof audit?.details === 'string'
+      ? JSON.parse(audit.details)
+      : audit?.details;
+    const auditEmail = String(details?.deletedStudentEmail || audit?.email || '').trim().toLowerCase();
+    return Boolean(auditEmail && PROTECTED_ACCOUNT_EMAILS.has(auditEmail));
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Reconciles only account IDs that already have a durable users tombstone.
- * It intentionally never infers deletion from a missing SQLite row, because
- * SQLite is a per-instance cache and is not a safe cross-instance source of truth.
+ * Reconciles durable deletion tombstones plus explicitly evidenced legacy
+ * deletions. It never infers deletion solely from a missing SQLite row, because
+ * SQLite is an instance-local cache rather than a cross-instance source of truth.
  */
 async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
   preview: DeletedAccountReconciliationPreview;
@@ -80,7 +113,10 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
 }> {
   const tombstones = await getAllFirestoreDocs<FirestoreDoc>('tombstones', { failOnError: true });
   const durableUserTombstoneIds = new Set(
-    tombstones.map(getUserIdFromTombstone).filter((id): id is string => Boolean(id)),
+    tombstones
+      .map(getUserIdFromTombstone)
+      .filter((id): id is string => Boolean(id))
+      .filter((id) => !PROTECTED_ACCOUNT_IDS.has(id)),
   );
 
   // Older delete paths sometimes removed only the local account or wrote a
@@ -93,7 +129,13 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
   const legacyMarkedStatuses = new Set(['DELETING', 'DELETED']);
   for (const user of cloudUsers) {
     const id = String(user.id || '').trim();
-    if (id && legacyMarkedStatuses.has(String(user.status || '').trim().toUpperCase())) {
+    const role = String(user.role || '').trim().toUpperCase();
+    if (
+      id &&
+      role === 'STUDENT' &&
+      !isProtectedAccount(id, user) &&
+      legacyMarkedStatuses.has(String(user.status || '').trim().toUpperCase())
+    ) {
       confirmedCandidateIds.add(id);
     }
   }
@@ -117,6 +159,7 @@ async function buildCleanupPlan(onlyUserIds?: string[]): Promise<{
 
     const user = cloudUsersById.get(userId);
     if (user && String(user.role || '').trim().toUpperCase() !== 'STUDENT') continue;
+    if (isProtectedAccount(userId, user, audit)) continue;
 
     // Protect against a rare ID reuse: if the current account was created after
     // the historical deletion audit, it is a new account and must not be purged.
