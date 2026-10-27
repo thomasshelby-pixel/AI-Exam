@@ -244,7 +244,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
       if (rejectionUpdate.changes === 1) {
         const notificationId = `notif_eval_rejected_${evaluationId}`;
-        const notificationMessage = `Your evaluation for ${subjectName || 'the selected paper'} was rejected. Reason: ${studentFacingReason}\\n\\nIf you believe this decision is incorrect, please contact support for a review.`;
+        const notificationMessage = `Your evaluation for ${subjectName || 'the selected paper'} was rejected. Reason: ${studentFacingReason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
         db.prepare(`
           INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
           VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
@@ -254,6 +254,18 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         const notificationRow = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
         if (rejectedRow) await syncRecordToFirestore('evaluations', evaluationId, rejectedRow);
         if (notificationRow) await syncRecordToFirestore('notifications', notificationId, notificationRow);
+
+        // The integrity gate can run after an entitlement was accepted. Refund only if
+        // this worker established the rejection transition, avoiding duplicate refunds.
+        if (job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+          ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource)) {
+          try {
+            refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+            await syncStudentCreditsToFirestore(studentId);
+          } catch (refundErr) {
+            console.warn(`[AsyncEval] Rejection refund error for ${evaluationId}:`, refundErr);
+          }
+        }
       }
       throw gateErr;
     }
