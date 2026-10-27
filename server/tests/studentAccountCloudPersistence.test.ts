@@ -63,6 +63,7 @@ async function run() {
       'A failed cloud write must never be reported as durable'
     );
 
+    documents.delete(`student_profiles/${userId}`);
     const missingProfileReadBackAdapter: StudentAccountPersistenceAdapter = {
       ...adapter,
       setDocumentsAtomically: async (writes) => {
