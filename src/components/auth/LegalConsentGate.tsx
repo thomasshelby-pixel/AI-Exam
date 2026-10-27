@@ -15,11 +15,33 @@ interface LegalConsentStatus {
 
 const isStudent = (role: unknown) => String(role || '').toUpperCase() === 'STUDENT';
 
+function legalConsentStorageKey(kind: 'pending' | 'explicitly-accepted', userId: string, termsVersion: string, privacyVersion: string): string {
+  return `ca_exam_legal_consent:${kind}:${encodeURIComponent(userId)}:${termsVersion}:${privacyVersion}`;
+}
+
+function readLegalConsentStorageFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setLegalConsentStorageFlag(key: string, value: boolean): void {
+  try {
+    if (value) window.localStorage.setItem(key, '1');
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Server-side consent remains authoritative if browser storage is unavailable.
+  }
+}
+
 export const LegalConsentGate: React.FC = () => {
   const { user, token, isAuthenticated, isLoading: authLoading } = useAuth();
   const location = useLocation();
   const latestStatusRequest = useRef(0);
   const statusOwner = useRef<string | null>(null);
+  const pendingConsent = useRef(false);
   const [status, setStatus] = useState<LegalConsentStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [pageError, setPageError] = useState('');
@@ -32,6 +54,7 @@ export const LegalConsentGate: React.FC = () => {
 
     if (authLoading || !isAuthenticated || !token || !user || !isStudent(user.role)) {
       statusOwner.current = null;
+      pendingConsent.current = false;
       setStatus(null);
       setPageError('');
       setTermsAccepted(false);
@@ -44,6 +67,7 @@ export const LegalConsentGate: React.FC = () => {
     const userId = String(user.id || '');
     if (statusOwner.current !== userId) {
       statusOwner.current = userId;
+      pendingConsent.current = false;
       setStatus(null);
       setTermsAccepted(false);
       setPrivacyAccepted(false);
@@ -56,7 +80,47 @@ export const LegalConsentGate: React.FC = () => {
         '/api/auth/legal-consent/status'
       );
       if (requestId === latestStatusRequest.current) {
-        setStatus(response.legalConsent);
+        const freshStatus = response.legalConsent;
+        const pendingKey = legalConsentStorageKey(
+          'pending',
+          userId,
+          freshStatus.termsVersion,
+          freshStatus.privacyVersion
+        );
+        const acceptedKey = legalConsentStorageKey(
+          'explicitly-accepted',
+          userId,
+          freshStatus.termsVersion,
+          freshStatus.privacyVersion
+        );
+        const hasLocalPending = readLegalConsentStorageFlag(pendingKey);
+        const hasExplicitAcceptance = readLegalConsentStorageFlag(acceptedKey);
+
+        if (freshStatus.needsAcceptance) {
+          pendingConsent.current = true;
+          setLegalConsentStorageFlag(pendingKey, true);
+          setStatus(freshStatus);
+        } else if (hasExplicitAcceptance) {
+          // Another tab explicitly accepted these exact versions. Let the server-confirmed
+          // status close the gate and clear the cross-tab pending marker.
+          pendingConsent.current = false;
+          setLegalConsentStorageFlag(pendingKey, false);
+          setStatus(freshStatus);
+        } else if (pendingConsent.current || hasLocalPending) {
+          // A prior status response in this browser already proved consent was pending.
+          // A later background/navigation check must not dismiss the gate just because it
+          // hit a different server instance with stale consent data. Only an explicit
+          // successful acceptance can clear this marker.
+          pendingConsent.current = true;
+          setStatus({
+            ...freshStatus,
+            termsAccepted: false,
+            privacyAccepted: false,
+            needsAcceptance: true,
+          });
+        } else {
+          setStatus(freshStatus);
+        }
       }
     } catch (error) {
       if (requestId !== latestStatusRequest.current) return;
@@ -80,12 +144,19 @@ export const LegalConsentGate: React.FC = () => {
     const refreshOnReturn = () => {
       if (document.visibilityState === 'visible') void loadStatus();
     };
+    const handleConsentStorage = (event: StorageEvent) => {
+      if (!user?.id || !event.key || event.newValue !== '1') return;
+      const acceptedPrefix = `ca_exam_legal_consent:explicitly-accepted:${encodeURIComponent(String(user.id))}:`;
+      if (event.key.startsWith(acceptedPrefix)) void loadStatus();
+    };
     window.addEventListener('focus', refreshOnReturn);
     document.addEventListener('visibilitychange', refreshOnReturn);
+    window.addEventListener('storage', handleConsentStorage);
 
     return () => {
       window.removeEventListener('focus', refreshOnReturn);
       document.removeEventListener('visibilitychange', refreshOnReturn);
+      window.removeEventListener('storage', handleConsentStorage);
     };
   }, [loadStatus, location.pathname]);
 
@@ -106,6 +177,24 @@ export const LegalConsentGate: React.FC = () => {
           }),
         }
       );
+      if (!response.legalConsent.needsAcceptance && user?.id) {
+        const pendingKey = legalConsentStorageKey(
+          'pending',
+          String(user.id),
+          status.termsVersion,
+          status.privacyVersion
+        );
+        const acceptedKey = legalConsentStorageKey(
+          'explicitly-accepted',
+          String(user.id),
+          status.termsVersion,
+          status.privacyVersion
+        );
+        pendingConsent.current = false;
+        setLegalConsentStorageFlag(pendingKey, false);
+        // This marker is written only after the server confirms the explicit Accept action.
+        setLegalConsentStorageFlag(acceptedKey, true);
+      }
       setStatus(response.legalConsent);
       setTermsAccepted(false);
       setPrivacyAccepted(false);
