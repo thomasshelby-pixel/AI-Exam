@@ -47,7 +47,7 @@ export function hardenedCorsMiddleware(req: Request, res: Response, next: NextFu
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, Authorization, X-Razorpay-Signature, X-Device-Id, X-Device-Trust-Token, X-Mfa-Session-Token'
+        'Content-Type, Authorization, X-Razorpay-Signature, X-Device-Id, X-Device-Trust-Token, X-Mfa-Session-Token, X-Client-Platform'
       );
       res.setHeader('Access-Control-Max-Age', '86400'); // Cache preflight for 24 hours
     } else if (req.method === 'OPTIONS') {
