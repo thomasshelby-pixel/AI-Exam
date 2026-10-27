@@ -120,6 +120,8 @@ export async function apiRequest<T = unknown>(
     'Content-Type': 'application/json',
     'X-Device-Id': deviceId,
     ...(options.headers as Record<string, string>),
+    // Explicit attribution for new website student registrations.
+    'X-Client-Platform': 'WEB',
   };
 
   if (trustToken && !headers['X-Device-Trust-Token']) {
