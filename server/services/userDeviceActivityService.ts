@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { getFirestoreDb, getFirestoreDoc, setFirestoreDoc, setFirestoreDocInDatabase } from './firestoreDbService.js';
+import {
+  getFirestoreDb,
+  getFirestoreDoc,
+  getFirestoreDocInDatabase,
+  setFirestoreDoc,
+  setFirestoreDocInDatabase,
+} from './firestoreDbService.js';
 
 const APP_DEVICE_ACTIVITY_DATABASE_ID = String(
   process.env.APP_DEVICE_ACTIVITY_FIRESTORE_DATABASE_ID ||
@@ -57,7 +63,15 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
 
     const now = new Date().toISOString();
     const documentId = getUserDeviceActivityDocumentId(userId, deviceId);
-    const previous = await getFirestoreDoc<Record<string, any>>('user_device_activity', documentId);
+    const resolvedPlatform: DeviceActivityPlatform =
+      input.platform === 'APP' || input.platform === 'WEB' ? input.platform : 'UNKNOWN';
+    const previous = resolvedPlatform === 'APP'
+      ? await getFirestoreDocInDatabase<Record<string, any>>(
+          APP_DEVICE_ACTIVITY_DATABASE_ID,
+          'user_device_activity',
+          documentId,
+        )
+      : await getFirestoreDoc<Record<string, any>>('user_device_activity', documentId);
     const firstSeenAt = safeText(previous?.first_seen_at, 64) || now;
     const previousCount = Number(previous?.login_count);
     const loginCount = Number.isFinite(previousCount) && previousCount >= 0
@@ -91,7 +105,7 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
       device_name: safeText(input.deviceName, 200) || 'Unknown device',
       user_agent: safeText(input.userAgent, 768),
       ip_address: safeText(input.ipAddress, 64),
-      platform: input.platform === 'APP' || input.platform === 'WEB' ? input.platform : 'UNKNOWN',
+      platform: resolvedPlatform,
       is_trusted: isTrusted,
       first_seen_at: firstSeenAt,
       last_seen_at: now,
