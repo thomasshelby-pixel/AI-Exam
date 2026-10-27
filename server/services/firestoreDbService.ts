@@ -389,6 +389,98 @@ export async function setFirestoreDocsAtomically(
   return false;
 }
 
+/**
+ * Lists documents from a specific named Firestore database.
+ * The primary configured database uses the normal helper. Secondary databases
+ * are accessible only through the trusted Admin SDK, never client credentials.
+ */
+export async function getAllFirestoreDocsInDatabase<T = any>(
+  databaseId: string,
+  collectionName: string,
+  options: { failOnError?: boolean } = {},
+): Promise<T[]> {
+  if (!databaseId?.trim() || !collectionName?.trim()) {
+    if (options.failOnError) throw new Error('A database ID and collection name are required.');
+    return [];
+  }
+
+  getFirestoreDb();
+  const { config } = loadAndValidateFirebaseConfig();
+  const primaryDatabaseId = String(config.firestoreDatabaseId || '(default)').trim();
+  const targetDatabaseId = databaseId.trim();
+  if (targetDatabaseId === primaryDatabaseId) {
+    return getAllFirestoreDocs<T>(collectionName, options);
+  }
+
+  if (activeDriverMode !== 'ADMIN_SDK' || !adminDbInstance) {
+    const error = new Error(`Cannot safely scan secondary Firestore database ${targetDatabaseId} without Admin SDK credentials.`);
+    if (options.failOnError) throw error;
+    console.warn('[Firestore] ' + error.message);
+    return [];
+  }
+
+  try {
+    const app = getAdminApps().length ? getAdminApp() : null;
+    if (!app) throw new Error('Firebase Admin app is unavailable.');
+    const targetDb = targetDatabaseId === '(default)'
+      ? getAdminFirestore(app)
+      : getAdminFirestore(app, targetDatabaseId);
+    const snapshot = await withTimeout(
+      targetDb.collection(collectionName).get(),
+      20000,
+      null as any,
+      `getAllFirestoreDocsInDatabase(${targetDatabaseId}/${collectionName})`,
+    );
+    if (!snapshot) throw new Error(`Firestore scan timed out for ${targetDatabaseId}/${collectionName}.`);
+    return snapshot.docs.map((document) => ({ id: document.id, ...document.data() }) as unknown as T);
+  } catch (error) {
+    console.warn(`[Firestore] Failed to scan ${targetDatabaseId}/${collectionName}:`, error);
+    if (options.failOnError) throw error;
+    return [];
+  }
+}
+
+/**
+ * Deletes a document from a specific named Firestore database.
+ * Secondary-database deletion is deliberately Admin-SDK-only.
+ */
+export async function deleteFirestoreDocInDatabase(
+  databaseId: string,
+  collectionName: string,
+  docId: string,
+): Promise<boolean> {
+  if (!databaseId?.trim() || !collectionName?.trim() || !docId?.trim()) return false;
+  getFirestoreDb();
+  const { config } = loadAndValidateFirebaseConfig();
+  const primaryDatabaseId = String(config.firestoreDatabaseId || '(default)').trim();
+  const targetDatabaseId = databaseId.trim();
+  if (targetDatabaseId === primaryDatabaseId) {
+    return deleteFirestoreDoc(collectionName, docId);
+  }
+
+  if (activeDriverMode !== 'ADMIN_SDK' || !adminDbInstance) {
+    console.warn(`[Firestore] Refusing secondary-database delete without Admin SDK: ${targetDatabaseId}/${collectionName}/${docId}`);
+    return false;
+  }
+
+  try {
+    const app = getAdminApps().length ? getAdminApp() : null;
+    if (!app) return false;
+    const targetDb = targetDatabaseId === '(default)'
+      ? getAdminFirestore(app)
+      : getAdminFirestore(app, targetDatabaseId);
+    return await withTimeout(
+      targetDb.collection(collectionName).doc(String(docId)).delete().then(() => true),
+      12000,
+      false,
+      `deleteFirestoreDocInDatabase(${targetDatabaseId}/${collectionName}/${docId})`,
+    );
+  } catch (error) {
+    console.warn(`[Firestore] Failed secondary-database delete ${targetDatabaseId}/${collectionName}/${docId}:`, error);
+    return false;
+  }
+}
+
 export async function getFirestoreDoc<T = any>(
   collectionName: string,
   docId: string,
