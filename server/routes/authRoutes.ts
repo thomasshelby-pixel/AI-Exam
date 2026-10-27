@@ -562,9 +562,57 @@ router.post('/register', authRegisterRateLimiter, async (req: Request, res: Resp
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Check existing email
-    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
+    // Recover a cloud-backed account before treating this email as new. This
+    // also handles accounts that vanished from ephemeral SQLite after a restart.
+    const recoveryResult = await recoverStudentAccountFromFirestoreByEmail(normalizedEmail);
+    if (recoveryResult === 'recovered') {
+      const recoveredUser = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; role: string } | undefined;
+      if (recoveredUser && String(recoveredUser.role || '').toUpperCase() === 'STUDENT') {
+        const durableResult = await persistStudentAccountToFirestore(recoveredUser.id);
+        if (durableResult !== 'persisted' && requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'Your existing account was found, but its durable save could not be confirmed. Please retry shortly or contact support.',
+            code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+            retryable: true,
+          });
+        }
+      }
+      return res.status(400).json({
+        error: 'Your existing account was found or recovered. Please sign in with your original credentials.',
+        code: 'ALREADY_EXISTS',
+        recovered: true,
+      });
+    }
+    if (recoveryResult === 'conflict') {
+      return res.status(409).json({
+        error: 'More than one or a protected account record matched this email. Registration is blocked to prevent duplicate accounts; please contact support.',
+        code: 'ACCOUNT_RECOVERY_CONFLICT',
+      });
+    }
+    if (
+      ['failed', 'incomplete', 'unconfigured'].includes(recoveryResult) &&
+      requiresDurableAccountPersistence()
+    ) {
+      return res.status(503).json({
+        error: 'We could not safely verify whether an existing account is stored. Please retry shortly; no duplicate account has been created.',
+        code: 'ACCOUNT_RECOVERY_UNAVAILABLE',
+        retryable: true,
+      });
+    }
+
+    // Check local email and repair its cloud copy before rejecting a re-registration.
+    const existing = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; role: string } | undefined;
     if (existing) {
+      if (String(existing.role || '').toUpperCase() === 'STUDENT') {
+        const durableResult = await persistStudentAccountToFirestore(existing.id);
+        if (durableResult !== 'persisted' && requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'We found your account but could not confirm its durable cloud save. Please retry shortly; do not register with a different email.',
+            code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+            retryable: true,
+          });
+        }
+      }
       return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
     }
 
