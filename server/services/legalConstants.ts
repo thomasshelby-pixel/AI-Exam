@@ -156,7 +156,7 @@ ${LEGAL_TERMS_ADDENDUM}
 
 export const DEFAULT_PRIVACY_POLICY = `CA EXAM CHECKER AI — PRIVACY POLICY
 
-Effective Date: 12 September 2026
+Effective Date: 27 October 2026
 Last Updated: 27 October 2026
 
 This Privacy Policy explains how CA Exam Checker AI collects, uses, stores and protects information when you use the Platform.
