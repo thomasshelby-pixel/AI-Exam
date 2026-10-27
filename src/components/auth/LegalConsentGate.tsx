@@ -54,6 +54,7 @@ export const LegalConsentGate: React.FC = () => {
 
     if (authLoading || !isAuthenticated || !token || !user || !isStudent(user.role)) {
       statusOwner.current = null;
+      pendingConsent.current = false;
       setStatus(null);
       setPageError('');
       setTermsAccepted(false);
@@ -66,6 +67,7 @@ export const LegalConsentGate: React.FC = () => {
     const userId = String(user.id || '');
     if (statusOwner.current !== userId) {
       statusOwner.current = userId;
+      pendingConsent.current = false;
       setStatus(null);
       setTermsAccepted(false);
       setPrivacyAccepted(false);
@@ -144,13 +146,8 @@ export const LegalConsentGate: React.FC = () => {
     };
     const handleConsentStorage = (event: StorageEvent) => {
       if (!user?.id || !event.key || event.newValue !== '1') return;
-      const expectedKey = legalConsentStorageKey(
-        'explicitly-accepted',
-        String(user.id),
-        status?.termsVersion || '2.0',
-        status?.privacyVersion || '2.0'
-      );
-      if (event.key === expectedKey) void loadStatus();
+      const acceptedPrefix = `ca_exam_legal_consent:explicitly-accepted:${encodeURIComponent(String(user.id))}:`;
+      if (event.key.startsWith(acceptedPrefix)) void loadStatus();
     };
     window.addEventListener('focus', refreshOnReturn);
     document.addEventListener('visibilitychange', refreshOnReturn);
