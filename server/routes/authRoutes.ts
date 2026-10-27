@@ -1375,6 +1375,15 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
             }
             user = emailRace;
           } else {
+            if (req.body?.privacyPolicyConsent !== true || req.body?.termsAccepted !== true) {
+              db.exec('ROLLBACK');
+              return res.status(400).json({
+                error: 'To create a new account with Google or Apple, please review and accept the Privacy Policy and all Terms & Conditions on the registration screen first.',
+                code: 'LEGAL_CONSENT_REQUIRED',
+              });
+            }
+            const socialPolicyVersions = getRequiredLegalPolicyVersions();
+
             db.prepare(`
               INSERT INTO users (
                 id, email, password_hash, full_name, phone, role, status,
@@ -1391,6 +1400,14 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
               ) VALUES (?, NULL, 'REG-PENDING', 'INTERMEDIATE', 0, 0, 0, 1,
                 'PROFILE_COMPLETION_REQUIRED', ?, 0, 0, ?, ?)
             `).run(socialUserId, getCurrentServerMonth(), timestamp, timestamp);
+
+            recordRequiredLegalPolicyConsent({
+              userId: socialUserId,
+              termsVersion: socialPolicyVersions.TERMS,
+              privacyVersion: socialPolicyVersions.PRIVACY,
+              ipAddress: req.ip || null,
+              userAgent: req.headers['user-agent'] || null,
+            });
 
             db.prepare(`
               INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
