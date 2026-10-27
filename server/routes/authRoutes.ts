@@ -751,27 +751,6 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     const verifiedSrnConflict = findStudentSrnConflict(String(regData.icaiRegistrationNumber || ''));
     if (verifiedSrnConflict) return studentSrnConflictResponse(res, verifiedSrnConflict);
 
-    // Check existing email again to eliminate race condition duplicates
-    const existing = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; role: string } | undefined;
-    if (existing) {
-      // A previous registration may exist in the current runtime but have missed
-      // its cloud mirror. Retry durable persistence before telling the student to sign in.
-      if (String(existing.role || '').toUpperCase() === 'STUDENT') {
-        const recovered = await persistStudentAccountToFirestore(existing.id);
-        if (recovered !== 'persisted' && requiresDurableAccountPersistence()) {
-          return res.status(503).json({
-            error: 'We found your account but could not confirm its durable cloud save. Please retry shortly; do not register with a different email.',
-            code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
-            retryable: true,
-          });
-        }
-      }
-      return res.status(400).json({
-        error: 'An account with this email address already exists. Please sign in.',
-        code: 'ALREADY_EXISTS',
-      });
-    }
-
     // If runtime SQLite lost a previous record after restart, check the authoritative
     // cloud account store before creating another identity with the same email.
     const recoveryResult = await recoverStudentAccountFromFirestoreByEmail(normalizedEmail);
@@ -796,6 +775,27 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
         error: 'We could not safely verify whether an existing account is stored. Please retry shortly; no duplicate account has been created.',
         code: 'ACCOUNT_RECOVERY_UNAVAILABLE',
         retryable: true,
+      });
+    }
+
+    // Check existing email again to eliminate race condition duplicates
+    const existing = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; role: string } | undefined;
+    if (existing) {
+      // A previous registration may exist in the current runtime but have missed
+      // its cloud mirror. Retry durable persistence before telling the student to sign in.
+      if (String(existing.role || '').toUpperCase() === 'STUDENT') {
+        const recovered = await persistStudentAccountToFirestore(existing.id);
+        if (recovered !== 'persisted' && requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'We found your account but could not confirm its durable cloud save. Please retry shortly; do not register with a different email.',
+            code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+            retryable: true,
+          });
+        }
+      }
+      return res.status(400).json({
+        error: 'An account with this email address already exists. Please sign in.',
+        code: 'ALREADY_EXISTS',
       });
     }
 
