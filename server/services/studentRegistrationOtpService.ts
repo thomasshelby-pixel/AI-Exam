@@ -14,10 +14,10 @@ export interface PendingStudentRegistration {
   deviceId?: string | null;
   clientIp?: string | null;
   signupPlatform?: SignupPlatform;
-  termsAccepted: boolean;
-  privacyAccepted: boolean;
-  termsVersion: string;
-  privacyVersion: string;
+  termsAccepted?: boolean;
+  privacyAccepted?: boolean;
+  termsVersion?: string;
+  privacyVersion?: string;
   createdAt: string;
   expiresAt: string;
   resendAvailableAt: string;
