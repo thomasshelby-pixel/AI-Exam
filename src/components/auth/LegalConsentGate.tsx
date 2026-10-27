@@ -75,7 +75,14 @@ export const LegalConsentGate: React.FC = () => {
       setPrivacyAccepted(false);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Could not save your acceptance. Please retry.');
-      if (error instanceof ApiError && error.status === 409) void loadStatus();
+      if (error instanceof ApiError && error.status === 409) {
+        // A policy version changed after the screen was loaded. Force a fresh,
+        // affirmative choice for both documents before recording the new versions.
+        setTermsAccepted(false);
+        setPrivacyAccepted(false);
+        setStatus(null);
+        void loadStatus();
+      }
     } finally {
       setSaving(false);
     }
