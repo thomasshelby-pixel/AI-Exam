@@ -1,3 +1,19 @@
+export const LEGAL_TERMS_ADDENDUM = `16. FAIR USE, ANTI-ABUSE AND REVIEW BEFORE FINAL TERMINATION
+
+The prohibition on abuse applies to every Platform facility, whether provided free of charge, through promotions, through purchased evaluation credits, through a paid subscription, or through an institute-funded allocation. Prohibited conduct includes creating, controlling or using multiple accounts to bypass free-evaluation limits or eligibility checks; repeating submissions to obtain benefits not available to the account; evading rate limits or security controls; manipulating credits, payments or evaluation records; fraud; account sharing or resale where unauthorized; and attempts to access another user's account or data.
+
+Where there are reasonable grounds to suspect misuse, we may temporarily restrict the affected feature or account when reasonably necessary to protect students, the Platform, payment integrity or security. Before a final suspension or termination for alleged abuse, we will normally notify the user of the concern and provide a reasonable opportunity to respond and be heard. Where immediate temporary action is necessary to prevent imminent harm, protect security, or comply with law, notice and an opportunity to respond will be provided as soon as reasonably practicable afterward. Decisions will be reviewed against the information reasonably available.
+
+If a violation is substantiated, the Platform may suspend or terminate the account, subject to applicable law and the review process above. This provision applies to free and paid facilities alike. It does not by itself forfeit unused paid credits or create a blanket no-refund rule; any remaining paid entitlement, cancellation or refund will be handled under the applicable purchase terms and law.`;
+
+export const LEGAL_PRIVACY_ADDENDUM = `16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW
+
+To protect students, payment integrity and the Platform, we may use relevant account and service records to identify and investigate suspected misuse of free or paid facilities. Depending on the incident, this may include account identifiers and registration details; login, session, trusted-device and security logs; IP address and user-agent information; answer-sheet submission references and timing; evaluation and credit usage; payment, refund or chargeback records; and related support or audit history.
+
+We use these signals to investigate suspected duplicate-account activity, attempts to bypass eligibility limits, fraud, unauthorized access and other violations of the Terms. A signal or automated indicator alone does not necessarily establish wrongdoing. Where a decision may lead to final suspension or termination, the Terms' notice and opportunity-to-respond process applies, subject to urgent temporary restrictions and applicable law.
+
+We limit access to investigation and audit records to authorized personnel and retain them for as long as reasonably necessary for security, review, dispute handling, legal compliance and legitimate operational needs, subject to applicable law.`;
+
 export const DEFAULT_TERMS_OF_SERVICE = `CA EXAM CHECKER AI — TERMS OF SERVICE
 
 Effective Date: 12 September 2026
@@ -135,14 +151,7 @@ support@caexamcheckerai.com
 Instagram:
 Official CA Exam Checker AI Instagram
 
-16. FAIR USE, ANTI-ABUSE AND REVIEW BEFORE FINAL TERMINATION
-
-The prohibition on abuse applies to every Platform facility, whether provided free of charge, through promotions, through purchased evaluation credits, through a paid subscription, or through an institute-funded allocation. Prohibited conduct includes creating, controlling or using multiple accounts to bypass free-evaluation limits or eligibility checks; repeating submissions to obtain benefits not available to the account; evading rate limits or security controls; manipulating credits, payments or evaluation records; fraud; account sharing or resale where unauthorized; and attempts to access another user's account or data.
-
-Where there are reasonable grounds to suspect misuse, we may temporarily restrict the affected feature or account when reasonably necessary to protect students, the Platform, payment integrity or security. Before a final suspension or termination for alleged abuse, we will normally notify the user of the concern and provide a reasonable opportunity to respond and be heard. Where immediate temporary action is necessary to prevent imminent harm, protect security, or comply with law, notice and an opportunity to respond will be provided as soon as reasonably practicable afterward. Decisions will be reviewed against the information reasonably available.
-
-If a violation is substantiated, the Platform may suspend or terminate the account, subject to applicable law and the review process above. This provision applies to free and paid facilities alike. It does not by itself forfeit unused paid credits or create a blanket no-refund rule; any remaining paid entitlement, cancellation or refund will be handled under the applicable purchase terms and law.
-
+${LEGAL_TERMS_ADDENDUM}
 `;
 
 export const DEFAULT_PRIVACY_POLICY = `CA EXAM CHECKER AI — PRIVACY POLICY
@@ -277,14 +286,7 @@ support@caexamcheckerai.com
 Instagram:
 Official CA Exam Checker AI Instagram
 
-16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW
-
-To protect students, payment integrity and the Platform, we may use relevant account and service records to identify and investigate suspected misuse of free or paid facilities. Depending on the incident, this may include account identifiers and registration details; login, session, trusted-device and security logs; IP address and user-agent information; answer-sheet submission references and timing; evaluation and credit usage; payment, refund or chargeback records; and related support or audit history.
-
-We use these signals to investigate suspected duplicate-account activity, attempts to bypass eligibility limits, fraud, unauthorized access and other violations of the Terms. A signal or automated indicator alone does not necessarily establish wrongdoing. Where a decision may lead to final suspension or termination, the Terms' notice and opportunity-to-respond process applies, subject to urgent temporary restrictions and applicable law.
-
-We limit access to investigation and audit records to authorized personnel and retain them for as long as reasonably necessary for security, review, dispute handling, legal compliance and legitimate operational needs, subject to applicable law.
-
+${LEGAL_PRIVACY_ADDENDUM}
 `;
 
 export const DEFAULT_REFUND_POLICY = `CA EXAM CHECKER AI — REFUND & CANCELLATION POLICY
