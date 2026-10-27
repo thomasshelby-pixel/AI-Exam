@@ -88,6 +88,7 @@ import {
 } from '../models/modelRegistry.js';
 import {
   estimateRecipientsFromDurableStore,
+  getTargetUsersForBroadcast,
   sendTestNotification,
   createAndDispatchBroadcast,
   getBroadcastCampaigns,
@@ -4395,11 +4396,48 @@ router.get('/notifications/campaigns/:id', (req: AuthRequest, res: Response) => 
   }
 });
 
+// 19.3a Search active student accounts for targeted notifications. Recipient identity
+// and targeting are resolved server-side; the client cannot broadcast by filtering locally.
+router.get('/notifications/students', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
+  try {
+    const search = String(req.query.search || '').trim().toLowerCase();
+    if (search.length < 2) return res.json({ students: [] });
+
+    const users = await getTargetUsersForBroadcast('STUDENT');
+    const students = users
+      .filter((user) => {
+        const searchable = [
+          user.full_name,
+          user.email,
+          user.icai_registration_number,
+          user.ca_level,
+        ].map((value) => String(value || '').toLowerCase()).join(' ');
+        return searchable.includes(search);
+      })
+      .slice(0, 30)
+      .map((user) => ({
+        id: user.id,
+        name: user.full_name || 'Student',
+        email: user.email,
+        caLevel: user.ca_level || '',
+        icaiRegistrationNumber: user.icai_registration_number || '',
+      }));
+
+    return res.json({ students });
+  } catch (error: unknown) {
+    console.error('Search notification recipients error:', error);
+    return res.status(503).json({
+      error: 'Student recipient data could not be loaded. Please retry.',
+      code: 'NOTIFICATION_RECIPIENTS_UNAVAILABLE',
+    });
+  }
+});
+
 // 19.3 Recipient Count & Demographic Estimation
 router.post('/notifications/estimate', async (req: AuthRequest, res: Response) => {
   try {
-    const { targetAudience } = req.body;
-    const estimate = await estimateRecipientsFromDurableStore(targetAudience || 'ALL');
+    const { targetAudience, targetUserIds } = req.body;
+    const estimate = await estimateRecipientsFromDurableStore(targetAudience || 'ALL', Array.isArray(targetUserIds) ? targetUserIds : []);
     return res.json({ estimate });
   } catch (error: unknown) {
     console.error('Estimate recipients error:', error);
@@ -4447,6 +4485,7 @@ router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) 
       title,
       message,
       targetAudience = 'ALL',
+      targetUserIds = [],
       channels = 'IN_APP_AND_EMAIL',
       priority = 'NORMAL',
       category = 'ANNOUNCEMENT',
@@ -4462,9 +4501,18 @@ router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) 
       return res.status(400).json({ error: 'Message content must be at least 5 characters long' });
     }
 
-    const validAudiences = ['ALL', 'STUDENT', 'INSTITUTE_ADMIN', 'STUDENTS_FOUNDATION', 'STUDENTS_INTERMEDIATE', 'STUDENTS_FINAL'];
+    const validAudiences = ['ALL', 'STUDENT', 'INSTITUTE_ADMIN', 'STUDENTS_FOUNDATION', 'STUDENTS_INTERMEDIATE', 'STUDENTS_FINAL', 'SPECIFIC_STUDENTS'];
     if (!validAudiences.includes(targetAudience)) {
       return res.status(400).json({ error: `Invalid target audience. Allowed: ${validAudiences.join(', ')}` });
+    }
+
+    if (targetAudience === 'SPECIFIC_STUDENTS') {
+      if (!Array.isArray(targetUserIds) || targetUserIds.length === 0) {
+        return res.status(400).json({ error: 'Select at least one student before sending an individual notification.' });
+      }
+      if (targetUserIds.length > 100 || targetUserIds.some((id: unknown) => typeof id !== 'string' || !id.trim() || id.length > 128)) {
+        return res.status(400).json({ error: 'Select no more than 100 valid student accounts per notification.' });
+      }
     }
 
     const validChannels = ['IN_APP', 'EMAIL', 'IN_APP_AND_EMAIL'];
@@ -4486,6 +4534,9 @@ router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) 
       title: title.trim(),
       message: message.trim(),
       targetAudience,
+      targetUserIds: targetAudience === 'SPECIFIC_STUDENTS'
+        ? [...new Set((targetUserIds as string[]).map((id) => id.trim()))]
+        : [],
       channels,
       priority,
       category,
