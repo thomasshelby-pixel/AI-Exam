@@ -10,7 +10,7 @@ import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSessio
 import { UserRole } from '../../src/types/index.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
-import { syncRecordToFirestore, persistStudentAccountToFirestore } from '../services/firestoreSyncService.js';
+import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
@@ -769,6 +769,33 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       return res.status(400).json({
         error: 'An account with this email address already exists. Please sign in.',
         code: 'ALREADY_EXISTS',
+      });
+    }
+
+    // If runtime SQLite lost a previous record after restart, check the authoritative
+    // cloud account store before creating another identity with the same email.
+    const recoveryResult = await recoverStudentAccountFromFirestoreByEmail(normalizedEmail);
+    if (recoveryResult === 'recovered') {
+      return res.status(400).json({
+        error: 'Your existing account was recovered. Please sign in with your original password.',
+        code: 'ALREADY_EXISTS',
+        recovered: true,
+      });
+    }
+    if (recoveryResult === 'conflict') {
+      return res.status(409).json({
+        error: 'An account with this email exists in the account store but could not be safely restored. Please contact support before creating another account.',
+        code: 'ACCOUNT_RECOVERY_CONFLICT',
+      });
+    }
+    if (
+      ['failed', 'incomplete', 'unconfigured'].includes(recoveryResult) &&
+      requiresDurableAccountPersistence()
+    ) {
+      return res.status(503).json({
+        error: 'We could not safely verify whether an existing account is stored. Please retry shortly; no duplicate account has been created.',
+        code: 'ACCOUNT_RECOVERY_UNAVAILABLE',
+        retryable: true,
       });
     }
 
