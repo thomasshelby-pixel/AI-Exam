@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, ClipboardCheck, LoaderCircle, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
-import { apiRequest } from '@/api/client';
+import { apiRequest } from '../../api/client.js';
 
 const CONFIRMATION_PHRASE = 'RECONCILE_DELETED_ACCOUNTS';
 
@@ -35,7 +35,7 @@ interface CleanupApiResponse {
   error?: string;
 }
 
-function CountTile({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+function CountTile({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">{icon}{label}</div>
@@ -102,7 +102,9 @@ export default function DeletedAccountCleanupSection() {
     }
   };
 
-  const collectionCounts = Object.entries(preview?.linkedDocumentsByCollection || {}).sort((a, b) => b[1] - a[1]);
+  const collectionCounts: Array<[string, number]> = Object.entries(preview?.linkedDocumentsByCollection || {})
+    .map(([name, count]) => [name, Number(count)] as [string, number])
+    .sort((a, b) => b[1] - a[1]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
