@@ -1357,17 +1357,9 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
             };
             createdViaSocialSignup = true;
 
-            // Keep authoritative Firestore records aligned. The existing startup
-            // hydrator remains authoritative; sync failures are visible in logs and
-            // are retried by the established persistence flow.
-            try {
-              const uRow = db.prepare('SELECT * FROM users WHERE id = ?').get(socialUserId) as any;
-              const spRow = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(socialUserId) as any;
-              if (uRow) await syncRecordToFirestore('users', socialUserId, uRow);
-              if (spRow) await syncRecordToFirestore('student_profiles', socialUserId, spRow);
-            } catch (syncError) {
-              console.warn('[Auth] Social signup Firestore sync warning:', (syncError as any)?.message || 'unknown error');
-            }
+            // Durable account persistence is verified below before any session
+            // is issued. Best-effort sync here could otherwise report successful
+            // sign-up while another App Hosting instance cannot see this account.
           }
         } catch (createError) {
           try { db.exec('ROLLBACK'); } catch {}
@@ -1406,6 +1398,28 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
 
       if (!user || !isAuthenticated) {
         return res.status(401).json({ error: 'Invalid email or password.' });
+      }
+    }
+
+    // Social accounts must be durably present in shared Firestore before a
+    // login succeeds. A local SQLite-only account can disappear from the view of
+    // another App Hosting instance and will not be visible in admin analytics.
+    if (
+      isSocialLogin &&
+      user?.role === 'STUDENT' &&
+      ['GOOGLE_OAUTH', 'APPLE_OAUTH', 'EXTERNAL_OAUTH'].includes(String(user.password_hash || '').toUpperCase())
+    ) {
+      const durableResult = await persistStudentAccountToFirestore(user.id);
+      if (durableResult !== 'persisted' && requiresDurableAccountPersistence()) {
+        console.error('[Auth] Social student account persistence gate failed:', {
+          userId: user.id,
+          result: durableResult,
+        });
+        return res.status(503).json({
+          error: 'Your social sign-in was verified, but we could not confirm that your student account was safely saved. Please retry shortly.',
+          code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+          retryable: true,
+        });
       }
     }
 
