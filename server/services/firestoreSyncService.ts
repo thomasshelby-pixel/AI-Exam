@@ -1375,6 +1375,19 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           // stale PROCESSING status from Firestore.
           const repairedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(ev.id) as any;
           if (repairedEvaluation) {
+            const rejectedStudentId = String(repairedEvaluation.student_id || '').trim();
+            if (rejectedStudentId) {
+              const rejectionReason = String(repairedEvaluation.rejection_reason || '').trim() ||
+                'This evaluation was rejected by validation checks. Please contact support for a review.';
+              const notificationId = `notif_eval_rejected_${ev.id}`;
+              const notificationMessage = `Your evaluation for ${String(repairedEvaluation.subject_name || 'the selected paper')} was rejected. Reason: ${rejectionReason}\\n\\nIf you believe this decision is incorrect, please contact support for a review.`;
+              db.prepare(`
+                INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
+                VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
+              `).run(notificationId, rejectedStudentId, notificationMessage);
+              const rejectionNotification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notificationId) as any;
+              if (rejectionNotification) await syncRecordToFirestore('notifications', notificationId, rejectionNotification);
+            }
             await syncRecordToFirestore('evaluations', ev.id, repairedEvaluation);
           }
           console.warn(`[FirestoreSync] Restored terminal REJECTED state for evaluation ${ev.id} from persisted rejection markers.`);
