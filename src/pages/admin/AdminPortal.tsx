@@ -1881,6 +1881,11 @@ export const AdminPortal: React.FC = () => {
                       <h3 className="text-sm font-black text-slate-900">Student Sign-ups by Platform</h3>
                       <span className="text-[11px] text-slate-500">
                         All-time · {dashboardData.metrics?.signupPlatformCounts?.total || 0} student accounts tracked
+                        {dashboardData.metrics?.accountMetricsSource === 'FIRESTORE'
+                          ? ' · Live cloud data'
+                          : dashboardData.metrics?.accountMetricsSource === 'SQLITE_CACHE_FALLBACK'
+                            ? ' · Local cache fallback (may be outdated)'
+                            : ''}
                       </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
