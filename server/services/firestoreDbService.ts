@@ -174,6 +174,62 @@ async function withTimeout<T>(
   }
 }
 
+/**
+ * Writes a server-owned record to a specific named Firestore database in the
+ * currently configured Firebase project. Use for explicitly separated app/site
+ * telemetry stores. Never fall back across databases after a target write fails.
+ */
+export async function setFirestoreDocInDatabase(
+  databaseId: string,
+  collectionName: string,
+  docId: string,
+  data: Record<string, any>,
+): Promise<boolean> {
+  if (!databaseId?.trim() || !collectionName?.trim() || !docId?.trim()) return false;
+
+  // Initialize and validate the authoritative Firebase project first.
+  getFirestoreDb();
+  if (activeDriverMode === 'OFFLINE') return false;
+
+  const { config } = loadAndValidateFirebaseConfig();
+  const primaryDatabaseId = String(config.firestoreDatabaseId || '(default)').trim();
+  const targetDatabaseId = databaseId.trim();
+
+  if (targetDatabaseId === primaryDatabaseId) {
+    return setFirestoreDoc(collectionName, docId, data);
+  }
+
+  const cleanData: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) cleanData[key] = value;
+  }
+  cleanData._updatedAt = new Date().toISOString();
+
+  if (activeDriverMode === 'ADMIN_SDK' && adminDbInstance) {
+    try {
+      const app = getAdminApps().length ? getAdminApp() : null;
+      if (!app) return false;
+      const targetDb = targetDatabaseId === '(default)'
+        ? getAdminFirestore(app)
+        : getAdminFirestore(app, targetDatabaseId);
+      return await withTimeout(
+        targetDb.collection(collectionName).doc(String(docId)).set(cleanData, { merge: true }).then(() => true),
+        12000,
+        false,
+        `setFirestoreDocInDatabase[Admin](${targetDatabaseId}/${collectionName}/${docId})`,
+      );
+    } catch (error) {
+      console.warn(`[Firestore] Failed to write ${collectionName}/${docId} to named database ${targetDatabaseId}:`, error);
+      return false;
+    }
+  }
+
+  // Client-SDK fallback exists for local development only; server-owned telemetry
+  // rules should deny direct client access, so it is not treated as a durable success.
+  console.warn(`[Firestore] Cannot safely write server-owned collection ${collectionName} to secondary database ${targetDatabaseId} without Admin SDK.`);
+  return false;
+}
+
 export async function setFirestoreDoc(
   collectionName: string,
   docId: string,
