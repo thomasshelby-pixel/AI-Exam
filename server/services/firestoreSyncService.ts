@@ -463,8 +463,10 @@ export async function persistStudentAccountToFirestore(
     }
 
     // Build the readable Student Code index after the authoritative account/profile
-    // documents are durable. Failure to create this lookup must not invalidate signup.
-    await syncStudentReadableIdentityToFirestore(userId);
+    // documents are durable. Keep dependency-injected tests isolated from the live SDK.
+    if (adapter === defaultStudentAccountPersistenceAdapter) {
+      await syncStudentReadableIdentityToFirestore(userId);
+    }
     return 'persisted';
   } catch (error) {
     console.warn(`[FirestoreSync] Durable student account persistence failed for ${userId}:`, error);
