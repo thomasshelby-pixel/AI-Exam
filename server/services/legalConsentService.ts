@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { LEGAL_TERMS_ADDENDUM, LEGAL_PRIVACY_ADDENDUM } from './legalConstants.js';
+import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export const CURRENT_TERMS_VERSION = '2.0';
 export const CURRENT_PRIVACY_VERSION = '2.0';
@@ -25,8 +27,74 @@ export interface LegalConsentAcceptanceInput {
   userAgent?: string | null;
 }
 
+/**
+ * Upgrade an existing published document in place without discarding its prior content.
+ * This runs before consent status is reported, so existing users are never asked to accept
+ * a new version while the publicly linked document still shows the old text.
+ */
+export function ensureCurrentLegalDocuments(): void {
+  const documents = [
+    {
+      docType: 'TERMS',
+      version: CURRENT_TERMS_VERSION,
+      updatedOn: CURRENT_TERMS_UPDATED_ON,
+      marker: '16. FAIR USE, ANTI-ABUSE AND REVIEW BEFORE FINAL TERMINATION',
+      amendment: LEGAL_TERMS_ADDENDUM,
+      changelog: 'Fair-use enforcement, free/paid facility abuse, and notice/opportunity-to-respond review clause.',
+    },
+    {
+      docType: 'PRIVACY',
+      version: CURRENT_PRIVACY_VERSION,
+      updatedOn: CURRENT_PRIVACY_UPDATED_ON,
+      marker: '16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW',
+      amendment: LEGAL_PRIVACY_ADDENDUM,
+      changelog: 'Disclosure of account/security data used to prevent and investigate suspected free or paid facility abuse.',
+    },
+  ];
+
+  for (const item of documents) {
+    const current = db.prepare(`
+      SELECT * FROM legal_documents
+      WHERE doc_type = ? AND status = 'PUBLISHED'
+      ORDER BY published_at DESC, updated_at DESC
+      LIMIT 1
+    `).get(item.docType) as Record<string, any> | undefined;
+    if (!current) continue;
+
+    const content = String(current.content || '');
+    const hasAmendment = content.includes(item.marker);
+    const existingVersion = Number.parseFloat(String(current.version || '0'));
+    const targetVersion = Number.isFinite(existingVersion) && existingVersion > Number.parseFloat(item.version)
+      ? String(current.version)
+      : item.version;
+
+    if (hasAmendment && String(current.version) === targetVersion &&
+        String(current.last_updated_date || '') === item.updatedOn) continue;
+
+    const updatedContent = hasAmendment ? content : `${content.trim()}\n\n${item.amendment}\n`;
+    const oldChangelog = String(current.changelog || '').trim();
+    const changelog = oldChangelog.includes(item.changelog)
+      ? oldChangelog
+      : [oldChangelog, item.changelog].filter(Boolean).join(' | ');
+
+    db.prepare(`
+      UPDATE legal_documents
+      SET content = ?, version = ?, effective_date = ?, last_updated_date = ?,
+          changelog = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'PUBLISHED'
+    `).run(updatedContent, targetVersion, item.updatedOn, item.updatedOn, changelog, current.id);
+
+    const updated = db.prepare('SELECT * FROM legal_documents WHERE id = ?').get(current.id) as Record<string, any> | undefined;
+    if (updated) {
+      void syncRecordToFirestore('legal_documents', String(updated.id), updated)
+        .catch((error: unknown) => console.warn('[LegalConsent] Could not sync published legal amendment:', error));
+    }
+  }
+}
+
 /** Current consent is tied to a published version, never to a browser-local flag. */
 export function getLegalConsentStatus(userId: string, role: string = 'STUDENT'): LegalConsentStatus {
+  ensureCurrentLegalDocuments();
   const normalizedRole = String(role || '').trim().toUpperCase();
   if (normalizedRole !== 'STUDENT') {
     return {
