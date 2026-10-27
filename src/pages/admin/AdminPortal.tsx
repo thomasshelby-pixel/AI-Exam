@@ -9,6 +9,8 @@ import { EvaluationControls } from '../../components/admin/EvaluationControls.js
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
 import { AdminDataCleanupSection } from './AdminDataCleanupSection.js';
+import AppUpdatesSection from './AppUpdatesSection.js';
+import DeletedAccountCleanupSection from './DeletedAccountCleanupSection.js';
 import { AdminLegalSection } from '../../components/admin/AdminLegalSection.js';
 import { AdminReviewsSection } from '../../components/admin/AdminReviewsSection.js';
 import { AdminPricingSection } from './AdminPricingSection.js';
@@ -73,6 +75,7 @@ import {
   Zap,
   Sliders,
   Tag,
+  Smartphone,
 } from 'lucide-react';
 
 export const AdminPortal: React.FC = () => {
@@ -363,6 +366,11 @@ export const AdminPortal: React.FC = () => {
         case 'dashboard': {
           const res = await apiRequest<any>('/api/admin/dashboard');
           setDashboardData(res);
+          break;
+        }
+        case 'app-updates':
+        case 'deleted-account-cleanup': {
+          // These sections load their own scoped data after mounting.
           break;
         }
         case 'users': {
@@ -1347,6 +1355,8 @@ export const AdminPortal: React.FC = () => {
     { id: 'mfa-recovery', label: 'MFA Recovery Requests', icon: KeyRound },
     { id: 'revocation-requests', label: 'Revocation Requests', icon: ShieldAlert },
     { id: 'data-cleanup', label: 'Test Data Cleanup', icon: Trash2 },
+    { id: 'deleted-account-cleanup', label: 'Deleted Account Cleanup', icon: ShieldAlert },
+    { id: 'app-updates', label: 'App Updates', icon: Smartphone },
     { id: 'legal', label: 'Legal & Policies', icon: Scale },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'audit-logs', label: 'Audit Logs', icon: ScrollText },
@@ -1747,6 +1757,12 @@ export const AdminPortal: React.FC = () => {
 
           {!loadingData && (
             <>
+              {/* APP RELEASES */}
+              {activeSection === 'app-updates' && <AppUpdatesSection />}
+
+              {/* TOMBSTONE-BACKED ACCOUNT CLEANUP */}
+              {activeSection === 'deleted-account-cleanup' && <DeletedAccountCleanupSection />}
+
               {/* FEATURE CONTROL & STUDENT ACCESS SYSTEM */}
               {activeSection === 'feature-control' && (
                 <AdminFeatureControlSection />
