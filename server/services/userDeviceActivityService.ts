@@ -3,15 +3,8 @@ import { db } from '../db.js';
 import {
   getFirestoreDb,
   getFirestoreDoc,
-  getFirestoreDocInDatabase,
   setFirestoreDoc,
-  setFirestoreDocInDatabase,
 } from './firestoreDbService.js';
-
-const APP_DEVICE_ACTIVITY_DATABASE_ID = String(
-  process.env.APP_DEVICE_ACTIVITY_FIRESTORE_DATABASE_ID ||
-  'ai-studio-aiexamapp-84322cc5-3d67-4034-bd47-214b89165488'
-).trim();
 
 export type DeviceActivityPlatform = 'APP' | 'WEB' | 'UNKNOWN';
 
@@ -65,13 +58,13 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
     const documentId = getUserDeviceActivityDocumentId(userId, deviceId);
     const resolvedPlatform: DeviceActivityPlatform =
       input.platform === 'APP' || input.platform === 'WEB' ? input.platform : 'UNKNOWN';
-    const previous = resolvedPlatform === 'APP'
-      ? await getFirestoreDocInDatabase<Record<string, any>>(
-          APP_DEVICE_ACTIVITY_DATABASE_ID,
-          'user_device_activity',
-          documentId,
-        )
-      : await getFirestoreDoc<Record<string, any>>('user_device_activity', documentId);
+    // All login activity lives in the same authoritative Firestore database as
+    // student accounts. Platform is metadata on the record; it does not select a
+    // different database, so the website and app can use one shared activity log.
+    const previous = await getFirestoreDoc<Record<string, any>>(
+      'user_device_activity',
+      documentId,
+    );
     const firstSeenAt = safeText(previous?.first_seen_at, 64) || now;
     const previousCount = Number(previous?.login_count);
     const loginCount = Number.isFinite(previousCount) && previousCount >= 0
@@ -113,22 +106,8 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
       login_count: loginCount,
     };
 
-    if (payload.platform === 'APP') {
-      // The app and website intentionally use separate named Firestore databases.
-      // App-originated activity belongs in the app database, not the website database.
-      const saved = await setFirestoreDocInDatabase(
-        APP_DEVICE_ACTIVITY_DATABASE_ID,
-        'user_device_activity',
-        documentId,
-        payload,
-      );
-      if (!saved) {
-        console.warn('[DeviceActivity] App login telemetry was not saved to the app Firestore database.');
-      }
-      return saved;
-    }
-
-    // Website and unattributed legacy clients remain in the website-configured database.
+    // A single shared database avoids duplicated records and cross-database
+    // synchronization. APP/WEB separation is retained in payload.platform.
     return await setFirestoreDoc('user_device_activity', documentId, payload);
   } catch (error) {
     console.warn('[DeviceActivity] Failed to record sign-in metadata:', error);
