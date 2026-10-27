@@ -4,6 +4,7 @@ import { db, recordLocalTombstone, getAllLocalTombstoneSet, isTombstoned as isLo
 import {
   getFirestoreDb,
   setFirestoreDoc,
+  setFirestoreDocsAtomically,
   getFirestoreDoc,
   deleteFirestoreDoc,
   getAllFirestoreDocs,
@@ -82,6 +83,94 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
     await setFirestoreDoc(collectionName, id, data);
   } catch (err) {
     console.warn(`[FirestoreSync] Failed to sync ${collectionName}/${id}:`, err);
+  }
+}
+
+
+/**
+ * Persist a newly registered student and their profile as one durable Firestore
+ * batch, then read both documents back before registration is considered saved.
+ * This is deliberately separate from the best-effort mirror used by older writes:
+ * account creation must not report success when the cloud write timed out or failed.
+ */
+export interface StudentAccountPersistenceAdapter {
+  isConfigured(): boolean;
+  isTombstoned(collectionName: string, id: string): Promise<boolean>;
+  setDocumentsAtomically(writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }>): Promise<boolean>;
+  getDocument<T>(collectionName: string, id: string, options?: { failOnError?: boolean }): Promise<T | null>;
+}
+
+const defaultStudentAccountPersistenceAdapter: StudentAccountPersistenceAdapter = {
+  isConfigured: () => {
+    try {
+      if (!fs.existsSync(path.resolve(process.cwd(), 'firebase-applet-config.json'))) return false;
+      return getFirestoreDb() !== null;
+    } catch {
+      return false;
+    }
+  },
+  isTombstoned,
+  setDocumentsAtomically: setFirestoreDocsAtomically,
+  getDocument: getFirestoreDoc,
+};
+
+export async function persistStudentAccountToFirestore(
+  userId: string,
+  adapter: StudentAccountPersistenceAdapter = defaultStudentAccountPersistenceAdapter,
+): Promise<'persisted' | 'unconfigured' | 'failed'> {
+  try {
+    if (!userId || !adapter.isConfigured()) return 'unconfigured';
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as Record<string, any> | undefined;
+    const profile = db.prepare('SELECT * FROM student_profiles WHERE user_id = ?').get(userId) as Record<string, any> | undefined;
+    if (!user || !profile || String(user.role || '').toUpperCase() !== 'STUDENT') return 'failed';
+
+    if (
+      await adapter.isTombstoned('users', userId) ||
+      await adapter.isTombstoned('student_profiles', userId)
+    ) {
+      console.error(`[FirestoreSync] Refusing to persist tombstoned student account ${userId}.`);
+      return 'failed';
+    }
+
+    const wrote = await adapter.setDocumentsAtomically([
+      { collectionName: 'users', docId: userId, data: user },
+      { collectionName: 'student_profiles', docId: userId, data: profile },
+    ]);
+    if (!wrote) {
+      console.error(`[FirestoreSync] Durable account batch write failed for ${userId}.`);
+      return 'failed';
+    }
+
+    const [savedUser, savedProfile] = await Promise.all([
+      adapter.getDocument<Record<string, any>>('users', userId, { failOnError: true }),
+      adapter.getDocument<Record<string, any>>('student_profiles', userId, { failOnError: true }),
+    ]);
+
+    const expectedEmail = String(user.email || '').trim().toLowerCase();
+    const expectedSrn = String(profile.icai_registration_number || '').trim().toUpperCase();
+    const expectedLevel = String(profile.ca_level || 'INTERMEDIATE').trim().toUpperCase();
+    const savedProfileSrn = String(savedProfile?.icai_registration_number || '').trim().toUpperCase();
+    const savedProfileLevel = String(savedProfile?.ca_level || 'INTERMEDIATE').trim().toUpperCase();
+
+    if (
+      !savedUser ||
+      String(savedUser.id || '') !== userId ||
+      String(savedUser.email || '').trim().toLowerCase() !== expectedEmail ||
+      String(savedUser.role || '').toUpperCase() !== 'STUDENT' ||
+      !savedProfile ||
+      String(savedProfile.user_id || '') !== userId ||
+      savedProfileSrn !== expectedSrn ||
+      savedProfileLevel !== expectedLevel
+    ) {
+      console.error(`[FirestoreSync] Durable account read-back verification failed for ${userId}.`);
+      return 'failed';
+    }
+
+    return 'persisted';
+  } catch (error) {
+    console.warn(`[FirestoreSync] Durable student account persistence failed for ${userId}:`, error);
+    return 'failed';
   }
 }
 
