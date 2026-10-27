@@ -4366,7 +4366,7 @@ router.get('/analytics', (req: AuthRequest, res: Response) => {
 // 19. Admin Notification Centre Endpoints
 
 // 19.1 List Broadcast Campaigns with Metrics & Pagination
-router.get('/notifications/campaigns', (req: AuthRequest, res: Response) => {
+router.get('/notifications/campaigns', authenticateToken, requireRole('SUPER_ADMIN'), (req: AuthRequest, res: Response) => {
   try {
     const page = parseInt(req.query.page as string, 10) || 1;
     const limit = parseInt(req.query.limit as string, 10) || 20;
@@ -4382,7 +4382,7 @@ router.get('/notifications/campaigns', (req: AuthRequest, res: Response) => {
 });
 
 // 19.2 Get Single Campaign Details with Delivery Logs
-router.get('/notifications/campaigns/:id', (req: AuthRequest, res: Response) => {
+router.get('/notifications/campaigns/:id', authenticateToken, requireRole('SUPER_ADMIN'), (req: AuthRequest, res: Response) => {
   try {
     const campaignId = req.params.id;
     const details = getCampaignDetails(campaignId);
@@ -4434,7 +4434,7 @@ router.get('/notifications/students', authenticateToken, requireRole('SUPER_ADMI
 });
 
 // 19.3 Recipient Count & Demographic Estimation
-router.post('/notifications/estimate', async (req: AuthRequest, res: Response) => {
+router.post('/notifications/estimate', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const { targetAudience, targetUserIds } = req.body;
     const estimate = await estimateRecipientsFromDurableStore(targetAudience || 'ALL', Array.isArray(targetUserIds) ? targetUserIds : []);
@@ -4449,7 +4449,7 @@ router.post('/notifications/estimate', async (req: AuthRequest, res: Response) =
 });
 
 // 19.4 Send Test Notification Preview (Safe Admin Preview)
-router.post('/notifications/send-test', async (req: AuthRequest, res: Response) => {
+router.post('/notifications/send-test', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const { title, message, category, priority, channels, actionUrl, actionLabel, testEmail } = req.body;
     if (!title || !message) {
@@ -4479,7 +4479,7 @@ router.post('/notifications/send-test', async (req: AuthRequest, res: Response) 
 });
 
 // 19.5 Production Broadcast Dispatcher
-router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) => {
+router.post('/notifications/broadcast', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const {
       title,
@@ -4569,7 +4569,7 @@ router.post('/notifications/broadcast', async (req: AuthRequest, res: Response) 
 });
 
 // 19.6 System Notifications Audit Feed (Backwards Compatible)
-router.get('/notifications', (req: AuthRequest, res: Response) => {
+router.get('/notifications', authenticateToken, requireRole('SUPER_ADMIN'), (req: AuthRequest, res: Response) => {
   try {
     const notifications = db.prepare(`
       SELECT n.*, u.email as user_email, u.full_name
