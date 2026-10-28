@@ -78,6 +78,21 @@ import {
   Smartphone,
 } from 'lucide-react';
 
+function summarizeEvaluationRejectionReason(value: unknown): string {
+  const reason = String(value || '').trim();
+  if (!reason) return 'Rejected by validation checks.';
+
+  if (/FINALIZATION_FAILED\s*:/i.test(reason)) {
+    const page = reason.match(/Page\s+(\d+)/i)?.[1];
+    const questions = reason.match(/for\s+(.+?)\s+but none are evaluated/i)?.[1]?.replace(/\s+/g, ' ').trim();
+    return `Finalization failed${page ? ` on page ${page}` : ''}: detected answer content was not evaluated${questions ? ` (${questions})` : ''}.`;
+  }
+
+  const withoutCode = reason.replace(/^[A-Z][A-Z0-9_]{2,}:\s*/, '').trim();
+  const summary = withoutCode || reason;
+  return summary.length > 135 ? `${summary.slice(0, 132).trimEnd()}…` : summary;
+}
+
 export const AdminPortal: React.FC = () => {
   const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge, syncMfaFactor, refreshUser } = useAuth();
   const navigate = useNavigate();
@@ -3109,14 +3124,29 @@ export const AdminPortal: React.FC = () => {
                                     >
                                       {ev.status}
                                     </span>
-                                    {String(ev.status || '').toUpperCase() === 'REJECTED' && (
-                                      <p
-                                        className="mt-1 max-w-48 text-[10px] leading-relaxed text-rose-700"
-                                        title={ev.rejection_reason || 'Rejection reason not recorded'}
-                                      >
-                                        {ev.rejection_reason || 'Rejected by validation checks'}
-                                      </p>
-                                    )}
+                                    {String(ev.status || '').toUpperCase() === 'REJECTED' && (() => {
+                                      const fullReason = String(ev.rejection_reason || 'Rejected by validation checks.');
+                                      return (
+                                        <div className="mt-1 max-w-[220px]">
+                                          <p
+                                            className="line-clamp-2 break-words text-[10px] leading-relaxed text-rose-700"
+                                            title={fullReason}
+                                          >
+                                            {summarizeEvaluationRejectionReason(fullReason)}
+                                          </p>
+                                          {fullReason.length > 135 && (
+                                            <details className="mt-1 text-[10px]">
+                                              <summary className="cursor-pointer select-none font-semibold text-rose-700 hover:underline">
+                                                View full reason
+                                              </summary>
+                                              <div className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded border border-rose-100 bg-rose-50/70 p-2 text-rose-800">
+                                                {fullReason}
+                                              </div>
+                                            </details>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                   </td>
 
                                   {/* Date */}

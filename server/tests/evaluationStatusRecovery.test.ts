@@ -36,6 +36,33 @@ const staleCompletedStatus = normalizeEvaluationRejectionStatus({
 });
 assert.equal(staleCompletedStatus.status, 'REJECTED');
 
+// Regression: finalization failures were sometimes persisted only in error_message,
+// leaving status PROCESSING and rejection_reason empty even though the grader had
+// detected answer content that it could not evaluate.
+const staleFinalizationFailure = normalizeEvaluationRejectionStatus({
+  id: 'eval_finalization_failed',
+  status: 'PROCESSING',
+  document_validation_status: 'VERIFIED',
+  rejection_reason: '',
+  error_message: 'FINALIZATION_FAILED: Page 2 contains student content for Q1, Q1(a) but none are evaluated.',
+  created_at: '2026-10-27T10:00:00.000Z',
+});
+assert.equal(staleFinalizationFailure.status, 'REJECTED');
+assert.match(String(staleFinalizationFailure.rejection_reason), /^FINALIZATION_FAILED:/);
+assert.equal(staleFinalizationFailure.progress_stage, 'REJECTED');
+assert.equal(staleFinalizationFailure.progress_percentage, 100);
+assert.equal(hasPersistedEvaluationRejection(staleFinalizationFailure), true);
+
+const transientErrorRemainsProcessing = normalizeEvaluationRejectionStatus({
+  id: 'eval_transient_error',
+  status: 'PROCESSING',
+  document_validation_status: 'VERIFIED',
+  rejection_reason: '',
+  error_message: 'Network timeout while waiting for evaluator.',
+});
+assert.equal(transientErrorRemainsProcessing.status, 'PROCESSING');
+assert.equal(hasPersistedEvaluationRejection(transientErrorRemainsProcessing), false);
+
 const validProcessing = normalizeEvaluationRejectionStatus({
   id: 'eval_valid_processing',
   status: 'PROCESSING',

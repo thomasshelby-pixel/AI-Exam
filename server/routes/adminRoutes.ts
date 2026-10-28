@@ -174,6 +174,7 @@ async function repairStaleRejectedEvaluationStatuses(): Promise<void> {
       AND (
         UPPER(COALESCE(document_validation_status, '')) IN ('DUPLICATE_ACCOUNT_UPLOAD', 'REJECTED')
         OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
+        OR UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
       )
     ORDER BY created_at DESC
     LIMIT 1000
