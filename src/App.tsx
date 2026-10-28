@@ -519,7 +519,6 @@ const StudentWorkspaceLayout: React.FC<{
               aria-label="Open notifications"
             >
               <Bell className="h-4 w-4" />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]" />
             </button>
             <button
               type="button"
