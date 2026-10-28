@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   ArrowRight,
+  ChevronRight,
+  ClipboardList,
   BookOpen,
   Calendar,
   Layers,
