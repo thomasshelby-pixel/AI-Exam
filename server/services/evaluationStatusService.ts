@@ -31,12 +31,19 @@ export function normalizeEvaluationRejectionStatus(evaluation: EvaluationStatusL
 
   const isDuplicateUpload = documentStatus === 'DUPLICATE_ACCOUNT_UPLOAD';
   const isRejectedDocument = documentStatus === 'REJECTED';
-  const hasPersistedRejection = isDuplicateUpload || isRejectedDocument || rejectionReason.length > 0;
+  // Finalization failures with unevaluated detected answer content are terminal
+  // integrity failures. Older records sometimes stored this marker only in
+  // error_message, leaving status as PROCESSING and rejection_reason empty.
+  const isFinalizationFailure = /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(errorMessage) ||
+    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(String(evaluation.progress_message || '').trim());
+  const hasPersistedRejection =
+    isDuplicateUpload || isRejectedDocument || rejectionReason.length > 0 || isFinalizationFailure;
 
   if (!hasPersistedRejection) return evaluation;
   if (currentStatus === 'REJECTED' && rejectionReason) return evaluation;
 
   const reason = rejectionReason ||
+    (isFinalizationFailure ? errorMessage || String(evaluation.progress_message || '') : '') ||
     (isDuplicateUpload ? (errorMessage || DUPLICATE_UPLOAD_REASON) : '') ||
     (isRejectedDocument ? (errorMessage || INVALID_DOCUMENT_REASON) : '') ||
     errorMessage ||
@@ -50,6 +57,8 @@ export function normalizeEvaluationRejectionStatus(evaluation: EvaluationStatusL
     progress_percentage: 100,
     progress_message: isDuplicateUpload
       ? 'Duplicate answer-sheet upload across accounts'
+      : isFinalizationFailure
+      ? 'Finalization failed: detected answer content was not evaluated'
       : 'Evaluation rejected by validation checks',
     completed_at: evaluation.completed_at || evaluation.updated_at || evaluation.created_at || null,
   };
@@ -57,7 +66,11 @@ export function normalizeEvaluationRejectionStatus(evaluation: EvaluationStatusL
 
 export function hasPersistedEvaluationRejection(evaluation: EvaluationStatusLike): boolean {
   const documentStatus = String(evaluation.document_validation_status || '').trim().toUpperCase();
+  const errorMessage = String(evaluation.error_message || '').trim();
+  const progressMessage = String(evaluation.progress_message || '').trim();
   return documentStatus === 'DUPLICATE_ACCOUNT_UPLOAD' ||
     documentStatus === 'REJECTED' ||
-    String(evaluation.rejection_reason || '').trim().length > 0;
+    String(evaluation.rejection_reason || '').trim().length > 0 ||
+    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(errorMessage) ||
+    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(progressMessage);
 }
