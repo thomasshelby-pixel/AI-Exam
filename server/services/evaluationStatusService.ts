@@ -34,8 +34,8 @@ export function normalizeEvaluationRejectionStatus(evaluation: EvaluationStatusL
   // Finalization failures with unevaluated detected answer content are terminal
   // integrity failures. Older records sometimes stored this marker only in
   // error_message, leaving status as PROCESSING and rejection_reason empty.
-  const isFinalizationFailure = /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(errorMessage) ||
-    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(String(evaluation.progress_message || '').trim());
+  const isFinalizationFailure = /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(errorMessage) ||
+    /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(String(evaluation.progress_message || '').trim());
   const hasPersistedRejection =
     isDuplicateUpload || isRejectedDocument || rejectionReason.length > 0 || isFinalizationFailure;
 
@@ -71,6 +71,6 @@ export function hasPersistedEvaluationRejection(evaluation: EvaluationStatusLike
   return documentStatus === 'DUPLICATE_ACCOUNT_UPLOAD' ||
     documentStatus === 'REJECTED' ||
     String(evaluation.rejection_reason || '').trim().length > 0 ||
-    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(errorMessage) ||
-    /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(progressMessage);
+    /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(errorMessage) ||
+    /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(progressMessage);
 }
