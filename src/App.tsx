@@ -340,7 +340,7 @@ const StudentWorkspaceLayout: React.FC<{
     return () => { active = false; };
   }, [user?.id]);
 
-  const navigationItems = [
+  const navigationItems: Array<{ label: string; icon: React.ElementType; path?: string; action?: string }> = [
     { label: 'Dashboard', icon: Home, path: '/student/dashboard' },
     { label: 'Evaluate Answer Sheet', icon: FileCheck2, path: '/student/upload' },
     { label: 'Question Bank & Tests', icon: BookOpen, path: '/student/enrollments' },
