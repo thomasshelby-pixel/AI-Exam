@@ -26,7 +26,6 @@ import {
   X,
   ChevronRight,
   Sparkles,
-  GraduationCap,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
@@ -323,6 +322,23 @@ const StudentWorkspaceLayout: React.FC<{
   const { user, profile } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [navSearch, setNavSearch] = useState('');
+  const [isArenaLinkAvailable, setIsArenaLinkAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setIsArenaLinkAvailable(false);
+      return () => { active = false; };
+    }
+    featureApi.checkAccess('mcq_arena')
+      .then((result) => {
+        if (active) setIsArenaLinkAvailable(Boolean(result.allowed));
+      })
+      .catch(() => {
+        if (active) setIsArenaLinkAvailable(false);
+      });
+    return () => { active = false; };
+  }, [user?.id]);
 
   const navigationItems = [
     { label: 'Dashboard', icon: Home, path: '/student/dashboard' },
@@ -336,6 +352,7 @@ const StudentWorkspaceLayout: React.FC<{
     { label: 'Profile & Settings', icon: UserRound, path: '/student/profile' },
   ];
   const filteredNavigation = navigationItems.filter((item) =>
+    (item.label !== 'MCQ Arena' || isArenaLinkAvailable) &&
     item.label.toLowerCase().includes(navSearch.trim().toLowerCase())
   );
   const studentName = String(user?.fullName || 'CA Student').trim();
@@ -490,10 +507,16 @@ const StudentWorkspaceLayout: React.FC<{
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             <button
               type="button"
-              onClick={() => navigate('/student/dashboard')}
+              onClick={() => {
+                if (location.pathname === '/student/dashboard') {
+                  window.dispatchEvent(new Event('student:open-notifications'));
+                } else {
+                  navigate('/student/dashboard', { state: { openNotifications: true } });
+                }
+              }}
               className="relative rounded-xl border border-white/10 bg-white/[0.035] p-2.5 text-blue-100 transition hover:border-blue-200/25 hover:bg-white/[0.08]"
-              title="Student dashboard notifications"
-              aria-label="Go to dashboard notifications"
+              title="Open notifications"
+              aria-label="Open notifications"
             >
               <Bell className="h-4 w-4" />
               <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-fuchsia-400 shadow-[0_0_8px_rgba(232,121,249,0.9)]" />
