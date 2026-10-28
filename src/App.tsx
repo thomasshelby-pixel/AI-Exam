@@ -378,9 +378,14 @@ const StudentWorkspaceLayout: React.FC<{
         className="flex w-full items-center gap-3 px-2 py-2 text-left"
         aria-label="CA Exam Checker AI dashboard"
       >
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-gradient-to-br from-cyan-300 via-blue-500 to-fuchsia-500 text-lg font-black text-white shadow-[0_0_28px_rgba(64,126,255,0.38)]">
-          CA
-        </span>
+        <img
+          src="/favicon.svg"
+          alt="CA Exam Checker AI logo"
+          className="h-12 w-12 shrink-0 rounded-2xl object-contain drop-shadow-[0_0_22px_rgba(59,130,246,0.28)]"
+          width={48}
+          height={48}
+          fetchPriority="high"
+        />
         <span className="min-w-0">
           <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">CA Exam</span>
           <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">Checker AI</span>
