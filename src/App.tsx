@@ -8,7 +8,25 @@ import {
   useLocation,
   useParams,
 } from 'react-router-dom';
-import { ShieldAlert, Clock } from 'lucide-react';
+import {
+  ShieldAlert,
+  Clock,
+  Home,
+  FileCheck2,
+  BookOpen,
+  LayoutGrid,
+  BrainCircuit,
+  ClipboardList,
+  TrendingUp,
+  CreditCard,
+  UserRound,
+  Search,
+  Bell,
+  Menu,
+  X,
+  ChevronRight,
+  Sparkles,
+} from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
 import { ThemeProvider } from './context/ThemeContext.js';
@@ -294,6 +312,240 @@ const EvaluationReportWrapper: React.FC = () => {
   );
 };
 
+// Student-facing workspace shell: dark glassmorphism UI shared across student routes.
+const StudentWorkspaceLayout: React.FC<{
+  children: React.ReactNode;
+  onOpenCreditsModal: (config?: any) => void;
+}> = ({ children, onOpenCreditsModal }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user, profile } = useAuth();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [navSearch, setNavSearch] = useState('');
+  const [isArenaLinkAvailable, setIsArenaLinkAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setIsArenaLinkAvailable(false);
+      return () => { active = false; };
+    }
+    featureApi.checkAccess('mcq_arena')
+      .then((result) => {
+        if (active) setIsArenaLinkAvailable(Boolean(result.allowed));
+      })
+      .catch(() => {
+        if (active) setIsArenaLinkAvailable(false);
+      });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  const navigationItems: Array<{ label: string; icon: React.ElementType; path?: string; action?: string }> = [
+    { label: 'Dashboard', icon: Home, path: '/student/dashboard' },
+    { label: 'Evaluate Answer Sheet', icon: FileCheck2, path: '/student/upload' },
+    { label: 'Question Bank & Tests', icon: BookOpen, path: '/student/enrollments' },
+    { label: 'MCQ Arena', icon: LayoutGrid, path: '/mcq-arena' },
+    { label: 'Study Planner', icon: BrainCircuit, path: '/student/study-planner' },
+    { label: 'My Evaluations', icon: ClipboardList, path: '/student/evaluations' },
+    { label: 'Performance Profile', icon: TrendingUp, path: '/student/examiner-profile' },
+    { label: 'Plans & Credits', icon: CreditCard, action: 'credits' },
+    { label: 'Profile & Settings', icon: UserRound, path: '/student/profile' },
+  ];
+  const filteredNavigation = navigationItems.filter((item) =>
+    (item.label !== 'MCQ Arena' || isArenaLinkAvailable) &&
+    item.label.toLowerCase().includes(navSearch.trim().toLowerCase())
+  );
+  const studentName = String(user?.fullName || 'CA Student').trim();
+  const studentInitial = studentName.charAt(0).toUpperCase() || 'S';
+  const courseLevel = String((profile as any)?.ca_level || (user as any)?.caLevel || 'CA Student')
+    .replaceAll('_', ' ');
+
+  const goToNavigationItem = (item: typeof navigationItems[number]) => {
+    setMobileNavOpen(false);
+    setNavSearch('');
+    if ('action' in item && item.action === 'credits') {
+      onOpenCreditsModal();
+      return;
+    }
+    if ('path' in item && item.path) navigate(item.path);
+  };
+
+  const renderSidebarContent = () => (
+    <>
+      <button
+        type="button"
+        onClick={() => navigate('/student/dashboard')}
+        className="flex w-full items-center gap-3 px-2 py-2 text-left"
+        aria-label="CA Exam Checker AI dashboard"
+      >
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-gradient-to-br from-cyan-300 via-blue-500 to-fuchsia-500 text-lg font-black text-white shadow-[0_0_28px_rgba(64,126,255,0.38)]">
+          CA
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">CA Exam</span>
+          <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">Checker AI</span>
+          <span className="mt-1 block text-[10px] leading-4 text-blue-200/75">Smarter Practice, Better Results.</span>
+        </span>
+      </button>
+
+      <div className="mt-7 space-y-1.5">
+        {filteredNavigation.map((item) => {
+          const Icon = item.icon;
+          const active = Boolean(item.path && (
+            item.path === '/student/dashboard'
+              ? location.pathname === '/student/dashboard'
+              : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`)
+          ));
+          return (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => goToNavigationItem(item)}
+              className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left text-[12px] font-semibold transition-all duration-200 ${
+                active
+                  ? 'border-cyan-300/50 bg-gradient-to-r from-blue-600/90 via-blue-500/70 to-cyan-500/45 text-white shadow-[0_0_24px_rgba(36,131,255,0.2)]'
+                  : 'border-transparent text-slate-300/85 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+              }`}
+            >
+              <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-cyan-100' : 'text-blue-200/80 group-hover:text-white'}`} />
+              <span className="min-w-0 flex-1">{item.label}</span>
+              {active && <ChevronRight className="h-3.5 w-3.5 text-cyan-100" />}
+              {item.label === 'MCQ Arena' && (
+                <span className="rounded-full border border-fuchsia-300/30 bg-fuchsia-500/20 px-1.5 py-0.5 text-[9px] font-bold text-fuchsia-200">PLAY</span>
+              )}
+            </button>
+          );
+        })}
+        {filteredNavigation.length === 0 && (
+          <p className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+            No matching destination.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-auto pt-6">
+        <div className="overflow-hidden rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-500/15 via-blue-500/10 to-fuchsia-500/15 p-4 shadow-[0_14px_45px_rgba(7,12,38,0.25)] backdrop-blur-xl">
+          <div className="flex items-center gap-2 text-xs font-bold text-white">
+            <Sparkles className="h-4 w-4 text-amber-300" />
+            Your CA Study Space
+          </div>
+          <p className="mt-2 text-[11px] leading-5 text-blue-100/70">
+            Practice consistently, review your marks and build your exam confidence.
+          </p>
+          <button
+            type="button"
+            onClick={() => onOpenCreditsModal()}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-gradient-to-r from-blue-500 to-fuchsia-500 px-3 py-2.5 text-[11px] font-bold text-white shadow-lg shadow-blue-900/30 transition hover:brightness-110"
+          >
+            View Plans <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <p className="px-2 pt-4 text-[10px] text-slate-500">CA Exam Checker AI · Student Workspace</p>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
+      <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
+      <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
+
+      <aside className="student-glass-sidebar fixed inset-y-0 left-0 z-40 hidden w-[252px] flex-col overflow-y-auto px-4 py-4 lg:flex">
+        {renderSidebarContent()}
+      </aside>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-[80] lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
+            aria-label="Close student navigation"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="student-glass-sidebar absolute inset-y-0 left-0 flex w-[min(84vw,300px)] flex-col overflow-y-auto px-4 py-4 shadow-2xl">
+            <div className="mb-2 flex justify-end">
+              <button type="button" onClick={() => setMobileNavOpen(false)} className="rounded-lg border border-white/10 p-2 text-slate-300 hover:bg-white/10" aria-label="Close menu">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {renderSidebarContent()}
+          </aside>
+        </div>
+      )}
+
+      <div className="min-w-0 lg:pl-[252px]">
+        <header className="student-glass-topbar sticky top-0 z-30 flex min-h-[76px] items-center gap-3 px-4 py-3 sm:px-6 xl:px-8">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-slate-200 hover:bg-white/[0.09] lg:hidden"
+            aria-label="Open student navigation"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="hidden min-w-0 flex-1 sm:block">
+            <label className="relative flex max-w-[560px] items-center">
+              <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-blue-200/60" />
+              <input
+                type="search"
+                value={navSearch}
+                onChange={(event) => setNavSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && filteredNavigation[0]) {
+                    event.preventDefault();
+                    goToNavigationItem(filteredNavigation[0]);
+                  }
+                  if (event.key === 'Escape') setNavSearch('');
+                }}
+                placeholder="Search your study workspace..."
+                aria-label="Search student workspace navigation"
+                className="student-glass-search w-full rounded-2xl border border-blue-200/15 py-3 pl-10 pr-4 text-xs text-slate-100 outline-none transition placeholder:text-slate-400/80 focus:border-cyan-300/50 focus:ring-2 focus:ring-blue-400/20"
+              />
+              <kbd className="absolute right-3 rounded-md border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-[9px] text-slate-400">ENTER</kbd>
+            </label>
+          </div>
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (location.pathname === '/student/dashboard') {
+                  window.dispatchEvent(new Event('student:open-notifications'));
+                } else {
+                  navigate('/student/dashboard', { state: { openNotifications: true } });
+                }
+              }}
+              className="relative rounded-xl border border-white/10 bg-white/[0.035] p-2.5 text-blue-100 transition hover:border-blue-200/25 hover:bg-white/[0.08]"
+              title="Open notifications"
+              aria-label="Open notifications"
+            >
+              <Bell className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/student/profile')}
+              className="flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.035] p-1.5 pr-2.5 text-left transition hover:border-blue-200/25 hover:bg-white/[0.07] sm:pr-3"
+              title="Open your profile"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full border border-blue-200/30 bg-gradient-to-br from-cyan-400 via-blue-600 to-fuchsia-500 text-sm font-black text-white shadow-[0_0_22px_rgba(59,130,246,0.3)]">
+                {studentInitial}
+              </span>
+              <span className="hidden min-w-0 sm:block">
+                <span className="block max-w-[160px] truncate text-xs font-bold text-white">{studentName}</span>
+                <span className="block max-w-[160px] truncate text-[10px] capitalize text-blue-200/70">{courseLevel}</span>
+              </span>
+              <ChevronRight className="hidden h-3.5 w-3.5 rotate-90 text-slate-400 sm:block" />
+            </button>
+          </div>
+        </header>
+
+        <main className="student-glass-page min-h-[calc(100vh-76px)] min-w-0 px-3 py-4 sm:px-5 sm:py-6 xl:px-8">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
 // Main layout for public and student screens
 const PublicAndStudentLayout: React.FC<{
   children: React.ReactNode;
@@ -393,6 +645,14 @@ const PublicAndStudentLayout: React.FC<{
         break;
     }
   };
+
+  if (pathname.startsWith('/student')) {
+    return (
+      <StudentWorkspaceLayout onOpenCreditsModal={onOpenCreditsModal}>
+        {children}
+      </StudentWorkspaceLayout>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f1f5f9] dark:bg-slate-950 text-[#1e293b] dark:text-slate-100 font-sans selection:bg-blue-600 selection:text-white transition-colors duration-150">

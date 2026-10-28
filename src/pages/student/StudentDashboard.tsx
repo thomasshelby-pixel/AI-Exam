@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   ArrowRight,
+  ChevronRight,
+  ClipboardList,
   BookOpen,
   Calendar,
   Layers,
@@ -145,6 +147,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateExaminerProfile,
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, profile, refreshUser } = useAuth();
   const [showCompleteProfileModal, setShowCompleteProfileModal] = useState(false);
   const [autoPromptedProfileUserId, setAutoPromptedProfileUserId] = useState<string | null>(null);
@@ -168,6 +171,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   useEffect(() => {
     fetchUnreadNotifications();
   }, []);
+
+  useEffect(() => {
+    const openNotifications = () => setShowNotificationModal(true);
+    window.addEventListener('student:open-notifications', openNotifications);
+
+    if ((location.state as { openNotifications?: boolean } | null)?.openNotifications) {
+      setShowNotificationModal(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+
+    return () => window.removeEventListener('student:open-notifications', openNotifications);
+  }, [location.key, location.pathname, location.state, navigate]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [referralStatus, setReferralStatus] = useState<{
     hasActivePromo: boolean;
@@ -514,7 +529,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }
 
   return (
-    <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-slate-800 dark:text-slate-100 space-y-6">
+    <div className="w-full max-w-screen-2xl mx-auto px-0 py-0 text-slate-100 space-y-6">
       {/* Offline Alert Notification Banner */}
       <OfflineNotificationBanner onRetrySuccess={fetchDashboard} />
 
@@ -559,7 +574,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Student Welcome Header Banner */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+      <header id="student-dashboard-welcome" className="student-glass-hero flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 sm:p-6 rounded-2xl border shadow-sm">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
@@ -733,7 +748,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Entitlement Card */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+        <div className="student-glass-kpi p-4 rounded-xl shadow-sm border">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>
               {referralStatus?.hasActivePromo && referralStatus.activePromo
@@ -791,7 +806,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         {/* Total Evaluated */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+        <div className="student-glass-kpi p-4 rounded-xl shadow-sm border">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Total Evaluated</span>
             <Layers className="w-3.5 h-3.5 text-slate-400" />
@@ -801,7 +816,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         {/* Average Score */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+        <div className="student-glass-kpi p-4 rounded-xl shadow-sm border">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Average Score</span>
             <TrendingUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -813,7 +828,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         {/* Pass Probability */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+        <div className="student-glass-kpi p-4 rounded-xl shadow-sm border">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>ICAI Standing</span>
             <Award className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
@@ -824,6 +839,188 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="text-xs text-amber-600 dark:text-amber-400 font-medium mt-1">Step-marking compliance</div>
         </div>
       </div>
+
+
+      {/* Subject progress and student shortcuts — glassmorphism overview */}
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="student-glass-panel rounded-2xl p-4 sm:p-5 xl:col-span-2">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-200/80">
+                <Layers className="h-4 w-4" /> Your subject progress
+              </div>
+              <h2 className="mt-1 text-lg font-bold text-white">Small steps. Stronger scores.</h2>
+              <p className="mt-1 text-xs text-blue-100/60">Progress is based on your submitted evaluations.</p>
+            </div>
+            <button
+              type="button"
+              onClick={onNavigateEvaluations}
+              className="inline-flex items-center gap-1.5 self-start rounded-xl border border-blue-200/15 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold text-blue-100 transition hover:bg-white/[0.09] sm:self-auto"
+            >
+              View evaluations <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {data?.subjectPerformance && data.subjectPerformance.length > 0 ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {data.subjectPerformance.slice(0, 6).map((subject, index) => {
+                const score = Math.max(0, Math.min(100, Math.round(Number(subject.averagePercentage) || 0)));
+                const accentClasses = [
+                  'from-cyan-400 to-blue-500',
+                  'from-violet-400 to-fuchsia-500',
+                  'from-emerald-400 to-teal-500',
+                  'from-orange-400 to-amber-500',
+                  'from-pink-400 to-rose-500',
+                  'from-sky-400 to-indigo-500',
+                ];
+                return (
+                  <div key={subject.subject} className="student-glass-subject-card rounded-xl p-3.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br ${accentClasses[index % accentClasses.length]} text-white shadow-lg`}>
+                          <BookOpen className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="line-clamp-2 text-xs font-bold leading-4 text-white">{subject.subject}</p>
+                          <p className="mt-1 text-[10px] text-blue-100/55">{subject.evaluationsCount} evaluation{subject.evaluationsCount === 1 ? '' : 's'}</p>
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-sm font-bold text-white">{score}%</span>
+                    </div>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                      <div className={`h-full rounded-full bg-gradient-to-r ${accentClasses[index % accentClasses.length]} transition-all duration-500`} style={{ width: `${score}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-blue-200/20 bg-blue-950/20 px-4 py-7 text-center">
+              <BookOpen className="mx-auto h-7 w-7 text-blue-200/70" />
+              <p className="mt-2 text-sm font-semibold text-white">Your subject journey starts here</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-blue-100/60">
+                Once you have completed an evaluation, your subject-wise scores and progress bars will appear here.
+              </p>
+              <button
+                type="button"
+                onClick={onNavigateUpload}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-blue-950/30 transition hover:brightness-110"
+              >
+                Evaluate answer sheet <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-1">
+          <div className="student-glass-panel rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-amber-200/15 bg-amber-400/10 text-amber-300">
+                  <CreditCard className="h-4 w-4" />
+                </span>
+                Your plan
+              </div>
+              <span className="rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2 py-1 text-[10px] font-bold text-emerald-200">
+                {metrics.instituteSponsored ? 'Sponsored' : user?.hasPermanentFreeAccess ? 'Active' : 'Free plan'}
+              </span>
+            </div>
+            <div className="mt-3 flex items-end justify-between gap-3">
+              <div>
+                <p className="text-xl font-extrabold text-white">
+                  {user?.hasPermanentFreeAccess ? 'Unlimited' : metrics.instituteSponsored ? 'Institute' : metrics.freeEvaluationsRemaining}
+                </p>
+                <p className="mt-1 text-[11px] text-blue-100/60">
+                  {user?.hasPermanentFreeAccess ? 'Permanent access enabled' : metrics.instituteSponsored ? (metrics.instituteName || 'Institute-sponsored access') : 'Free evaluations remaining'}
+                </p>
+              </div>
+              <button type="button" onClick={onOpenCreditsModal} className="rounded-lg border border-blue-200/20 bg-white/[0.05] px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-white/[0.1]">
+                View plans
+              </button>
+            </div>
+            {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400" style={{ width: `${Math.max(0, Math.min(100, (metrics.freeEvaluationsRemaining / 2) * 100))}%` }} />
+              </div>
+            )}
+          </div>
+
+          <div className="student-glass-panel rounded-2xl p-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-white">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-violet-200/15 bg-violet-400/10 text-violet-200">
+                <Sparkles className="h-4 w-4" />
+              </span>
+              Study planner
+            </div>
+            <p className="mt-3 text-xs leading-5 text-blue-100/65">Build a practical revision plan around your CA subjects, target attempt and available study time.</p>
+            <button
+              type="button"
+              onClick={() => navigate('/student/study-planner')}
+              className="mt-3 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-fuchsia-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-lg shadow-blue-950/20 transition hover:brightness-110"
+            >
+              Open study planner <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="student-glass-panel rounded-2xl p-4 sm:col-span-2 xl:col-span-1">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <BookOpen className="h-4 w-4 text-cyan-200" /> Latest institute material
+              </div>
+              <button type="button" onClick={() => navigate('/student/enrollments')} className="text-[10px] font-semibold text-cyan-200 hover:text-white">View all →</button>
+            </div>
+            {instituteMaterials.length > 0 ? (
+              <div className="space-y-2">
+                {instituteMaterials.slice(0, 3).map((material) => (
+                  <button
+                    key={material.id}
+                    type="button"
+                    onClick={() => navigate('/student/enrollments')}
+                    className="flex w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.025] p-2 text-left transition hover:border-cyan-200/20 hover:bg-white/[0.06]"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-200"><FileCheck2 className="h-4 w-4" /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[11px] font-semibold text-slate-100">{material.title || material.subject || 'Study material'}</span>
+                      <span className="mt-0.5 block truncate text-[10px] text-blue-100/50">{material.subject || material.subject_name || material.material_type || 'Institute resource'}</span>
+                    </span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-[11px] leading-5 text-blue-100/55">
+                New institute papers and study materials will appear here when your institute publishes them.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="student-glass-panel rounded-2xl p-4 sm:p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Zap className="h-4 w-4 text-amber-300" />
+          <h2 className="text-sm font-bold text-white">Quick actions</h2>
+          <span className="text-[10px] text-blue-100/50">Your study tools, one click away</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <button type="button" onClick={onNavigateUpload} className="group rounded-xl border border-blue-200/15 bg-gradient-to-br from-blue-500/15 to-blue-900/10 p-3 text-left transition hover:border-blue-200/35 hover:bg-blue-500/15">
+            <FileCheck2 className="h-5 w-5 text-cyan-200 transition group-hover:scale-110" />
+            <span className="mt-2 block text-[11px] font-bold text-white">Evaluate answer sheet</span>
+          </button>
+          <button type="button" onClick={() => navigate('/student/study-planner')} className="group rounded-xl border border-violet-200/15 bg-gradient-to-br from-violet-500/15 to-fuchsia-900/10 p-3 text-left transition hover:border-violet-200/35">
+            <Calendar className="h-5 w-5 text-violet-200 transition group-hover:scale-110" />
+            <span className="mt-2 block text-[11px] font-bold text-white">Study planner</span>
+          </button>
+          <button type="button" onClick={() => navigate('/student/evaluations')} className="group rounded-xl border border-emerald-200/15 bg-gradient-to-br from-emerald-500/15 to-teal-900/10 p-3 text-left transition hover:border-emerald-200/35">
+            <ClipboardList className="h-5 w-5 text-emerald-200 transition group-hover:scale-110" />
+            <span className="mt-2 block text-[11px] font-bold text-white">My evaluations</span>
+          </button>
+          <button type="button" onClick={() => navigate('/student/enrollments')} className="group rounded-xl border border-amber-200/15 bg-gradient-to-br from-amber-500/15 to-orange-900/10 p-3 text-left transition hover:border-amber-200/35">
+            <BookOpen className="h-5 w-5 text-amber-200 transition group-hover:scale-110" />
+            <span className="mt-2 block text-[11px] font-bold text-white">Browse materials</span>
+          </button>
+        </div>
+      </section>
 
       {/* 🧬 Permanent Examiner Profile / Mark-Loss DNA Card */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm relative overflow-hidden">
