@@ -1698,7 +1698,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           value={deleteOtp}
                           onChange={(event) => { setDeleteOtpVerificationStage('idle'); setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6)); setDeleteOtpVerified(false); setDeleteOtpMessage(''); }}
                           placeholder="Enter 6-digit OTP"
-                          disabled={isDeletingAccount}
+                          disabled={isVerifyingDeleteOtp || isDeletingAccount}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono tracking-[0.25em] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:normal-case placeholder:tracking-normal"
                         />
                         <div className="flex flex-col sm:flex-row gap-2">
