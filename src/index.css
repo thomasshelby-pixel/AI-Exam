@@ -216,6 +216,36 @@ textarea {
 .student-glass-workspace .border-slate-100 {
   border-color: rgba(136, 169, 235, 0.13);
 }
+.student-glass-workspace .text-slate-900 {
+  color: #f5f7ff;
+}
+.student-glass-workspace .text-slate-800 {
+  color: #e6edff;
+}
+.student-glass-workspace .text-slate-700 {
+  color: #d3def7;
+}
+.student-glass-workspace .text-slate-600 {
+  color: #b5c4e5;
+}
+.student-glass-workspace .text-slate-500 {
+  color: #91a4cb;
+}
+.student-glass-workspace .text-slate-400 {
+  color: #8296bd;
+}
+.student-glass-workspace .text-slate-300 {
+  color: #c8d6f5;
+}
+.student-glass-workspace .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(136, 169, 235, 0.13);
+}
+.student-glass-workspace table thead {
+  background: rgba(10, 23, 52, 0.88);
+}
+.student-glass-workspace table tbody tr:hover {
+  background-color: rgba(76, 110, 190, 0.08);
+}
 .student-glass-workspace .student-glass-subject-card {
   background: linear-gradient(145deg, rgba(17, 40, 79, 0.7), rgba(9, 19, 46, 0.72));
   border: 1px solid rgba(116, 161, 247, 0.2);
