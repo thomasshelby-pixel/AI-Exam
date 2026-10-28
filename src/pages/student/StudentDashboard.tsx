@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST } from '../../utils/timezone.js';
@@ -147,6 +147,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateExaminerProfile,
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, profile, refreshUser } = useAuth();
   const [showCompleteProfileModal, setShowCompleteProfileModal] = useState(false);
   const [autoPromptedProfileUserId, setAutoPromptedProfileUserId] = useState<string | null>(null);
@@ -170,6 +171,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   useEffect(() => {
     fetchUnreadNotifications();
   }, []);
+
+  useEffect(() => {
+    const openNotifications = () => setShowNotificationModal(true);
+    window.addEventListener('student:open-notifications', openNotifications);
+
+    if ((location.state as { openNotifications?: boolean } | null)?.openNotifications) {
+      setShowNotificationModal(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+
+    return () => window.removeEventListener('student:open-notifications', openNotifications);
+  }, [location.key, location.pathname, location.state, navigate]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [referralStatus, setReferralStatus] = useState<{
     hasActivePromo: boolean;
