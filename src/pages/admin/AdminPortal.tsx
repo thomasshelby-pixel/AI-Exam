@@ -21,21 +21,6 @@ import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureC
 import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
 import { AdminUsageMetricsPanel } from '../../components/admin/AdminUsageMetricsPanel.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
-function summarizeEvaluationRejectionReason(value: unknown): string {
-  const reason = String(value || '').trim();
-  if (!reason) return 'Rejected by validation checks.';
-
-  if (/FINALIZATION_FAILED\\s*:/i.test(reason)) {
-    const page = reason.match(/Page\\s+(\\d+)/i)?.[1];
-    const questions = reason.match(/for\\s+(.+?)\\s+but none are evaluated/i)?.[1]?.replace(/\\s+/g, ' ').trim();
-    return `Finalization failed${page ? ` on page ${page}` : ''}: detected answer content was not evaluated${questions ? ` (${questions})` : ''}.`;
-  }
-
-  const withoutCode = reason.replace(/^[A-Z][A-Z0-9_]{2,}:\\s*/, '').trim();
-  const summary = withoutCode || reason;
-  return summary.length > 135 ? `${summary.slice(0, 132).trimEnd()}…` : summary;
-}
-
 import {
   LayoutDashboard,
   KeyRound,
@@ -92,6 +77,21 @@ import {
   Tag,
   Smartphone,
 } from 'lucide-react';
+
+function summarizeEvaluationRejectionReason(value: unknown): string {
+  const reason = String(value || '').trim();
+  if (!reason) return 'Rejected by validation checks.';
+
+  if (/FINALIZATION_FAILED\s*:/i.test(reason)) {
+    const page = reason.match(/Page\s+(\d+)/i)?.[1];
+    const questions = reason.match(/for\s+(.+?)\s+but none are evaluated/i)?.[1]?.replace(/\s+/g, ' ').trim();
+    return `Finalization failed${page ? ` on page ${page}` : ''}: detected answer content was not evaluated${questions ? ` (${questions})` : ''}.`;
+  }
+
+  const withoutCode = reason.replace(/^[A-Z][A-Z0-9_]{2,}:\s*/, '').trim();
+  const summary = withoutCode || reason;
+  return summary.length > 135 ? `${summary.slice(0, 132).trimEnd()}…` : summary;
+}
 
 export const AdminPortal: React.FC = () => {
   const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge, syncMfaFactor, refreshUser } = useAuth();
