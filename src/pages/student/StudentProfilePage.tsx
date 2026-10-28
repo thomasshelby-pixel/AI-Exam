@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { OtpVaultAnimation } from '../../components/auth/OtpVaultAnimation.js';
 import { formatDateIST } from '../../utils/timezone.js';
 import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import {
@@ -208,6 +209,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [deleteRegisteredEmail, setDeleteRegisteredEmail] = useState<string>('');
   const [deleteMaskedEmail, setDeleteMaskedEmail] = useState<string>('');
   const [deleteOtp, setDeleteOtp] = useState<string>('');
+  const [deleteOtpVerificationStage, setDeleteOtpVerificationStage] = useState<'idle' | 'verifying' | 'success'>('idle');
   const [deleteOtpSent, setDeleteOtpSent] = useState<boolean>(false);
   const [deleteOtpVerified, setDeleteOtpVerified] = useState<boolean>(false);
   const [isVerifyingDeleteOtp, setIsVerifyingDeleteOtp] = useState<boolean>(false);
@@ -224,6 +226,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     setDeleteEmailConfirm('');
     setDeleteConfirmationInput('');
     setDeleteOtp('');
+    setDeleteOtpVerificationStage('idle');
     setDeleteOtpSent(false);
     setDeleteOtpVerified(false);
     setIsVerifyingDeleteOtp(false);
@@ -281,15 +284,19 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     setIsVerifyingDeleteOtp(true);
     setDeleteAccountError(null);
     setDeleteOtpMessage('');
+    setDeleteOtpVerificationStage('verifying');
     try {
       const result = await apiRequest<{ success: boolean; message: string }>('/api/student/delete-account/verify-otp', {
         method: 'POST',
         body: JSON.stringify({ emailOtp: deleteOtp.trim() }),
       });
       if (!result.success) throw new Error(result.message || 'Could not verify the code.');
+      setDeleteOtpVerificationStage('success');
+      await new Promise((resolve) => window.setTimeout(resolve, 720));
       setDeleteOtpVerified(true);
       setDeleteOtpMessage(result.message || 'Email verified. You can now confirm permanent deletion.');
     } catch (err: any) {
+      setDeleteOtpVerificationStage('idle');
       setDeleteOtpVerified(false);
       setDeleteAccountError(err?.message || 'The verification code could not be verified. Check it and try again.');
     } finally {
@@ -1689,9 +1696,9 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                           autoComplete="one-time-code"
                           maxLength={6}
                           value={deleteOtp}
-                          onChange={(event) => { setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6)); setDeleteOtpVerified(false); setDeleteOtpMessage(''); }}
+                          onChange={(event) => { setDeleteOtpVerificationStage('idle'); setDeleteOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6)); setDeleteOtpVerified(false); setDeleteOtpMessage(''); }}
                           placeholder="Enter 6-digit OTP"
-                          disabled={isDeletingAccount}
+                          disabled={isVerifyingDeleteOtp || isDeletingAccount}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-mono tracking-[0.25em] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:normal-case placeholder:tracking-normal"
                         />
                         <div className="flex flex-col sm:flex-row gap-2">
@@ -1706,6 +1713,9 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                             {isVerifyingDeleteOtp ? 'Verifying…' : deleteOtpVerified ? 'OTP Verified' : 'Verify OTP'}
                           </button>
                         </div>
+                        {deleteOtpVerificationStage !== 'idle' && (
+                          <OtpVaultAnimation status={deleteOtpVerificationStage} compact />
+                        )}
                         <p className="text-[10px] text-slate-500 dark:text-slate-400">The code is single-use. Nothing is deleted until you also type DELETE and submit the final confirmation.</p>
                       </div>
                     )}
