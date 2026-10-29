@@ -49,6 +49,7 @@ import { ReviewsPage } from './pages/public/ReviewsPage.js';
 import { LoginPage } from './pages/auth/LoginPage.js';
 import { UnifiedAuthPage } from './pages/auth/UnifiedAuthPage.js';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage.js';
+import { EmailOtpVerificationPage } from './pages/auth/EmailOtpVerificationPage.js';
 import { PrivateAdminAccessPage } from './pages/auth/PrivateAdminAccessPage.js';
 import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
@@ -1302,6 +1303,15 @@ const AppRoutes: React.FC = () => {
           element={
             <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
               <UnifiedAuthPage initialMode="register" defaultType="student" />
+            </PublicAndStudentLayout>
+          }
+        />
+
+        <Route
+          path="/verify-email"
+          element={
+            <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+              <EmailOtpVerificationPage />
             </PublicAndStudentLayout>
           }
         />
