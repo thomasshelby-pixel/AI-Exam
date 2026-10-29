@@ -6,6 +6,7 @@ export type OtpVaultAnimationStatus = 'ready' | 'verifying' | 'success';
 interface OtpVaultAnimationProps {
   status: OtpVaultAnimationStatus;
   compact?: boolean;
+  hero?: boolean;
 }
 
 const vaultStyles = `
@@ -44,6 +45,11 @@ const vaultStyles = `
   text-align: center;
 }
 .otp-vault-animation.is-compact { padding-top: 12px; padding-bottom: 11px; }
+.otp-vault-animation.is-hero { padding: 25px 20px 22px; border-color: rgba(103, 232, 249, .25); background: radial-gradient(ellipse at 50% 30%, rgba(21, 94, 117, .38), transparent 58%), linear-gradient(145deg, #0b1724 0%, #101d2a 58%, #07111c 100%); }
+.otp-vault-animation.is-hero .otp-vault-scene { transform: scale(1.45); margin: 30px auto; }
+.otp-vault-animation.is-hero .otp-vault-title { font-size: 17px; }
+.otp-vault-animation.is-hero .otp-vault-description { font-size: 12px; }
+.otp-vault-animation.is-hero .otp-vault-progress { max-width: 270px; margin-top: 15px; }
 .otp-vault-backdrop {
   position: absolute; z-index: -1; inset: 0; pointer-events: none; opacity: .75;
   background-image: radial-gradient(rgba(148, 203, 220, .22) .65px, transparent .65px);
@@ -140,7 +146,7 @@ const vaultStyles = `
 }
 `;
 
-export const OtpVaultAnimation: React.FC<OtpVaultAnimationProps> = ({ status, compact = false }) => {
+export const OtpVaultAnimation: React.FC<OtpVaultAnimationProps> = ({ status, compact = false, hero = false }) => {
   const isSuccess = status === 'success';
   const isReady = status === 'ready';
 
@@ -149,7 +155,8 @@ export const OtpVaultAnimation: React.FC<OtpVaultAnimationProps> = ({ status, co
       className={
         'otp-vault-animation' +
         (isSuccess ? ' is-success' : '') +
-        (compact ? ' is-compact' : '')
+        (compact ? ' is-compact' : '') +
+        (hero ? ' is-hero' : '')
       }
       role="status"
       aria-live="polite"
