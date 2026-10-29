@@ -65,7 +65,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // OTP Verification states for new student registrations
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [otpCode, setOtpCode] = useState('');
-  const [otpVerificationStage, setOtpVerificationStage] = useState<'idle' | 'verifying' | 'success'>('idle');
+  const [otpVerificationStage, setOtpVerificationStage] = useState<'ready' | 'verifying' | 'success'>('ready');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [pendingEmail, setPendingEmail] = useState('');
   const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
@@ -193,6 +193,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       });
 
       if (data.requiresOtpVerification) {
+        setOtpVerificationStage('ready');
         setIsVerifyingOtp(true);
         setPendingEmail(data.email || email.trim().toLowerCase());
         setMaskedEmail(data.emailMasked || email.trim().toLowerCase());
@@ -229,7 +230,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       await new Promise((resolve) => window.setTimeout(resolve, 720));
       onSuccess(activatedUser);
     } catch (err: unknown) {
-      setOtpVerificationStage('idle');
+      setOtpVerificationStage('ready');
       const msg = err instanceof Error ? err.message : 'Verification failed. Please try again.';
       setErrorMessage(msg);
     } finally {
@@ -428,7 +429,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     value={otpCode}
                     disabled={isLoading || otpVerificationStage === 'success'}
                     onChange={(e) => {
-                      setOtpVerificationStage('idle');
+                      setOtpVerificationStage('ready');
                       setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6));
                     }}
                     className="w-full py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 text-center text-xl font-mono font-bold tracking-widest text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500 disabled:opacity-60"
@@ -436,9 +437,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
               </div>
 
-              {otpVerificationStage !== 'idle' && (
-                <OtpVaultAnimation status={otpVerificationStage} compact />
-              )}
+              <OtpVaultAnimation status={otpVerificationStage} compact />
 
               <button
                 id="btn-verify-otp-submit"
