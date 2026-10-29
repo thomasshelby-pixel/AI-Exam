@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, LockKeyhole } from 'lucide-react';
 
-export type OtpVaultAnimationStatus = 'verifying' | 'success';
+export type OtpVaultAnimationStatus = 'ready' | 'verifying' | 'success';
 
 interface OtpVaultAnimationProps {
   status: OtpVaultAnimationStatus;
@@ -142,6 +142,7 @@ const vaultStyles = `
 
 export const OtpVaultAnimation: React.FC<OtpVaultAnimationProps> = ({ status, compact = false }) => {
   const isSuccess = status === 'success';
+  const isReady = status === 'ready';
 
   return (
     <section
@@ -181,14 +182,16 @@ export const OtpVaultAnimation: React.FC<OtpVaultAnimationProps> = ({ status, co
       <div className="otp-vault-copy">
         <div className="otp-vault-kicker">
           <span className="otp-vault-live-dot" />
-          {isSuccess ? 'VERIFIED & UNLOCKED' : 'AUTHENTICATING'}
+          {isSuccess ? 'VERIFIED & UNLOCKED' : isReady ? 'VAULT ARMED' : 'AUTHENTICATING'}
         </div>
         <p className="otp-vault-title">
-          {isSuccess ? 'Identity confirmed' : 'Securing your connection'}
+          {isSuccess ? 'Identity confirmed' : isReady ? 'Ready for secure verification' : 'Securing your connection'}
         </p>
         <p className="otp-vault-description">
           {isSuccess
             ? 'The vault is open. You are cleared to continue.'
+            : isReady
+            ? 'Enter your 6-digit code and verify to unlock secure access.'
             : 'Checking your code and releasing the security lock…'}
         </p>
       </div>

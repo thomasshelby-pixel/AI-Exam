@@ -35,6 +35,7 @@ import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
 import { mcqApi } from '../../api/mcqClient.js';
 import { apiRequest } from '../../api/client.js';
 import { generateTotpSetup, TotpSetupData } from '../../lib/firebaseAuth.js';
+import { OtpVaultAnimation } from '../../components/auth/OtpVaultAnimation.js';
 import { McqMaterialLibrary } from '../../components/admin/McqMaterialLibrary.js';
 import { McqBulkImport } from '../../components/admin/McqBulkImport.js';
 import {
@@ -64,6 +65,7 @@ export const McqAdminPortal: React.FC = () => {
   const [newAuthLabel, setNewAuthLabel] = useState<string>('Priya iPhone 15');
   const [newAuthSetup, setNewAuthSetup] = useState<TotpSetupData | null>(null);
   const [newAuthCode, setNewAuthCode] = useState<string>('');
+  const [newAuthVerificationStage, setNewAuthVerificationStage] = useState<'ready' | 'verifying' | 'success'>('ready');
   const [submittingAuth, setSubmittingAuth] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
@@ -441,6 +443,7 @@ export const McqAdminPortal: React.FC = () => {
     setAuthError(null);
     setAuthSuccess(null);
     setNewAuthCode('');
+    setNewAuthVerificationStage('ready');
     try {
       const res = await apiRequest<{ success: boolean; setup: any }>(
         `/api/auth/mfa/device/new-setup?label=${encodeURIComponent(newAuthLabel.trim() || 'Authenticator Device')}`
@@ -465,6 +468,7 @@ export const McqAdminPortal: React.FC = () => {
 
     setSubmittingAuth(true);
     setAuthError(null);
+    setNewAuthVerificationStage('verifying');
     try {
       await apiRequest('/api/auth/mfa/backup-authenticator/enroll', {
         method: 'POST',
@@ -475,10 +479,13 @@ export const McqAdminPortal: React.FC = () => {
         }),
       });
 
+      setNewAuthVerificationStage('success');
+      await new Promise((resolve) => window.setTimeout(resolve, 720));
       setAuthSuccess('New Authenticator successfully enrolled.');
       setShowAddAuthModal(false);
       loadSecurityDetails();
     } catch (err: any) {
+      setNewAuthVerificationStage('ready');
       setAuthError(err.message || 'Failed to verify and add authenticator.');
     } finally {
       setSubmittingAuth(false);
@@ -1728,11 +1735,13 @@ export const McqAdminPortal: React.FC = () => {
                   maxLength={6}
                   required
                   value={newAuthCode}
-                  onChange={(e) => setNewAuthCode(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => { setNewAuthVerificationStage('ready'); setNewAuthCode(e.target.value.replace(/\D/g, '')); }}
                   placeholder="000000"
                   className="w-full px-3 py-2 bg-slate-950 text-center tracking-[0.4em] font-mono font-bold text-lg border border-slate-700 rounded-xl text-amber-400"
                 />
               </div>
+
+              <OtpVaultAnimation status={newAuthVerificationStage} compact />
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
