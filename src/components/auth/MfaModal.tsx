@@ -31,6 +31,7 @@ import {
 } from '../../lib/firebaseAuth.js';
 import { formatDateTimeIST } from '../../utils/timezone.js';
 import { useTrustedDevice } from '../../hooks/useTrustedDevice.js';
+import { OtpVaultAnimation } from './OtpVaultAnimation.js';
 import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken } from '../../api/client.js';
 
 export type MfaUiState = 'INITIALIZING' | 'READY' | 'VERIFYING' | 'VERIFIED' | 'SHOWING_RECOVERY_CODES' | 'ERROR';
@@ -61,10 +62,17 @@ export const MfaModal: React.FC = () => {
     mfaChallenge?.role === 'SUPER_ADMIN' ||
     user?.role === 'INSTITUTE_ADMIN' ||
     user?.role === 'SUPER_ADMIN';
+  const adminMfaRoles = [mfaChallenge?.role, user?.role]
+    .filter(Boolean)
+    .map((role) => String(role).toUpperCase().replace(/\s+/g, '_'));
+  const isAdminMfaContext = adminMfaRoles.some((role) =>
+    ['ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN', 'MCQ_ADMIN'].includes(role)
+  );
 
   const [mfaState, setMfaState] = useState<MfaUiState>('INITIALIZING');
   const [totpSetup, setTotpSetup] = useState<TotpSetupData | null>(null);
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [vaultAnimationStage, setVaultAnimationStage] = useState<'idle' | 'verifying' | 'success'>('idle');
   const [recoveryCodeInput, setRecoveryCodeInput] = useState<string>('');
   const [newlyGeneratedCodes, setNewlyGeneratedCodes] = useState<string[]>([]);
   const [copiedCodes, setCopiedCodes] = useState<boolean>(false);
@@ -103,6 +111,7 @@ export const MfaModal: React.FC = () => {
     if (mfaChallenge?.isOpen) {
       setErrorMsg('');
       setSuccessMsg('');
+      setVaultAnimationStage('idle');
       setCopiedKey(false);
       isSubmittingRef.current = false;
       verifiedUserRef.current = null;
@@ -187,6 +196,7 @@ export const MfaModal: React.FC = () => {
       hasInitializedRef.current = false;
       isSubmittingRef.current = false;
       verifiedUserRef.current = null;
+      setVaultAnimationStage('idle');
     }
   }, [mfaChallenge?.isOpen, mfaChallenge?.mode]);
 
@@ -358,6 +368,7 @@ export const MfaModal: React.FC = () => {
 
     isSubmittingRef.current = true;
     setMfaState('VERIFYING');
+    setVaultAnimationStage(isAdminMfaContext ? 'idle' : 'verifying');
     setErrorMsg('');
     setSuccessMsg('');
 
@@ -387,7 +398,10 @@ export const MfaModal: React.FC = () => {
           throw new Error(data.error || 'Failed to verify and finalize enrollment.');
         }
 
-        await new Promise((resolve) => window.setTimeout(resolve, 720));
+        if (!isAdminMfaContext) {
+          setVaultAnimationStage('success');
+          await new Promise((resolve) => window.setTimeout(resolve, 720));
+        }
 
         if (data.token) {
           localStorage.setItem('ca_exam_checker_token', data.token);
@@ -417,7 +431,10 @@ export const MfaModal: React.FC = () => {
       } else {
         logMfaDiagnostic('executing-challenge-verification');
         await verifyMfaChallenge(code, trustDevice);
-        await new Promise((resolve) => window.setTimeout(resolve, 720));
+        if (!isAdminMfaContext) {
+          setVaultAnimationStage('success');
+          await new Promise((resolve) => window.setTimeout(resolve, 720));
+        }
         setMfaState('VERIFIED');
         setSuccessMsg(
           trustDevice
@@ -430,6 +447,7 @@ export const MfaModal: React.FC = () => {
         errorCode: err?.code,
         errorMessage: err?.message,
       });
+      setVaultAnimationStage('idle');
       setMfaState('ERROR');
       const userErr = mapFirebaseTotpAuthError(err);
       setErrorMsg(userErr || err.message || 'Verification failed. Please ensure the code matches your authenticator app.');
@@ -1043,6 +1061,10 @@ export const MfaModal: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                {!isAdminMfaContext && vaultAnimationStage !== 'idle' && (
+                  <OtpVaultAnimation status={vaultAnimationStage} compact />
+                )}
 
                 {/* Browser Trust Status (from useTrustedDevice HttpOnly cookie check) */}
                 <div className="pt-1">

@@ -21,9 +21,6 @@ import {
   EyeOff,
   ShieldCheck,
   X,
-  MailCheck,
-  ArrowLeft,
-  RotateCw,
   Building2,
 } from 'lucide-react';
 
@@ -44,7 +41,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, socialLogin, register, initiateRegister, verifyRegisterOtp, resendRegisterOtp, suspendedAccount, clearSuspension } = useAuth();
+  const { login, socialLogin, register, initiateRegister, suspendedAccount, clearSuspension } = useAuth();
   const accountDeletedMessage = (location.state as any)?.accountDeletedMessage;
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
 
@@ -61,27 +58,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
-  // OTP Verification states for new student registrations
-  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
-  const [otpCode, setOtpCode] = useState('');
-  const [otpVerificationStage, setOtpVerificationStage] = useState<'ready' | 'verifying' | 'success'>('ready');
-  const [maskedEmail, setMaskedEmail] = useState('');
-  const [pendingEmail, setPendingEmail] = useState('');
-  const [otpSuccessMessage, setOtpSuccessMessage] = useState('');
-  const [resendCooldown, setResendCooldown] = useState(0);
-
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
-
-  // Countdown timer effect for OTP resend cooldown
-  React.useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [resendCooldown]);
 
   const handleSocialLogin = async (provider: 'google' | 'apple') => {
     setErrorMessage('');
@@ -192,7 +171,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       });
 
       if (data.requiresOtpVerification) {
-        setOtpVerificationStage('ready');
         const verificationEmail = data.email || email.trim().toLowerCase();
         const verificationMaskedEmail = data.emailMasked || verificationEmail;
         const cooldownSeconds = data.cooldownSeconds || 60;
@@ -203,54 +181,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
-      setErrorMessage(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handle OTP verification submission
-  const handleOtpVerifySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage('');
-
-    const cleanOtp = otpCode.trim();
-    if (cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
-      setErrorMessage('Please enter a valid 6-digit verification code.');
-      return;
-    }
-
-    setIsLoading(true);
-    setOtpVerificationStage('verifying');
-
-    try {
-      const activatedUser = await verifyRegisterOtp(pendingEmail || email.trim().toLowerCase(), cleanOtp);
-      setOtpVerificationStage('success');
-      // Briefly show the confirmed vault-unlock animation before the authenticated redirect.
-      await new Promise((resolve) => window.setTimeout(resolve, 720));
-      onSuccess(activatedUser);
-    } catch (err: unknown) {
-      setOtpVerificationStage('ready');
-      const msg = err instanceof Error ? err.message : 'Verification failed. Please try again.';
-      setErrorMessage(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handle resend OTP request
-  const handleResendOtp = async () => {
-    if (resendCooldown > 0 || isLoading) return;
-    setErrorMessage('');
-    setIsLoading(true);
-
-    try {
-      const data = await resendRegisterOtp(pendingEmail || email.trim().toLowerCase());
-      setResendCooldown(data.cooldownSeconds || 60);
-      setOtpSuccessMessage(data.message || 'A fresh 6-digit verification code has been dispatched to your email.');
-      setOtpCode('');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to resend code. Please try again.';
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
@@ -291,21 +221,40 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   }
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-8 bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-7 shadow-sm relative">
+    <div className="dark relative isolate min-h-[calc(100vh-5rem)] overflow-hidden bg-[#050a16] px-4 py-8 text-white sm:px-6 sm:py-10 lg:px-8">
+      <div aria-hidden="true" className="pointer-events-none absolute -left-40 -top-36 h-[28rem] w-[28rem] rounded-full bg-cyan-500/10 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -right-40 h-[30rem] w-[30rem] rounded-full bg-blue-600/10 blur-3xl" />
+      <div className="relative mx-auto grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[30px] border border-white/10 bg-[#0c1526]/95 shadow-[0_32px_100px_rgba(0,0,0,.42)] backdrop-blur-2xl lg:grid-cols-[0.86fr_1.14fr]">
+        <aside className="relative hidden flex-col justify-between overflow-hidden border-b border-white/10 bg-gradient-to-br from-[#0d2030] via-[#0a1727] to-[#08111f] p-8 lg:flex lg:border-b-0 lg:border-r xl:p-10">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-70 [background-image:radial-gradient(rgba(103,232,249,.14)_1px,transparent_1px)] [background-size:18px_18px] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
+          <div aria-hidden="true" className="pointer-events-none absolute -right-16 top-10 h-48 w-48 rounded-full bg-cyan-400/10 blur-3xl" />
+          <div className="relative">
+            <BrandLogo variant="full" size="md" onClick={onNavigateHome} />
+            <div className="mt-14 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[.2em] text-cyan-200"><ShieldCheck className="h-3.5 w-3.5" /> Secure student workspace</div>
+            <h1 className="mt-5 max-w-md text-3xl font-black leading-tight tracking-tight xl:text-4xl">{mode === 'login' ? 'Welcome back to your CA workspace.' : 'Build your next CA success story.'}</h1>
+            <p className="mt-4 max-w-md text-sm leading-6 text-slate-400">{mode === 'login' ? 'Continue your preparation with clear evaluations, step-marking reports, and a workspace built around your CA journey.' : 'Create your account to unlock structured practice, examiner-style feedback, and your first two free answer-sheet checks.'}</p>
+          </div>
+          <div className="relative my-10 space-y-3">
+            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-300/[0.07] text-cyan-200"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">ICAI-style step checking</p><p className="mt-1 text-xs text-slate-400">Working notes and method marks matter.</p></div></div>
+            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-200"><CheckCircle2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">Clear, actionable feedback</p><p className="mt-1 text-xs text-slate-400">Understand where marks were gained or lost.</p></div></div>
+            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-300/15 bg-blue-300/[0.07] text-blue-200"><Lock className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">Secure account access</p><p className="mt-1 text-xs text-slate-400">Your account and study progress in one place.</p></div></div>
+          </div>
+          <div className="relative flex items-center justify-between border-t border-white/10 pt-5 text-[11px] text-slate-500"><span>CA EXAM CHECKER AI</span><span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> System online</span></div>
+        </aside>
+        <div className="min-w-0 p-5 sm:p-8 lg:p-9 xl:p-11">
         {/* Header with Brand Logo */}
         <div className="text-center mb-6">
-          <div className="flex justify-center mb-3">
+          <div className="mb-4 flex justify-center lg:hidden">
             <BrandLogo variant="full" size="sm" onClick={onNavigateHome} />
           </div>
-          <div className="flex items-center justify-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 text-xs font-semibold mx-auto w-fit mb-2">
+          <div className="mx-auto mb-3 inline-flex w-fit items-center justify-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-1.5 text-xs font-semibold text-cyan-200">
             <GraduationCap className="w-3.5 h-3.5" />
             <span>CA Student Portal</span>
           </div>
-          <h2 className="text-lg font-black tracking-tight text-slate-900 dark:text-white mt-1">
+          <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">
             {mode === 'login' ? 'Sign in to Your Account' : 'Create Your Account'}
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <p className="mt-2 text-sm leading-6 text-slate-400">
             {mode === 'login'
               ? 'Access your CA answer sheet evaluations and step-marking reports'
               : 'Sign up today and get your first 2 answer sheets evaluated free'}
@@ -314,12 +263,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {/* Free Tier Callout on Register */}
         {mode === 'register' && (
-          <div className="mb-5 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900 flex items-center gap-3">
-            <div className="w-7 h-7 rounded bg-blue-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">
+          <div className="mb-5 flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] p-3.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-200/20 bg-cyan-300/[0.12] text-[10px] font-black text-cyan-100">
               FREE
             </div>
             <div className="text-xs">
-              <p className="font-bold text-blue-900 dark:text-blue-300">2 Free Answer Sheet Checks</p>
+              <p className="font-bold text-cyan-100">2 Free Answer Sheet Checks</p>
               <p className="text-slate-600 dark:text-slate-300">Full paper evaluation with ICAI step marking & working notes check.</p>
             </div>
           </div>
@@ -350,151 +299,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </div>
         )}
 
-        {/* Mode Switch Tabs (hidden during OTP verification) */}
-        {!isVerifyingOtp && (
-          <div className="flex p-1 rounded-lg bg-slate-100 dark:bg-slate-800 mb-5 border border-slate-200 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('login');
-                setErrorMessage('');
-              }}
-              className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-                mode === 'login'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('register');
-                setErrorMessage('');
-              }}
-              className={`flex-1 py-1.5 text-xs font-bold rounded transition ${
-                mode === 'register'
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              Create Account
-            </button>
-          </div>
-        )}
+        {/* Mode Switch Tabs */}
+        <div className="mb-6 flex rounded-xl border border-white/10 bg-white/[0.035] p-1">
+          <button type="button" onClick={() => { setMode('login'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'login' ? 'bg-cyan-300/[0.12] text-cyan-100 shadow-sm ring-1 ring-cyan-200/10' : 'text-slate-400 hover:text-white'}`}>Sign In</button>
+          <button type="button" onClick={() => { setMode('register'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'register' ? 'bg-cyan-300/[0.12] text-cyan-100 shadow-sm ring-1 ring-cyan-200/10' : 'text-slate-400 hover:text-white'}`}>Create Account</button>
+        </div>
 
-        {/* Email OTP Verification Screen */}
-        {isVerifyingOtp && (
-          <div id="email-otp-verification-section" className="space-y-4">
-            <div className="p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-center">
-              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
-                <MailCheck className="w-6 h-6" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Verify Your Email Address</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                We sent a 6-digit verification code to
-              </p>
-              <p className="text-xs font-mono font-bold text-blue-700 dark:text-blue-300 mt-0.5">
-                {maskedEmail || email}
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
-                Code expires in <strong>10 minutes</strong>. Single-use only.
-              </p>
-            </div>
-
-            {otpSuccessMessage && (
-              <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                <span>{otpSuccessMessage}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleOtpVerifySubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 text-center">
-                  Enter 6-Digit Verification Code
-                </label>
-                <div className="relative">
-                  <input
-                    id="input-verification-otp"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    required
-                    autoFocus
-                    placeholder="123456"
-                    value={otpCode}
-                    disabled={isLoading || otpVerificationStage === 'success'}
-                    onChange={(e) => {
-                      setOtpVerificationStage('ready');
-                      setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6));
-                    }}
-                    className="w-full py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 text-center text-xl font-mono font-bold tracking-widest text-slate-900 dark:text-white focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 dark:focus:border-blue-500 disabled:opacity-60"
-                  />
-                </div>
-              </div>
-
-              <button
-                id="btn-verify-otp-submit"
-                type="submit"
-                disabled={isLoading || otpCode.trim().length !== 6}
-                className="w-full py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {isLoading ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Verifying Code...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Verify & Activate Account</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-
-              <div className="flex items-center justify-between pt-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsVerifyingOtp(false);
-                    setErrorMessage('');
-                    setOtpSuccessMessage('');
-                  }}
-                  className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Edit Details</span>
-                </button>
-
-                <button
-                  id="btn-resend-otp"
-                  type="button"
-                  disabled={resendCooldown > 0 || isLoading}
-                  onClick={handleResendOtp}
-                  className={`font-semibold flex items-center gap-1.5 transition ${
-                    resendCooldown > 0 || isLoading
-                      ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
-                      : 'text-blue-600 dark:text-blue-400 hover:underline cursor-pointer'
-                  }`}
-                >
-                  <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                  {resendCooldown > 0 ? (
-                    <span>Resend in {resendCooldown}s</span>
-                  ) : (
-                    <span>Resend Code</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Login Form */}
-        {!isVerifyingOtp && mode === 'login' && (
+                {/* Login Form */}
+        {mode === 'login' && (
           <div className="space-y-4">
             <form onSubmit={handleLoginSubmit} className="space-y-3.5">
               <div>
@@ -598,7 +410,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         )}
 
         {/* Student Registration Form */}
-        {!isVerifyingOtp && mode === 'register' && (
+        {mode === 'register' && (
           <div className="space-y-4">
             <form onSubmit={handleRegisterSubmit} className="space-y-3">
               <div>
@@ -804,7 +616,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         )}
 
         {/* Switch to Institute Portal */}
-        <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500 dark:text-slate-400">
+        <div className="mt-6 border-t border-white/10 pt-5 text-center text-xs text-slate-400">
           <span>Are you a CA Coaching Academy or Faculty? </span>
           <button
             id="btn-goto-institute-portal"
@@ -823,13 +635,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         {/* Terms notice */}
-        <p className="text-[10px] text-slate-400 dark:text-slate-400 text-center mt-6 leading-relaxed">
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">
           By signing in or registering, you agree to our{' '}
           <a href="/legal" className="text-blue-600 dark:text-blue-400 hover:underline">
             Terms of Service
           </a>{' '}
           and acknowledge our strict adherence to ICAI examination guidelines.
         </p>
+        </div>
       </div>
     </div>
   );
