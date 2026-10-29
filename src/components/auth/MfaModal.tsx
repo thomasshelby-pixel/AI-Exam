@@ -64,7 +64,7 @@ export const MfaModal: React.FC = () => {
     user?.role === 'SUPER_ADMIN';
   const adminMfaRoles = [mfaChallenge?.role, user?.role]
     .filter(Boolean)
-    .map((role) => String(role).toUpperCase().replace(/\\s+/g, '_'));
+    .map((role) => String(role).toUpperCase().replace(/\s+/g, '_'));
   const isAdminMfaContext = adminMfaRoles.some((role) =>
     ['ADMIN', 'SUPER_ADMIN', 'INSTITUTE_ADMIN', 'MCQ_ADMIN'].includes(role)
   );
