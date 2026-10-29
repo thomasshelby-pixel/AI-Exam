@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { BrandLogo } from '../../components/common/BrandLogo';
 import { SuspendedAccountView } from '../../components/auth/SuspendedAccountView.js';
-import { OtpVaultAnimation } from '../../components/auth/OtpVaultAnimation.js';
 import { SrnInputField } from '../../components/common/SrnInputField.js';
 import { validateSrn } from '../../utils/srnValidator.js';
 import {
@@ -194,12 +193,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       if (data.requiresOtpVerification) {
         setOtpVerificationStage('ready');
-        setIsVerifyingOtp(true);
-        setPendingEmail(data.email || email.trim().toLowerCase());
-        setMaskedEmail(data.emailMasked || email.trim().toLowerCase());
-        setResendCooldown(data.cooldownSeconds || 60);
-        setOtpSuccessMessage(data.message || `A 6-digit verification code has been dispatched to ${data.emailMasked || email}.`);
-        setOtpCode('');
+        const verificationEmail = data.email || email.trim().toLowerCase();
+        const verificationMaskedEmail = data.emailMasked || verificationEmail;
+        const cooldownSeconds = data.cooldownSeconds || 60;
+        const successMessage = data.message || `A 6-digit verification code has been dispatched to ${verificationMaskedEmail}.`;
+        const cooldownUntil = Date.now() + cooldownSeconds * 1000;
+        sessionStorage.setItem('ca_pending_email_otp', JSON.stringify({ email: verificationEmail, maskedEmail: verificationMaskedEmail, message: successMessage, cooldownUntil }));
+        navigate('/verify-email', { state: { email: verificationEmail, maskedEmail: verificationMaskedEmail, message: successMessage, cooldownUntil } });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
@@ -436,8 +436,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   />
                 </div>
               </div>
-
-              <OtpVaultAnimation status={otpVerificationStage} compact />
 
               <button
                 id="btn-verify-otp-submit"
