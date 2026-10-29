@@ -14,6 +14,7 @@ import {
   Check,
 } from 'lucide-react';
 import { McqArenaLogo } from '../../components/common/McqArenaLogo.js';
+import { OtpVaultAnimation } from '../../components/auth/OtpVaultAnimation.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest, getOrCreateDeviceId, saveScopedTrustToken, getScopedTrustToken } from '../../api/client.js';
 
@@ -33,6 +34,7 @@ export const McqAdminLoginPage: React.FC = () => {
   const [email, setEmail] = useState<string>('priyatca15@gmail.com');
   const [password, setPassword] = useState<string>('');
   const [totpCode, setTotpCode] = useState<string>('');
+  const [vaultAnimationStage, setVaultAnimationStage] = useState<'ready' | 'verifying' | 'success'>('ready');
   
   // Authoritative Flow states: 'PASSWORD' | 'ENROLL' | 'CHALLENGE'
   const [authStep, setAuthStep] = useState<'PASSWORD' | 'ENROLL' | 'CHALLENGE'>('PASSWORD');
@@ -97,11 +99,13 @@ export const McqAdminLoginPage: React.FC = () => {
             }
           }
           setTotpCode('');
+          setVaultAnimationStage('ready');
           setAuthStep('ENROLL');
         } else {
           // Normal Verification Challenge: Strictly NO QR code shown
           setTotpSetup(null);
           setTotpCode('');
+          setVaultAnimationStage('ready');
           setAuthStep('CHALLENGE');
         }
         setLoading(false);
@@ -143,6 +147,7 @@ export const McqAdminLoginPage: React.FC = () => {
 
     setErrorMsg(null);
     setLoading(true);
+    setVaultAnimationStage('verifying');
 
     try {
       const deviceId = getOrCreateDeviceId();
@@ -160,6 +165,9 @@ export const McqAdminLoginPage: React.FC = () => {
       if (!res.success && !res.token) {
         throw new Error(res.error || 'Failed to verify and activate Authenticator.');
       }
+
+      setVaultAnimationStage('success');
+      await new Promise((resolve) => window.setTimeout(resolve, 720));
 
       const activeToken = res.token;
       if (activeToken) {
@@ -179,6 +187,7 @@ export const McqAdminLoginPage: React.FC = () => {
       await refreshUser().catch(() => {});
       navigate('/mcq-admin');
     } catch (err: any) {
+      setVaultAnimationStage('ready');
       setErrorMsg(err.message || 'Invalid 6-digit code. Please verify against your authenticator app time.');
     } finally {
       setLoading(false);
@@ -195,6 +204,7 @@ export const McqAdminLoginPage: React.FC = () => {
 
     setErrorMsg(null);
     setLoading(true);
+    setVaultAnimationStage('verifying');
 
     try {
       const deviceId = getOrCreateDeviceId();
@@ -209,6 +219,8 @@ export const McqAdminLoginPage: React.FC = () => {
       });
 
       if (res.token && res.user) {
+        setVaultAnimationStage('success');
+        await new Promise((resolve) => window.setTimeout(resolve, 720));
         localStorage.setItem('ca_exam_checker_token', res.token);
         localStorage.setItem('auth_token', res.token);
         localStorage.setItem('ca_token', res.token);
@@ -224,6 +236,7 @@ export const McqAdminLoginPage: React.FC = () => {
         throw new Error('Verification completed but session could not be established.');
       }
     } catch (err: any) {
+      setVaultAnimationStage('ready');
       setErrorMsg(err.message || 'Invalid verification code. Please try again.');
     } finally {
       setLoading(false);
@@ -382,11 +395,13 @@ export const McqAdminLoginPage: React.FC = () => {
                 autoFocus
                 required
                 value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => { setVaultAnimationStage('ready'); setTotpCode(e.target.value.replace(/\D/g, '')); }}
                 placeholder="_ _ _ _ _ _"
                 className="w-full px-4 py-3 bg-slate-950 text-center tracking-[0.5em] font-mono font-black text-xl border border-slate-700 rounded-xl text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
+
+            <OtpVaultAnimation status={vaultAnimationStage} compact />
 
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
               <input
@@ -450,11 +465,13 @@ export const McqAdminLoginPage: React.FC = () => {
                 autoFocus
                 required
                 value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => { setVaultAnimationStage('ready'); setTotpCode(e.target.value.replace(/\D/g, '')); }}
                 placeholder="_ _ _ _ _ _"
                 className="w-full px-4 py-3 bg-slate-950 text-center tracking-[0.5em] font-mono font-black text-xl border border-slate-700 rounded-xl text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
+
+            <OtpVaultAnimation status={vaultAnimationStage} compact />
 
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
               <input
