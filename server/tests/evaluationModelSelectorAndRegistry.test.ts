@@ -302,6 +302,19 @@ async function runTests() {
   assert.strictEqual(leakReport.incompleteAnswerMarks, 2, 'Missing working marks must be classified separately');
   assert.strictEqual(leakReport.totalMarksAtStake, 7, 'Evidence-backed marks at stake must reconcile');
   assert.ok(leakReport.findings.some((finding) => finding.pages.includes(2)), 'Finding must retain answer-sheet page evidence');
+  const legacyLeakReport = buildMarksLeakReport({
+    questions: [{
+      questionNumber: '3',
+      fullQuestionCode: 'Q3',
+      maximumMarks: 8,
+      marksAwarded: 5,
+      marksLost: 3,
+      status: 'partially_correct',
+      detailedFeedback: 'Question-level deduction retained; no component breakdown exists.',
+    }],
+  } as any);
+  assert.strictEqual(legacyLeakReport.stepMarksLost, 3, 'Legacy question-level marksLost must remain detectable');
+
 
   console.log('  ✓ Deterministic routing and wire config sanitization verified.');
 
