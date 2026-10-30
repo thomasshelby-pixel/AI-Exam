@@ -305,6 +305,16 @@ async function runTests() {
   assert.strictEqual(calcRouting.primaryModel, 'gpt-5.6-sol', 'Calculation-heavy CA Final must route to GPT-5.6 Sol');
   assert.strictEqual(calcRouting.thinkingLevel, 'XHIGH');
 
+  // Question-level evaluation must forward subjectKey so subject routing works
+  // without a separately injected hasCalculationHeavyContent flag.
+  const subjectKeyRouting = determineModelRouting({
+    level: 'FINAL',
+    subjectKey: 'taxation',
+    checkingMode: 'strict',
+  });
+  assert.strictEqual(subjectKeyRouting.primaryModel, 'gpt-5.6-sol');
+  assert.strictEqual(subjectKeyRouting.thinkingLevel, 'XHIGH');
+
   // Routing with legal/audit heavy context: should pick claude-opus-5 for CA final
   const legalRouting = determineModelRouting({
     level: 'FINAL',
