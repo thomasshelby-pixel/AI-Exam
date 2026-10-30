@@ -1008,7 +1008,7 @@ export function getOpenAIThinkingLevel(
   requested: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH'
 ): 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' {
   const normalized = String(modelId || '').toLowerCase();
-  if (normalized.includes('astra')) return requested;
+  if (normalized.includes('astra')) return requested === 'XHIGH' ? 'XHIGH' : requested === 'LOW' ? 'LOW' : 'HIGH';
   if (normalized.includes('sol')) return requested === 'XHIGH' ? 'XHIGH' : 'HIGH';
   if (normalized.includes('terra')) return 'LOW';
   return requested;
