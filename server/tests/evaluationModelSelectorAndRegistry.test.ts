@@ -9,6 +9,7 @@ import {
   clearModelCooldown,
   buildOpenAIUserContent,
   isOpenAIReasoningModel,
+  getOpenAIThinkingLevel,
 } from '../models/modelRegistry.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import {
@@ -255,6 +256,10 @@ async function runTests() {
   assert.strictEqual(isOpenAIReasoningModel('gpt-5.6-sol'), true, 'GPT-5.6 Sol must be treated as a reasoning model');
   assert.strictEqual(isOpenAIReasoningModel('gpt-5.6-terra'), true, 'GPT-5.6 Terra compatibility must remain intact');
   assert.strictEqual(isOpenAIReasoningModel('gpt-4.1'), false, 'Standard GPT model must not be treated as reasoning');
+  assert.strictEqual(getOpenAIThinkingLevel('gpt-6-astra', 'HIGH'), 'HIGH', 'Astra must retain HIGH thinking from registry/admin routing');
+  assert.strictEqual(getOpenAIThinkingLevel('gpt-6-astra', 'XHIGH'), 'XHIGH', 'Astra must retain XHIGH thinking when explicitly requested');
+  assert.strictEqual(getOpenAIThinkingLevel('gpt-5.6-sol', 'MEDIUM'), 'HIGH', 'Sol retains its configured deep-reasoning minimum');
+  assert.strictEqual(getOpenAIThinkingLevel('gpt-5.6-terra', 'HIGH'), 'LOW', 'Terra remains on low-latency reasoning');
 
   // Marks Leak Detector: only explicit attempt and component evidence is counted.
   const leakReport = buildMarksLeakReport({
