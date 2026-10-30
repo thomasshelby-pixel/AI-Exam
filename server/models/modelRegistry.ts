@@ -1003,6 +1003,17 @@ export function buildOpenAIUserContent(
  * Keep provider request capabilities aligned with the model registry.
  * Astra is explicitly configured as HIGH-reasoning in APPROVED_MODELS.
  */
+export function getOpenAIThinkingLevel(
+  modelId: string,
+  requested: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH'
+): 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' {
+  const normalized = String(modelId || '').toLowerCase();
+  if (normalized.includes('astra')) return requested;
+  if (normalized.includes('sol')) return requested === 'XHIGH' ? 'XHIGH' : 'HIGH';
+  if (normalized.includes('terra')) return 'LOW';
+  return requested;
+}
+
 export function isOpenAIReasoningModel(modelId: string): boolean {
   const normalized = String(modelId || '').toLowerCase();
   return normalized.includes('sol') ||
@@ -1524,8 +1535,11 @@ export async function executeModelWithFallback(
 
     // Determine thinking level for candidate (use LOW/MEDIUM thinking to minimize latency and prevent timeouts)
     let effectiveThinking: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'MEDIUM';
-    if (candidateModel === 'gpt-5.6-sol') {
-      effectiveThinking = routing.thinkingLevel === 'XHIGH' ? 'XHIGH' : 'HIGH';
+    if (candidateModel === 'gpt-6-astra') {
+      // Preserve the registry/admin-selected HIGH or XHIGH level for Astra.
+      effectiveThinking = getOpenAIThinkingLevel(candidateModel, routing.thinkingLevel);
+    } else if (candidateModel === 'gpt-5.6-sol') {
+      effectiveThinking = getOpenAIThinkingLevel(candidateModel, routing.thinkingLevel);
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
       candidateModel === 'claude-sonnet-5' ||
