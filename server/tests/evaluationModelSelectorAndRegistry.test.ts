@@ -10,6 +10,7 @@ import {
   buildOpenAIUserContent,
   isOpenAIReasoningModel,
   getOpenAIThinkingLevel,
+  isOpenAIParameterCompatibilityError,
 } from '../models/modelRegistry.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import {
@@ -261,6 +262,8 @@ async function runTests() {
   assert.strictEqual(getOpenAIThinkingLevel('gpt-6-astra', 'XHIGH'), 'XHIGH', 'Astra must retain XHIGH thinking when explicitly requested');
   assert.strictEqual(getOpenAIThinkingLevel('gpt-5.6-sol', 'MEDIUM'), 'HIGH', 'Sol retains its configured deep-reasoning minimum');
   assert.strictEqual(getOpenAIThinkingLevel('gpt-5.6-terra', 'HIGH'), 'LOW', 'Terra remains on low-latency reasoning');
+  assert.strictEqual(isOpenAIParameterCompatibilityError('Unsupported parameter: reasoning_effort'), true, 'Explicit reasoning parameter rejection may use compatibility retry');
+  assert.strictEqual(isOpenAIParameterCompatibilityError('Model not found for this project'), false, 'Unrelated provider failures must not trigger a reasoning downgrade');
 
   // Marks Leak Detector: only explicit attempt and component evidence is counted.
   const leakReport = buildMarksLeakReport({
