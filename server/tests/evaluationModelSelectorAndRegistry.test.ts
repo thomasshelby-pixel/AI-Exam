@@ -8,6 +8,10 @@ import {
   determineModelRouting,
   clearModelCooldown,
   buildOpenAIUserContent,
+  getOpenAIApiModelId,
+  isOpenAIReasoningModel,
+  buildOpenAIChatCompletionPayload,
+  extractOpenAIChatCompletionText,
 } from '../models/modelRegistry.js';
 import {
   getSupportedThinkingLevel,
@@ -125,6 +129,71 @@ async function runTests() {
   });
   assert.strictEqual(imageContent[0].type, 'image_url', 'Non-PDF image uploads must retain image_url transport');
   assert.strictEqual(imageContent[1].type, 'text');
+
+
+  // OpenAI's internal admin IDs intentionally remain stable, but runtime calls
+  // must resolve to currently listed API model IDs.
+  assert.strictEqual(getOpenAIApiModelId('gpt-5.6-sol'), 'gpt-6.1-sol');
+  assert.strictEqual(getOpenAIApiModelId('gpt-5.6-terra'), 'gpt-6.1-terra');
+  assert.strictEqual(getOpenAIApiModelId('gpt-6-astra'), 'gpt-6-astra');
+  assert.strictEqual(isOpenAIReasoningModel('gpt-6-astra'), true);
+
+  // Reasoning models must use reasoning_effort/max_completion_tokens, never
+  // sampling temperature or the legacy max_tokens field.
+  const astraPayload = buildOpenAIChatCompletionPayload(
+    'gpt-6-astra',
+    {
+      systemPrompt: 'You are a strict ICAI examiner.',
+      userPrompt: 'Evaluate this answer and return JSON.',
+      responseMimeType: 'application/json',
+    },
+    'HIGH'
+  );
+  assert.strictEqual(astraPayload.model, 'gpt-6-astra');
+  assert.strictEqual(astraPayload.messages[0].role, 'developer');
+  assert.strictEqual(astraPayload.reasoning_effort, 'high');
+  assert.strictEqual(astraPayload.max_completion_tokens, 8192);
+  assert.strictEqual(astraPayload.temperature, undefined);
+  assert.strictEqual(astraPayload.max_tokens, undefined);
+  assert.deepStrictEqual(astraPayload.response_format, { type: 'json_object' });
+
+  const solPayload = buildOpenAIChatCompletionPayload(
+    'gpt-5.6-sol',
+    { systemPrompt: '', userPrompt: 'Check the numerical solution.' },
+    'XHIGH'
+  );
+  assert.strictEqual(solPayload.model, 'gpt-6.1-sol');
+  assert.strictEqual(solPayload.reasoning_effort, 'xhigh');
+  assert.strictEqual(solPayload.max_completion_tokens, 8192);
+  assert.strictEqual(solPayload.temperature, undefined);
+
+  const terraPayload = buildOpenAIChatCompletionPayload(
+    'gpt-5.6-terra',
+    { systemPrompt: '', userPrompt: 'Read this answer sheet.' },
+    'LOW'
+  );
+  assert.strictEqual(terraPayload.model, 'gpt-6.1-terra');
+  assert.strictEqual(terraPayload.reasoning_effort, 'low');
+  assert.strictEqual(terraPayload.temperature, undefined);
+
+  assert.strictEqual(
+    extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'stop', message: { content: '{"marksAwarded": 3}' } }],
+    }),
+    '{"marksAwarded": 3}'
+  );
+  assert.throws(
+    () => extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'length', message: { content: '{"marksAwarded":' } }],
+    }),
+    /truncated at the token limit/
+  );
+  assert.throws(
+    () => extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'Request declined.' } }],
+    }),
+    /declined the evaluation request/
+  );
 
   console.log('  ✓ OpenAI PDF and image content-part formats validated without live API calls.');
 
