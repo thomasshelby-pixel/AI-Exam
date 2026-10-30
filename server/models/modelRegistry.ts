@@ -1031,6 +1031,7 @@ export function isOpenAIParameterCompatibilityError(message: string): boolean {
     'not supported with this model',
     'does not support parameter',
     'unknown request argument',
+    'unrecognized request argument',
   ].some((phrase) => normalized.includes(phrase));
   return mentionsRequestParameter && indicatesParameterRejection;
 }
