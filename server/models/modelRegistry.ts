@@ -1014,6 +1014,27 @@ export function getOpenAIThinkingLevel(
   return requested;
 }
 
+export function isOpenAIParameterCompatibilityError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  const mentionsRequestParameter = [
+    'reasoning_effort',
+    'max_completion_tokens',
+    'max_tokens',
+    'response_format',
+  ].some((parameter) => normalized.includes(parameter));
+  const indicatesParameterRejection = [
+    'unsupported parameter',
+    'unknown parameter',
+    'unrecognized parameter',
+    'invalid parameter',
+    'unsupported value',
+    'not supported with this model',
+    'does not support parameter',
+    'unknown request argument',
+  ].some((phrase) => normalized.includes(phrase));
+  return mentionsRequestParameter && indicatesParameterRejection;
+}
+
 export function isOpenAIReasoningModel(modelId: string): boolean {
   const normalized = String(modelId || '').toLowerCase();
   return normalized.includes('sol') ||
@@ -1075,8 +1096,10 @@ async function callOpenAI(
   } catch (err: any) {
     const errMsg = (err?.message || String(err)).toLowerCase();
     const isBillingOrQuota = errMsg.includes('credit') || errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('401') || errMsg.includes('billing');
-    // Only retry without reasoning_effort if it is a parameter incompatibility, NEVER on billing/quota/auth errors
-    if (!isBillingOrQuota && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
+    const isParameterCompatibilityError = isOpenAIParameterCompatibilityError(errMsg);
+    // Retry without reasoning only when the provider explicitly rejects a request parameter.
+    // Do not silently downgrade reasoning for unrelated 400/404/5xx failures.
+    if (!isBillingOrQuota && isParameterCompatibilityError && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
       delete requestPayload.reasoning_effort;
       requestPayload.max_tokens = requestPayload.max_completion_tokens || 8192;
       delete requestPayload.max_completion_tokens;
