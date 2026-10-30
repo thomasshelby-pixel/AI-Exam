@@ -8,7 +8,9 @@ import {
   determineModelRouting,
   clearModelCooldown,
   buildOpenAIUserContent,
+  isOpenAIReasoningModel,
 } from '../models/modelRegistry.js';
+import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -247,6 +249,54 @@ async function runTests() {
     assert.strictEqual(clean.thinking_budget, undefined, 'thinking_budget must be stripped');
     assert.strictEqual(clean.thinkingConfig.thinkingLevel, def);
   }
+
+  // Provider parity: registry HIGH-reasoning Astra must use reasoning API parameters.
+  assert.strictEqual(isOpenAIReasoningModel('gpt-6-astra'), true, 'GPT-6 Astra must be treated as a reasoning model');
+  assert.strictEqual(isOpenAIReasoningModel('gpt-5.6-sol'), true, 'GPT-5.6 Sol must be treated as a reasoning model');
+  assert.strictEqual(isOpenAIReasoningModel('gpt-5.6-terra'), true, 'GPT-5.6 Terra compatibility must remain intact');
+  assert.strictEqual(isOpenAIReasoningModel('gpt-4.1'), false, 'Standard GPT model must not be treated as reasoning');
+
+  // Marks Leak Detector: only explicit attempt and component evidence is counted.
+  const leakReport = buildMarksLeakReport({
+    questions: [{
+      questionNumber: '1',
+      fullQuestionCode: 'Q1(a)',
+      maximumMarks: 10,
+      marksAwarded: 6,
+      marksLost: 4,
+      status: 'partially_correct',
+      detailedFeedback: 'Working incomplete',
+      sourcePages: [2],
+      markingComponents: [{
+        componentId: 'working-1',
+        componentType: 'WORKING',
+        expectedRequirement: 'Show full calculation',
+        studentEvidence: 'Final answer only',
+        assessment: 'INCORRECT',
+        marksAvailable: 2,
+        marksAwarded: 0,
+        marksDeducted: 2,
+        deductionReason: 'Working not shown',
+        confidence: 90,
+        pageNumber: 2,
+      }],
+    }],
+    canonicalLedger: { records: [{
+      questionId: 'Q2(b)',
+      attempted: false,
+      maxMarks: 5,
+      awardedMarks: 0,
+      evaluationStatus: 'UNATTEMPTED',
+      sourcePages: [],
+      rendered: true,
+      counted: true,
+      studentPages: [],
+    }] },
+  } as any);
+  assert.strictEqual(leakReport.unattemptedMarks, 5, 'Unattempted canonical question marks must be detected');
+  assert.strictEqual(leakReport.incompleteAnswerMarks, 2, 'Missing working marks must be classified separately');
+  assert.strictEqual(leakReport.totalMarksAtStake, 7, 'Evidence-backed marks at stake must reconcile');
+  assert.ok(leakReport.findings.some((finding) => finding.pages.includes(2)), 'Finding must retain answer-sheet page evidence');
 
   console.log('  ✓ Deterministic routing and wire config sanitization verified.');
 
