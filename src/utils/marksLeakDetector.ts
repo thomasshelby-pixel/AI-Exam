@@ -63,21 +63,21 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
   };
 
   const runPackage = result.evaluationRunPackage;
-  const ledgerRecords = runPackage?.scoreLedger?.records || result.canonicalLedger?.records || [];
+  const ledgerRecords = runPackage?.scoreLedger?.records || runPackage?.evaluationRecords || result.canonicalLedger?.records || [];
   const inventoryItems = runPackage?.questionInventory?.items || [];
   const inventoryById = new Map(inventoryItems.map((item) => [item.questionId, item]));
   const ledgerById = new Map(ledgerRecords.map((record) => [record.questionId, record]));
 
   for (const record of ledgerRecords) {
     if (!record.attempted && record.evaluationStatus === 'UNATTEMPTED' && !record.isAlternative) {
-      const item = inventoryById.get(record.questionId);
+      const inventoryItem = inventoryById.get(record.questionId);
       add({
         id: `unattempted:${record.questionId}`,
         questionId: record.questionId,
         category: 'UNATTEMPTED',
         title: `${record.questionId} was left unattempted`,
         detail: 'The answer-sheet attempt manifest and canonical paper inventory both mark this question as unattempted.',
-        marksAtStake: record.maxMarks,
+        marksAtStake: inventoryItem?.maxMarks ?? record.maxMarks,
         pages: uniquePages(record.studentPages || [], record.sourcePages || []),
         evidence: ['Canonical paper inventory', 'Student attempt manifest'],
         priority: record.maxMarks >= 5 ? 'HIGH' : 'MEDIUM',
@@ -103,12 +103,6 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       if (lost <= 0) continue;
 
       const type = String(component.componentType || '').toUpperCase();
-      const text = [
-        component.expectedRequirement,
-        component.whatWasMissing,
-        component.deductionReason,
-        component.reason,
-      ].filter(Boolean).join(' ');
       const isWorking = /WORKING|CALCULATION|FORMULA|JOURNAL|LEDGER|RECONCILIATION/i.test(type);
       const isExplanation = /REASONING|PROVISION|CONCLUSION|APPLICATION|ANALYSIS/i.test(type);
       const category: MarksLeakCategory = isWorking
@@ -137,6 +131,20 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
           component.deductionReason || component.whatWasMissing || '',
         ].filter(Boolean),
         priority: lost >= 2 ? 'HIGH' : 'MEDIUM',
+      });
+    }
+
+    if (question.status === 'not_attempted' && !ledgerById.has(question.canonicalId || questionId)) {
+      add({
+        id: `unattempted:${questionId}`,
+        questionId,
+        category: 'UNATTEMPTED',
+        title: `${questionId} was marked not attempted`,
+        detail: question.reasonForDeduction || question.detailedFeedback || 'The saved question evaluation marks this answer as not attempted.',
+        marksAtStake: question.maximumMarks,
+        pages,
+        evidence: [question.reasonForDeduction || question.detailedFeedback || 'Evaluation status: not_attempted'].filter(Boolean),
+        priority: safeNumber(question.maximumMarks) >= 5 ? 'HIGH' : 'MEDIUM',
       });
     }
 
@@ -185,7 +193,7 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
     stepMarksLost,
     incompleteAnswerMarks,
     technicalReviewCount: findings.filter((f) => f.category === 'TECHNICAL_REVIEW').length,
-    isEvidenceLimited: ledgerRecords.length === 0 && componentsCount(result.questions || []) === 0,
+    isEvidenceLimited: ledgerRecords.length === 0 && componentsCount(result.questions || []) === 0 && !(result.questions || []).some((question) => (question.missingRequirements || []).length > 0),
   };
 }
 
