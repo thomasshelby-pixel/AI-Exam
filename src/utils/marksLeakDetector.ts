@@ -103,6 +103,7 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       if (lost <= 0) continue;
 
       const type = String(component.componentType || '').toUpperCase();
+      if (type === 'MCQ') continue;
       const isWorking = /WORKING|CALCULATION|FORMULA|JOURNAL|LEDGER|RECONCILIATION/i.test(type);
       const isExplanation = /REASONING|PROVISION|CONCLUSION|APPLICATION|ANALYSIS/i.test(type);
       const category: MarksLeakCategory = isWorking
