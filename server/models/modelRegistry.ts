@@ -127,8 +127,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Sol',
-    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, ambiguous answers, deep marking verification, score calculation cross-checks, and checked-copy annotation instructions.',
+    displayName: 'OpenAI GPT-6.1 Sol',
+    description: 'Current OpenAI GPT-6.1 Sol API model. Deep reasoning for difficult CA answer evaluation, complex tax/costing computations, capital budgeting, ambiguous answers, marking verification, score cross-checks, and checked-copy annotation instructions.',
     contextWindow: 200000,
     recommended: true,
     role: 'Deep Reasoning & Calculation Cross-Check',
@@ -147,8 +147,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
   {
     id: 'gpt-5.6-terra',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Terra',
-    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, standard practical/theory evaluation, and speed-critical fallback processing.',
+    displayName: 'OpenAI GPT-6.1 Terra',
+    description: 'Current OpenAI GPT-6.1 Terra API model. Fast high-volume multimodal evaluation, low-latency OCR, handwriting reading, routine question evaluation, and speed-critical fallback processing.',
     contextWindow: 128000,
     recommended: false,
     role: 'Fast High-Volume / Multimodal / Low Latency',
@@ -295,11 +295,11 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Sol (Deep Reasoning & Calculation Cross-Check)',
+    displayName: 'OpenAI GPT-6.1 Sol (Deep Reasoning & Calculation Cross-Check)',
     category: 'pro',
     status: 'STABLE',
     role: 'Deep Reasoning & Calculation Cross-Check',
-    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
+    description: 'Current OpenAI GPT-6.1 Sol API model for deep evaluation, difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
     contextWindow: 200000,
     supportsMultimodal: true,
     supportsThinking: true,
@@ -311,11 +311,11 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   {
     id: 'gpt-5.6-terra',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Terra (Fast Multimodal & OCR)',
+    displayName: 'OpenAI GPT-6.1 Terra (Fast Multimodal & OCR)',
     category: 'flash',
     status: 'STABLE',
     role: 'Fast High-Volume / Multimodal / Low Latency',
-    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, and speed-critical fallback processing.',
+    description: 'Current OpenAI GPT-6.1 Terra API model for fast high-volume multimodal evaluation, low-latency OCR, dense handwriting reading, and speed-critical fallback processing.',
     contextWindow: 128000,
     supportsMultimodal: true,
     supportsThinking: true,
@@ -650,6 +650,93 @@ export interface ModelExecutionResult {
     notes: string;
     discrepanciesFound: boolean;
   };
+}
+
+/**
+ * Runtime routing IDs are kept stable because they are persisted in SQLite and
+ * Firestore. Resolve those legacy admin-facing IDs to currently listed OpenAI
+ * API model IDs at the transport boundary, so no production routing migration
+ * is required.
+ */
+const OPENAI_API_MODEL_ID_ALIASES: Record<string, string> = {
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-terra': 'gpt-6.1-terra',
+  'gpt-6-astra': 'gpt-6-astra',
+};
+
+export function getOpenAIApiModelId(modelId: string): string {
+  return OPENAI_API_MODEL_ID_ALIASES[modelId] || modelId;
+}
+
+/**
+ * Explicit provider capability table prevents string-prefix heuristics from
+ * accidentally treating reasoning models as sampling models.
+ */
+export function isOpenAIReasoningModel(modelId: string): boolean {
+  const apiModelId = getOpenAIApiModelId(modelId);
+  return ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra'].includes(apiModelId);
+}
+
+export function buildOpenAIChatCompletionPayload(
+  modelId: string,
+  params: ModelExecutionParams,
+  effectiveThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'HIGH'
+): any {
+  const messages: any[] = [];
+  if (params.systemPrompt) {
+    // OpenAI recommends developer messages for o1 and newer reasoning models.
+    messages.push({ role: 'developer', content: params.systemPrompt });
+  }
+
+  const userContent = buildOpenAIUserContent(params);
+  messages.push({
+    role: 'user',
+    content: userContent.length === 1 ? userContent[0].text : userContent,
+  });
+
+  const requestPayload: any = {
+    model: getOpenAIApiModelId(modelId),
+    messages,
+  };
+
+  if (isOpenAIReasoningModel(modelId)) {
+    const reasoningEffort =
+      effectiveThinkingLevel === 'XHIGH' ? 'xhigh' :
+      effectiveThinkingLevel === 'HIGH' ? 'high' :
+      effectiveThinkingLevel === 'LOW' ? 'low' : 'medium';
+    requestPayload.reasoning_effort = reasoningEffort;
+    requestPayload.max_completion_tokens = params.maxTokens || 8192;
+    // Do not attach temperature to reasoning-model requests.
+  } else {
+    requestPayload.max_tokens = params.maxTokens || 8192;
+    requestPayload.temperature = 0.2;
+  }
+
+  if (params.responseMimeType === 'application/json') {
+    requestPayload.response_format = { type: 'json_object' };
+  }
+
+  return requestPayload;
+}
+
+export function extractOpenAIChatCompletionText(response: any): string {
+  const choice = response?.choices?.[0];
+  const message = choice?.message;
+  if (choice?.finish_reason === 'length') {
+    throw new Error('OpenAI evaluation output was truncated at the token limit; retry through the evaluation fallback chain.');
+  }
+  if (choice?.finish_reason === 'content_filter') {
+    throw new Error('OpenAI evaluation output was blocked by the provider content filter.');
+  }
+
+  const text = typeof message?.content === 'string' ? message.content.trim() : '';
+  if (!text) {
+    const refusal = typeof message?.refusal === 'string' ? message.refusal.trim() : '';
+    throw new Error(refusal
+      ? `OpenAI declined the evaluation request: ${refusal.slice(0, 300)}`
+      : 'OpenAI returned an empty or non-text evaluation response.');
+  }
+  return text;
 }
 
 let openaiClient: OpenAI | null = null;
@@ -1005,64 +1092,13 @@ async function callOpenAI(
   effectiveThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'HIGH'
 ): Promise<{ text: string; promptTokens?: number; completionTokens?: number; totalTokens?: number }> {
   const openai = getOpenAI();
-  const messages: any[] = [];
+  const requestPayload = buildOpenAIChatCompletionPayload(modelId, params, effectiveThinkingLevel);
 
-  if (params.systemPrompt) {
-    messages.push({
-      role: 'system',
-      content: params.systemPrompt,
-    });
-  }
-
-  const userContent = buildOpenAIUserContent(params);
-
-  messages.push({
-    role: 'user',
-    content: userContent.length === 1 ? userContent[0].text : userContent,
-  });
-
-  const requestPayload: any = {
-    model: modelId,
-    messages,
-  };
-
-  const isReasoningModel = modelId.includes('sol') || modelId.includes('terra') || modelId.startsWith('o3') || modelId.startsWith('o1');
-  if (isReasoningModel) {
-    const reasoningEffort =
-      effectiveThinkingLevel === 'XHIGH' || effectiveThinkingLevel === 'HIGH'
-        ? 'high'
-        : effectiveThinkingLevel === 'LOW'
-        ? 'low'
-        : 'medium';
-    requestPayload.reasoning_effort = reasoningEffort;
-    requestPayload.max_completion_tokens = params.maxTokens || 8192;
-  } else {
-    requestPayload.max_tokens = params.maxTokens || 8192;
-    requestPayload.temperature = 0.2;
-  }
-
-  if (params.responseMimeType === 'application/json') {
-    requestPayload.response_format = { type: 'json_object' };
-  }
-
-  let response: any;
-  try {
-    response = await openai.chat.completions.create(requestPayload);
-  } catch (err: any) {
-    const errMsg = (err?.message || String(err)).toLowerCase();
-    const isBillingOrQuota = errMsg.includes('credit') || errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('401') || errMsg.includes('billing');
-    // Only retry without reasoning_effort if it is a parameter incompatibility, NEVER on billing/quota/auth errors
-    if (!isBillingOrQuota && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
-      delete requestPayload.reasoning_effort;
-      requestPayload.max_tokens = requestPayload.max_completion_tokens || 8192;
-      delete requestPayload.max_completion_tokens;
-      response = await openai.chat.completions.create(requestPayload);
-    } else {
-      throw err;
-    }
-  }
-
-  const text = response.choices?.[0]?.message?.content || '';
+  // Let the outer provider fallback handle failures. Retrying every non-billing
+  // error with altered token parameters can hide invalid inputs and make model
+  // failures harder to diagnose.
+  const response = await openai.chat.completions.create(requestPayload);
+  const text = extractOpenAIChatCompletionText(response);
   const usage = response.usage;
   return {
     text,
@@ -1512,6 +1548,8 @@ export async function executeModelWithFallback(
     // Determine thinking level for candidate (use LOW/MEDIUM thinking to minimize latency and prevent timeouts)
     let effectiveThinking: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'MEDIUM';
     if (candidateModel === 'gpt-5.6-sol') {
+      effectiveThinking = routing.thinkingLevel === 'XHIGH' ? 'XHIGH' : 'HIGH';
+    } else if (candidateModel === 'gpt-6-astra') {
       effectiveThinking = routing.thinkingLevel === 'XHIGH' ? 'XHIGH' : 'HIGH';
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
