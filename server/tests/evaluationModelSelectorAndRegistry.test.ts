@@ -13,6 +13,7 @@ import {
   buildOpenAIChatCompletionPayload,
   extractOpenAIChatCompletionText,
 } from '../models/modelRegistry.js';
+import { deriveEvaluationModelAttribution } from '../services/evaluationModelAttribution.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -194,6 +195,24 @@ async function runTests() {
     }),
     /declined the evaluation request/
   );
+
+
+  // Top-level result metadata must reflect the models actually used per question.
+  const mixedAttribution = deriveEvaluationModelAttribution([
+    { modelUsed: 'gpt-6-astra', modelProvider: 'openai', fallbackOccurred: false },
+    { modelUsed: 'gemini-3.8-flash', modelProvider: 'gemini', fallbackOccurred: true, fallbackReason: 'OpenAI request failed' },
+  ]);
+  assert.strictEqual(mixedAttribution.modelProvider, 'multi-provider (openai + gemini)');
+  assert.strictEqual(mixedAttribution.modelUsed, 'multi-model (gpt-6-astra, gemini-3.8-flash)');
+  assert.strictEqual(mixedAttribution.fallbackOccurred, true);
+  assert.strictEqual(mixedAttribution.fallbackReason, 'OpenAI request failed');
+
+  const deterministicAttribution = deriveEvaluationModelAttribution([
+    { fallbackOccurred: false },
+  ]);
+  assert.strictEqual(deterministicAttribution.modelProvider, 'deterministic');
+  assert.strictEqual(deterministicAttribution.modelUsed, 'deterministic');
+  assert.strictEqual(deterministicAttribution.fallbackOccurred, false);
 
   console.log('  ✓ OpenAI PDF and image content-part formats validated without live API calls.');
 
