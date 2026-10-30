@@ -999,6 +999,19 @@ export function buildOpenAIUserContent(
  * Execute evaluation prompt against OpenAI provider
  * Supports GPT-5.6 Sol (Deep Reasoning) and GPT-5.6 Terra (Fast Multimodal)
  */
+/**
+ * Keep provider request capabilities aligned with the model registry.
+ * Astra is explicitly configured as HIGH-reasoning in APPROVED_MODELS.
+ */
+export function isOpenAIReasoningModel(modelId: string): boolean {
+  const normalized = String(modelId || '').toLowerCase();
+  return normalized.includes('sol') ||
+    normalized.includes('terra') ||
+    normalized.includes('astra') ||
+    normalized.startsWith('o3') ||
+    normalized.startsWith('o1');
+}
+
 async function callOpenAI(
   modelId: string,
   params: ModelExecutionParams,
@@ -1026,7 +1039,7 @@ async function callOpenAI(
     messages,
   };
 
-  const isReasoningModel = modelId.includes('sol') || modelId.includes('terra') || modelId.startsWith('o3') || modelId.startsWith('o1');
+  const isReasoningModel = isOpenAIReasoningModel(modelId);
   if (isReasoningModel) {
     const reasoningEffort =
       effectiveThinkingLevel === 'XHIGH' || effectiveThinkingLevel === 'HIGH'
