@@ -1192,6 +1192,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                       checkingMode: (params.checkingMode as any) || 'standard',
                       level: params.level,
                       subjectName: params.subjectName,
+                      subjectKey: params.subjectKey,
                     });
                     break;
                   } catch (chunkErr: any) {
@@ -1249,6 +1250,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     checkingMode: (params.checkingMode as any) || 'standard',
                     level: params.level,
                     subjectName: params.subjectName,
+                    subjectKey: params.subjectKey,
                   });
                   descriptiveQuestions.push(recoveredQ);
                   evaluatedCanonSet.add(canonId);
