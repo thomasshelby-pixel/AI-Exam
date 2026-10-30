@@ -148,6 +148,25 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       });
     }
 
+    if (
+      components.length === 0 &&
+      question.status !== 'not_attempted' &&
+      safeNumber(question.marksLost) > 0 &&
+      (question.missingRequirements || []).length === 0
+    ) {
+      add({
+        id: `question-loss:${questionId}`,
+        questionId,
+        category: 'STEP_MARKS_LOST',
+        title: 'Question-level marks were deducted',
+        detail: question.reasonForDeduction || question.detailedFeedback || 'The saved question evaluation records marks lost but does not retain a component-level breakdown.',
+        marksAtStake: safeNumber(question.marksLost),
+        pages,
+        evidence: [question.reasonForDeduction || question.detailedFeedback || 'Question-level marksLost field'].filter(Boolean),
+        priority: safeNumber(question.marksLost) >= 2 ? 'HIGH' : 'MEDIUM',
+      });
+    }
+
     const explicitlyMissing = (question.missingRequirements || []).filter(Boolean);
     if (explicitlyMissing.length > 0 && components.length === 0) {
       const lost = roundMarks(Math.max(0, safeNumber(question.maximumMarks) - safeNumber(question.marksAwarded)));
@@ -193,7 +212,7 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
     stepMarksLost,
     incompleteAnswerMarks,
     technicalReviewCount: findings.filter((f) => f.category === 'TECHNICAL_REVIEW').length,
-    isEvidenceLimited: ledgerRecords.length === 0 && componentsCount(result.questions || []) === 0 && !(result.questions || []).some((question) => (question.missingRequirements || []).length > 0),
+    isEvidenceLimited: ledgerRecords.length === 0 && componentsCount(result.questions || []) === 0 && !(result.questions || []).some((question) => (question.missingRequirements || []).length > 0 || safeNumber(question.marksLost) > 0),
   };
 }
 
