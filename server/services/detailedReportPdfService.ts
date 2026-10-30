@@ -2,6 +2,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopyService.js';
 import { deduplicateQuestionList } from './canonicalQuestionService.js';
 import { loadEvaluationRunPackage } from '../db.js';
+import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 
 function wrapText(text: string, maxChars: number = 80): string[] {
   if (!text) return [];
@@ -733,6 +734,64 @@ export async function generateDetailedReportPdf(
   });
 
   y -= 125;
+
+  // Evidence-led Marks Leak Detector (reuses the persisted evaluation; no extra model call).
+  const marksLeakReport = buildMarksLeakReport({
+    ...resultJson,
+    evaluationRunPackage: resultJson?.evaluationRunPackage || runPkg,
+    canonicalLedger: resultJson?.canonicalLedger || runPkg?.scoreLedger,
+  } as any);
+  if (marksLeakReport.findings.length > 0) {
+    safeDrawText(p1, 'MARKS LEAK DETECTOR - EVIDENCE-BASED REVIEW', {
+      x: 36,
+      y,
+      size: 9,
+      font: helveticaBold,
+      color: accentGold,
+    });
+    y -= 14;
+    safeDrawText(p1, `Recorded marks at stake: ${marksLeakReport.totalMarksAtStake} | Unattempted: ${marksLeakReport.unattemptedMarks} | Working / explanation: ${marksLeakReport.incompleteAnswerMarks}`, {
+      x: 36,
+      y,
+      size: 7.2,
+      font: helveticaBold,
+      color: darkSlate,
+    });
+    y -= 12;
+    marksLeakReport.findings.slice(0, 3).forEach((finding) => {
+      const evidenceLine = `${finding.questionId}: ${finding.title} - ${finding.detail}`;
+      const findingLines = wrapText(evidenceLine, 92).slice(0, 2);
+      findingLines.forEach((line) => {
+        safeDrawText(p1, line, {
+          x: 42,
+          y,
+          size: 6.8,
+          font: helvetica,
+          color: mutedSlate,
+        });
+        y -= 9;
+      });
+      if (finding.pages.length > 0) {
+        safeDrawText(p1, `Answer sheet page(s): ${finding.pages.join(', ')}`, {
+          x: 42,
+          y,
+          size: 6.4,
+          font: helvetica,
+          color: mutedSlate,
+        });
+        y -= 8;
+      }
+      y -= 2;
+    });
+    safeDrawText(p1, 'Marks at stake are diagnostic only and are not a guarantee of marks recoverable on rechecking.', {
+      x: 36,
+      y,
+      size: 6.2,
+      font: helvetica,
+      color: mutedSlate,
+    });
+    y -= 12;
+  }
 
   // Question Summary Table Header on Page 1
   safeDrawText(p1, 'QUESTION-WISE PERFORMANCE SCORECARD', {
