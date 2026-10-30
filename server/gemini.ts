@@ -29,6 +29,7 @@ import { getActiveMcqScoringRule, getCanonicalPaperName } from './mcqRules.js';
 import { processEvaluationIntegrity } from './services/evaluationIntegrityEngine.js';
 import { getAuthoritativePaperStructure } from './services/paperStructureService.js';
 import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageService.js';
+import { deriveEvaluationModelAttribution } from './services/evaluationModelAttribution.js';
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
@@ -1345,6 +1346,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             totalPaperMaxMarks: officialMax,
           });
 
+          const modelAttribution = deriveEvaluationModelAttribution(activeQuestions);
+
           const initialResult: EvaluationResult = {
             evaluationId: params.evaluationId,
             studentName: params.studentName,
@@ -1402,9 +1405,11 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             structuredMarkingEvidence: activeQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
             scoreCalculationAudit,
             isMcqPaper: false,
-            modelUsed: 'authoritative-ensemble-v4',
-            modelDisplayName: 'CA Evaluator Engine v4 (Structure-Enforced)',
-            modelProvider: 'Google Gemini Pro / Flash Vision',
+            modelUsed: modelAttribution.modelUsed,
+            modelDisplayName: modelAttribution.modelDisplayName,
+            modelProvider: modelAttribution.modelProvider,
+            fallbackOccurred: modelAttribution.fallbackOccurred,
+            fallbackReason: modelAttribution.fallbackReason,
             coverageMap,
             modeBreakdown: multiMode.modeBreakdown,
             checkingMode: params.checkingMode,
