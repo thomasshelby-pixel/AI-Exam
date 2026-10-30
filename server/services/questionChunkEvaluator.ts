@@ -17,6 +17,7 @@ export interface ChunkEvaluationContext {
   checkingMode: 'standard' | 'strict' | 'lenient';
   level: string;
   subjectName: string;
+  subjectKey?: string;
   /** Issues identified by the supervisor; when present, the model must re-check this question. */
   supervisorIssues?: string[];
   supervisorCorrectionAttempt?: number;
@@ -82,7 +83,7 @@ export function extractRelevantReferenceSnippets(
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
-  const { subQuestion, mapping, fullPdfBuffer, checkingMode, level, subjectName } = ctx;
+  const { subQuestion, mapping, fullPdfBuffer, checkingMode, level, subjectName, subjectKey } = ctx;
   const maxMarks = subQuestion.maximumMarks; // IMMUTABLE
   const qNum = subQuestion.questionNumber;
   const subQ = subQuestion.subQuestionNumber;
@@ -275,6 +276,7 @@ Return strictly valid JSON with this schema:
       context: {
         level,
         subjectName,
+        subjectKey,
         checkingMode,
         pageCount: mapping.pages.length,
       },
