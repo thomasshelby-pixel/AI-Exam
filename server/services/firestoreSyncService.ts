@@ -1367,7 +1367,15 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         ) {
           // Hydration repaired an old false rejection. Remove the stale local notice
           // created by the previous normalizer; do not generate a new rejection alert.
-          db.prepare('DELETE FROM notifications WHERE id = ?').run(`notif_eval_rejected_${ev.id}`);
+          const staleRejectionNotificationId = `notif_eval_rejected_${ev.id}`;
+          db.prepare('DELETE FROM notifications WHERE id = ?').run(staleRejectionNotificationId);
+          // Remove and tombstone the cloud copy too; otherwise the following
+          // notification-centre hydration can recreate the false rejection notice.
+          await permanentlyDeleteFromFirestore(
+            'notifications',
+            staleRejectionNotificationId,
+            'Removed stale false-rejection notice after restoring evaluation to NEEDS_REVIEW.'
+          );
           const repairedReviewEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(ev.id) as any;
           if (repairedReviewEvaluation) {
             await syncRecordToFirestore('evaluations', ev.id, repairedReviewEvaluation);
