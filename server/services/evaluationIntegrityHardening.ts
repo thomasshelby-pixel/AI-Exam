@@ -242,6 +242,36 @@ export function validatePreEvaluationGate(params: {
 }
 
 /**
+ * Coverage uncertainty is a certification blocker, not a reason to discard all
+ * otherwise-mappable answers. Keep mapping failures visible for reviewer follow-up
+ * while allowing identified questions to be evaluated provisionally.
+ *
+ * Source/paper-structure failures remain hard blockers because the evaluator cannot
+ * safely establish the authoritative marking basis for those questions.
+ */
+export function classifyPreEvaluationFailures(failedInvariants: string[]): {
+  blockingFailures: string[];
+  coverageReviewFailures: string[];
+} {
+  const coverageReviewPrefixes = [
+    'UNMAPPED_STUDENT_PAGE:',
+    'UNMAPPED_ATTEMPT_DETECTED:',
+  ];
+  const coverageReviewFailures: string[] = [];
+  const blockingFailures: string[] = [];
+
+  for (const failure of failedInvariants || []) {
+    if (coverageReviewPrefixes.some((prefix) => String(failure).startsWith(prefix))) {
+      coverageReviewFailures.push(failure);
+    } else {
+      blockingFailures.push(failure);
+    }
+  }
+
+  return { blockingFailures, coverageReviewFailures };
+}
+
+/**
  * Gate 2: POST-EVALUATION INTEGRITY VALIDATION GATE
  *
  * Runs on the finalized evaluation result before report/checked-copy generation.
