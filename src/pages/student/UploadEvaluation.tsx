@@ -768,6 +768,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         setActiveEvaluationOwnerId(null);
         setEvalStep('IDLE');
         await refreshUser();
+        if (currentStudentIdRef.current !== submissionOwnerId) return;
         const finalEvalId = (response as any).displayId || (response as any).display_id || response.evaluationId;
         onEvaluationComplete(finalEvalId, response.result);
       } else {
