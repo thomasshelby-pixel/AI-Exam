@@ -1049,8 +1049,14 @@ export function processEvaluationIntegrity(
     let finalAwarded = needsHumanReview
       ? Math.max(0, Math.min(maxMarks, Number.isFinite(initialAwarded) ? initialAwarded : 0))
       : initialAwarded;
-    let zeroScoreReason: ZeroScoreReason | undefined;
-    let zeroScoreEvidence: string | undefined;
+    // Preserve the established diagnostic classification for illegible handwriting,
+    // while keeping the mark provisional and skipping any automatic score override.
+    let zeroScoreReason: ZeroScoreReason | undefined = isHandwritingUnclear
+      ? 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED'
+      : undefined;
+    let zeroScoreEvidence: string | undefined = isHandwritingUnclear
+      ? 'Candidate script appears attempted, but handwriting or scan clarity prevented automated optical verification. Preserved for recheck review.'
+      : undefined;
 
     if (!needsHumanReview && !zeroValidation.isZeroAllowed && (zeroValidation.suggestedAwardedMarks ?? 0) > 0) {
       finalAwarded = zeroValidation.suggestedAwardedMarks!;
