@@ -39,6 +39,7 @@ import {
   Loader2,
   Fingerprint,
   Copy,
+  ImagePlus,
 } from 'lucide-react';
 
 interface StudentProfilePageProps {
@@ -186,6 +187,76 @@ const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150&auto=format&fit=crop&q=80',
 ];
+
+
+const MAX_AVATAR_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_AVATAR_DATA_URL_CHARS = 300_000;
+
+function prepareAvatarDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+
+    const releaseObjectUrl = () => URL.revokeObjectURL(objectUrl);
+
+    image.onload = () => {
+      try {
+        const sourceSide = Math.min(image.naturalWidth, image.naturalHeight);
+        if (!sourceSide) {
+          throw new Error('This image could not be opened. Please choose another photo.');
+        }
+
+        // Crop to a square and compress before sending it to the shared profile API.
+        const sourceX = (image.naturalWidth - sourceSide) / 2;
+        const sourceY = (image.naturalHeight - sourceSide) / 2;
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Photo processing is unavailable in this browser.');
+
+        const encodings = [
+          { size: 384, quality: 0.78 },
+          { size: 320, quality: 0.70 },
+          { size: 256, quality: 0.62 },
+        ];
+
+        for (const option of encodings) {
+          canvas.width = option.size;
+          canvas.height = option.size;
+          context.drawImage(
+            image,
+            sourceX,
+            sourceY,
+            sourceSide,
+            sourceSide,
+            0,
+            0,
+            option.size,
+            option.size
+          );
+
+          const dataUrl = canvas.toDataURL('image/jpeg', option.quality);
+          if (dataUrl.length <= MAX_AVATAR_DATA_URL_CHARS) {
+            releaseObjectUrl();
+            resolve(dataUrl);
+            return;
+          }
+        }
+
+        throw new Error('This photo is too large after compression. Please choose another image.');
+      } catch (error) {
+        releaseObjectUrl();
+        reject(error instanceof Error ? error : new Error('Could not process this photo.'));
+      }
+    };
+
+    image.onerror = () => {
+      releaseObjectUrl();
+      reject(new Error('This image format could not be opened. Please choose a JPG or PNG photo.'));
+    };
+
+    image.src = objectUrl;
+  });
+}
 
 export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   onNavigateDashboard,
@@ -407,6 +478,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [caLevel, setCaLevel] = useState<'FOUNDATION' | 'INTERMEDIATE' | 'FINAL'>('INTERMEDIATE');
   const [preferredSubjects, setPreferredSubjects] = useState<string[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string>('');
+  const [isPreparingAvatar, setIsPreparingAvatar] = useState<boolean>(false);
 
   // UI States
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -491,9 +563,48 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
     fetchProfileAndReferrals();
   }, []);
 
+
+  const handleAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    setProfileMessage(null);
+    if (!file.type.startsWith('image/')) {
+      setProfileMessage({ type: 'error', text: 'Please select an image from your gallery.' });
+      return;
+    }
+    if (file.size > MAX_AVATAR_FILE_BYTES) {
+      setProfileMessage({ type: 'error', text: 'Choose a photo smaller than 10 MB.' });
+      return;
+    }
+
+    try {
+      setIsPreparingAvatar(true);
+      const compressedPhoto = await prepareAvatarDataUrl(file);
+      setAvatarUrl(compressedPhoto);
+      setProfileMessage({
+        type: 'success',
+        text: 'Photo selected. Save profile changes to sync it with your account and app.',
+      });
+    } catch (err) {
+      setProfileMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Could not process this photo.',
+      });
+    } finally {
+      setIsPreparingAvatar(false);
+    }
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileMessage(null);
+
+    if (isPreparingAvatar) {
+      setProfileMessage({ type: 'error', text: 'Please wait for the photo to finish preparing before saving.' });
+      return;
+    }
 
     if (!fullName.trim() || fullName.trim().length < 2) {
       setProfileMessage({ type: 'error', text: 'Full name must be at least 2 characters long.' });
@@ -875,7 +986,26 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 </div>
 
                 <div className="flex-1 space-y-1.5">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Choose a default avatar or paste a custom image URL:</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Choose a default avatar or upload your own photo from the device gallery:</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input
+                      id="student-profile-photo-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleAvatarFileChange}
+                    />
+                    <label
+                      htmlFor="student-profile-photo-input"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-blue-500 cursor-pointer transition"
+                    >
+                      <ImagePlus className="w-3.5 h-3.5" />
+                      Choose from gallery
+                    </label>
+                    {isPreparingAvatar && (
+                      <span className="text-xs text-slate-500 dark:text-slate-400">Preparing photo…</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {PRESET_AVATARS.map((preset, idx) => (
                       <button
