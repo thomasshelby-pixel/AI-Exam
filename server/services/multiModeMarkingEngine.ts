@@ -66,12 +66,17 @@ export function applyMultiModeMarkingPhilosophy(
 
   // 1. Build Standard Questions (Balanced ICAI step-marking)
   const standardQuestions: QuestionEvaluation[] = dedupedQuestions.map((q) => {
-    const qMax = Number(q.maximumMarks) || 0;
-    const comps = (q.markingComponents || []).map((c) => ({
-      ...c,
-      marksAwarded: Math.min(Number(c.marksAvailable) || 0, Math.max(0, Number(c.marksAwarded) || 0)),
-      marksDeducted: Math.max(0, (Number(c.marksAvailable) || 0) - (Number(c.marksAwarded) || 0)),
-    }));
+    const qMax = Math.max(0, Number(q.maximumMarks) || 0);
+    const comps = (q.markingComponents || []).map((c) => {
+      const marksAvailable = Math.max(0, Number(c.marksAvailable) || 0);
+      const marksAwarded = Math.min(marksAvailable, Math.max(0, Number(c.marksAwarded) || 0));
+      return {
+        ...c,
+        marksAvailable,
+        marksAwarded,
+        marksDeducted: Math.max(0, marksAvailable - marksAwarded),
+      };
+    });
     const awarded = comps.length > 0
       ? Math.min(qMax, comps.reduce((s, c) => s + (c.marksAwarded || 0), 0))
       : Math.min(qMax, Math.max(0, Number(q.marksAwarded) || 0));
@@ -296,13 +301,9 @@ export function applyMultiModeMarkingPhilosophy(
   let strictTotal = Math.round(strictQuestions.reduce((s, q) => s + (q.marksAwarded || 0), 0) * 4) / 4;
   let modTotal = Math.round(moderateQuestions.reduce((s, q) => s + (q.marksAwarded || 0), 0) * 4) / 4;
 
-  // Enforce mathematical invariant
-  if (strictTotal > stdTotal) {
-    strictTotal = stdTotal;
-  }
-  if (modTotal < stdTotal) {
-    modTotal = stdTotal;
-  }
+  // Totals remain the literal sums of their corresponding question arrays.
+  // The per-question mode transforms above enforce Strict <= Standard <= Moderate;
+  // avoid clamping summary numbers independently from displayed question marks.
 
   const stdPct = Math.round((stdTotal / officialPaperMaxMarks) * 1000) / 10;
   const strictPct = Math.round((strictTotal / officialPaperMaxMarks) * 1000) / 10;
