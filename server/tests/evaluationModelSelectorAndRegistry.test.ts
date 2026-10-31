@@ -15,6 +15,9 @@ import {
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
+import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
+import { validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
+import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -359,6 +362,117 @@ async function runTests() {
     }],
   };
   assert.equal(parseAndValidateQuestionChunkOutput(JSON.stringify(validChunk), 5).marksAwarded, 2);
+
+  const validCoverage = {
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    summary: 'Candidate answered Q2(a).',
+    detectedQuestions: [{
+      questionNumber: '2',
+      subQuestion: 'a',
+      parentQuestionNumberVisible: true,
+      isContinuation: false,
+      snippet: 'Candidate working and conclusion.',
+    }],
+    mcqSelections: { '1': 'B' },
+  };
+  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).detectedQuestions.length, 1);
+  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).mcqSelections['1'], 'B');
+  assert.equal(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: {},
+      isContinuation: true,
+      summary: 'Continuation of the previous answer.',
+    })).isContinuation,
+    true,
+    'Top-level continuation signal must survive validated page parsing.',
+  );
+  assert.deepEqual(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { 'MCQ 1': 'Option B', '1': 'B' },
+    })).mcqSelections,
+    { '1': 'B' },
+    'Equivalent MCQ keys must normalize to one canonical question number.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
+    })),
+    /PAGE_COVERAGE_CONFLICTING_MCQ_SELECTION/,
+    'Conflicting MCQ selections must trigger model fallback instead of arbitrarily choosing one.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'CLEARLY_UNATTEMPTED',
+      detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
+      mcqSelections: {},
+    })),
+    /PAGE_COVERAGE_STATUS_CONFLICT/,
+    'A page cannot be accepted as blank when it contains a detected answer.',
+  );
+  assert.equal(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'CLEARLY_UNATTEMPTED',
+      detectedQuestions: [],
+      mcqSelections: {},
+    })).status,
+    'CLEARLY_UNATTEMPTED',
+    'A truly blank page is valid coverage output and must not trigger provider fallback.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput('not valid JSON'),
+    /PAGE_COVERAGE_INVALID_JSON/,
+    'Malformed page mapping JSON must trigger provider fallback.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [{ subQuestion: 'a' }],
+      mcqSelections: {},
+    })),
+    /PAGE_COVERAGE_MISSING_QUESTION_ID/,
+    'An attempted answer without safe question identity must not be silently accepted.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      ...validCoverage,
+      mcqSelections: { '1': 'Z' },
+    })),
+    /PAGE_COVERAGE_INVALID_MCQ_OPTION/,
+    'MCQ coverage must reject invalid answer options and use provider fallback.',
+  );
+
+  const mislabeledPartialChunk = {
+    ...validChunk,
+    status: 'incorrect',
+  };
+  assert.equal(
+    parseAndValidateQuestionChunkOutput(JSON.stringify(mislabeledPartialChunk), 5).status,
+    'partially_correct',
+    'A valid positive step-mark score must not be discarded because the model mislabeled the status.',
+  );
+  const fullMarksMislabeledChunk = {
+    ...validChunk,
+    marksAwarded: 5,
+    status: 'partially_correct',
+    markingComponents: [{
+      ...validChunk.markingComponents[0],
+      marksAwarded: 5,
+      marksDeducted: 0,
+      assessment: 'CORRECT',
+    }],
+  };
+  assert.equal(
+    parseAndValidateQuestionChunkOutput(JSON.stringify(fullMarksMislabeledChunk), 5).status,
+    'correct',
+    'A fully reconciled maximum score must normalize to correct.',
+  );
   assert.throws(
     () => parseAndValidateQuestionChunkOutput('not valid JSON', 5),
     /QUESTION_CHUNK_INVALID_JSON/,
@@ -427,6 +541,118 @@ async function runTests() {
     assert.equal(modeResult.activeQuestions[0].marksAwarded, 0, `${mode} mode must not invent academic marks.`);
     assert.equal(modeResult.activeQuestions[0].marksLost, 0, `${mode} mode must not convert technical failure into academic mark loss.`);
   }
+
+  const strictnessFixture = {
+    questionNumber: '2',
+    subQuestion: 'a',
+    maximumMarks: 3,
+    marksAwarded: 2.5,
+    marksLost: 0.5,
+    status: 'partially_correct',
+    markingComponents: [
+      {
+        componentId: 'Q2a-provision',
+        componentType: 'PROVISION',
+        assessment: 'PARTIALLY_CORRECT',
+        expectedRequirement: 'Cite and explain the applicable statutory provision.',
+        studentEvidence: 'Candidate cited the section but omitted one material condition.',
+        marksAvailable: 2,
+        marksAwarded: 1.5,
+        marksDeducted: 0.5,
+        deductionReason: 'One material condition was omitted.',
+      },
+      {
+        componentId: 'Q2a-application',
+        componentType: 'APPLICATION',
+        assessment: 'CORRECT',
+        expectedRequirement: 'Apply the provision to the facts.',
+        studentEvidence: 'Candidate correctly applied the provision to the facts.',
+        marksAvailable: 1,
+        marksAwarded: 1,
+        marksDeducted: 0,
+        deductionReason: '',
+      },
+    ],
+  } as any;
+  const standardMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'standard', 100);
+  const strictMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'strict', 100);
+  const moderateMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'lenient', 100);
+  const questionMarkTotal = (questions: any[]) => questions.reduce((sum, question) => sum + question.marksAwarded, 0);
+  assert.equal(standardMode.activeTotalMarks, questionMarkTotal(standardMode.activeQuestions), 'Standard total must equal the sum of displayed question marks.');
+  assert.equal(strictMode.activeTotalMarks, questionMarkTotal(strictMode.activeQuestions), 'Strict total must equal the sum of displayed question marks.');
+  assert.equal(moderateMode.activeTotalMarks, questionMarkTotal(moderateMode.activeQuestions), 'Moderate total must equal the sum of displayed question marks.');
+  assert.ok(strictMode.activeTotalMarks <= standardMode.activeTotalMarks, 'Strict marking must not exceed Standard marking.');
+  assert.ok(moderateMode.activeTotalMarks >= standardMode.activeTotalMarks, 'Moderate marking must not be below Standard marking.');
+  assert.ok(strictMode.activeQuestions[0].markingComponents[1].marksAwarded === 1, 'Strict marking must preserve an independently correct application component.');
+
+  // Foundation objective MCQs carry an official -0.25 penalty for wrong answers.
+  // Standard/Strict/Moderate transforms and the post-evaluation gate must preserve it.
+  const foundationMcq = evaluateAllAuthoritativeMcqs(
+    [{
+      fullQuestionCode: 'MCQ1',
+      questionNumber: '1',
+      maximumMarks: 1,
+      officialKey: 'A',
+      section: 'A',
+      officialExplanation: 'The official key is option A.',
+      provision: 'As per the supplied official answer.',
+    } as any],
+    { '1': 'B' },
+    { caLevel: 'FOUNDATION', paper: 'Paper 3', subjectKey: 'quantitative_aptitude' },
+  )[0];
+  assert.equal(foundationMcq.marksAwarded, -0.25, 'Foundation Paper 3 wrong MCQ must receive the official -0.25 penalty.');
+  assert.equal(foundationMcq.negativeMarking, -0.25, 'Foundation negative penalty must remain explicitly traceable.');
+  for (const mode of ['standard', 'strict', 'lenient'] as const) {
+    const negativeMode = applyMultiModeMarkingPhilosophy([foundationMcq as any], mode, 100);
+    assert.equal(negativeMode.activeQuestions[0].marksAwarded, -0.25, `${mode} mode must preserve the official Foundation MCQ penalty.`);
+    assert.equal(negativeMode.activeQuestions[0].marksLost, 1.25, `${mode} mode must reconcile the available mark and -0.25 penalty.`);
+  }
+  const foundationStandard = applyMultiModeMarkingPhilosophy([foundationMcq as any], 'standard', 100);
+  const foundationPostGate = validatePostEvaluationGate({
+    evaluationResult: {
+      caLevel: 'FOUNDATION',
+      questions: foundationStandard.activeQuestions,
+      totalMarks: -0.25,
+      officialPaperMaxMarks: 100,
+      maximumMarks: 100,
+    } as any,
+  });
+  assert.equal(foundationPostGate.isValid, true, 'The post-evaluation gate must allow only the traceable Foundation objective-MCQ penalty.');
+
+  const blankMcq = {
+    ...foundationMcq,
+    questionNumber: 'MCQ 2',
+    canonicalId: 'MCQ2',
+    marksAwarded: 0,
+    negativeMarking: 0,
+    marksLost: 1,
+    status: 'not_attempted',
+    markingComponents: [{
+      ...foundationMcq.markingComponents[0],
+      componentId: 'MCQ2_c1',
+      marksAwarded: 0,
+      marksDeducted: 1,
+      studentEvidence: 'Candidate left question unattempted',
+      deductionReason: 'Question not attempted.',
+    }],
+  } as any;
+  const blankMcqResult = applyMultiModeMarkingPhilosophy([blankMcq], 'standard', 100);
+  assert.equal(blankMcqResult.activeQuestions[0].status, 'not_attempted', 'An unanswered MCQ must not be mislabeled as an incorrect answer.');
+  assert.equal(blankMcqResult.activeQuestions[0].marksAwarded, 0, 'An unanswered MCQ must remain zero without a negative penalty.');
+
+  const clampedComponentFixture = {
+    ...strictnessFixture,
+    marksAwarded: 3,
+    markingComponents: [{
+      ...strictnessFixture.markingComponents[1],
+      marksAvailable: 1,
+      marksAwarded: 1.75,
+      marksDeducted: 0,
+    }],
+  } as any;
+  const clampedMode = applyMultiModeMarkingPhilosophy([clampedComponentFixture], 'standard', 100);
+  assert.equal(clampedMode.activeQuestions[0].markingComponents[0].marksAwarded, 1, 'Standard marking must clamp an over-awarded component to its available marks.');
+  assert.equal(clampedMode.activeQuestions[0].markingComponents[0].marksDeducted, 0, 'Component deductions must be calculated from the clamped awarded marks.');
 
 
   console.log('  ✓ Deterministic routing and wire config sanitization verified.');

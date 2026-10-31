@@ -1110,30 +1110,25 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     }
 
     // The account has passed email OTP verification and the ICAI SRN was rechecked
-    // under the registration transaction above. Grant the normal two-free-evaluation
-    // quota based on that verified identity, not noisy browser/IP heuristics. The
-    // hashed signal service is still consulted for risk telemetry and a durable
-    // per-SRN duplicate-trial claim (including after account deletion).
+    // under the registration transaction above. Free-trial eligibility is separate:
+    // only a device OR IP already claimed by another account can deny the standard
+    // free-trial quota. Moving to another device during OTP verification is not abuse
+    // by itself; both observed device IDs are checked against existing account claims.
     const registrationDeviceId = typeof regData.deviceId === 'string' ? regData.deviceId : undefined;
     const verificationDeviceHeader = req.headers['x-device-id'];
     const verificationDeviceId = typeof verificationDeviceHeader === 'string'
       ? verificationDeviceHeader.trim().slice(0, 200)
       : undefined;
     const verificationIp = req.ip || undefined;
-    const deviceChangedDuringSignup = Boolean(
-      registrationDeviceId && verificationDeviceId && registrationDeviceId !== verificationDeviceId
-    );
     const freeTrialDecision = await claimFreeTrialEligibility({
       userId,
       deviceIds: [registrationDeviceId, verificationDeviceId],
       ipAddresses: [regData.clientIp, verificationIp],
-      studentRegistrationNumber: regData.icaiRegistrationNumber,
-      forceBlock: deviceChangedDuringSignup,
     });
 
     // Keep account-level free-trial abuse checks separate from answer-sheet evaluation.
-    // A second account on the same device OR IP, a reused ICAI identity, or missing
-    // required signals withholds only the standard free-trial quota.
+    // A second account on the same device OR IP withholds only the standard
+    // free-trial quota; paid and institute entitlements remain independent.
     const freeTrialGranted = freeTrialDecision.eligible;
     if (freeTrialGranted) {
       db.prepare(`

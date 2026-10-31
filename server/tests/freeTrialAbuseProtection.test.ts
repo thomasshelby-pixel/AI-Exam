@@ -24,15 +24,11 @@ const blockedUserId = 'usr_trial_blocked_' + suffix;
 const normalUserId = 'usr_trial_normal_' + suffix;
 const staleCounterUserId = 'usr_trial_stale_counter_' + suffix;
 const repairableUserId = 'usr_trial_repairable_' + suffix;
-const duplicateOwnerId = 'usr_trial_dup_owner_' + suffix;
-const duplicateBlockedId = 'usr_trial_dup_blocked_' + suffix;
-const durableBlockedId = 'usr_trial_durable_blocked_' + suffix;
 const reusedDeviceBlockedId = 'usr_trial_device_reused_' + suffix;
 const reusedIpBlockedId = 'usr_trial_ip_reused_' + suffix;
 const unknownLegacyBlockedId = 'usr_trial_unknown_legacy_blocked_' + suffix;
 const nowMonth = getCurrentServerMonth();
 const repairSrnDigits = String(Date.now()).slice(-7);
-const duplicateSrnDigits = String(Number(repairSrnDigits) + 1).slice(-7).padStart(7, '0');
 const unverifiedSrnDigits = String(Number(repairSrnDigits) + 2).slice(-7).padStart(7, '0');
 
 // The account-level free-trial policy blocks a second claim from either
@@ -41,23 +37,21 @@ const unverifiedSrnDigits = String(Number(repairSrnDigits) + 2).slice(-7).padSta
 const baseSignals = {
   hasDeviceSignal: true,
   hasIpSignal: true,
-  validSrn: true,
   reusedDevice: false,
   reusedIp: false,
-  reusedSrn: false,
 };
 const normalDecision = decideFreeTrialEligibility(baseSignals);
-assert(normalDecision.eligible && normalDecision.reason === 'FIRST_CLAIM', 'Fresh device/IP and unique ICAI identity receive the standard free trial');
+assert(normalDecision.eligible && normalDecision.reason === 'FIRST_CLAIM', 'A new account with fresh device/IP signals receives the standard free trial');
 const reusedDeviceDecision = decideFreeTrialEligibility({ ...baseSignals, reusedDevice: true });
-assert(!reusedDeviceDecision.eligible && reusedDeviceDecision.reason === 'REUSED_DEVICE', 'A reused device on a second account blocks only the free trial');
+assert(!reusedDeviceDecision.eligible && reusedDeviceDecision.reason === 'REUSED_DEVICE', 'A new account on a previously claimed device is denied only the free trial');
 const reusedIpDecision = decideFreeTrialEligibility({ ...baseSignals, reusedIp: true });
-assert(!reusedIpDecision.eligible && reusedIpDecision.reason === 'REUSED_IP', 'A reused IP on a second account blocks only the free trial');
-const reusedSrnDecision = decideFreeTrialEligibility({ ...baseSignals, reusedSrn: true });
-assert(!reusedSrnDecision.eligible && reusedSrnDecision.reason === 'REUSED_SRN', 'A previously claimed ICAI registration identity remains blocked');
-const missingSignalDecision = decideFreeTrialEligibility({ ...baseSignals, hasDeviceSignal: false });
-assert(!missingSignalDecision.eligible && missingSignalDecision.reason === 'NO_RELIABLE_SIGNALS', 'Missing device identity does not silently grant a new free trial');
-const changedDeviceDecision = decideFreeTrialEligibility({ ...baseSignals, forceBlock: true });
-assert(!changedDeviceDecision.eligible && changedDeviceDecision.reason === 'DEVICE_CHANGED_DURING_SIGNUP', 'Device changed during signup does not receive a new free trial');
+assert(!reusedIpDecision.eligible && reusedIpDecision.reason === 'REUSED_IP', 'A new account on a previously claimed IP is denied only the free trial');
+const ipOnlyDecision = decideFreeTrialEligibility({ ...baseSignals, hasDeviceSignal: false });
+assert(ipOnlyDecision.eligible && ipOnlyDecision.reason === 'FIRST_CLAIM', 'A reliable fresh IP is sufficient when a device identifier is unavailable');
+const deviceOnlyDecision = decideFreeTrialEligibility({ ...baseSignals, hasIpSignal: false });
+assert(deviceOnlyDecision.eligible && deviceOnlyDecision.reason === 'FIRST_CLAIM', 'A reliable fresh device is sufficient when an IP is unavailable');
+const noSignalDecision = decideFreeTrialEligibility({ ...baseSignals, hasDeviceSignal: false, hasIpSignal: false });
+assert(!noSignalDecision.eligible && noSignalDecision.reason === 'NO_RELIABLE_SIGNALS', 'No reliable device or IP signal fails closed for free-trial eligibility');
 assert(!isSignalOwnedByAnotherUser(true, 'usr_same_account', 'usr_same_account'), "A student's own repeated login on the same device/IP is not treated as another account");
 assert(isSignalOwnedByAnotherUser(true, 'usr_first_account', 'usr_second_account'), 'A device/IP claim owned by a different account is treated as reuse');
 assert(isSignalOwnedByAnotherUser(true, null, 'usr_new_account'), 'Legacy ownerless device/IP claims remain protected from duplicate free-trial claims');
@@ -151,34 +145,6 @@ try {
   assert(restoredProfile.free_trial_blocked === 0 && restoredProfile.monthly_free_evaluations_limit === 2, 'False-block repair is persisted in the student profile');
   assert(restoredProfile.purchased_credits === 3 && restoredProfile.paid_credits === 3, 'Repair leaves paid credits unchanged');
 
-  // A verified account whose numeric ICAI SRN identity is already present on
-  // another account must remain blocked to avoid duplicate free-trial claims.
-  db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
-    VALUES (?, ?, 'test-hash', 'Duplicate SRN Owner', 'STUDENT', 'ACTIVE', 1)
-  `).run(duplicateOwnerId, 'trial_dup_owner_' + suffix + '@example.test');
-  db.prepare(`
-    INSERT INTO student_profiles (
-      user_id, icai_registration_number, ca_level, free_evaluations_used,
-      monthly_free_evaluations_used, monthly_free_evaluations_limit,
-      free_evaluation_reset_month, purchased_credits, paid_credits, free_trial_blocked
-    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 2, ?, 0, 0, 0)
-  `).run(duplicateOwnerId, 'CRO' + duplicateSrnDigits, nowMonth);
-  db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
-    VALUES (?, ?, 'test-hash', 'Duplicate SRN Blocked', 'STUDENT', 'ACTIVE', 1)
-  `).run(duplicateBlockedId, 'trial_dup_blocked_' + suffix + '@example.test');
-  db.prepare(`
-    INSERT INTO student_profiles (
-      user_id, icai_registration_number, ca_level, free_evaluations_used,
-      monthly_free_evaluations_used, monthly_free_evaluations_limit,
-      free_evaluation_reset_month, purchased_credits, paid_credits, free_trial_blocked
-    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1)
-  `).run(duplicateBlockedId, 'WRO' + duplicateSrnDigits, nowMonth);
-
-  const duplicateQuota = ensureMonthlyFreeEvaluationsReset(duplicateBlockedId);
-  assert(duplicateQuota.monthlyFreeEvaluationsLimit === 0 && duplicateQuota.freeEvaluationsRemaining === 0, 'Duplicate ICAI identity is not auto-unblocked');
-
   // Unknown legacy blocks must fail closed: without an audited reason they may
   // represent older device/IP abuse decisions from before reason codes existed.
   db.prepare(`
@@ -218,24 +184,7 @@ try {
     assert(saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0, reason + ' block remains persisted');
   }
 
-  // Explicit durable identity-claim blocks must not be mistaken for false blocks.
-  const durableDigits = String(Number(repairSrnDigits) + 3).slice(-7).padStart(7, '0');
-  db.prepare(`
-    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
-    VALUES (?, ?, 'test-hash', 'Durably Blocked Student', 'STUDENT', 'ACTIVE', 1)
-  `).run(durableBlockedId, 'trial_durable_blocked_' + suffix + '@example.test');
-  db.prepare(`
-    INSERT INTO student_profiles (
-      user_id, icai_registration_number, ca_level, free_evaluations_used,
-      monthly_free_evaluations_used, monthly_free_evaluations_limit,
-      free_evaluation_reset_month, purchased_credits, paid_credits,
-      free_trial_blocked, free_trial_block_reason
-    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1, 'REUSED_SRN')
-  `).run(durableBlockedId, 'SRO' + durableDigits, nowMonth);
-  const durableQuota = ensureMonthlyFreeEvaluationsReset(durableBlockedId);
-  assert(durableQuota.monthlyFreeEvaluationsLimit === 0 && durableQuota.freeEvaluationsRemaining === 0, 'Explicit durable SRN-claim block is not auto-repaired');
-
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');
 } finally {
-  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, duplicateOwnerId, duplicateBlockedId, durableBlockedId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
+  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
 }

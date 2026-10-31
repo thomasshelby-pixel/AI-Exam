@@ -1070,14 +1070,10 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           return validCanonicalIds.has(canon);
         }) || [];
 
-        const hasCriticalStructureConflict = (preGate.criticalFailures || preGate.failedInvariants).some((f) =>
-          f.includes('SOURCE_CONFLICT_COURSE_LEVEL_MISMATCH') ||
-          f.includes('QUESTION_PAPER_NOT_PARSED') ||
-          f.includes('MALFORMED_CANONICAL_ID') ||
-          f.includes('MISSING_OFFICIAL_MCQ_KEY')
-        );
-
-        if (!preGate.passed && (hasCriticalStructureConflict || attemptedScorableQuestions.length === 0)) {
+        // Never score a partially mapped script. In particular, an attempted
+        // page with an unidentified question must not disappear while other mapped
+        // questions continue to receive marks.
+        if (!preGate.passed || attemptedScorableQuestions.length === 0) {
           return createEvaluationReviewResult({
             evaluationId: params.evaluationId,
             studentName: params.studentName,

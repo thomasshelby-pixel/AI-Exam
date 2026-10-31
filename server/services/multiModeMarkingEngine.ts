@@ -66,22 +66,54 @@ export function applyMultiModeMarkingPhilosophy(
 
   // 1. Build Standard Questions (Balanced ICAI step-marking)
   const standardQuestions: QuestionEvaluation[] = dedupedQuestions.map((q) => {
-    const qMax = Number(q.maximumMarks) || 0;
-    const comps = (q.markingComponents || []).map((c) => ({
-      ...c,
-      marksAwarded: Math.min(Number(c.marksAvailable) || 0, Math.max(0, Number(c.marksAwarded) || 0)),
-      marksDeducted: Math.max(0, (Number(c.marksAvailable) || 0) - (Number(c.marksAwarded) || 0)),
-    }));
-    const awarded = comps.length > 0
-      ? Math.min(qMax, comps.reduce((s, c) => s + (c.marksAwarded || 0), 0))
-      : Math.min(qMax, Math.max(0, Number(q.marksAwarded) || 0));
+    const qMax = Math.max(0, Number(q.maximumMarks) || 0);
+    const isMcqQuestion = Boolean(
+      String(q.questionNumber || '').toUpperCase().startsWith('MCQ') ||
+      String(q.canonicalId || q.questionId || '').toUpperCase().startsWith('MCQ') ||
+      String(q.subQuestion || '').toUpperCase() === 'MCQ'
+    );
+    const configuredNegativePenalty = Number(q.negativeMarking);
+    const allowedNegativePenalty =
+      isMcqQuestion &&
+      (q.markingComponents || []).some((component) => component.componentType === 'MCQ') &&
+      Number.isFinite(configuredNegativePenalty) &&
+      Math.abs(configuredNegativePenalty - (-0.25)) <= 0.001 &&
+      String(q.markingRule || '').startsWith('ICAI Foundation Rule')
+        ? -0.25
+        : 0;
+    const comps = (q.markingComponents || []).map((c) => {
+      const marksAvailable = Math.max(0, Number(c.marksAvailable) || 0);
+      const componentNegativeFloor = c.componentType === 'MCQ' ? allowedNegativePenalty : 0;
+      const marksAwarded = Math.max(
+        componentNegativeFloor,
+        Math.min(marksAvailable, Number(c.marksAwarded) || 0)
+      );
+      return {
+        ...c,
+        marksAvailable,
+        marksAwarded,
+        marksDeducted: Math.max(0, marksAvailable - marksAwarded),
+      };
+    });
+    const rawAwarded = comps.length > 0
+      ? comps.reduce((s, c) => s + (c.marksAwarded || 0), 0)
+      : (Number(q.marksAwarded) || 0);
+    const awarded = Math.max(allowedNegativePenalty, Math.min(qMax, rawAwarded));
     const marksLost = q.status === 'unclear' ? Math.max(0, Number(q.marksLost) || 0) : Math.max(0, qMax - awarded);
 
     return {
       ...q,
       marksAwarded: Math.round(awarded * 4) / 4,
       marksLost: Math.round(marksLost * 4) / 4,
-      status: q.status === 'unclear' ? 'unclear' : awarded >= qMax ? 'correct' : awarded > 0 ? 'partially_correct' : 'incorrect',
+      status: q.status === 'unclear'
+        ? 'unclear'
+        : q.status === 'not_attempted'
+          ? 'not_attempted'
+          : awarded >= qMax
+            ? 'correct'
+            : awarded > 0
+              ? 'partially_correct'
+              : 'incorrect',
       markingComponents: comps,
     };
   });
@@ -107,7 +139,7 @@ export function applyMultiModeMarkingPhilosophy(
       };
     }
 
-    // MCQs are deterministic: matching option gets full marks, non-matching gets 0
+    // MCQs remain deterministic; preserve any official CA Foundation negative-marking penalty.
     if (isMcq) {
       return {
         ...sq,
@@ -296,13 +328,9 @@ export function applyMultiModeMarkingPhilosophy(
   let strictTotal = Math.round(strictQuestions.reduce((s, q) => s + (q.marksAwarded || 0), 0) * 4) / 4;
   let modTotal = Math.round(moderateQuestions.reduce((s, q) => s + (q.marksAwarded || 0), 0) * 4) / 4;
 
-  // Enforce mathematical invariant
-  if (strictTotal > stdTotal) {
-    strictTotal = stdTotal;
-  }
-  if (modTotal < stdTotal) {
-    modTotal = stdTotal;
-  }
+  // Totals remain the literal sums of their corresponding question arrays.
+  // The per-question mode transforms above enforce Strict <= Standard <= Moderate;
+  // avoid clamping summary numbers independently from displayed question marks.
 
   const stdPct = Math.round((stdTotal / officialPaperMaxMarks) * 1000) / 10;
   const strictPct = Math.round((strictTotal / officialPaperMaxMarks) * 1000) / 10;
