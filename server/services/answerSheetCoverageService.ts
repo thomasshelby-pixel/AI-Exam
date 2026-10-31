@@ -160,7 +160,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         ...(questionNumber ? { questionNumber } : {}),
         ...(subQuestion ? { subQuestion } : {}),
         ...(parentVisible !== undefined ? { parentQuestionNumberVisible: parentVisible } : {}),
-        isContinuation: continuation,
+        isContinuation: explicitContinuation,
         ...(snippet !== undefined ? { snippet } : {}),
       });
     }
@@ -198,9 +198,9 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     normalizedHandwriting = true;
     warnings.push('The page auditor marked a page with detected answers as having no handwriting; the contradiction was retained for review.');
   }
-  if (status === 'CLEARLY_UNATTEMPTED' && hasDetectedAnswers) {
+  if (hasDetectedAnswers && (status === 'CLEARLY_UNATTEMPTED' || status === 'PAGE_UNREADABLE')) {
     status = 'ATTEMPTED_UNCLEAR';
-    warnings.push('The page was marked unattempted despite detected answers; the page was retained as an attempted answer requiring review.');
+    warnings.push('The page was marked blank or unreadable despite detected answers; the page was retained as an attempted answer requiring review.');
   } else if (status === 'QUESTION_NOT_IDENTIFIED' && hasDetectedAnswers) {
     // Preserve confidently identified questions from a mixed page. The separate
     // warning keeps the page uncertified until its unidentified content is reviewed.
