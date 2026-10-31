@@ -1735,7 +1735,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     const reportReady = record.report_status === 'READY' || fs.existsSync(reportPath);
 
     let resultJson: any = null;
-    if ((record.status === 'COMPLETED' || record.status === 'NEEDS_REVIEW') && record.result_json) {
+    if ((normalizedRecord.status === 'COMPLETED' || normalizedRecord.status === 'NEEDS_REVIEW' || record.status === 'COMPLETED' || record.status === 'NEEDS_REVIEW') && record.result_json) {
       try {
         resultJson = JSON.parse(record.result_json);
       } catch {
@@ -1747,7 +1747,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       evaluationId,
       status: normalizedRecord.status || record.status,
       progressStage: normalizedRecord.progress_stage || record.progress_stage || record.status,
-      progressPercentage: record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
+      progressPercentage: normalizedRecord.progress_percentage ?? record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
       progressMessage: normalizedRecord.progress_message || record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
       reportReady,
       checkedCopyReady,
