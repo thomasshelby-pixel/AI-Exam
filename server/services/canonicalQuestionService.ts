@@ -496,7 +496,18 @@ export function deduplicateQuestionList<T extends {
         clonedItem.marksAwarded = authMax;
       }
       if (typeof clonedItem.marksAwarded === 'number') {
-        clonedItem.marksLost = Math.max(0, Math.round((authMax - clonedItem.marksAwarded) * 4) / 4);
+        const itemFlags = Array.isArray(clonedItem.flags) ? clonedItem.flags : [];
+        const requiresHumanReview =
+          clonedItem.status === 'unclear' ||
+          itemFlags.includes('REVIEW_REQUIRED') ||
+          itemFlags.includes('FAILED_TO_EVALUATE') ||
+          itemFlags.includes('TECHNICAL_FAILURE') ||
+          itemFlags.includes('MODEL_UNCERTAIN');
+        // An unresolved evaluation's marksLost is provisional, not a confirmed
+        // academic deduction. Preserve it through canonical deduplication.
+        clonedItem.marksLost = requiresHumanReview
+          ? Math.max(0, Math.min(authMax, Math.round((Number(clonedItem.marksLost) || 0) * 4) / 4))
+          : Math.max(0, Math.round((authMax - clonedItem.marksAwarded) * 4) / 4);
       }
     }
 

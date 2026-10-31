@@ -977,7 +977,10 @@ export function processEvaluationIntegrity(
     if (!maxMarks || maxMarks <= 0) {
       maxMarks = 0;
     }
-    let initialAwarded = Number(rawQ.marksAwarded) ?? 0;
+    const rawInitialAwarded = Number(rawQ.marksAwarded);
+    let initialAwarded = Number.isFinite(rawInitialAwarded)
+      ? Math.max(0, Math.min(maxMarks > 0 ? maxMarks : 0, rawInitialAwarded))
+      : 0;
 
     const isMcq =
       isMcqOnly ||
@@ -1002,45 +1005,83 @@ export function processEvaluationIntegrity(
       initialAwarded = Math.min(maxMarks, initialAwarded + restored);
     }
 
-    // Step C: Run Zero-Mark Safety Gate (Rule 3 & Rule 21)
-    const zeroValidation = evaluateZeroMarkSafetyGate({
-      questionNumber: qNum,
-      subQuestion: subQ,
-      maxMarks,
-      awardedMarks: initialAwarded,
-      status: rawQ.status || (initialAwarded > 0 ? 'partially_correct' : 'incorrect'),
-      components,
-      studentEvidence: rawQ.studentEvidence || rawQ.technicalEvaluation,
-      detailedFeedback: rawQ.detailedFeedback,
-      technicalEvaluation: rawQ.technicalEvaluation,
-      reasonForDeduction: rawQ.reasonForDeduction,
-      isMcq,
-      applicableProvisions: rawQ.applicableProvisions,
-    });
+    const questionFlags: string[] = Array.isArray(rawQ.flags) ? [...rawQ.flags] : [];
+    const isTechnicalFailure = questionFlags.includes('FAILED_TO_EVALUATE') || questionFlags.includes('TECHNICAL_FAILURE');
+    const isModelUncertain = questionFlags.includes('MODEL_UNCERTAIN');
+    const hasHandwritingEvidence =
+      questionFlags.includes('HANDWRITING_UNCLEAR') ||
+      Boolean(rawQ.detailedFeedback && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.detailedFeedback)) ||
+      Boolean(rawQ.technicalEvaluation && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.technicalEvaluation));
+    const isHandwritingUnclear = hasHandwritingEvidence && !isTechnicalFailure;
+    const needsHumanReview =
+      rawQ.status === 'unclear' ||
+      isTechnicalFailure ||
+      isModelUncertain ||
+      questionFlags.includes('REVIEW_REQUIRED') ||
+      isHandwritingUnclear;
 
-    let finalAwarded = initialAwarded;
-    let zeroScoreReason: ZeroScoreReason | undefined;
-    let zeroScoreEvidence: string | undefined;
+    // Step C: Run the Zero-Mark Safety Gate only for academically scorable answers.
+    // Technical failure / uncertainty must never be converted into a guessed academic score.
+    const zeroValidation: ZeroMarkValidationResult = needsHumanReview
+      ? {
+          isZeroAllowed: true,
+          creditworthyComponentsFound: [],
+          zeroScoreReason: undefined,
+          zeroScoreEvidence: undefined,
+          suggestedAwardedMarks: undefined,
+          auditNotes: ['Human review required; automatic zero-mark arbitration skipped.'],
+        }
+      : evaluateZeroMarkSafetyGate({
+          questionNumber: qNum,
+          subQuestion: subQ,
+          maxMarks,
+          awardedMarks: initialAwarded,
+          status: rawQ.status || (initialAwarded > 0 ? 'partially_correct' : 'incorrect'),
+          components,
+          studentEvidence: rawQ.studentEvidence || rawQ.technicalEvaluation,
+          detailedFeedback: rawQ.detailedFeedback,
+          technicalEvaluation: rawQ.technicalEvaluation,
+          reasonForDeduction: rawQ.reasonForDeduction,
+          isMcq,
+          applicableProvisions: rawQ.applicableProvisions,
+        });
 
-    if (!zeroValidation.isZeroAllowed && zeroValidation.suggestedAwardedMarks) {
-      finalAwarded = zeroValidation.suggestedAwardedMarks;
-    } else if (finalAwarded === 0) {
+    let finalAwarded = needsHumanReview
+      ? Math.max(0, Math.min(maxMarks, Number.isFinite(initialAwarded) ? initialAwarded : 0))
+      : initialAwarded;
+    // Preserve the established diagnostic classification for illegible handwriting,
+    // while keeping the mark provisional and skipping any automatic score override.
+    let zeroScoreReason: ZeroScoreReason | undefined = isHandwritingUnclear
+      ? 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED'
+      : undefined;
+    let zeroScoreEvidence: string | undefined = isHandwritingUnclear
+      ? 'Candidate script appears attempted, but handwriting or scan clarity prevented automated optical verification. Preserved for recheck review.'
+      : undefined;
+
+    if (!needsHumanReview && !zeroValidation.isZeroAllowed && (zeroValidation.suggestedAwardedMarks ?? 0) > 0) {
+      finalAwarded = zeroValidation.suggestedAwardedMarks!;
+    } else if (!needsHumanReview && finalAwarded === 0) {
       zeroScoreReason = zeroValidation.zeroScoreReason;
       zeroScoreEvidence = zeroValidation.zeroScoreEvidence;
     }
 
-    // Step D: Normalize components to guarantee mathematical integrity (Rule 11)
-    const balancedComponents = normalizeQuestionComponents(components, maxMarks, finalAwarded, qNum);
-    const verifiedAwarded = balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0);
-    const verifiedLost = Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
+    // Step D: Do not fabricate component breakdowns for unresolved questions.
+    const balancedComponents = maxMarks > 0
+      ? (needsHumanReview && components.length === 0
+          ? []
+          : normalizeQuestionComponents(components, maxMarks, finalAwarded, qNum))
+      : [];
+    const verifiedAwarded = maxMarks > 0
+      ? (balancedComponents.length > 0
+          ? balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0)
+          : finalAwarded)
+      : 0;
+    const verifiedLost = needsHumanReview
+      ? Math.max(0, Math.round((Number(rawQ.marksLost) || 0) * 4) / 4)
+      : Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
 
     let status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear' = 'correct';
-    const isHandwritingUnclear =
-      rawQ.status === 'unclear' ||
-      Boolean(rawQ.detailedFeedback && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.detailedFeedback)) ||
-      Boolean(rawQ.technicalEvaluation && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.technicalEvaluation));
-
-    if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
+    if (needsHumanReview && rawQ.status !== 'not_attempted') {
       status = 'unclear';
     } else if (verifiedAwarded <= 0) {
       status = rawQ.status === 'not_attempted' ? 'not_attempted' : 'incorrect';
@@ -1048,7 +1089,6 @@ export function processEvaluationIntegrity(
       status = 'partially_correct';
     }
 
-    const questionFlags: string[] = Array.isArray(rawQ.flags) ? [...rawQ.flags] : [];
     if (maxMarks <= 0) {
       status = 'unclear';
       if (!questionFlags.includes('NEEDS_MAPPING_REVIEW')) questionFlags.push('NEEDS_MAPPING_REVIEW');
@@ -1056,7 +1096,9 @@ export function processEvaluationIntegrity(
     }
     if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
       if (!questionFlags.includes('HANDWRITING_UNCLEAR')) questionFlags.push('HANDWRITING_UNCLEAR');
-      if (!questionFlags.includes('RECHECK_RECOMMENDED')) questionFlags.push('RECHECK_RECOMMENDED');
+    }
+    if (needsHumanReview && !questionFlags.includes('RECHECK_RECOMMENDED')) {
+      questionFlags.push('RECHECK_RECOMMENDED');
     }
 
     const structuredEv: StructuredMarkingEvidence = {
@@ -1071,7 +1113,7 @@ export function processEvaluationIntegrity(
       markingComponents: balancedComponents,
       finalConclusionAssessment: rawQ.finalConclusionAssessment || 'Conclusion assessed against reference standards.',
       overallReason: rawQ.reasonForDeduction || rawQ.detailedFeedback || 'Evaluated against official marking scheme.',
-      confidence: Math.max(80, Math.min(99, Number(rawQ.confidence) || 94)),
+      confidence: Number.isFinite(Number(rawQ.confidence)) ? Math.max(0, Math.min(100, Number(rawQ.confidence))) : 0,
       flags: questionFlags,
       isDerivedAllocation: !Array.isArray(rawQ.markingComponents) || rawQ.markingComponents.length === 0,
     };
@@ -1080,7 +1122,7 @@ export function processEvaluationIntegrity(
       materialId: options.materialId || rawResult.materialId || rawQ.referenceTrace?.materialId || 'ICAI_OFFICIAL_SUGGESTED',
       markingSchemeSection: rawQ.referenceTrace?.markingSchemeSection || (balancedComponents.length > 0 ? balancedComponents.map(c => c.componentType).join(', ') : `Q${qNum} Marking Guideline`),
       suggestedAnswerRef: rawQ.referenceTrace?.suggestedAnswerRef || `Q${qNum}${subQ ? `(${subQ})` : ''}`,
-      deductionReason: rawQ.reasonForDeduction || (verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on official guideline variance.` : 'Full marks awarded.'),
+      deductionReason: rawQ.reasonForDeduction || (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on official guideline variance.` : 'Full marks awarded.'),
       verifiedGroundTruthSnippet: rawQ.referenceTrace?.verifiedGroundTruthSnippet || balancedComponents[0]?.expectedRequirement || undefined,
     };
 
@@ -1093,7 +1135,7 @@ export function processEvaluationIntegrity(
       status,
       reasonForDeduction:
         rawQ.reasonForDeduction ||
-        (verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),
+        (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),
       detailedFeedback: rawQ.detailedFeedback || 'Candidate solution evaluated against reference answer.',
       confidence: structuredEv.confidence,
       technicalEvaluation: rawQ.technicalEvaluation || '',

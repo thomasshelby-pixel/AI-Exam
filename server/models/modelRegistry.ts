@@ -613,6 +613,8 @@ export interface ModelExecutionParams {
   maxTokens?: number;
   thinkingLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH';
   responseMimeType?: string;
+  /** Validate provider output before it is accepted; failures trigger the configured model fallback chain. */
+  validateOutput?: (rawText: string) => void;
   context?: {
     level?: string;
     subjectKey?: string;
@@ -1110,8 +1112,20 @@ async function callOpenAI(
     }
   }
 
-  const text = response.choices?.[0]?.message?.content || '';
+  const choice = response.choices?.[0];
   const usage = response.usage;
+  const finishReason = choice?.finish_reason;
+  if (finishReason === 'length') {
+    const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+    throw new Error(`OPENAI_OUTPUT_TRUNCATED: finish_reason=length; completion_tokens=${usage?.completion_tokens ?? 'unknown'}; reasoning_tokens=${reasoningTokens}.`);
+  }
+  if (finishReason !== 'stop') {
+    throw new Error(`OPENAI_OUTPUT_INCOMPLETE: finish_reason=${finishReason || 'missing'}.`);
+  }
+  const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+  if (!text.trim()) {
+    throw new Error('OPENAI_EMPTY_OUTPUT: provider returned no textual evaluation content.');
+  }
   return {
     text,
     promptTokens: usage?.prompt_tokens,
@@ -1585,6 +1599,13 @@ export async function executeModelWithFallback(
       );
 
       const output = await executeSingleModel(candidateModel, params, effectiveThinking);
+      if (params.validateOutput) {
+        try {
+          params.validateOutput(output.text);
+        } catch (validationError: any) {
+          throw new Error(`MODEL_OUTPUT_VALIDATION_FAILED: ${validationError?.message || String(validationError)}`);
+        }
+      }
       const latencyMs = Date.now() - startTime;
 
       try {
@@ -1660,6 +1681,13 @@ export async function executeModelWithFallback(
       const isRateLimit = errMsgLower.includes('429') || errMsgLower.includes('quota') || errMsgLower.includes('resource_exhausted') || errMsgLower.includes('rate_limit');
       const isTemp = errMsgLower.includes('503') || errMsgLower.includes('502') || errMsgLower.includes('unavailable') || errMsgLower.includes('high demand') || errMsgLower.includes('overloaded');
       const isTimeout = errMsgLower.includes('timed out') || errMsgLower.includes('timeout') || errMsgLower.includes('etimedout');
+      const isOutputRejected = errMsgLower.includes('model_output_validation_failed') ||
+        errMsgLower.includes('openai_output_truncated') ||
+        errMsgLower.includes('openai_output_incomplete') ||
+        errMsgLower.includes('openai_empty_output');
+      if (isOutputRejected) {
+        markModelTemporarilyUnavailable(candidateModel, 30000, 'Invalid or incomplete structured evaluation output');
+      }
 
       if (isRateLimit || isTemp || isTimeout) {
         const cooldownMs = isRateLimit ? extractRetryDelayMs(errMsg, 30000) : isTimeout ? 2 * 60 * 1000 : 45000;
@@ -1668,7 +1696,7 @@ export async function executeModelWithFallback(
       }
 
       try {
-        const status = isCreditIssue ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
+        const status = isCreditIssue ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp || isOutputRejected ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
         db.prepare(
           "UPDATE model_configs SET status = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
         ).run(status, latencyMs, candidateModel);

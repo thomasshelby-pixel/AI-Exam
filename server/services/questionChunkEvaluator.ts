@@ -77,6 +77,110 @@ export function extractRelevantReferenceSnippets(
 
 
 /**
+ * Parse and validate a single-question model response before it can be scored.
+ * Invalid or internally inconsistent output is rejected so the provider fallback
+ * chain can try another model instead of silently converting it into an academic zero.
+ */
+export function parseAndValidateQuestionChunkOutput(rawText: string, maxMarks: number): Record<string, any> {
+  let clean = String(rawText || '').trim();
+  clean = clean.replace(/^`{3}(?:json)?[ \t\r\n]*/i, '').replace(/[ \t\r\n]*`{3}$/, '');
+
+  let raw: any;
+  try {
+    raw = JSON.parse(clean);
+  } catch {
+    throw new Error('QUESTION_CHUNK_INVALID_JSON: model response could not be parsed as JSON.');
+  }
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('QUESTION_CHUNK_INVALID_SCHEMA: response must be a JSON object.');
+  }
+  if (!Number.isFinite(maxMarks) || maxMarks <= 0) {
+    throw new Error('QUESTION_CHUNK_INVALID_MAX_MARKS: authoritative maximum marks are missing.');
+  }
+
+  const allowedStatuses = new Set(['correct', 'partially_correct', 'incorrect', 'unclear']);
+  if (typeof raw.status !== 'string' || !allowedStatuses.has(raw.status)) {
+    throw new Error('QUESTION_CHUNK_INVALID_STATUS: expected correct, partially_correct, incorrect, or unclear.');
+  }
+  if (typeof raw.marksAwarded !== 'number' || !Number.isFinite(raw.marksAwarded) ||
+      raw.marksAwarded < 0 || raw.marksAwarded > maxMarks + 0.05) {
+    throw new Error('QUESTION_CHUNK_INVALID_TOTAL: awarded marks are missing or outside the authoritative range.');
+  }
+
+  if (raw.status === 'correct' && raw.marksAwarded < maxMarks - 0.05) {
+    throw new Error('QUESTION_CHUNK_STATUS_SCORE_MISMATCH: a correct answer must receive the full available marks.');
+  }
+  if (raw.status === 'partially_correct' && (raw.marksAwarded <= 0 || raw.marksAwarded >= maxMarks - 0.05)) {
+    throw new Error('QUESTION_CHUNK_STATUS_SCORE_MISMATCH: partially_correct requires a score strictly between zero and the maximum.');
+  }
+  if (raw.status === 'incorrect' && raw.marksAwarded > 0.05) {
+    throw new Error('QUESTION_CHUNK_STATUS_SCORE_MISMATCH: a response with positive step credit must not be labelled wholly incorrect.');
+  }
+
+  const components = raw.markingComponents;
+  if (!Array.isArray(components) || components.length === 0) {
+    throw new Error('QUESTION_CHUNK_COMPONENTS_MISSING: a question-level score without step evidence is not accepted.');
+  }
+
+  const allowedTypes = new Set([
+    'PROVISION', 'PRINCIPLE', 'CONDITION', 'APPLICATION', 'CALCULATION',
+    'WORKING', 'TREATMENT', 'REASONING', 'CONCLUSION', 'PRESENTATION',
+  ]);
+  const allowedAssessments = new Set(['CORRECT', 'PARTIALLY_CORRECT', 'INCORRECT', 'OMITTED']);
+  let availableTotal = 0;
+  let awardedTotal = 0;
+
+  for (let index = 0; index < components.length; index++) {
+    const component = components[index];
+    const prefix = `Component ${index + 1}`;
+    if (!component || typeof component !== 'object' || Array.isArray(component)) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} must be an object.`);
+    }
+    if (typeof component.componentId !== 'string' || !component.componentId.trim()) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing componentId.`);
+    }
+    if (typeof component.componentType !== 'string' || !allowedTypes.has(component.componentType)) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported componentType.`);
+    }
+    if (typeof component.assessment !== 'string' || !allowedAssessments.has(component.assessment)) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported assessment.`);
+    }
+    if (typeof component.expectedRequirement !== 'string' || !component.expectedRequirement.trim()) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing the authoritative requirement.`);
+    }
+    if (typeof component.studentEvidence !== 'string' || !component.studentEvidence.trim()) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing candidate evidence or an explicit omission statement.`);
+    }
+
+    const numbers = [component.marksAvailable, component.marksAwarded, component.marksDeducted];
+    if (numbers.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has missing or non-numeric marks.`);
+    }
+    const available = component.marksAvailable as number;
+    const awarded = component.marksAwarded as number;
+    const deducted = component.marksDeducted as number;
+    if (available < 0 || awarded < 0 || awarded > available + 0.01 || deducted < 0 || deducted > available + 0.01) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has marks outside its component limit.`);
+    }
+    if (Math.abs((available - awarded) - deducted) > 0.26) {
+      throw new Error(`QUESTION_CHUNK_COMPONENT_ARITHMETIC_MISMATCH: ${prefix} awarded and deducted marks do not reconcile.`);
+    }
+    availableTotal += available;
+    awardedTotal += awarded;
+  }
+
+  if (Math.abs(availableTotal - maxMarks) > 0.05) {
+    throw new Error(`QUESTION_CHUNK_ALLOCATION_MISMATCH: component allocations total ${availableTotal}, but the authoritative maximum is ${maxMarks}.`);
+  }
+  if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
+    throw new Error(`QUESTION_CHUNK_SCORE_MISMATCH: component awards total ${awardedTotal}, but the model reported ${raw.marksAwarded}.`);
+  }
+
+  return raw;
+}
+
+/**
  * Evaluates a single attempted descriptive sub-question using targeted page images and reference material.
  */
 export async function evaluateQuestionChunk(
@@ -107,6 +211,13 @@ export async function evaluateQuestionChunk(
     ctx.suggestedAnswersText,
     ctx.markingSchemeText
   );
+  if (!snippets.questionPaperFound || !snippets.suggestedAnswerFound || snippets.referenceNeedsReview) {
+    const missingSources = [
+      !snippets.questionPaperFound ? 'Question Paper section' : '',
+      !snippets.suggestedAnswerFound ? 'Suggested Answer section' : '',
+    ].filter(Boolean).join(' and ');
+    throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${missingSources || 'authoritative question reference'} could not be matched to ${fullCode}; human review required.`);
+  }
 
   const sourceTransformations = extractSourceGroundedTransformations(
     snippets.qpSnippet,
@@ -211,10 +322,10 @@ CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
 3. Every step component must have:
-   - componentType: 'PROVISION' | 'PRINCIPLE' | 'CONDITION' | 'APPLICATION' | 'CALCULATION' | 'CONCLUSION'
+    - componentType: 'PROVISION' | 'PRINCIPLE' | 'CONDITION' | 'APPLICATION' | 'CALCULATION' | 'WORKING' | 'TREATMENT' | 'REASONING' | 'CONCLUSION' | 'PRESENTATION'
    - expectedRequirement: exact requirement from verified official answer
    - studentEvidence: exact quotes, working, or numbers from what candidate wrote in their script
-   - assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT'
+    - assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT' | 'OMITTED'
    - marksAvailable: step max
    - marksAwarded: awarded marks (0 to marksAvailable)
    - marksDeducted: deducted marks
@@ -248,10 +359,10 @@ Return strictly valid JSON with this schema:
   "markingComponents": [
     {
       "componentId": string,
-      "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "CONCLUSION",
+      "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "WORKING" | "TREATMENT" | "REASONING" | "CONCLUSION" | "PRESENTATION",
       "expectedRequirement": string,
       "studentEvidence": string,
-      "assessment": "CORRECT" | "PARTIALLY_CORRECT" | "INCORRECT",
+      "assessment": "CORRECT" | "PARTIALLY_CORRECT" | "INCORRECT" | "OMITTED",
       "marksAvailable": number,
       "marksAwarded": number,
       "marksDeducted": number,
@@ -272,6 +383,9 @@ Return strictly valid JSON with this schema:
       mimeType: 'application/pdf',
       responseMimeType: 'application/json',
       thinkingLevel: checkingMode === 'strict' ? 'HIGH' : 'MEDIUM',
+      validateOutput: (rawText) => {
+        parseAndValidateQuestionChunkOutput(rawText, maxMarks);
+      },
       context: {
         level,
         subjectName,
@@ -281,55 +395,23 @@ Return strictly valid JSON with this schema:
     });
     console.info(`[QuestionChunkEvaluator] ${fullCode} evaluated with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
 
-    let raw: any = {};
-    try {
-      let clean = res.rawText?.trim() || '{}';
-      if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-      raw = JSON.parse(clean);
-    } catch {
-      raw = {};
-    }
+    const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks);
+    const components: MarkingComponent[] = raw.markingComponents as MarkingComponent[];
 
-    const initialAwarded = Math.min(maxMarks, Math.max(0, Number(raw.marksAwarded) || 0));
-    let components: MarkingComponent[] = Array.isArray(raw.markingComponents) ? raw.markingComponents : [];
-
-    // Ensure components sum to maxMarks
-    if (components.length === 0) {
-      components = [
-        {
-          componentId: `${fullCode}_c1`,
-          componentType: 'APPLICATION',
-          expectedRequirement: `Fulfill requirements of ${fullCode}`,
-          studentEvidence: mapping.studentSnippet || 'Candidate answer evaluated.',
-          assessment: initialAwarded >= maxMarks ? 'CORRECT' : initialAwarded > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT',
-          marksAvailable: maxMarks,
-          marksAwarded: initialAwarded,
-          marksDeducted: Math.max(0, maxMarks - initialAwarded),
-          deductionReason: initialAwarded < maxMarks ? raw.reasonForDeduction || 'Partial variance from model answer.' : undefined,
-          confidence: 90,
-          pageNumber: mapping.pages[0] || 1,
-          annotationInstructions: `Marks awarded: ${initialAwarded}/${maxMarks}`,
-        },
-      ];
-    } else {
-      // Balance components so total marksAvailable === maxMarks
-      const compAvailSum = components.reduce((sum, c) => sum + (Number(c.marksAvailable) || 0), 0);
-      if (Math.abs(compAvailSum - maxMarks) > 0.01 && compAvailSum > 0) {
-        const factor = maxMarks / compAvailSum;
-        components = components.map((c) => ({
-          ...c,
-          marksAvailable: Math.round(c.marksAvailable * factor * 2) / 2,
-          marksAwarded: Math.min(c.marksAvailable, Math.round((c.marksAwarded || 0) * factor * 2) / 2),
-          marksDeducted: Math.max(0, Math.round((c.marksAvailable - (c.marksAwarded || 0)) * 2) / 2),
-        }));
-      }
-    }
-
-    const calculatedAwarded = components.reduce((sum, c) => sum + (Number(c.marksAwarded) || 0), 0);
+    // Do not invent or proportionally rescale step allocations. The model output has
+    // already been validated against the authoritative maximum and component arithmetic.
+    const calculatedAwarded = components.reduce((sum, component) => sum + component.marksAwarded, 0);
     const finalAwarded = Math.min(maxMarks, Math.round(calculatedAwarded * 4) / 4);
-    const marksLost = Math.max(0, maxMarks - finalAwarded);
+    const marksLost = raw.status === 'unclear' ? 0 : Math.max(0, maxMarks - finalAwarded);
+    const modelConfidence = typeof raw.confidence === 'number' && Number.isFinite(raw.confidence)
+      ? Math.max(0, Math.min(100, raw.confidence))
+      : 0;
 
     const questionFlags: string[] = [];
+    if (raw.status === 'unclear') {
+      questionFlags.push('MODEL_UNCERTAIN');
+      questionFlags.push('REVIEW_REQUIRED');
+    }
     if (mapping.status === 'ATTEMPTED_UNCLEAR') {
       questionFlags.push('HANDWRITING_UNCLEAR');
       questionFlags.push('REVIEW_REQUIRED');
@@ -345,10 +427,10 @@ Return strictly valid JSON with this schema:
       maximumMarks: maxMarks,
       marksAwarded: finalAwarded,
       marksLost,
-      status: finalAwarded >= maxMarks ? 'correct' : finalAwarded > 0 ? 'partially_correct' : 'incorrect',
+      status: raw.status,
       reasonForDeduction: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} mark(s) deducted based on step-marking rubric.` : 'Full marks awarded.'),
       detailedFeedback: raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
-      confidence: Math.max(80, Math.min(99, Number(raw.confidence) || 92)),
+      confidence: modelConfidence,
       technicalEvaluation: raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
       markingComponents: components,
       pageNumber: mapping.pages[0] || 1,
@@ -377,7 +459,7 @@ Return strictly valid JSON with this schema:
         markingComponents: components,
         finalConclusionAssessment: raw.finalConclusionAssessment || 'Assessed against official standards.',
         overallReason: raw.reasonForDeduction || 'Evaluated against verified marking scheme.',
-        confidence: 92,
+        confidence: modelConfidence,
         flags: questionFlags,
         isDerivedAllocation: false,
       },

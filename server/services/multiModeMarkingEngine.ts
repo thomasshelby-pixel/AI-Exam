@@ -75,13 +75,13 @@ export function applyMultiModeMarkingPhilosophy(
     const awarded = comps.length > 0
       ? Math.min(qMax, comps.reduce((s, c) => s + (c.marksAwarded || 0), 0))
       : Math.min(qMax, Math.max(0, Number(q.marksAwarded) || 0));
-    const marksLost = Math.max(0, qMax - awarded);
+    const marksLost = q.status === 'unclear' ? Math.max(0, Number(q.marksLost) || 0) : Math.max(0, qMax - awarded);
 
     return {
       ...q,
       marksAwarded: Math.round(awarded * 4) / 4,
       marksLost: Math.round(marksLost * 4) / 4,
-      status: awarded >= qMax ? 'correct' : awarded > 0 ? 'partially_correct' : 'incorrect',
+      status: q.status === 'unclear' ? 'unclear' : awarded >= qMax ? 'correct' : awarded > 0 ? 'partially_correct' : 'incorrect',
       markingComponents: comps,
     };
   });
@@ -97,6 +97,15 @@ export function applyMultiModeMarkingPhilosophy(
     );
 
     const qMax = Number(sq.maximumMarks) || 0;
+
+    // Unclear questions remain provisional across every marking mode. Do not apply
+    // strict deductions or moderate bonuses to unresolved/technical evaluations.
+    if (sq.status === 'unclear') {
+      return {
+        ...sq,
+        markingModeApplied: 'strict',
+      };
+    }
 
     // MCQs are deterministic: matching option gets full marks, non-matching gets 0
     if (isMcq) {
@@ -182,6 +191,14 @@ export function applyMultiModeMarkingPhilosophy(
     );
 
     const qMax = Number(sq.maximumMarks) || 0;
+
+    // Do not manufacture benefit-of-doubt marks for an unresolved question.
+    if (sq.status === 'unclear') {
+      return {
+        ...sq,
+        markingModeApplied: 'moderate',
+      };
+    }
 
     if (isMcq) {
       return {
