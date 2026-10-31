@@ -167,10 +167,14 @@ export function parseAndValidateQuestionChunkOutput(rawText: string, maxMarks: n
     throw new Error(`QUESTION_CHUNK_SCORE_MISMATCH: component awards total ${awardedTotal}, but the model reported ${raw.marksAwarded}.`);
   }
 
+  // The validated component marks are authoritative. Reconcile the question
+  // score to their quarter-mark sum so displayed totals cannot drift from steps.
+  raw.marksAwarded = Math.min(maxMarks, Math.round(awardedTotal * 4) / 4);
+
   // The status label is not an independent scoring signal. Some models label
   // a response "incorrect" while still awarding valid step marks. Keep the
-  // validated component marks and normalize the label from the score; only an
-  // explicitly unclear answer remains provisional for human review.
+  // validated component marks and normalize the label from the reconciled score;
+  // only an explicitly unclear answer remains provisional for human review.
   if (raw.status !== 'unclear') {
     raw.status = raw.marksAwarded >= maxMarks - 0.05
       ? 'correct'
@@ -305,7 +309,8 @@ ${correctionDirective}
 TARGET EVALUATION DETAILS:
 Question: ${fullCode} (Question ${qNum}${subQ ? `, Sub-part (${subQ})` : ''})
 Subject: ${subjectName} (${level})
-Checking Mode: ${checkingMode}
+Requested Display Mode: ${checkingMode}
+Base scoring instruction: Use the same balanced, source-grounded Standard ICAI step-marking for this question regardless of the requested display mode. Do not apply extra Strict deductions or Moderate bonuses here. The deterministic multi-mode marking engine applies Strict/Moderate adjustments exactly once after all base question marks have been reconciled.
 MAXIMUM MARKS FOR THIS QUESTION: EXACTLY ${maxMarks} MARKS (Do NOT alter or exceed this limit!).
 
 --- VERIFIED QUESTION PAPER EXTRACT ---
