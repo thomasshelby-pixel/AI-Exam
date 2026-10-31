@@ -16,7 +16,7 @@ import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
-import { classifyPreEvaluationFailures, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
+import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
 import {
   getSupportedThinkingLevel,
@@ -47,6 +47,10 @@ async function runTests() {
     ['MISSING_OFFICIAL_MCQ_KEY: MCQ 2 lacks a verified authoritative answer key.'],
     'An absent authoritative MCQ answer key must remain a hard scoring blocker.',
   );
+  assert.strictEqual(isEvaluationValidationSafeForCertification('VALID'), true, 'Only validated results may auto-certify.');
+  assert.strictEqual(isEvaluationValidationSafeForCertification('NEEDS_REVIEW'), false, 'Review-required marks must never auto-certify.');
+  assert.strictEqual(isEvaluationValidationSafeForCertification('VALIDATION_FAILED'), false, 'Failed validation must never auto-certify.');
+
   const hardOnlyDisposition = classifyPreEvaluationFailures([
     'QUESTION_PAPER_NOT_PARSED: No valid question nodes found in authoritative structure.',
   ]);
