@@ -294,7 +294,22 @@ export function validatePostEvaluationGate(params: {
     }
 
     if (qAwarded < 0) {
-      errors.push(`NEGATIVE_SCORE_ERROR: ${q.canonicalId || q.questionNumber} has negative awarded marks: ${qAwarded}`);
+      const questionId = String(q.canonicalId || q.questionNumber || '').toUpperCase();
+      const isMcqQuestion =
+        questionId.startsWith('MCQ') ||
+        (q.markingComponents || []).some((component) => component.componentType === 'MCQ');
+      const configuredPenalty = Number(q.negativeMarking);
+      const isAuthorizedFoundationNegativeMark =
+        String((evaluationResult as any).caLevel || (evaluationResult as any).level || '').toUpperCase() === 'FOUNDATION' &&
+        isMcqQuestion &&
+        String(q.markingRule || '').startsWith('ICAI Foundation Rule') &&
+        Number.isFinite(configuredPenalty) &&
+        configuredPenalty < 0 &&
+        Math.abs(qAwarded - configuredPenalty) <= 0.01;
+
+      if (!isAuthorizedFoundationNegativeMark) {
+        errors.push(`NEGATIVE_SCORE_ERROR: ${q.canonicalId || q.questionNumber} has negative awarded marks outside the authorized CA Foundation objective-MCQ rule: ${qAwarded}`);
+      }
     }
 
     if (qAwarded > qMax) {
