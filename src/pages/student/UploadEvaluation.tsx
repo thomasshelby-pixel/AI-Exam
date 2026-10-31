@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
@@ -117,6 +117,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   onOpenCreditsModal,
 }) => {
   const { user, profile, refreshUser } = useAuth();
+  const currentStudentIdRef = useRef(user?.id || '');
+  currentStudentIdRef.current = user?.id || '';
   // Keep in-flight evaluation recovery scoped to the signed-in student account.
   const activeEvaluationStorageKey = user?.id ? `ca_active_eval_id_${user.id}` : null;
   const activeEvaluationStartStorageKey = user?.id ? `ca_active_eval_start_${user.id}` : null;
@@ -200,6 +202,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     setSelectedInstituteId('');
     setInstituteMaterials([]);
     setSelectedInstituteMaterialId('');
+    setShowDisclaimerModal(false);
+    setCheckingDisclaimer(false);
+    setErrorMessage('');
+    setRejectionDetails('');
+    setDragOver(false);
 
     if (!user?.id || !activeEvaluationStorageKey || !activeEvaluationStartStorageKey) return;
 
@@ -620,6 +627,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
   const handleCheckAnswerSheetClick = async () => {
+    const requestedUserId = user?.id || '';
+    if (!requestedUserId) {
+      setErrorMessage('Your student session is not ready. Please sign in again.');
+      return;
+    }
     if (evaluationSource === 'PUBLIC' && (!accountCourseLevel || level !== accountCourseLevel)) {
       setRequestedCourseLevel(level);
       setShowCourseAccessNotice(true);
@@ -653,6 +665,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     try {
       setCheckingDisclaimer(true);
       const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
+      if (currentStudentIdRef.current !== requestedUserId) return;
       if (!res.acknowledged) {
         setShowDisclaimerModal(true);
         return;
@@ -660,10 +673,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       // If already acknowledged, proceed with evaluation
       await handleStartEvaluation();
     } catch (err: unknown) {
+      if (currentStudentIdRef.current !== requestedUserId) return;
       console.warn('[UploadEvaluation] Error checking disclaimer status:', err);
       setShowDisclaimerModal(true);
     } finally {
-      setCheckingDisclaimer(false);
+      if (currentStudentIdRef.current === requestedUserId) setCheckingDisclaimer(false);
     }
   };
 
@@ -697,17 +711,21 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       return;
     }
 
+    const submissionOwnerId = user?.id || '';
+    if (!submissionOwnerId || !activeEvaluationStorageKey || !activeEvaluationStartStorageKey) {
+      setErrorMessage('Your student session is not ready. Please sign in again before starting an evaluation.');
+      return;
+    }
+
     const newEvaluationId = `eval_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
 
     try {
       setErrorMessage('');
       setRejectionDetails('');
       setElapsedSeconds(0);
-      if (!user?.id || !activeEvaluationStorageKey || !activeEvaluationStartStorageKey) {
-        throw new Error('Your student session is not ready. Please sign in again before starting an evaluation.');
-      }
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
       setActiveEvaluationId(newEvaluationId);
-      setActiveEvaluationOwnerId(user.id);
+      setActiveEvaluationOwnerId(submissionOwnerId);
       localStorage.setItem(activeEvaluationStorageKey, newEvaluationId);
       localStorage.setItem(activeEvaluationStartStorageKey, Date.now().toString());
       setEvalStep('VALIDATING_DOCUMENT');
@@ -741,6 +759,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         }),
       });
 
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
+
       if (response.result) {
         if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
         if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
@@ -755,11 +775,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         setEvalStep('EVALUATING_ANSWERS');
       }
     } catch (err: unknown) {
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
       // Resilience check: verify if the evaluation was enqueued and is running in backend
       try {
         const verifyRes = await apiRequest<{ evaluation?: { id: string; status: string } }>(
           `/api/student/evaluations/${newEvaluationId}`
         );
+        if (currentStudentIdRef.current !== submissionOwnerId) return;
         if (
           verifyRes.evaluation &&
           verifyRes.evaluation.status !== 'FAILED' &&
