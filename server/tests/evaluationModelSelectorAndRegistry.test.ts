@@ -17,6 +17,7 @@ import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEv
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
+import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -361,6 +362,53 @@ async function runTests() {
     }],
   };
   assert.equal(parseAndValidateQuestionChunkOutput(JSON.stringify(validChunk), 5).marksAwarded, 2);
+
+  const validCoverage = {
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    summary: 'Candidate answered Q2(a).',
+    detectedQuestions: [{
+      questionNumber: '2',
+      subQuestion: 'a',
+      parentQuestionNumberVisible: true,
+      isContinuation: false,
+      snippet: 'Candidate working and conclusion.',
+    }],
+    mcqSelections: { '1': 'B' },
+  };
+  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).detectedQuestions.length, 1);
+  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).mcqSelections['1'], 'B');
+  assert.equal(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'CLEARLY_UNATTEMPTED',
+      detectedQuestions: [],
+      mcqSelections: {},
+    })).status,
+    'CLEARLY_UNATTEMPTED',
+    'A truly blank page is valid coverage output and must not trigger provider fallback.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput('not valid JSON'),
+    /PAGE_COVERAGE_INVALID_JSON/,
+    'Malformed page mapping JSON must trigger provider fallback.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [{ subQuestion: 'a' }],
+      mcqSelections: {},
+    })),
+    /PAGE_COVERAGE_MISSING_QUESTION_ID/,
+    'An attempted answer without safe question identity must not be silently accepted.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      ...validCoverage,
+      mcqSelections: { '1': 'Z' },
+    })),
+    /PAGE_COVERAGE_INVALID_MCQ_OPTION/,
+    'MCQ coverage must reject invalid answer options and use provider fallback.',
+  );
 
   const mislabeledPartialChunk = {
     ...validChunk,
