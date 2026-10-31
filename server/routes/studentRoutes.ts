@@ -153,18 +153,21 @@ function repairLegacyFinalizationRejectionsForStudent(studentId: string, student
     // rejections too. The refund ledger is keyed by evaluation ID, so admin
     // repair, Firestore hydration and student history cannot refund twice.
     const entitlementSource = String(stale.entitlement_source || '').toUpperCase();
+    const entitlementOwnerId = String(stale.student_id || studentId);
     if (
       ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource) &&
-      String(stale.student_id || '') === studentId
+      entitlementOwnerId
     ) {
       try {
+        // The original student_id owns the debit ledger even when this history
+        // entry is visible through a verified email/account ownership alias.
         refundEvaluationCreditAtomic({
-          userId: studentId,
+          userId: entitlementOwnerId,
           evaluationId: String(stale.id),
           entitlementSource,
         });
         db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(stale.id));
-        syncStudentCreditsToFirestore(studentId).catch((error) =>
+        syncStudentCreditsToFirestore(entitlementOwnerId).catch((error) =>
           console.warn('[StudentRoutes] Could not sync refunded evaluation entitlement:', stale.id, error)
         );
       } catch (refundError) {
