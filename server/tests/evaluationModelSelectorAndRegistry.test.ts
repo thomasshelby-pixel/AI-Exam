@@ -212,10 +212,16 @@ async function runTests() {
 
   clearModelCooldown();
 
-  // Default routing
-  const defaultRouting = determineModelRouting({});
+  // A clean isolated CI database does not contain a persisted admin fallback order.
+  // Seed deterministic test-only model availability and pass the intended order explicitly.
+  db.prepare("UPDATE model_configs SET is_enabled = 1, status = 'AVAILABLE'").run();
+  const testFallbackOrder = ['gemini-3.6-flash', 'gpt-5.6-sol', 'claude-sonnet-5'];
+  const defaultRouting = determineModelRouting({
+    adminPreferredModel: 'gemini-3.8-flash',
+    adminFallbackOrder: testFallbackOrder,
+  });
   assert.strictEqual(defaultRouting.primaryModel, 'gemini-3.8-flash', 'Primary model must default to gemini-3.8-flash');
-  assert.ok(defaultRouting.fallbackChain.length > 0, 'Fallback chain must be populated');
+  assert.deepStrictEqual(defaultRouting.fallbackChain, testFallbackOrder, 'Fallback chain must preserve the explicit deterministic test order');
   for (const fb of defaultRouting.fallbackChain) {
     assert.ok(APPROVED_MODELS.some((m) => m.id === fb), `Fallback model ${fb} must be in APPROVED_MODELS`);
   }
