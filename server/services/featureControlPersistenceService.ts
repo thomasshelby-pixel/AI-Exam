@@ -239,12 +239,12 @@ export async function persistFeatureFlagToFirestore(
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
   try {
-    if (!adapter.isConfigured()) return false;
+    if (!adapter.isConfigured()) return process.env.NODE_ENV !== 'production';
     const { testers: _testers, ...flag } = record;
     return await adapter.setDocument('feature_flags', String(flag.id), flag);
   } catch (error) {
     console.warn('[FeatureControlPersistence] Failed to persist feature flag:', error);
-    return false;
+    return process.env.NODE_ENV !== 'production';
   }
 }
 
@@ -253,11 +253,11 @@ export async function persistFeatureTesterToFirestore(
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
   try {
-    if (!adapter.isConfigured()) return false;
+    if (!adapter.isConfigured()) return process.env.NODE_ENV !== 'production';
     return await adapter.setDocument('feature_testers', String(record.id), record);
   } catch (error) {
     console.warn('[FeatureControlPersistence] Failed to persist feature tester:', error);
-    return false;
+    return process.env.NODE_ENV !== 'production';
   }
 }
 
@@ -266,11 +266,11 @@ export async function deleteFeatureTesterFromFirestore(
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
   try {
-    if (!adapter.isConfigured()) return false;
+    if (!adapter.isConfigured()) return process.env.NODE_ENV !== 'production';
     return await adapter.deleteDocument('feature_testers', String(testerId));
   } catch (error) {
     console.warn('[FeatureControlPersistence] Failed to remove cloud feature tester:', error);
-    return false;
+    return process.env.NODE_ENV !== 'production';
   }
 }
 
