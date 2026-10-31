@@ -977,7 +977,10 @@ export function processEvaluationIntegrity(
     if (!maxMarks || maxMarks <= 0) {
       maxMarks = 0;
     }
-    let initialAwarded = Number(rawQ.marksAwarded) ?? 0;
+    const rawInitialAwarded = Number(rawQ.marksAwarded);
+    let initialAwarded = Number.isFinite(rawInitialAwarded)
+      ? Math.max(0, Math.min(maxMarks > 0 ? maxMarks : 0, rawInitialAwarded))
+      : 0;
 
     const isMcq =
       isMcqOnly ||
