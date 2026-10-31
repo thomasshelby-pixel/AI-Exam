@@ -165,13 +165,13 @@ export function applyMultiModeMarkingPhilosophy(
     const strictAwarded = strictComponents.length > 0
       ? Math.min(sq.marksAwarded, strictComponents.reduce((s, c) => s + (c.marksAwarded || 0), 0))
       : Math.min(sq.marksAwarded, Math.round(sq.marksAwarded * 0.75 * 2) / 2);
-    const strictLost = sq.status === 'unclear' ? Math.max(0, Number(sq.marksLost) || 0) : Math.max(0, qMax - strictAwarded);
+    const strictLost = Math.max(0, qMax - strictAwarded);
 
     return {
       ...sq,
       marksAwarded: Math.round(strictAwarded * 4) / 4,
       marksLost: Math.round(strictLost * 4) / 4,
-      status: sq.status === 'unclear' ? 'unclear' : strictAwarded >= qMax ? 'correct' : strictAwarded > 0 ? 'partially_correct' : 'incorrect',
+      status: strictAwarded >= qMax ? 'correct' : strictAwarded > 0 ? 'partially_correct' : 'incorrect',
       markingComponents: strictComponents,
       reasonForDeduction: strictAwarded < sq.marksAwarded
         ? `Strict mode evaluation: ${Math.round((sq.marksAwarded - strictAwarded) * 4) / 4} additional mark(s) deducted for strict statutory citations and step precision.`
@@ -271,7 +271,7 @@ export function applyMultiModeMarkingPhilosophy(
     const modAwarded = modComponents.length > 0
       ? Math.max(sq.marksAwarded, Math.min(qMax, modComponents.reduce((s, c) => s + (c.marksAwarded || 0), 0)))
       : Math.max(sq.marksAwarded, Math.min(qMax, sq.marksAwarded + Math.round((qMax - sq.marksAwarded) * 0.3 * 2) / 2));
-    const modLost = sq.status === 'unclear' ? Math.max(0, Number(sq.marksLost) || 0) : Math.max(0, qMax - modAwarded);
+    const modLost = Math.max(0, qMax - modAwarded);
 
     const qHasDiff = modAwarded > sq.marksAwarded;
     const dominantCategory = modComponents.find((c) => c.modeDifferenceCategory)?.modeDifferenceCategory ||
@@ -283,7 +283,7 @@ export function applyMultiModeMarkingPhilosophy(
       ...sq,
       marksAwarded: Math.round(modAwarded * 4) / 4,
       marksLost: Math.round(modLost * 4) / 4,
-      status: sq.status === 'unclear' ? 'unclear' : modAwarded >= qMax ? 'correct' : modAwarded > 0 ? 'partially_correct' : 'incorrect',
+      status: modAwarded >= qMax ? 'correct' : modAwarded > 0 ? 'partially_correct' : 'incorrect',
       markingComponents: modComponents,
       markingModeApplied: 'moderate',
       modeDifferenceCategory: dominantCategory,
