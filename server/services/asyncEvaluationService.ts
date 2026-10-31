@@ -562,6 +562,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';
     let finalizationErrors: string[] = [];
+    let reviewErrors: string[] = [];
 
     if (runPackage) {
       const packageToPersist = {
@@ -618,7 +619,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       };
       console.log(`[AsyncEval] Evaluation ${evaluationId} automatically verified and CERTIFIED.`);
     } else {
-      const reviewErrors = Array.from(new Set([
+      reviewErrors = Array.from(new Set([
         ...(!consistencyReport.isValid ? consistencyReport.errors : []),
         ...(evaluationResult.validationErrors || []),
         ...finalizationErrors,
@@ -650,6 +651,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           progress_stage = ?,
           progress_percentage = 100,
           progress_message = ?,
+          error_message = ?,
+          rejection_reason = NULL,
           total_marks = ?,
           maximum_marks = ?,
           percentage = ?,
@@ -692,6 +695,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       finalStatus === 'COMPLETED'
         ? 'Evaluation complete and certified'
         : 'Evaluation preserved. Academic score recorded; review required.',
+      finalStatus === 'COMPLETED' ? null : (reviewErrors.join(' | ') || 'Evaluation preserved for academic review; no document rejection was made.'),
       evaluationResult.canonicalLedger?.totalAwardedMarks ?? evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
