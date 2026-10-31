@@ -1444,7 +1444,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             hardenedResult.overallSummary = [
               hardenedResult.overallSummary,
               `PROVISIONAL RESULT: ${attemptedScorableQuestions.length} mapped attempted question(s) were scored, but ${coverageMap.unmappedPages?.length || 0} page(s) or question mapping(s) still require review. These marks are not a certified full-paper result.`,
-            ].filter(Boolean).join('\\n\\n');
+            ].filter(Boolean).join('\n\n');
             hardenedResult.completionGateReport = {
               ...(hardenedResult.completionGateReport || { passedCount: 0, failedCount: 0, checks: [] }),
               isPassed: false,
@@ -1455,7 +1455,6 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   ruleId: 'PRE_EVALUATION_COVERAGE_REVIEW',
                   name: 'Unmapped page/question review',
                   passed: false,
-                  isWarning: false,
                   details: coverageErrors.join(' | '),
                 },
               ],
