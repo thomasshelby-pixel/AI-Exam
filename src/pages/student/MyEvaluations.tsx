@@ -38,6 +38,7 @@ interface EvaluationItem {
   confidence_score: number;
   status: string;
   rejection_reason?: string;
+  progress_message?: string;
   created_at: string;
   evaluation_source?: 'PUBLIC' | 'INSTITUTE';
   institute_id?: string;
@@ -280,6 +281,12 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                           <div className="mt-2 max-w-xl rounded-md border border-rose-200 bg-rose-50 p-2 text-[11px] leading-relaxed text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
                             <span className="font-bold">Rejection reason: </span>
                             {ev.rejection_reason?.trim() || 'The rejection reason was not recorded. Please contact support for a review.'}
+                          </div>
+                        )}
+                        {ev.status === 'NEEDS_REVIEW' && (
+                          <div className="mt-2 max-w-xl rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                            <span className="font-bold">Review required: </span>
+                            {ev.progress_message?.trim() || 'Your answer sheet has been preserved for academic review. No final result has been issued yet.'}
                           </div>
                         )}
                       </td>
