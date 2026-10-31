@@ -22,6 +22,107 @@ export type PageAttemptStatus =
   | 'QUESTION_NOT_IDENTIFIED'
   | 'PAGE_UNREADABLE';
 
+export interface PageCoverageModelOutput {
+  status: PageAttemptStatus;
+  hasHandwriting?: boolean;
+  summary?: string;
+  detectedQuestions: Array<{
+    questionNumber?: string;
+    subQuestion?: string | null;
+    parentQuestionNumberVisible?: boolean;
+    isContinuation?: boolean;
+    snippet?: string;
+  }>;
+  mcqSelections: Record<string, string>;
+}
+
+/** Validate page-auditor output before accepting a provider, enabling model fallback. */
+export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverageModelOutput {
+  let clean = String(rawText || '').trim();
+  clean = clean.replace(/^\x60{3}(?:json)?[ \t\r\n]*/i, '').replace(/[ \t\r\n]*\x60{3}$/, '');
+
+  let raw: any;
+  try {
+    raw = JSON.parse(clean);
+  } catch {
+    throw new Error('PAGE_COVERAGE_INVALID_JSON: page-auditor response is not valid JSON.');
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('PAGE_COVERAGE_INVALID_SCHEMA: response must be a JSON object.');
+  }
+
+  const knownStatuses = new Set<PageAttemptStatus>([
+    'ATTEMPTED_READABLE',
+    'ATTEMPTED_PARTIALLY_READABLE',
+    'ATTEMPTED_UNCLEAR',
+    'CLEARLY_UNATTEMPTED',
+    'QUESTION_NOT_IDENTIFIED',
+    'PAGE_UNREADABLE',
+  ]);
+  if (typeof raw.status !== 'string' || !knownStatuses.has(raw.status)) {
+    throw new Error('PAGE_COVERAGE_INVALID_STATUS: unknown page attempt status.');
+  }
+  if (raw.hasHandwriting !== undefined && typeof raw.hasHandwriting !== 'boolean') {
+    throw new Error('PAGE_COVERAGE_INVALID_HANDWRITING: hasHandwriting must be boolean when provided.');
+  }
+  if (raw.summary !== undefined && typeof raw.summary !== 'string') {
+    throw new Error('PAGE_COVERAGE_INVALID_SUMMARY: summary must be a string when provided.');
+  }
+  if (!Array.isArray(raw.detectedQuestions)) {
+    throw new Error('PAGE_COVERAGE_INVALID_DETECTIONS: detectedQuestions must be an array.');
+  }
+  if (raw.mcqSelections !== undefined &&
+      (!raw.mcqSelections || typeof raw.mcqSelections !== 'object' || Array.isArray(raw.mcqSelections))) {
+    throw new Error('PAGE_COVERAGE_INVALID_MCQ_SELECTIONS: mcqSelections must be an object.');
+  }
+
+  for (let index = 0; index < raw.detectedQuestions.length; index++) {
+    const question = raw.detectedQuestions[index];
+    if (!question || typeof question !== 'object' || Array.isArray(question)) {
+      throw new Error(`PAGE_COVERAGE_INVALID_DETECTION: detectedQuestions[${index}] must be an object.`);
+    }
+    const questionNumber = String(question.questionNumber || '').trim();
+    const subQuestion = String(question.subQuestion || '').trim();
+    const contextualIdentity = question.parentQuestionNumberVisible === false && subQuestion.length > 0;
+    const explicitContinuation = question.isContinuation === true && (questionNumber.length > 0 || subQuestion.length > 0);
+    if (!questionNumber && !contextualIdentity && !explicitContinuation) {
+      throw new Error(`PAGE_COVERAGE_MISSING_QUESTION_ID: detectedQuestions[${index}] has no safely resolvable question identity.`);
+    }
+    if (question.parentQuestionNumberVisible !== undefined && typeof question.parentQuestionNumberVisible !== 'boolean') {
+      throw new Error(`PAGE_COVERAGE_INVALID_PARENT_VISIBILITY: detectedQuestions[${index}] must use a boolean.`);
+    }
+    if (question.isContinuation !== undefined && typeof question.isContinuation !== 'boolean') {
+      throw new Error(`PAGE_COVERAGE_INVALID_CONTINUATION: detectedQuestions[${index}] must use a boolean.`);
+    }
+    if (question.subQuestion !== undefined && question.subQuestion !== null && typeof question.subQuestion !== 'string') {
+      throw new Error(`PAGE_COVERAGE_INVALID_SUBQUESTION: detectedQuestions[${index}] must use a string or null.`);
+    }
+    if (question.snippet !== undefined && typeof question.snippet !== 'string') {
+      throw new Error(`PAGE_COVERAGE_INVALID_SNIPPET: detectedQuestions[${index}] must use a string.`);
+    }
+  }
+
+  const selections: Record<string, string> = {};
+  for (const [questionNumber, rawOption] of Object.entries(raw.mcqSelections || {})) {
+    const option = String(rawOption || '').trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()]/g, '');
+    if (!/^[A-D]$/.test(option)) {
+      throw new Error(`PAGE_COVERAGE_INVALID_MCQ_OPTION: MCQ ${questionNumber} has an invalid selected option.`);
+    }
+    if (!String(questionNumber).replace(/[^0-9]/g, '')) {
+      throw new Error('PAGE_COVERAGE_INVALID_MCQ_NUMBER: MCQ selection keys must contain a question number.');
+    }
+    selections[String(questionNumber)] = option;
+  }
+
+  return {
+    status: raw.status,
+    hasHandwriting: raw.hasHandwriting,
+    summary: raw.summary,
+    detectedQuestions: raw.detectedQuestions,
+    mcqSelections: selections,
+  };
+}
+
 export interface DetectedQuestionOccurrence {
   fullQuestionCode: string; // e.g. 'Q5(a)', 'Q6(c)', 'MCQ9'
   questionNumber: string;
@@ -396,6 +497,9 @@ Return strictly valid JSON with this schema:
       mimeType: 'application/pdf',
       responseMimeType: 'application/json',
       thinkingLevel: 'LOW',
+      validateOutput: (rawText) => {
+        parseAndValidatePageCoverageOutput(rawText);
+      },
       context: {
         checkingMode: 'strict',
         pageCount: 1,
@@ -404,22 +508,10 @@ Return strictly valid JSON with this schema:
     });
 
     console.info(`[AnswerCoverageService] Page ${pageNumber} analyzed with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
-    let clean = res.rawText?.trim() || '{}';
-    if (clean.startsWith('```json')) clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    const raw: any = JSON.parse(clean);
+    const raw = parseAndValidatePageCoverageOutput(res.rawText);
 
     const detectedQuestions: DetectedQuestionOccurrence[] = [];
-    const knownStatuses: PageAttemptStatus[] = [
-      'ATTEMPTED_READABLE',
-      'ATTEMPTED_PARTIALLY_READABLE',
-      'ATTEMPTED_UNCLEAR',
-      'CLEARLY_UNATTEMPTED',
-      'QUESTION_NOT_IDENTIFIED',
-      'PAGE_UNREADABLE',
-    ];
-    let status: PageAttemptStatus = knownStatuses.includes(raw.status)
-      ? raw.status
-      : 'QUESTION_NOT_IDENTIFIED';
+    let status: PageAttemptStatus = raw.status;
     const hasHandwriting = raw.hasHandwriting !== false;
     const summary = raw.summary || `Page ${pageNumber} analysis`;
     let mappingReviewReason: string | undefined;
