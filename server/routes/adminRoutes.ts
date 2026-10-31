@@ -14,7 +14,7 @@ import {
 } from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -55,7 +55,7 @@ import {
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
 import { executeServerMfaReset } from '../services/mfaRecoveryService.js';
-import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
+import { isFinalizationReviewMarker, normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import {
   auditStorageConsistency,
   inspectCloudStorageStatus,
@@ -119,6 +119,33 @@ async function repairEvaluationStatus(evaluation: any): Promise<boolean> {
   const normalizedStatus = String(normalized?.status || '').trim().toUpperCase();
   const currentStatus = String(evaluation?.status || '').trim().toUpperCase();
   const currentReason = String(evaluation?.rejection_reason || '').trim();
+  const documentStatus = String(evaluation?.document_validation_status || '').trim().toUpperCase();
+
+  // Restore the app entitlement for a legacy internal finalization failure even
+  // when another path (e.g. Firestore hydration) already changed the row to review.
+  // The per-evaluation refund ledger makes this safe across concurrent repair paths.
+  if (
+    isFinalizationReviewMarker(evaluation) &&
+    !['REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD'].includes(documentStatus) &&
+    ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(evaluation?.entitlement_source || '').toUpperCase())
+  ) {
+    try {
+      const studentId = String(evaluation?.student_id || '').trim();
+      if (studentId) {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId: String(evaluation.id),
+          entitlementSource: String(evaluation.entitlement_source).toUpperCase(),
+        });
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(evaluation.id));
+        syncStudentCreditsToFirestore(studentId).catch((error) =>
+          console.warn('[AdminEvaluations] Could not sync refunded legacy entitlement:', evaluation.id, error)
+        );
+      }
+    } catch (refundError) {
+      console.error('[AdminEvaluations] Could not restore entitlement for legacy false rejection:', evaluation.id, refundError);
+    }
+  }
 
   // Repair legacy false rejections from finalization/integrity failures as review.
   // Do not send rejection notifications or retain rejection_reason for these rows.
