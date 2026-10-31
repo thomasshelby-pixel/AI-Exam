@@ -820,7 +820,7 @@ export function buildStudentAttemptManifest(options: {
     const pageOccs = rawPageOccurrences.filter((occ) => occ.pageNumber === p);
     const hasStudentContent = pageOccs.length > 0;
     const detectedQuestionIds = attempts
-      .filter((attempt) => attempt.isAttempted && attempt.sourcePages.includes(p))
+      .filter((attempt) => attempt.attempted && attempt.sourcePages.includes(p))
       .map((attempt) => attempt.questionId)
       .filter((questionId, index, all) => all.indexOf(questionId) === index)
       .sort();
