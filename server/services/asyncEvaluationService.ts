@@ -587,6 +587,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           evaluationResult.evaluationRunPackage = finalizationResult.package;
           if (finalizationResult.success) {
             finalStatus = 'COMPLETED';
+          } else {
+            finalStatus = 'NEEDS_REVIEW';
+            finalizationErrors = finalizationResult.errors || ['Evaluation finalization checks need review.'];
           }
         } catch (finErr: any) {
           console.warn(`[AsyncEval] Finalization run warning:`, finErr.message);
@@ -753,7 +756,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       // Return it when the system could not produce a verified final result.
       if (
         job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-        (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+        (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
       ) {
         try {
           refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
