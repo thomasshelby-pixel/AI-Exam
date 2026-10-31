@@ -529,7 +529,7 @@ const StudentWorkspaceLayout: React.FC<{
   };
 
   return (
-    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
+    <div className="student-glass-workspace dark relative min-h-screen overflow-x-clip text-slate-100">
       <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
       <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
 
@@ -651,7 +651,7 @@ const StudentWorkspaceLayout: React.FC<{
             <button
               key={item.path}
               type="button"
-              onClick={() => navigate(item.path)}
+              onClick={() => { setMobileNavOpen(false); navigate(item.path); }}
               className={'student-mobile-bottom-nav-item' + (isActive ? ' is-active' : '')}
               aria-current={isActive ? 'page' : undefined}
             >
