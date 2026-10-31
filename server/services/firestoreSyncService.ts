@@ -183,7 +183,7 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
           collectionName === 'evaluations' &&
           String(data.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
           [data.error_message, data.rejection_reason, data.progress_message]
-            .some((value) => /(?:^|\\b)FINALIZATION_FAILED\\s*:/i.test(String(value || '').trim()))
+            .some((value) => /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(String(value || '').trim()))
         ) {
           // Explicitly repair legacy false rejections caused by the old finalizer.
           // This review correction must override a newer stale REJECTED cloud snapshot.
