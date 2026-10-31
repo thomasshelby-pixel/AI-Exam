@@ -1482,8 +1482,24 @@ export function processEvaluationIntegrity(
     ...totalReconciliation.discrepancies,
   ];
 
-  const combinedValid = consistencyReport.isValid && postGateReport.isValid && canonicalLedger.isReconciled && totalReconciliation.passed;
-  const combinedErrors = Array.from(new Set([...consistencyReport.errors, ...postGateReport.errors, ...ledgerErrors]));
+  const questionReferenceReviewIds = auditedQuestions
+    .filter((question) => question.flags?.includes('QUESTION_REFERENCE_REVIEW_REQUIRED'))
+    .map((question) => question.canonicalId || `Q${question.questionNumber}${question.subQuestion ? `(${question.subQuestion})` : ''}`);
+  const questionReferenceReviewErrors = questionReferenceReviewIds.map(
+    (questionId) => `QUESTION_REFERENCE_REVIEW_REQUIRED: ${questionId} was scored provisionally because its exact Question Paper text slice needs manual verification against the locked Suggested Answer.`
+  );
+  const combinedValid =
+    consistencyReport.isValid &&
+    postGateReport.isValid &&
+    canonicalLedger.isReconciled &&
+    totalReconciliation.passed &&
+    questionReferenceReviewIds.length === 0;
+  const combinedErrors = Array.from(new Set([
+    ...consistencyReport.errors,
+    ...postGateReport.errors,
+    ...ledgerErrors,
+    ...questionReferenceReviewErrors,
+  ]));
 
   evaluationResult.validationStatus = combinedValid ? 'VALID' : 'NEEDS_REVIEW';
   evaluationResult.validationErrors = combinedErrors;
