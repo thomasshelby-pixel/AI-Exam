@@ -51,16 +51,20 @@ async function main() {
       ) VALUES (?, 'CHECKER', ?, 'Persistence Regression Feature', 'Cloud persistence test', 'DISABLED',
         'Temporarily unavailable', 1, 99, 'TEST', 'TEST', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).run(featureId, featureKey);
-    db.prepare(`
-      INSERT INTO feature_testers (id, feature_id, application, feature_key, email, created_by)
-      VALUES (?, ?, 'CHECKER', ?, ?, 'TEST')
-    `).run(testerId, featureId, featureKey, testerEmail);
-
     // First startup migrates existing local state into Firestore without replacing
     // any cloud document that already exists.
     const firstHydration = await hydrateFeatureControlsFromFirestore({ requireComplete: true }, adapter);
     assert.strictEqual(firstHydration.skipped, false);
     assert.strictEqual(getCollectionMap('feature_flags').get(featureId)?.status, 'DISABLED');
+
+    // An admin adds a tester after first startup; the mutation must be mirrored
+    // immediately rather than waiting for another container restart.
+    db.prepare(`
+      INSERT INTO feature_testers (id, feature_id, application, feature_key, email, created_by)
+      VALUES (?, ?, 'CHECKER', ?, ?, 'TEST')
+    `).run(testerId, featureId, featureKey, testerEmail);
+    const addedTester = db.prepare('SELECT * FROM feature_testers WHERE id = ?').get(testerId) as FeatureControlCloudDocument;
+    assert.strictEqual(await persistFeatureTesterToFirestore(addedTester, adapter), true);
     assert.strictEqual(getCollectionMap('feature_testers').get(testerId)?.email, testerEmail);
 
     // Admin changes are written to the durable cloud record.
