@@ -941,6 +941,25 @@ export function evaluateHardCompletionGate(
 }
 
 /**
+ * Returns authoritative review errors for question-level references that were
+ * deliberately scored provisionally because exact Question Paper extraction
+ * needs a human check. These errors participate in the final certification gate.
+ */
+export function getQuestionReferenceReviewErrors(questions: any[]): string[] {
+  return (Array.isArray(questions) ? questions : [])
+    .filter((question) => Array.isArray(question.flags) && question.flags.includes('QUESTION_REFERENCE_REVIEW_REQUIRED'))
+    .map((question) => {
+      const questionId = String(
+        question.canonicalId ||
+        question.fullQuestionCode ||
+        ('Q' + (question.questionNumber || '') + (question.subQuestion ? '(' + question.subQuestion + ')' : ''))
+      );
+      return 'QUESTION_REFERENCE_REVIEW_REQUIRED: ' + questionId +
+        ' was scored provisionally because its exact Question Paper text slice needs manual verification against the locked Suggested Answer.';
+    });
+}
+
+/**
  * 6. Master Pipeline: Enforces complete evaluation integrity on raw AI model output.
  * Call this function inside evaluateCAAnswerSheet before saving or returning.
  */
@@ -1482,8 +1501,19 @@ export function processEvaluationIntegrity(
     ...totalReconciliation.discrepancies,
   ];
 
-  const combinedValid = consistencyReport.isValid && postGateReport.isValid && canonicalLedger.isReconciled && totalReconciliation.passed;
-  const combinedErrors = Array.from(new Set([...consistencyReport.errors, ...postGateReport.errors, ...ledgerErrors]));
+  const questionReferenceReviewErrors = getQuestionReferenceReviewErrors(auditedQuestions);
+  const combinedValid =
+    consistencyReport.isValid &&
+    postGateReport.isValid &&
+    canonicalLedger.isReconciled &&
+    totalReconciliation.passed &&
+    questionReferenceReviewErrors.length === 0;
+  const combinedErrors = Array.from(new Set([
+    ...consistencyReport.errors,
+    ...postGateReport.errors,
+    ...ledgerErrors,
+    ...questionReferenceReviewErrors,
+  ]));
 
   evaluationResult.validationStatus = combinedValid ? 'VALID' : 'NEEDS_REVIEW';
   evaluationResult.validationErrors = combinedErrors;

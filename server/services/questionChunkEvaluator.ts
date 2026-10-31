@@ -76,6 +76,43 @@ export function extractRelevantReferenceSnippets(
 }
 
 
+export interface QuestionReferenceEvaluationDisposition {
+  canScoreProvisionally: boolean;
+  requiresHumanReview: boolean;
+  reason?: string;
+}
+
+/**
+ * A parsed authoritative paper structure can anchor a question when the exact
+ * QP text-slice matcher misses its formatting. The Suggested Answer must still
+ * be locked to that exact canonical question. Such scores remain provisional.
+ */
+export function assessQuestionReferenceForEvaluation(
+  reference: Pick<ExtractedReferenceSnippets, 'questionPaperFound' | 'suggestedAnswerFound' | 'referenceNeedsReview'>
+): QuestionReferenceEvaluationDisposition {
+  if (!reference.suggestedAnswerFound || reference.referenceNeedsReview) {
+    return {
+      canScoreProvisionally: false,
+      requiresHumanReview: true,
+      reason: 'The authoritative Suggested Answer section could not be securely locked to this question.',
+    };
+  }
+
+  if (!reference.questionPaperFound) {
+    return {
+      canScoreProvisionally: true,
+      requiresHumanReview: true,
+      reason: 'The question is present in the parsed authoritative paper structure and its Suggested Answer is locked, but the exact Question Paper text slice needs manual verification. This score is provisional.',
+    };
+  }
+
+  return {
+    canScoreProvisionally: true,
+    requiresHumanReview: false,
+  };
+}
+
+
 /**
  * Parse and validate a single-question model response before it can be scored.
  * Invalid or internally inconsistent output is rejected so the provider fallback
@@ -217,12 +254,9 @@ export async function evaluateQuestionChunk(
     ctx.suggestedAnswersText,
     ctx.markingSchemeText
   );
-  if (!snippets.questionPaperFound || !snippets.suggestedAnswerFound || snippets.referenceNeedsReview) {
-    const missingSources = [
-      !snippets.questionPaperFound ? 'Question Paper section' : '',
-      !snippets.suggestedAnswerFound ? 'Suggested Answer section' : '',
-    ].filter(Boolean).join(' and ');
-    throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${missingSources || 'authoritative question reference'} could not be matched to ${fullCode}; human review required.`);
+  const referenceDisposition = assessQuestionReferenceForEvaluation(snippets);
+  if (!referenceDisposition.canScoreProvisionally) {
+    throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${referenceDisposition.reason || 'authoritative Suggested Answer reference could not be locked'} Question: ${fullCode}; human review required.`);
   }
 
   const sourceTransformations = extractSourceGroundedTransformations(
@@ -409,12 +443,17 @@ Return strictly valid JSON with this schema:
     // already been validated against the authoritative maximum and component arithmetic.
     const calculatedAwarded = components.reduce((sum, component) => sum + component.marksAwarded, 0);
     const finalAwarded = Math.min(maxMarks, Math.round(calculatedAwarded * 4) / 4);
-    const marksLost = raw.status === 'unclear' ? 0 : Math.max(0, maxMarks - finalAwarded);
+    const effectiveStatus = referenceDisposition.requiresHumanReview ? 'unclear' : raw.status;
+    const marksLost = effectiveStatus === 'unclear' ? 0 : Math.max(0, maxMarks - finalAwarded);
     const modelConfidence = typeof raw.confidence === 'number' && Number.isFinite(raw.confidence)
       ? Math.max(0, Math.min(100, raw.confidence))
       : 0;
 
     const questionFlags: string[] = [];
+    if (referenceDisposition.requiresHumanReview) {
+      questionFlags.push('QUESTION_REFERENCE_REVIEW_REQUIRED');
+      questionFlags.push('REVIEW_REQUIRED');
+    }
     if (raw.status === 'unclear') {
       questionFlags.push('MODEL_UNCERTAIN');
       questionFlags.push('REVIEW_REQUIRED');
@@ -434,9 +473,12 @@ Return strictly valid JSON with this schema:
       maximumMarks: maxMarks,
       marksAwarded: finalAwarded,
       marksLost,
-      status: raw.status,
+      status: effectiveStatus,
       reasonForDeduction: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} mark(s) deducted based on step-marking rubric.` : 'Full marks awarded.'),
-      detailedFeedback: raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
+      detailedFeedback: [
+        raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
+        referenceDisposition.reason,
+      ].filter(Boolean).join('\n\n'),
       confidence: modelConfidence,
       technicalEvaluation: raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
       markingComponents: components,
@@ -465,7 +507,10 @@ Return strictly valid JSON with this schema:
         marksLost,
         markingComponents: components,
         finalConclusionAssessment: raw.finalConclusionAssessment || 'Assessed against official standards.',
-        overallReason: raw.reasonForDeduction || 'Evaluated against verified marking scheme.',
+        overallReason: [
+          raw.reasonForDeduction || 'Evaluated against verified marking scheme.',
+          referenceDisposition.reason,
+        ].filter(Boolean).join(' '),
         confidence: modelConfidence,
         flags: questionFlags,
         isDerivedAllocation: false,
