@@ -186,5 +186,5 @@ try {
 
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');
 } finally {
-  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId, '');
+  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
 }
