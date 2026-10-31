@@ -242,6 +242,16 @@ export function validatePreEvaluationGate(params: {
 }
 
 /**
+ * Only explicitly VALID results may be automatically certified. An absent status
+ * remains compatible with older non-authoritative callers; every explicit review,
+ * failure, or pending state must stay outside the auto-certification path.
+ */
+export function isEvaluationValidationSafeForCertification(status: unknown): boolean {
+  const normalized = String(status || '').trim().toUpperCase();
+  return !normalized || normalized === 'VALID';
+}
+
+/**
  * Coverage uncertainty is a certification blocker, not a reason to discard all
  * otherwise-mappable answers. Keep mapping failures visible for reviewer follow-up
  * while allowing identified questions to be evaluated provisionally.
