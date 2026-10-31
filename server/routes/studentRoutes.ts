@@ -3113,6 +3113,10 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       Number(previousProfile?.monthly_free_evaluations_limit || 0) > 0;
 
     const legacyNonSignalBlockReasons = new Set([
+      'REUSED_SRN',
+      'DEVICE_CHANGED_DURING_SIGNUP',
+      'NO_RELIABLE_SIGNALS',
+      'SIGNAL_STORE_UNAVAILABLE',
       'PROFILE_COMPLETION_REUSED_SRN',
       'PROFILE_COMPLETION_DEVICE_CHANGED_DURING_SIGNUP',
       'PROFILE_COMPLETION_NO_RELIABLE_SIGNALS',
