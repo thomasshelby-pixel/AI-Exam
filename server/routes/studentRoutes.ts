@@ -19,6 +19,7 @@ import {
   getValidStudentCreditBalance,
   consumeEvaluationEntitlementAtomic,
   getStudentCreditDetailedSummary,
+  refundEvaluationCreditAtomic,
   syncStudentCreditsToFirestore,
   getCurrentServerMonth,
 } from '../services/studentCreditService.js';
@@ -145,6 +146,29 @@ function repairLegacyFinalizationRejectionsForStudent(studentId: string): void {
   for (const stale of staleRows) {
     const normalized = normalizeEvaluationRejectionStatus(stale);
     if (String(normalized.status || '').toUpperCase() !== 'NEEDS_REVIEW') continue;
+
+    // Restore the app's consumed evaluation entitlement for legacy false
+    // rejections too. The refund ledger is keyed by evaluation ID, so admin
+    // repair, Firestore hydration and student history cannot refund twice.
+    const entitlementSource = String(stale.entitlement_source || '').toUpperCase();
+    if (
+      ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource) &&
+      String(stale.student_id || '') === studentId
+    ) {
+      try {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId: String(stale.id),
+          entitlementSource,
+        });
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(stale.id));
+        syncStudentCreditsToFirestore(studentId).catch((error) =>
+          console.warn('[StudentRoutes] Could not sync refunded evaluation entitlement:', stale.id, error)
+        );
+      } catch (refundError) {
+        console.error('[StudentRoutes] Could not restore entitlement for legacy false rejection:', stale.id, refundError);
+      }
+    }
 
     const reviewReason = String(normalized.error_message || stale.error_message || stale.rejection_reason || '').trim() ||
       'Automated finalization could not verify every detected answer. The evaluation is preserved for academic review.';
