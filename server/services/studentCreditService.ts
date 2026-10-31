@@ -139,12 +139,11 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   let resetMonth = profile.free_evaluation_reset_month;
   let trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
-  // Repair legacy false-blocks only when the authenticated identity can be
-  // independently checked in our account registry. Device/IP signals are noisy
-  // (shared PCs, carrier NAT, changing networks), so they must not permanently
-  // deny a verified, active student whose ICAI registration identity is unique.
-  // We never grant an extra evaluation: usage is reconstructed from the current
-  // month's authoritative consumption ledger and paid balances are untouched.
+  // Repair only legacy false-blocks that were explicitly reviewed and marked
+  // LEGACY_FALSE_BLOCK_REVIEWED. Unknown/blank reasons fail closed because they may
+  // be old device/IP abuse decisions made before reason codes were persisted.
+  // Explicit REUSED_DEVICE / REUSED_IP / REUSED_SRN blocks survive monthly resets.
+  // The current-month ledger still prevents any extra free evaluation from being granted.
   if (trialBlocked || Number(profile.monthly_free_evaluations_limit || 0) <= 0) {
     const srn = String(profile.icai_registration_number || '').trim().toUpperCase();
     const srnDigits = srn.length === 10 ? srn.slice(3) : '';
@@ -157,11 +156,16 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
             AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = ?
         `).get(userId, srnDigits) as { count: number }
       : { count: 1 };
+    const normalizedBlockReason = String(profile.free_trial_block_reason || '')
+      .trim()
+      .toUpperCase()
+      .replace(/^PROFILE_COMPLETION_/, '');
+    const explicitlyReviewedFalseBlock = normalizedBlockReason === 'LEGACY_FALSE_BLOCK_REVIEWED';
     const identityVerified =
+      explicitlyReviewedFalseBlock &&
       Number(profile.email_verified) === 1 &&
       profile.account_status === 'ACTIVE' &&
       profile.account_role === 'STUDENT' &&
-      profile.free_trial_block_reason !== 'REUSED_SRN' &&
       /^[A-Z]{3}[0-9]{7}$/.test(srn) &&
       Number(duplicateIdentity.count) === 0;
 

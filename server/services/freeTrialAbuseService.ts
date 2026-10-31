@@ -16,18 +16,53 @@ export interface FreeTrialEligibilityDecision {
   reason: FreeTrialDecisionReason;
 }
 
+export interface FreeTrialSignalDecisionInput {
+  hasDeviceSignal: boolean;
+  hasIpSignal: boolean;
+  validSrn: boolean;
+  reusedDevice: boolean;
+  reusedIp: boolean;
+  reusedSrn: boolean;
+  forceBlock?: boolean;
+}
+
+/**
+ * Pure policy decision for a new free-trial claim.
+ * A second account on a previously claimed device OR IP is blocked. Repeated
+ * ICAI registration identity and device changes during signup are also blocked.
+ * This decision only controls the standard free-trial quota, never paid/institute
+ * evaluation entitlements or the answer-sheet marking pipeline.
+ */
+export function decideFreeTrialEligibility(input: FreeTrialSignalDecisionInput): FreeTrialEligibilityDecision {
+  if (input.reusedSrn) return { eligible: false, reason: 'REUSED_SRN' };
+  if (input.forceBlock) return { eligible: false, reason: 'DEVICE_CHANGED_DURING_SIGNUP' };
+  if (!input.validSrn || !input.hasDeviceSignal || !input.hasIpSignal) {
+    return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' };
+  }
+  if (input.reusedDevice) return { eligible: false, reason: 'REUSED_DEVICE' };
+  if (input.reusedIp) return { eligible: false, reason: 'REUSED_IP' };
+  return { eligible: true, reason: 'FIRST_CLAIM' };
+}
+
+export function isSignalOwnedByAnotherUser(
+  snapshotExists: boolean,
+  signalOwnerId: string | null | undefined,
+  requestingUserId: string
+): boolean {
+  return snapshotExists && String(signalOwnerId || '') !== requestingUserId;
+}
+
 /**
  * Claims hashed browser/device and IP signals in Firestore in one transaction.
  * Raw device identifiers and IP addresses are never persisted.
  *
- * Device and IP reuse are recorded as risk signals, but neither alone blocks a
- * verified student from the standard free-trial quota. Registration already checks
- * email OTP, unique ICAI registration number, and rate limits; blocking by browser
- * alone incorrectly denies legitimate students using a shared or previously used
- * device. A hashed ICAI-registration identity claim prevents re-claiming a trial
- * after an account has been deleted. Raw SRNs, device IDs, and IP addresses are
- * never written to Firestore. Device/IP signals are risk telemetry, not an
- * individual eligibility veto.
+ * A reused device OR IP blocks a second account from claiming the standard
+ * free-trial quota. Signal documents store only hashed device/IP keys plus the
+ * opaque owning user ID, so the same account's later login does not look like a
+ * second account. A hashed ICAI-registration identity claim also prevents a
+ * deleted account from claiming the quota again. Raw SRNs, device IDs, and IP
+ * addresses are never written to Firestore. This gate only controls free trials;
+ * it does not reject paid/institute evaluations or affect answer-sheet checking.
  */
 export async function claimFreeTrialEligibility(params: {
   userId: string;
@@ -83,51 +118,49 @@ export async function claimFreeTrialEligibility(params: {
         });
       }
 
-      const reusedDevice = snapshots.some((entry) => entry.type === 'device' && entry.snapshot.exists);
-      const reusedIp = snapshots.some((entry) => entry.type === 'ip' && entry.snapshot.exists);
+      const ownerFor = (entry: (typeof snapshots)[number]): string => {
+        const data = entry.snapshot.data() as any;
+        return String(entry.type === 'srn' ? (data?.userId || '') : (data?.claimedByUserId || ''));
+      };
+      const deviceClaim = snapshots.filter((entry) => entry.type === 'device');
+      const ipClaim = snapshots.filter((entry) => entry.type === 'ip');
       const srnClaim = snapshots.find((entry) => entry.type === 'srn');
+      const reusedDevice = deviceClaim.some((entry) =>
+        isSignalOwnedByAnotherUser(entry.snapshot.exists, ownerFor(entry), params.userId)
+      );
+      const reusedIp = ipClaim.some((entry) =>
+        isSignalOwnedByAnotherUser(entry.snapshot.exists, ownerFor(entry), params.userId)
+      );
       const reusedSrn = Boolean(
-        srnClaim?.snapshot.exists &&
-        String((srnClaim.snapshot.data() as any)?.userId || '') !== params.userId
+        isSignalOwnedByAnotherUser(Boolean(srnClaim?.snapshot.exists), srnClaim ? ownerFor(srnClaim) : null, params.userId)
       );
 
-      // Claim any unseen signals in one transaction. Only the hashed SRN claim
-      // records an opaque userId association; raw student identifiers are never stored.
+      // Claim any unseen signals in one transaction. The owner is an opaque
+      // internal account ID; raw browser identifiers, IPs and SRNs are never saved.
+      // Recording the owner prevents the same student's later login/profile update
+      // from being misclassified as a second account.
       for (const entry of snapshots) {
         if (!entry.snapshot.exists) {
           transaction.set('free_trial_abuse_signals', entry.id, {
             signalType: entry.type,
             firstSeenAt: now,
             trialClaimed: true,
-            ...(entry.type === 'srn' ? { userId: params.userId } : {}),
+            ...(entry.type === 'srn'
+              ? { userId: params.userId }
+              : { claimedByUserId: params.userId }),
           });
         }
       }
 
-      // A repeat claim for the same ICAI registration identity is the strongest
-      // durable duplicate-trial signal, including after a student profile is deleted.
-      if (reusedSrn) {
-        return { eligible: false, reason: 'REUSED_SRN' as const };
-      }
-      if (params.forceBlock) {
-        console.info('[FreeTrialAbuse] Device changed during signup; SRN claim is unique.', { userId: params.userId });
-      }
-      // Missing browser/IP signals should not deny an OTP-verified student whose
-      // ICAI SRN is valid and durably claimed. These are risk signals, not identity.
-      if (!validSrn) {
-        return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' as const };
-      }
-      // Reuse is retained as an abuse signal, not an automatic denial. Shared PCs,
-      // coaching-centre labs, family devices, and test accounts can legitimately
-      // reuse a browser identifier. Unique ICAI SRN validation, verified email OTP,
-      // and rate limits are the primary account-creation controls.
-      if (reusedDevice) {
-        console.info('[FreeTrialAbuse] Reused device observed; allowing verified signup subject to SRN/OTP/rate limits.', { userId: params.userId });
-      }
-      if (reusedIp) {
-        console.info('[FreeTrialAbuse] Reused IP observed; allowing verified signup.', { userId: params.userId });
-      }
-      return { eligible: true, reason: 'FIRST_CLAIM' as const };
+      return decideFreeTrialEligibility({
+        hasDeviceSignal: deviceIds.length > 0,
+        hasIpSignal: ipAddresses.length > 0,
+        validSrn,
+        reusedDevice,
+        reusedIp,
+        reusedSrn,
+        forceBlock: params.forceBlock,
+      });
     });
   } catch (error) {
     console.warn('[FreeTrialAbuse] Could not persist hashed abuse signals / SRN claim:', error);
