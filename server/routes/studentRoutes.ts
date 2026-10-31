@@ -43,6 +43,7 @@ import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySel
 import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
 import { requireFeatureAccess } from '../services/featureControlService.js';
+import { buildStudentOwnershipSql, getStudentOwnershipParams } from '../services/studentOwnershipService.js';
 import {
   getOrAssignStudentCode,
   generateCanonicalEvaluationId,
@@ -70,20 +71,10 @@ router.use((req: AuthRequest, res: Response, next) => {
 
 export const CURRENT_DISCLAIMER_VERSION = 'v1.0';
 
-export function buildStudentOwnershipSql(alias: string = 'e', userAlias: string = 'u') {
-  return `(
-    ${alias}.student_id = ?
-    OR (${userAlias}.email IS NOT NULL AND LOWER(${userAlias}.email) = ?)
-    OR ${alias}.student_id IN (SELECT id FROM users WHERE LOWER(email) = ?)
-    OR (? IN ('at9767676@gmail.com', 'adityakumart484@gmail.com') AND (${alias}.student_id IN ('usr_bf97ebeeae7273b7', 'usr_user_at9767') OR LOWER(COALESCE(${userAlias}.email, '')) IN ('at9767676@gmail.com', 'adityakumart484@gmail.com')))
-    OR (? = 'student@caexamchecker.ai' AND (${alias}.student_id = 'usr_student_demo_001' OR ${alias}.student_id LIKE 'student_v_%' OR LOWER(COALESCE(${userAlias}.email, '')) LIKE '%student%'))
-  )`;
-}
-
-export function getStudentOwnershipParams(studentId: string, studentEmail: string) {
-  const normEmail = (studentEmail || '').toLowerCase().trim();
-  return [studentId, normEmail, normEmail, normEmail, normEmail];
-}
+// Student evaluation history is private to the authenticated account.
+// Legacy rows are included only when they resolve to the same normalized email.
+// Never grant cross-account access through demo or hard-coded account aliases.
+export { buildStudentOwnershipSql, getStudentOwnershipParams } from '../services/studentOwnershipService.js';
 
 /**
  * Persist the student-facing rejection reason and notify the owning student. The
