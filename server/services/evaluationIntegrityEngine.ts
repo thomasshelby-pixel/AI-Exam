@@ -952,9 +952,10 @@ export function getQuestionReferenceReviewErrors(questions: any[]): string[] {
       const questionId = String(
         question.canonicalId ||
         question.fullQuestionCode ||
-        \`Q\${question.questionNumber || ''}\${question.subQuestion ? \`(\${question.subQuestion})\` : ''}\`
+        ('Q' + (question.questionNumber || '') + (question.subQuestion ? '(' + question.subQuestion + ')' : ''))
       );
-      return \`QUESTION_REFERENCE_REVIEW_REQUIRED: \${questionId} was scored provisionally because its exact Question Paper text slice needs manual verification against the locked Suggested Answer.\`;
+      return 'QUESTION_REFERENCE_REVIEW_REQUIRED: ' + questionId +
+        ' was scored provisionally because its exact Question Paper text slice needs manual verification against the locked Suggested Answer.';
     });
 }
 
