@@ -15,6 +15,8 @@ import {
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
+import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
+import { validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -496,6 +498,61 @@ async function runTests() {
   assert.ok(strictMode.activeTotalMarks <= standardMode.activeTotalMarks, 'Strict marking must not exceed Standard marking.');
   assert.ok(moderateMode.activeTotalMarks >= standardMode.activeTotalMarks, 'Moderate marking must not be below Standard marking.');
   assert.ok(strictMode.activeQuestions[0].markingComponents[1].marksAwarded === 1, 'Strict marking must preserve an independently correct application component.');
+
+  // Foundation objective MCQs carry an official -0.25 penalty for wrong answers.
+  // Standard/Strict/Moderate transforms and the post-evaluation gate must preserve it.
+  const foundationMcq = evaluateAllAuthoritativeMcqs(
+    [{
+      fullQuestionCode: 'MCQ1',
+      questionNumber: '1',
+      maximumMarks: 1,
+      officialKey: 'A',
+      section: 'A',
+      officialExplanation: 'The official key is option A.',
+      provision: 'As per the supplied official answer.',
+    } as any],
+    { '1': 'B' },
+    { caLevel: 'FOUNDATION', paper: 'Paper 3', subjectKey: 'quantitative_aptitude' },
+  )[0];
+  assert.equal(foundationMcq.marksAwarded, -0.25, 'Foundation Paper 3 wrong MCQ must receive the official -0.25 penalty.');
+  assert.equal(foundationMcq.negativeMarking, -0.25, 'Foundation negative penalty must remain explicitly traceable.');
+  for (const mode of ['standard', 'strict', 'lenient'] as const) {
+    const negativeMode = applyMultiModeMarkingPhilosophy([foundationMcq as any], mode, 100);
+    assert.equal(negativeMode.activeQuestions[0].marksAwarded, -0.25, `${mode} mode must preserve the official Foundation MCQ penalty.`);
+    assert.equal(negativeMode.activeQuestions[0].marksLost, 1.25, `${mode} mode must reconcile the available mark and -0.25 penalty.`);
+  }
+  const foundationStandard = applyMultiModeMarkingPhilosophy([foundationMcq as any], 'standard', 100);
+  const foundationPostGate = validatePostEvaluationGate({
+    evaluationResult: {
+      caLevel: 'FOUNDATION',
+      questions: foundationStandard.activeQuestions,
+      totalMarks: -0.25,
+      officialPaperMaxMarks: 100,
+      maximumMarks: 100,
+    } as any,
+  });
+  assert.equal(foundationPostGate.isValid, true, 'The post-evaluation gate must allow only the traceable Foundation objective-MCQ penalty.');
+
+  const blankMcq = {
+    ...foundationMcq,
+    questionNumber: 'MCQ 2',
+    canonicalId: 'MCQ2',
+    marksAwarded: 0,
+    negativeMarking: 0,
+    marksLost: 1,
+    status: 'not_attempted',
+    markingComponents: [{
+      ...foundationMcq.markingComponents[0],
+      componentId: 'MCQ2_c1',
+      marksAwarded: 0,
+      marksDeducted: 1,
+      studentEvidence: 'Candidate left question unattempted',
+      deductionReason: 'Question not attempted.',
+    }],
+  } as any;
+  const blankMcqResult = applyMultiModeMarkingPhilosophy([blankMcq], 'standard', 100);
+  assert.equal(blankMcqResult.activeQuestions[0].status, 'not_attempted', 'An unanswered MCQ must not be mislabeled as an incorrect answer.');
+  assert.equal(blankMcqResult.activeQuestions[0].marksAwarded, 0, 'An unanswered MCQ must remain zero without a negative penalty.');
 
   const clampedComponentFixture = {
     ...strictnessFixture,
