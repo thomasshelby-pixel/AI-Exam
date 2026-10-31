@@ -429,24 +429,21 @@ async function runTests() {
     { '1': 'B' },
     'Equivalent MCQ keys must normalize to one canonical question number.',
   );
-  assert.throws(
-    () => parseAndValidatePageCoverageOutput(JSON.stringify({
-      status: 'ATTEMPTED_READABLE',
-      detectedQuestions: [],
-      mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
-    })),
-    /PAGE_COVERAGE_CONFLICTING_MCQ_SELECTION/,
-    'Conflicting MCQ selections must trigger model fallback instead of arbitrarily choosing one.',
-  );
-  assert.throws(
-    () => parseAndValidatePageCoverageOutput(JSON.stringify({
-      status: 'CLEARLY_UNATTEMPTED',
-      detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
-      mcqSelections: {},
-    })),
-    /PAGE_COVERAGE_STATUS_CONFLICT/,
-    'A page cannot be accepted as blank when it contains a detected answer.',
-  );
+  const conflictingMcqOnly = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    detectedQuestions: [],
+    mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
+  }));
+  assert.equal(conflictingMcqOnly.mcqSelections['1'], undefined, 'Conflicting options must not be selected arbitrarily.');
+  assert.ok(conflictingMcqOnly.mappingWarnings.length > 0, 'Conflicting MCQ output must remain a page-level review issue.');
+  const contradictoryBlank = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'CLEARLY_UNATTEMPTED',
+    detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
+    mcqSelections: {},
+  }));
+  assert.equal(contradictoryBlank.status, 'ATTEMPTED_UNCLEAR', 'A page cannot be accepted as blank when it contains a detected answer.');
+  assert.equal(contradictoryBlank.detectedQuestions.length, 1, 'A valid question identity must survive the status contradiction.');
+  assert.ok(contradictoryBlank.mappingWarnings.length > 0, 'A contradictory page must remain a review issue.');
   assert.equal(
     parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
