@@ -304,8 +304,8 @@ export function validatePostEvaluationGate(params: {
         isMcqQuestion &&
         String(q.markingRule || '').startsWith('ICAI Foundation Rule') &&
         Number.isFinite(configuredPenalty) &&
-        configuredPenalty < 0 &&
-        Math.abs(qAwarded - configuredPenalty) <= 0.01;
+        Math.abs(configuredPenalty - (-0.25)) <= 0.001 &&
+        Math.abs(qAwarded - (-0.25)) <= 0.01;
 
       if (!isAuthorizedFoundationNegativeMark) {
         errors.push(`NEGATIVE_SCORE_ERROR: ${q.canonicalId || q.questionNumber} has negative awarded marks outside the authorized CA Foundation objective-MCQ rule: ${qAwarded}`);
