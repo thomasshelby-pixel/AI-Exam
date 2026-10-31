@@ -1471,6 +1471,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       AND (
         UPPER(COALESCE(e.error_message, '')) LIKE '%FINALIZATION_FAILED:%'
         OR UPPER(COALESCE(e.rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
       )
     )`;
     const visibleStatusSql = `CASE WHEN ${finalizationReviewSql} THEN 'NEEDS_REVIEW' ELSE e.status END`;
