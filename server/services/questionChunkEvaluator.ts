@@ -322,10 +322,10 @@ CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
 3. Every step component must have:
-   - componentType: 'PROVISION' | 'PRINCIPLE' | 'CONDITION' | 'APPLICATION' | 'CALCULATION' | 'CONCLUSION'
+    - componentType: 'PROVISION' | 'PRINCIPLE' | 'CONDITION' | 'APPLICATION' | 'CALCULATION' | 'WORKING' | 'TREATMENT' | 'REASONING' | 'CONCLUSION' | 'PRESENTATION'
    - expectedRequirement: exact requirement from verified official answer
    - studentEvidence: exact quotes, working, or numbers from what candidate wrote in their script
-   - assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT'
+    - assessment: 'CORRECT' | 'PARTIALLY_CORRECT' | 'INCORRECT' | 'OMITTED'
    - marksAvailable: step max
    - marksAwarded: awarded marks (0 to marksAvailable)
    - marksDeducted: deducted marks
