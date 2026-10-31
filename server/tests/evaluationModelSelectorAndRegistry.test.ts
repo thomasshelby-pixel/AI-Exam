@@ -26,6 +26,11 @@ console.log('--- REGRESSION TEST: STRICT RUNTIME AI MODEL WHITELIST & REGISTRY -
 console.log('========================================================================\n');
 
 async function runTests() {
+  // Routing is exercised as a pure configuration test; use placeholder credentials
+  // so CI can validate provider availability without making any external API calls.
+  process.env.GEMINI_API_KEY = 'test-gemini-key';
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+  process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
   initDatabase();
 
   // ---------------------------------------------------------------------------
