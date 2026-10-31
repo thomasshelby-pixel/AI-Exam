@@ -238,25 +238,40 @@ export async function persistFeatureFlagToFirestore(
   record: Record<string, any>,
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
-  if (!adapter.isConfigured()) return false;
-  const { testers: _testers, ...flag } = record;
-  return adapter.setDocument('feature_flags', String(flag.id), flag);
+  try {
+    if (!adapter.isConfigured()) return false;
+    const { testers: _testers, ...flag } = record;
+    return await adapter.setDocument('feature_flags', String(flag.id), flag);
+  } catch (error) {
+    console.warn('[FeatureControlPersistence] Failed to persist feature flag:', error);
+    return false;
+  }
 }
 
 export async function persistFeatureTesterToFirestore(
   record: Record<string, any>,
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
-  if (!adapter.isConfigured()) return false;
-  return adapter.setDocument('feature_testers', String(record.id), record);
+  try {
+    if (!adapter.isConfigured()) return false;
+    return await adapter.setDocument('feature_testers', String(record.id), record);
+  } catch (error) {
+    console.warn('[FeatureControlPersistence] Failed to persist feature tester:', error);
+    return false;
+  }
 }
 
 export async function deleteFeatureTesterFromFirestore(
   testerId: string,
   adapter: FeatureControlPersistenceAdapter = firestoreAdapter,
 ): Promise<boolean> {
-  if (!adapter.isConfigured()) return false;
-  return adapter.deleteDocument('feature_testers', String(testerId));
+  try {
+    if (!adapter.isConfigured()) return false;
+    return await adapter.deleteDocument('feature_testers', String(testerId));
+  } catch (error) {
+    console.warn('[FeatureControlPersistence] Failed to remove cloud feature tester:', error);
+    return false;
+  }
 }
 
 export function restoreFeatureFlagLocally(record: Record<string, any>): void {
