@@ -134,7 +134,6 @@ function repairLegacyFinalizationRejectionsForStudent(studentId: string): void {
   const staleRows = db.prepare(`
     SELECT * FROM evaluations
     WHERE student_id = ?
-      AND UPPER(COALESCE(status, '')) = 'REJECTED'
       AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
       AND (
         UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
@@ -162,8 +161,13 @@ function repairLegacyFinalizationRejectionsForStudent(studentId: string): void {
           completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-        AND UPPER(COALESCE(status, '')) = 'REJECTED'
         AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+        AND (
+          UPPER(COALESCE(status, '')) <> 'NEEDS_REVIEW'
+          OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
+          OR UPPER(COALESCE(certification_status, '')) <> 'REVIEW_REQUIRED'
+          OR COALESCE(downloads_unlocked, 0) <> 0
+        )
     `).run(reviewReason, String(stale.id));
 
     if (update.changes !== 1) continue;
