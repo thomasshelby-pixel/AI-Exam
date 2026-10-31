@@ -83,7 +83,7 @@ export function extractRelevantReferenceSnippets(
  */
 export function parseAndValidateQuestionChunkOutput(rawText: string, maxMarks: number): Record<string, any> {
   let clean = String(rawText || '').trim();
-  clean = clean.replace(/^\`\`\`(?:json)?\\s*/i, '').replace(/\\s*\`\`\`$/, '');
+  clean = clean.replace(/^`{3}(?:json)?[ \t\r\n]*/i, '').replace(/[ \t\r\n]*`{3}$/, '');
 
   let raw: any;
   try {
