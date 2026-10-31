@@ -37,6 +37,7 @@ import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../serv
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
+import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
@@ -1465,10 +1466,17 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
+    const finalizationReviewSql = `(
+      UPPER(COALESCE(e.error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+      OR UPPER(COALESCE(e.rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+    )`;
+    const visibleStatusSql = `CASE WHEN ${finalizationReviewSql} THEN 'NEEDS_REVIEW' ELSE e.status END`;
     let query = `
       SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
-             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
+             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score,
+             ${visibleStatusSql} AS status,
              CASE
+               WHEN ${finalizationReviewSql} THEN NULL
                WHEN UPPER(COALESCE(e.status, '')) = 'REJECTED'
                  AND UPPER(COALESCE(e.document_validation_status, '')) = 'DUPLICATE_ACCOUNT_UPLOAD'
                THEN COALESCE(NULLIF(TRIM(e.rejection_reason), ''), NULLIF(TRIM(e.error_message), ''))
@@ -1479,13 +1487,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
              e.institute_id, e.batch_id,
              i.name as institute_name, si.name as sponsoring_institute_name, b.name as batch_name
-      FROM evaluations e
-      LEFT JOIN institutes i ON i.id = e.institute_id
-      LEFT JOIN institutes si ON si.id = e.sponsoring_institute_id
-      LEFT JOIN batches b ON b.id = e.batch_id
-      LEFT JOIN users u ON u.id = e.student_id
-      WHERE ${buildStudentOwnershipSql('e', 'u')}
-    `;
+      FROM evaluations e`;
     const params: any[] = getStudentOwnershipParams(studentId, studentEmail);
 
     if (evaluationSource) {
@@ -1501,7 +1503,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(subject);
     }
     if (status) {
-      query += ' AND e.status = ?';
+      query += ` AND ${visibleStatusSql} = ?`;
       params.push(status);
     }
     if (search) {
@@ -1723,6 +1725,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    const normalizedRecord = normalizeEvaluationRejectionStatus(record);
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const checkedCopyPath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
@@ -1742,17 +1745,17 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
 
     return res.json({
       evaluationId,
-      status: record.status,
-      progressStage: record.progress_stage || record.status,
+      status: normalizedRecord.status || record.status,
+      progressStage: normalizedRecord.progress_stage || record.progress_stage || record.status,
       progressPercentage: record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
-      progressMessage: record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
+      progressMessage: normalizedRecord.progress_message || record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
       reportReady,
       checkedCopyReady,
       createdAt: record.created_at,
       updatedAt: record.updated_at || record.created_at,
       completedAt: record.completed_at || null,
-      errorMessage: record.error_message || null,
-      rejectionReason: record.rejection_reason || null,
+      errorMessage: normalizedRecord.error_message || record.error_message || null,
+      rejectionReason: normalizedRecord.rejection_reason || null,
       resultSummary: record.status === 'COMPLETED' ? {
         totalMarks: record.total_marks,
         maximumMarks: record.maximum_marks,
