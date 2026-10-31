@@ -34,6 +34,7 @@ export interface PageCoverageModelOutput {
     snippet?: string;
   }>;
   mcqSelections: Record<string, string>;
+  isContinuation?: boolean;
 }
 
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
@@ -68,6 +69,9 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   if (raw.summary !== undefined && typeof raw.summary !== 'string') {
     throw new Error('PAGE_COVERAGE_INVALID_SUMMARY: summary must be a string when provided.');
   }
+  if (raw.isContinuation !== undefined && typeof raw.isContinuation !== 'boolean') {
+    throw new Error('PAGE_COVERAGE_INVALID_CONTINUATION: top-level isContinuation must be boolean when provided.');
+  }
   if (!Array.isArray(raw.detectedQuestions)) {
     throw new Error('PAGE_COVERAGE_INVALID_DETECTIONS: detectedQuestions must be an array.');
   }
@@ -84,7 +88,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     const questionNumber = String(question.questionNumber || '').trim();
     const subQuestion = String(question.subQuestion || '').trim();
     const contextualIdentity = question.parentQuestionNumberVisible === false && subQuestion.length > 0;
-    const explicitContinuation = question.isContinuation === true && (questionNumber.length > 0 || subQuestion.length > 0);
+    const explicitContinuation = question.isContinuation === true;
     if (!questionNumber && !contextualIdentity && !explicitContinuation) {
       throw new Error(`PAGE_COVERAGE_MISSING_QUESTION_ID: detectedQuestions[${index}] has no safely resolvable question identity.`);
     }
@@ -104,20 +108,30 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
 
   const selections: Record<string, string> = {};
   for (const [questionNumber, rawOption] of Object.entries(raw.mcqSelections || {})) {
+    const normalizedNumber = String(questionNumber).replace(/[^0-9]/g, '');
     const option = String(rawOption || '').trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()]/g, '');
     if (!/^[A-D]$/.test(option)) {
       throw new Error(`PAGE_COVERAGE_INVALID_MCQ_OPTION: MCQ ${questionNumber} has an invalid selected option.`);
     }
-    if (!String(questionNumber).replace(/[^0-9]/g, '')) {
+    if (!normalizedNumber) {
       throw new Error('PAGE_COVERAGE_INVALID_MCQ_NUMBER: MCQ selection keys must contain a question number.');
     }
-    selections[String(questionNumber)] = option;
+    if (selections[normalizedNumber] && selections[normalizedNumber] !== option) {
+      throw new Error(`PAGE_COVERAGE_CONFLICTING_MCQ_SELECTION: MCQ ${normalizedNumber} has conflicting detected options.`);
+    }
+    selections[normalizedNumber] = option;
+  }
+
+  if (raw.status === 'CLEARLY_UNATTEMPTED' &&
+      (raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
+    throw new Error('PAGE_COVERAGE_STATUS_CONFLICT: page is marked unattempted but contains detected answers.');
   }
 
   return {
     status: raw.status,
     hasHandwriting: raw.hasHandwriting,
     summary: raw.summary,
+    isContinuation: raw.isContinuation,
     detectedQuestions: raw.detectedQuestions,
     mcqSelections: selections,
   };
