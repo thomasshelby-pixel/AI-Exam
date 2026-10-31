@@ -562,6 +562,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';
     let finalizationErrors: string[] = [];
+    let reviewErrors: string[] = [];
 
     if (runPackage) {
       const packageToPersist = {
@@ -587,6 +588,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           evaluationResult.evaluationRunPackage = finalizationResult.package;
           if (finalizationResult.success) {
             finalStatus = 'COMPLETED';
+          } else {
+            finalStatus = 'NEEDS_REVIEW';
+            finalizationErrors = finalizationResult.errors || ['Evaluation finalization checks need review.'];
           }
         } catch (finErr: any) {
           console.warn(`[AsyncEval] Finalization run warning:`, finErr.message);
@@ -615,7 +619,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       };
       console.log(`[AsyncEval] Evaluation ${evaluationId} automatically verified and CERTIFIED.`);
     } else {
-      const reviewErrors = Array.from(new Set([
+      reviewErrors = Array.from(new Set([
         ...(!consistencyReport.isValid ? consistencyReport.errors : []),
         ...(evaluationResult.validationErrors || []),
         ...finalizationErrors,
@@ -647,6 +651,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           progress_stage = ?,
           progress_percentage = 100,
           progress_message = ?,
+          error_message = ?,
+          rejection_reason = NULL,
           total_marks = ?,
           maximum_marks = ?,
           percentage = ?,
@@ -689,6 +695,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       finalStatus === 'COMPLETED'
         ? 'Evaluation complete and certified'
         : 'Evaluation preserved. Academic score recorded; review required.',
+      finalStatus === 'COMPLETED' ? null : (reviewErrors.join(' | ') || 'Evaluation preserved for academic review; no document rejection was made.'),
       evaluationResult.canonicalLedger?.totalAwardedMarks ?? evaluationResult.totalMarks,
       evaluationResult.maximumMarks,
       evaluationResult.percentage,
@@ -753,7 +760,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       // Return it when the system could not produce a verified final result.
       if (
         job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-        (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+        (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
       ) {
         try {
           refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });

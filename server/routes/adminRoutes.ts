@@ -14,7 +14,7 @@ import {
 } from '../services/featureControlService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -55,7 +55,7 @@ import {
   deleteMaterialCloudFiles
 } from '../services/persistentStorageService.js';
 import { executeServerMfaReset } from '../services/mfaRecoveryService.js';
-import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
+import { isFinalizationReviewMarker, normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import {
   auditStorageConsistency,
   inspectCloudStorageStatus,
@@ -114,13 +114,86 @@ const router = Router();
  * Heal legacy evaluation rows where a persisted rejection marker survived but an old
  * worker/Firestore snapshot rewrote status back to PROCESSING or COMPLETED.
  */
-async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean> {
+async function repairEvaluationStatus(evaluation: any): Promise<boolean> {
   const normalized = normalizeEvaluationRejectionStatus(evaluation);
+  const normalizedStatus = String(normalized?.status || '').trim().toUpperCase();
   const currentStatus = String(evaluation?.status || '').trim().toUpperCase();
   const currentReason = String(evaluation?.rejection_reason || '').trim();
-  const normalizedReason = String(normalized?.rejection_reason || '').trim();
+  const documentStatus = String(evaluation?.document_validation_status || '').trim().toUpperCase();
 
-  if (String(normalized?.status || '').toUpperCase() !== 'REJECTED') return false;
+  // Restore the app entitlement for a legacy internal finalization failure even
+  // when another path (e.g. Firestore hydration) already changed the row to review.
+  // The per-evaluation refund ledger makes this safe across concurrent repair paths.
+  if (
+    isFinalizationReviewMarker(evaluation) &&
+    !['REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD'].includes(documentStatus) &&
+    ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(evaluation?.entitlement_source || '').toUpperCase())
+  ) {
+    try {
+      const studentId = String(evaluation?.student_id || '').trim();
+      if (studentId) {
+        refundEvaluationCreditAtomic({
+          userId: studentId,
+          evaluationId: String(evaluation.id),
+          entitlementSource: String(evaluation.entitlement_source).toUpperCase(),
+        });
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(evaluation.id));
+        syncStudentCreditsToFirestore(studentId).catch((error) =>
+          console.warn('[AdminEvaluations] Could not sync refunded legacy entitlement:', evaluation.id, error)
+        );
+      }
+    } catch (refundError) {
+      console.error('[AdminEvaluations] Could not restore entitlement for legacy false rejection:', evaluation.id, refundError);
+    }
+  }
+
+  // Repair legacy false rejections from finalization/integrity failures as review.
+  // Do not send rejection notifications or retain rejection_reason for these rows.
+  if (normalizedStatus === 'NEEDS_REVIEW' &&
+      (currentStatus !== 'NEEDS_REVIEW' || currentReason.length > 0 ||
+       Number(evaluation?.downloads_unlocked || 0) !== 0 ||
+       String(evaluation?.certification_status || '').toUpperCase() === 'CERTIFIED')) {
+    const reviewReason = String(normalized?.error_message || evaluation?.error_message || currentReason ||
+      'Automated finalization needs academic review.').trim();
+    const update = db.prepare(`
+      UPDATE evaluations
+      SET status = 'NEEDS_REVIEW',
+          rejection_reason = NULL,
+          error_message = ?,
+          certification_status = 'REVIEW_REQUIRED',
+          downloads_unlocked = 0,
+          progress_stage = 'NEEDS_REVIEW',
+          progress_percentage = 100,
+          progress_message = 'Evaluation preserved for academic review; this is not a document rejection.',
+          completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND UPPER(COALESCE(document_validation_status, 'VERIFIED')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+    `).run(reviewReason, String(evaluation.id));
+
+    if (update.changes !== 1) return false;
+
+    const repaired = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(String(evaluation.id)) as any;
+    if (!repaired) return false;
+
+    // Remove a stale rejection notice that may have been created by the old
+    // normalizer. This evaluation is now a review item, not a document rejection.
+    const notificationId = `notif_eval_rejected_${repaired.id}`;
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(notificationId);
+    await permanentlyDeleteFromFirestore(
+      'notifications',
+      notificationId,
+      'Removed stale false-rejection notice after restoring evaluation to NEEDS_REVIEW.'
+    ).catch(() => {});
+
+    await syncRecordToFirestore('evaluations', String(repaired.id), repaired);
+    console.warn(`[AdminEvaluations] Restored false rejection ${repaired.id} to NEEDS_REVIEW.`);
+    return true;
+  }
+
+  if (normalizedStatus !== 'REJECTED') return false;
+
+  const normalizedReason = String(normalized?.rejection_reason || '').trim();
   if (currentStatus === 'REJECTED' && currentReason === normalizedReason) return false;
 
   const update = db.prepare(`
@@ -138,8 +211,8 @@ async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean>
         OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NULL
       )
   `).run(
-    normalizedReason || 'This evaluation was rejected by validation checks. Please contact support for a review.',
-    String(normalized.progress_message || 'Evaluation rejected by validation checks'),
+    normalizedReason || 'This evaluation was rejected by document validation checks.',
+    String(normalized.progress_message || 'Document validation rejected the submission'),
     String(evaluation.id)
   );
 
@@ -152,7 +225,7 @@ async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean>
   if (studentId) {
     const reason = String(repaired.rejection_reason || normalizedReason).trim();
     const notificationId = `notif_eval_rejected_${repaired.id}`;
-    const notificationMessage = `Your evaluation for ${String(repaired.subject_name || 'the selected paper')} was rejected. Reason: ${reason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
+    const notificationMessage = `Your evaluation for ${String(repaired.subject_name || 'the selected paper')} was rejected. Reason: ${reason}\\n\\nIf you believe this decision is incorrect, please contact support for a review.`;
     db.prepare(`
       INSERT OR IGNORE INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, 'Evaluation Rejected', ?, 'EVALUATION')
@@ -163,28 +236,27 @@ async function repairRejectedEvaluationStatus(evaluation: any): Promise<boolean>
   }
 
   await syncRecordToFirestore('evaluations', String(repaired.id), repaired);
-  console.warn(`[AdminEvaluations] Restored REJECTED status for ${repaired.id} from persisted rejection markers.`);
+  console.warn(`[AdminEvaluations] Restored REJECTED status for ${repaired.id} from explicit document rejection markers.`);
   return true;
 }
 
-async function repairStaleRejectedEvaluationStatuses(): Promise<void> {
+async function repairStaleEvaluationStatuses(): Promise<void> {
   const staleRows = db.prepare(`
     SELECT * FROM evaluations
-    WHERE UPPER(COALESCE(status, '')) <> 'REJECTED'
-      AND (
-        UPPER(COALESCE(document_validation_status, '')) IN ('DUPLICATE_ACCOUNT_UPLOAD', 'REJECTED')
-        OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
-        OR UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
-      )
+    WHERE
+      UPPER(COALESCE(document_validation_status, '')) IN ('DUPLICATE_ACCOUNT_UPLOAD', 'REJECTED')
+      OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
+      OR UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+      OR UPPER(COALESCE(progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
     ORDER BY created_at DESC
     LIMIT 1000
   `).all() as any[];
 
   for (const evaluation of staleRows) {
     try {
-      await repairRejectedEvaluationStatus(evaluation);
+      await repairEvaluationStatus(evaluation);
     } catch (error) {
-      console.warn('[AdminEvaluations] Could not repair a legacy rejection status:', evaluation?.id, error);
+      console.warn('[AdminEvaluations] Could not repair a stale evaluation status:', evaluation?.id, error);
     }
   }
 }
@@ -3008,7 +3080,7 @@ router.put('/model-answers/:id', (req: AuthRequest, res: Response) => {
 // 15. Evaluations Management
 router.get('/evaluations', async (req: AuthRequest, res: Response) => {
   try {
-    await repairStaleRejectedEvaluationStatuses();
+    await repairStaleEvaluationStatuses();
     const { status, level, search, classification, source } = req.query;
     let query = `
       SELECT e.id, e.display_id, e.evaluation_sequence, e.student_id, e.level, e.material_type, e.subject_key, e.subject_name,
@@ -3079,13 +3151,24 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     const evaluationId = String(evaluation.id);
     const canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
     if (String(canonicalStatus.status || '').toUpperCase() === 'REJECTED') {
-      await repairRejectedEvaluationStatus(evaluation);
+      await repairEvaluationStatus(evaluation);
       return res.status(409).json({
-        error: 'This evaluation has a persisted rejection decision and cannot be recovered or reprocessed. Review the rejection reason instead.',
+        error: 'This submission was explicitly rejected by document validation and cannot be reprocessed automatically.',
         code: 'REJECTED_EVALUATION_NOT_RECOVERABLE',
         evaluationId,
         status: 'REJECTED',
         rejection_reason: canonicalStatus.rejection_reason || evaluation.error_message || null,
+      });
+    }
+
+    if (String(canonicalStatus.status || '').toUpperCase() === 'NEEDS_REVIEW') {
+      await repairEvaluationStatus(evaluation);
+      return res.status(409).json({
+        error: 'This evaluation is preserved for academic review. It is not a document rejection and should be reviewed before any retry.',
+        code: 'EVALUATION_NEEDS_REVIEW',
+        evaluationId,
+        status: 'NEEDS_REVIEW',
+        reviewReason: canonicalStatus.error_message || evaluation.error_message || evaluation.rejection_reason || null,
       });
     }
 

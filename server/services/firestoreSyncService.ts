@@ -179,9 +179,17 @@ export async function syncRecordToFirestore(collectionName: string, id: string, 
             console.log(`[FirestoreSync] Preserving authoritative Firestore data for ${collectionName}/${id}`);
             return;
           }
+        } else if (
+          collectionName === 'evaluations' &&
+          String(data.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+          [data.error_message, data.rejection_reason, data.progress_message]
+            .some((value) => /(?:^|\b)FINALIZATION_FAILED\s*:/i.test(String(value || '').trim()))
+        ) {
+          // Explicitly repair legacy false rejections caused by the old finalizer.
+          // This review correction must override a newer stale REJECTED cloud snapshot.
         } else if (collectionName === 'evaluations' && String(data.status || '').toUpperCase() === 'REJECTED') {
-          // Rejection is a terminal safety decision. A stale cloud snapshot with a
-          // newer timestamp must not resurrect the evaluation as PROCESSING.
+          // Explicit document rejection is a terminal safety decision. A stale cloud
+          // snapshot with a newer timestamp must not resurrect it as PROCESSING.
         } else if (collectionName === 'student_profiles') {
           const localPurchased = typeof data.purchased_credits === 'number' ? data.purchased_credits : 999999;
           const fsPurchased = typeof existingDoc.purchased_credits === 'number' ? existingDoc.purchased_credits : 999999;
@@ -1352,6 +1360,28 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           ev.account_classification || 'NORMAL',
           ev.created_at || new Date().toISOString(), (typeof normalizedEvaluation.completed_at === 'string' ? normalizedEvaluation.completed_at : ev.completed_at || null)
         );
+
+        if (
+          String(normalizedEvaluation.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+          String(ev.status || '').toUpperCase() === 'REJECTED'
+        ) {
+          // Hydration repaired an old false rejection. Remove the stale local notice
+          // created by the previous normalizer; do not generate a new rejection alert.
+          const staleRejectionNotificationId = `notif_eval_rejected_${ev.id}`;
+          db.prepare('DELETE FROM notifications WHERE id = ?').run(staleRejectionNotificationId);
+          // Remove and tombstone the cloud copy too; otherwise the following
+          // notification-centre hydration can recreate the false rejection notice.
+          await permanentlyDeleteFromFirestore(
+            'notifications',
+            staleRejectionNotificationId,
+            'Removed stale false-rejection notice after restoring evaluation to NEEDS_REVIEW.'
+          );
+          const repairedReviewEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(ev.id) as any;
+          if (repairedReviewEvaluation) {
+            await syncRecordToFirestore('evaluations', ev.id, repairedReviewEvaluation);
+          }
+          console.warn(`[FirestoreSync] Restored false rejection ${ev.id} to NEEDS_REVIEW during hydration.`);
+        }
 
         if (String(normalizedEvaluation.status || '').toUpperCase() === 'REJECTED' &&
             String(ev.status || '').toUpperCase() !== 'REJECTED') {

@@ -19,12 +19,13 @@ import {
   getValidStudentCreditBalance,
   consumeEvaluationEntitlementAtomic,
   getStudentCreditDetailedSummary,
+  refundEvaluationCreditAtomic,
   syncStudentCreditsToFirestore,
   getCurrentServerMonth,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
-import { persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { permanentlyDeleteFromFirestore, persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
@@ -37,6 +38,7 @@ import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../serv
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
+import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
@@ -120,6 +122,99 @@ async function persistEvaluationRejectionAndNotify(
     if (notificationRow) await syncRecordToFirestore('notifications', notificationId, notificationRow);
   } catch (error) {
     console.warn('[StudentRoutes] Could not persist rejection detail/notification:', evaluationId, error);
+  }
+}
+
+
+/**
+ * Repair legacy false REJECTED rows for the student currently viewing their history.
+ * Only finalization/integrity markers are corrected; explicit document-validation
+ * rejections (invalid document / duplicate cross-account upload) remain untouched.
+ */
+function repairLegacyFinalizationRejectionsForStudent(studentId: string, studentEmail: string): void {
+  const staleRows = db.prepare(`
+    SELECT e.*
+    FROM evaluations e
+    LEFT JOIN users u ON u.id = e.student_id
+    WHERE ${buildStudentOwnershipSql('e', 'u')}
+      AND UPPER(COALESCE(e.document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+      AND (
+        UPPER(COALESCE(e.error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
+      )
+  `).all(...getStudentOwnershipParams(studentId, studentEmail)) as any[];
+
+  for (const stale of staleRows) {
+    const normalized = normalizeEvaluationRejectionStatus(stale);
+    if (String(normalized.status || '').toUpperCase() !== 'NEEDS_REVIEW') continue;
+
+    // Restore the app's consumed evaluation entitlement for legacy false
+    // rejections too. The refund ledger is keyed by evaluation ID, so admin
+    // repair, Firestore hydration and student history cannot refund twice.
+    const entitlementSource = String(stale.entitlement_source || '').toUpperCase();
+    const entitlementOwnerId = String(stale.student_id || studentId);
+    if (
+      ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource) &&
+      entitlementOwnerId
+    ) {
+      try {
+        // The original student_id owns the debit ledger even when this history
+        // entry is visible through a verified email/account ownership alias.
+        refundEvaluationCreditAtomic({
+          userId: entitlementOwnerId,
+          evaluationId: String(stale.id),
+          entitlementSource,
+        });
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(stale.id));
+        syncStudentCreditsToFirestore(entitlementOwnerId).catch((error) =>
+          console.warn('[StudentRoutes] Could not sync refunded evaluation entitlement:', stale.id, error)
+        );
+      } catch (refundError) {
+        console.error('[StudentRoutes] Could not restore entitlement for legacy false rejection:', stale.id, refundError);
+      }
+    }
+
+    const reviewReason = String(normalized.error_message || stale.error_message || stale.rejection_reason || '').trim() ||
+      'Automated finalization could not verify every detected answer. The evaluation is preserved for academic review.';
+    const update = db.prepare(`
+      UPDATE evaluations
+      SET status = 'NEEDS_REVIEW',
+          rejection_reason = NULL,
+          error_message = ?,
+          certification_status = 'REVIEW_REQUIRED',
+          downloads_unlocked = 0,
+          progress_stage = 'NEEDS_REVIEW',
+          progress_percentage = 100,
+          progress_message = 'Your answer sheet has been preserved for academic review. No final result has been issued yet.',
+          completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+        AND (
+          UPPER(COALESCE(status, '')) <> 'NEEDS_REVIEW'
+          OR NULLIF(TRIM(COALESCE(rejection_reason, '')), '') IS NOT NULL
+          OR UPPER(COALESCE(certification_status, '')) <> 'REVIEW_REQUIRED'
+          OR COALESCE(downloads_unlocked, 0) <> 0
+        )
+    `).run(reviewReason, String(stale.id));
+
+    if (update.changes !== 1) continue;
+
+    const repaired = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(String(stale.id)) as any;
+    if (repaired) {
+      syncRecordToFirestore('evaluations', String(repaired.id), repaired).catch((error) =>
+        console.warn('[StudentRoutes] Could not sync corrected review status:', repaired.id, error)
+      );
+    }
+
+    const notificationId = `notif_eval_rejected_${stale.id}`;
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(notificationId);
+    permanentlyDeleteFromFirestore(
+      'notifications',
+      notificationId,
+      'Removed stale false-rejection notice after restoring evaluation to NEEDS_REVIEW.'
+    ).catch(() => {});
   }
 }
 
@@ -1463,17 +1558,33 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    repairLegacyFinalizationRejectionsForStudent(studentId, studentEmail);
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
+    const finalizationReviewSql = `(
+      UPPER(COALESCE(e.document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+      AND (
+        UPPER(COALESCE(e.error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
+      )
+    )`;
+    const visibleStatusSql = `CASE WHEN ${finalizationReviewSql} THEN 'NEEDS_REVIEW' ELSE e.status END`;
     let query = `
       SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
-             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score, e.status,
+             e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score,
+             ${visibleStatusSql} AS status,
              CASE
+               WHEN ${finalizationReviewSql} THEN NULL
                WHEN UPPER(COALESCE(e.status, '')) = 'REJECTED'
                  AND UPPER(COALESCE(e.document_validation_status, '')) = 'DUPLICATE_ACCOUNT_UPLOAD'
                THEN COALESCE(NULLIF(TRIM(e.rejection_reason), ''), NULLIF(TRIM(e.error_message), ''))
                ELSE e.rejection_reason
              END AS rejection_reason,
+             CASE
+               WHEN ${finalizationReviewSql} THEN 'Your answer sheet has been preserved for academic review. No final result has been issued yet.'
+               ELSE e.progress_message
+             END AS progress_message,
              e.created_at, e.completed_at,
              e.evaluation_source, e.material_source, e.sponsoring_institute_id,
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
@@ -1484,8 +1595,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       LEFT JOIN institutes si ON si.id = e.sponsoring_institute_id
       LEFT JOIN batches b ON b.id = e.batch_id
       LEFT JOIN users u ON u.id = e.student_id
-      WHERE ${buildStudentOwnershipSql('e', 'u')}
-    `;
+      WHERE ${buildStudentOwnershipSql('e', 'u')}`;
     const params: any[] = getStudentOwnershipParams(studentId, studentEmail);
 
     if (evaluationSource) {
@@ -1501,7 +1611,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       params.push(subject);
     }
     if (status) {
-      query += ' AND e.status = ?';
+      query += ` AND ${visibleStatusSql} = ?`;
       params.push(status);
     }
     if (search) {
@@ -1723,6 +1833,11 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    if (String(record.student_id || '') === studentId) {
+      repairLegacyFinalizationRejectionsForStudent(studentId, req.user!.email?.toLowerCase().trim() || '');
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
+    }
+    const normalizedRecord = normalizeEvaluationRejectionStatus(record);
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const checkedCopyPath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
@@ -1732,7 +1847,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     const reportReady = record.report_status === 'READY' || fs.existsSync(reportPath);
 
     let resultJson: any = null;
-    if ((record.status === 'COMPLETED' || record.status === 'NEEDS_REVIEW') && record.result_json) {
+    if ((normalizedRecord.status === 'COMPLETED' || normalizedRecord.status === 'NEEDS_REVIEW' || record.status === 'COMPLETED' || record.status === 'NEEDS_REVIEW') && record.result_json) {
       try {
         resultJson = JSON.parse(record.result_json);
       } catch {
@@ -1742,17 +1857,17 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
 
     return res.json({
       evaluationId,
-      status: record.status,
-      progressStage: record.progress_stage || record.status,
-      progressPercentage: record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
-      progressMessage: record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
+      status: normalizedRecord.status || record.status,
+      progressStage: normalizedRecord.progress_stage || record.progress_stage || record.status,
+      progressPercentage: normalizedRecord.progress_percentage ?? record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
+      progressMessage: normalizedRecord.progress_message || record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
       reportReady,
       checkedCopyReady,
       createdAt: record.created_at,
       updatedAt: record.updated_at || record.created_at,
       completedAt: record.completed_at || null,
-      errorMessage: record.error_message || null,
-      rejectionReason: record.rejection_reason || null,
+      errorMessage: String(normalizedRecord.status || '').toUpperCase() === 'NEEDS_REVIEW' ? null : (normalizedRecord.error_message || record.error_message || null),
+      rejectionReason: normalizedRecord.rejection_reason || null,
       resultSummary: record.status === 'COMPLETED' ? {
         totalMarks: record.total_marks,
         maximumMarks: record.maximum_marks,
