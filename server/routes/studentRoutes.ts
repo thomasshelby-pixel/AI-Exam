@@ -131,17 +131,19 @@ async function persistEvaluationRejectionAndNotify(
  * Only finalization/integrity markers are corrected; explicit document-validation
  * rejections (invalid document / duplicate cross-account upload) remain untouched.
  */
-function repairLegacyFinalizationRejectionsForStudent(studentId: string): void {
+function repairLegacyFinalizationRejectionsForStudent(studentId: string, studentEmail: string): void {
   const staleRows = db.prepare(`
-    SELECT * FROM evaluations
-    WHERE student_id = ?
-      AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+    SELECT e.*
+    FROM evaluations e
+    LEFT JOIN users u ON u.id = e.student_id
+    WHERE ${buildStudentOwnershipSql('e', 'u')}
+      AND UPPER(COALESCE(e.document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
       AND (
-        UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
-        OR UPPER(COALESCE(rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
-        OR UPPER(COALESCE(progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
+        UPPER(COALESCE(e.error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(e.progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
       )
-  `).all(studentId) as any[];
+  `).all(...getStudentOwnershipParams(studentId, studentEmail)) as any[];
 
   for (const stale of staleRows) {
     const normalized = normalizeEvaluationRejectionStatus(stale);
@@ -1553,7 +1555,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
-    repairLegacyFinalizationRejectionsForStudent(studentId);
+    repairLegacyFinalizationRejectionsForStudent(studentId, studentEmail);
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
     const finalizationReviewSql = `(
@@ -1829,7 +1831,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     }
 
     if (String(record.student_id || '') === studentId) {
-      repairLegacyFinalizationRejectionsForStudent(studentId);
+      repairLegacyFinalizationRejectionsForStudent(studentId, req.user!.email?.toLowerCase().trim() || '');
       record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
     }
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
