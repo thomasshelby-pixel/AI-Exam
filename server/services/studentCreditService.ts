@@ -139,11 +139,11 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   let resetMonth = profile.free_evaluation_reset_month;
   let trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
-  // Repair only legacy/unspecified false-blocks when the authenticated identity
-  // can be independently checked. Explicit REUSED_DEVICE / REUSED_IP / REUSED_SRN
-  // decisions are durable free-trial abuse blocks and must survive monthly resets.
-  // We never grant an extra evaluation: usage is reconstructed from the current
-  // month's authoritative consumption ledger and paid balances are untouched.
+  // Repair only legacy false-blocks that were explicitly reviewed and marked
+  // LEGACY_FALSE_BLOCK_REVIEWED. Unknown/blank reasons fail closed because they may
+  // be old device/IP abuse decisions made before reason codes were persisted.
+  // Explicit REUSED_DEVICE / REUSED_IP / REUSED_SRN blocks survive monthly resets.
+  // The current-month ledger still prevents any extra free evaluation from being granted.
   if (trialBlocked || Number(profile.monthly_free_evaluations_limit || 0) <= 0) {
     const srn = String(profile.icai_registration_number || '').trim().toUpperCase();
     const srnDigits = srn.length === 10 ? srn.slice(3) : '';
@@ -160,19 +160,12 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
       .trim()
       .toUpperCase()
       .replace(/^PROFILE_COMPLETION_/, '');
-    const durableAbuseBlockReasons = new Set([
-      'REUSED_SRN',
-      'REUSED_DEVICE',
-      'REUSED_IP',
-      'DEVICE_CHANGED_DURING_SIGNUP',
-      'NO_RELIABLE_SIGNALS',
-      'SIGNAL_STORE_UNAVAILABLE',
-    ]);
+    const explicitlyReviewedFalseBlock = normalizedBlockReason === 'LEGACY_FALSE_BLOCK_REVIEWED';
     const identityVerified =
+      explicitlyReviewedFalseBlock &&
       Number(profile.email_verified) === 1 &&
       profile.account_status === 'ACTIVE' &&
       profile.account_role === 'STUDENT' &&
-      !durableAbuseBlockReasons.has(normalizedBlockReason) &&
       /^[A-Z]{3}[0-9]{7}$/.test(srn) &&
       Number(duplicateIdentity.count) === 0;
 
