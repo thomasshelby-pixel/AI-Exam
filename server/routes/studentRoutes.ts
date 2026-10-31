@@ -55,6 +55,13 @@ import {
 
 const router = Router();
 
+// Student-specific responses must never be stored in a browser or intermediary cache.
+// This prevents a shared device/browser from reusing one account's private response.
+router.use((_req: AuthRequest, res: Response, next) => {
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+  next();
+});
+
 // Ensure all student routes require authentication. Self-delete endpoints use a
 // narrower middleware so deactivated students can still securely delete their own data
 // using a password or a fresh email OTP.
