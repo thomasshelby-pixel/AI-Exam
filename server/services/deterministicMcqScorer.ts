@@ -83,13 +83,15 @@ export function scoreMcqComponent(
   const isPartiallyCorrect = component.assessment === 'PARTIALLY_CORRECT';
 
   // Check if negative marking applies (CA Foundation Paper 3 & 4 only)
+  const normalizedPaper = String(config.paper || '').toLowerCase();
+  const normalizedSubjectKey = String(config.subjectKey || '').toLowerCase();
   const isFoundationObjective =
     level === 'FOUNDATION' &&
     (
-      String(config.paper).includes('Paper 3') ||
-      String(config.paper).includes('Paper 4') ||
-      String(config.subjectKey).includes('quantitative') ||
-      String(config.subjectKey).includes('economics')
+      normalizedPaper.includes('paper 3') ||
+      normalizedPaper.includes('paper 4') ||
+      normalizedSubjectKey.includes('quantitative') ||
+      normalizedSubjectKey.includes('economics')
     );
 
   let marksAwarded = 0;
@@ -256,13 +258,15 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
   }
 ): AuthoritativeMcqEvaluationResult {
   const level = (config.caLevel || 'INTERMEDIATE').toUpperCase();
+  const normalizedPaper = String(config.paper || '').toLowerCase();
+  const normalizedSubjectKey = String(config.subjectKey || '').toLowerCase();
   const isFoundationObjective =
     level === 'FOUNDATION' &&
     (
-      String(config.paper).includes('Paper 3') ||
-      String(config.paper).includes('Paper 4') ||
-      String(config.subjectKey).includes('quantitative') ||
-      String(config.subjectKey).includes('economics')
+      normalizedPaper.includes('paper 3') ||
+      normalizedPaper.includes('paper 4') ||
+      normalizedSubjectKey.includes('quantitative') ||
+      normalizedSubjectKey.includes('economics')
     );
 
   const matTitle = config.sourceMaterialTitle || 'Source-provided suggested answers';
