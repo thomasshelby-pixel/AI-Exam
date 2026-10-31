@@ -359,10 +359,10 @@ Return strictly valid JSON with this schema:
   "markingComponents": [
     {
       "componentId": string,
-      "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "CONCLUSION",
+      "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "WORKING" | "TREATMENT" | "REASONING" | "CONCLUSION" | "PRESENTATION",
       "expectedRequirement": string,
       "studentEvidence": string,
-      "assessment": "CORRECT" | "PARTIALLY_CORRECT" | "INCORRECT",
+      "assessment": "CORRECT" | "PARTIALLY_CORRECT" | "INCORRECT" | "OMITTED",
       "marksAvailable": number,
       "marksAwarded": number,
       "marksDeducted": number,
@@ -396,7 +396,6 @@ Return strictly valid JSON with this schema:
     console.info(`[QuestionChunkEvaluator] ${fullCode} evaluated with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
 
     const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks);
-    const initialAwarded = raw.marksAwarded as number;
     const components: MarkingComponent[] = raw.markingComponents as MarkingComponent[];
 
     // Do not invent or proportionally rescale step allocations. The model output has
@@ -460,7 +459,7 @@ Return strictly valid JSON with this schema:
         markingComponents: components,
         finalConclusionAssessment: raw.finalConclusionAssessment || 'Assessed against official standards.',
         overallReason: raw.reasonForDeduction || 'Evaluated against verified marking scheme.',
-        confidence: 92,
+        confidence: modelConfidence,
         flags: questionFlags,
         isDerivedAllocation: false,
       },
