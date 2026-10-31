@@ -1331,108 +1331,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       });
     }
 
-    // Step D.1.1: Detect exact answer-sheet reuse across student accounts before consuming a free entitlement.
-    // This is an abuse signal, not identity proof. It applies only to free/promo entitlements;
-    // purchased-credit and institute-sponsored evaluations remain available. Admin-marked TEST
-    // accounts can repeat fixture uploads during QA.
-    const isFreeTierEntitlement =
-      entitlementSource === 'PROMO' ||
-      entitlementSource === 'PERSONAL_FREE' ||
-      entitlementSource === 'PERMANENT_FREE';
-    const currentAccount = db.prepare('SELECT account_classification FROM users WHERE id = ?').get(studentId) as any;
-    const isTestAccount = String(currentAccount?.account_classification || '').toUpperCase() === 'TEST';
-    if (answerSheetSha256 && isFreeTierEntitlement && !isTestAccount) {
-      let duplicateUpload = db.prepare(`
-        SELECT e.id, e.display_id, e.student_id, e.created_at
-        FROM evaluations e
-        JOIN users prior_user ON prior_user.id = e.student_id
-        WHERE e.answer_sheet_sha256 = ?
-          AND e.id <> ?
-          AND e.student_id <> ?
-          AND UPPER(COALESCE(prior_user.account_classification, 'NORMAL')) <> 'TEST'
-          AND UPPER(COALESCE(e.status, '')) NOT IN ('REJECTED', 'FAILED', 'PERSISTENCE_FAILED')
-        ORDER BY e.created_at DESC
-        LIMIT 1
-      `).get(answerSheetSha256, evaluationId, studentId) as any;
-
-      // Older evaluations predate answer-sheet fingerprints. Re-hash a small,
-      // relevant set of legacy originals once so pre-existing accounts remain covered.
-      // This compares actual file bytes and never uses name/email as proof of abuse.
-      if (!duplicateUpload) {
-        const legacyCandidates = db.prepare(`
-          SELECT e.id, e.display_id, e.student_id, e.created_at
-          FROM evaluations e
-          JOIN users prior_user ON prior_user.id = e.student_id
-          WHERE (e.answer_sheet_sha256 IS NULL OR TRIM(e.answer_sheet_sha256) = '')
-            AND e.id <> ?
-            AND e.student_id <> ?
-            AND UPPER(COALESCE(prior_user.account_classification, 'NORMAL')) <> 'TEST'
-            AND UPPER(COALESCE(e.status, '')) NOT IN ('REJECTED', 'FAILED', 'PERSISTENCE_FAILED')
-            AND UPPER(COALESCE(e.subject_key, '')) = UPPER(?)
-            AND UPPER(COALESCE(e.level, '')) = UPPER(?)
-          ORDER BY e.created_at DESC
-          LIMIT 8
-        `).all(evaluationId, studentId, subjectKey, level) as any[];
-
-        for (const candidate of legacyCandidates) {
-          try {
-            const priorOriginal = await getPersistentFile(
-              `${candidate.id}_original`,
-              `${candidate.id}_original.pdf`
-            );
-            if (!priorOriginal?.buffer?.length) continue;
-
-            const priorHash = crypto.createHash('sha256').update(priorOriginal.buffer).digest('hex');
-            db.prepare(`
-              UPDATE evaluations
-              SET answer_sheet_sha256 = ?
-              WHERE id = ? AND (answer_sheet_sha256 IS NULL OR TRIM(answer_sheet_sha256) = '')
-            `).run(priorHash, candidate.id);
-
-            if (priorHash === answerSheetSha256) {
-              duplicateUpload = candidate;
-              break;
-            }
-          } catch (legacyHashError) {
-            console.warn('[StudentRoutes] Legacy answer-sheet fingerprint check failed:', candidate.id, legacyHashError);
-          }
-        }
-      }
-
-      if (duplicateUpload) {
-        const message = 'Suspicious activity detected: this exact answer-sheet file has already been submitted from another student account. This submission has been stopped and no credits were deducted. Repeated attempts to bypass free evaluation limits using multiple accounts may lead to account suspension or manual review. If this is legitimate testing, contact support or ask an administrator to mark the account as TEST.';
-        db.prepare(`
-          UPDATE users
-          SET suspicious_activity_warning = 1,
-              suspicious_activity_reason = ?,
-              suspicious_activity_at = COALESCE(suspicious_activity_at, CURRENT_TIMESTAMP),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(message, studentId);
-
-        db.prepare(`
-          UPDATE evaluations
-          SET status = 'REJECTED',
-              document_validation_status = 'DUPLICATE_ACCOUNT_UPLOAD',
-              rejection_reason = ?,
-              error_message = ?,
-              progress_stage = 'REJECTED',
-              progress_message = 'Duplicate answer-sheet upload across accounts',
-              completed_at = CURRENT_TIMESTAMP,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(message, message, evaluationId);
-
-        await persistEvaluationRejectionAndNotify(studentId, evaluationId, subjectName, message);
-
-        return res.status(409).json({
-          error: message,
-          code: 'DUPLICATE_ANSWER_SHEET_FREE_TIER',
-          duplicateEvaluationId: duplicateUpload.display_id || duplicateUpload.id,
-          creditsDeducted: false,
-        });
-      }
-    }
+    // Exact answer-sheet reuse across different student accounts is not an abuse verdict.
+    // Free-trial abuse is handled only by new-account device/IP eligibility; identical
+    // practice PDFs must continue through academic validation and evaluation.
 
     // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
     let creditAlreadyConsumed = false;
@@ -3211,11 +3112,21 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       Number(previousProfile?.free_trial_blocked || 0) === 0 &&
       Number(previousProfile?.monthly_free_evaluations_limit || 0) > 0;
 
-    if (isCompletingProfile && normalizedSrn && !alreadyGrantedStandardFreeTrial) {
-      // Claim the SRN only after the validated profile write has been accepted by
-      // the durable profile adapter. Existing accounts that already have a standard
-      // free quota keep it; profile completion must not retroactively re-run signup
-      // abuse checks against their prior login/device history. New/ungranted accounts
+    const legacyNonSignalBlockReasons = new Set([
+      'PROFILE_COMPLETION_REUSED_SRN',
+      'PROFILE_COMPLETION_DEVICE_CHANGED_DURING_SIGNUP',
+      'PROFILE_COMPLETION_NO_RELIABLE_SIGNALS',
+      'PROFILE_COMPLETION_SIGNAL_STORE_UNAVAILABLE',
+    ]);
+    const legacyPolicyBlockNeedsRecheck = legacyNonSignalBlockReasons.has(
+      String(previousProfile?.free_trial_block_reason || '').trim().toUpperCase()
+    );
+
+    if ((isCompletingProfile || legacyPolicyBlockNeedsRecheck) && normalizedSrn && !alreadyGrantedStandardFreeTrial) {
+      // Run the free-trial device/IP claim only after the validated profile write
+      // has been accepted. Existing accounts with an already-granted quota are never
+      // rechecked; legacy blocks caused only by retired SRN/device-change/signal
+      // rules may be re-evaluated against the current device/IP signals. New/ungranted accounts
       // still pass the full device + IP + SRN gate.
       const deviceHeader = req.headers['x-device-id'];
       const bodyDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
@@ -3224,7 +3135,6 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
         userId: studentId,
         deviceIds: [deviceId],
         ipAddresses: [req.ip || req.socket.remoteAddress || undefined],
-        studentRegistrationNumber: normalizedSrn,
       });
       const currentMonth = getCurrentServerMonth();
       db.prepare(`
