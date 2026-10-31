@@ -1131,12 +1131,10 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       forceBlock: deviceChangedDuringSignup,
     });
 
-    // Device/IP reuse, missing optional signals, or a temporary Firestore
-    // signal-store failure must not penalize a verified student. A prior durable
-    // claim for the same ICAI identity is the only signal-based reason to withhold
-    // the free quota. Existing profile duplicates are also stopped before this
-    // point by findStudentSrnConflict().
-    const freeTrialGranted = freeTrialDecision.reason !== 'REUSED_SRN';
+    // Keep account-level free-trial abuse checks separate from answer-sheet evaluation.
+    // A second account on the same device OR IP, a reused ICAI identity, or missing
+    // required signals withholds only the standard free-trial quota.
+    const freeTrialGranted = freeTrialDecision.eligible;
     if (freeTrialGranted) {
       db.prepare(`
         UPDATE student_profiles
@@ -1159,12 +1157,12 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       db.prepare(`
         UPDATE student_profiles
         SET free_trial_blocked = 1,
-            free_trial_block_reason = 'REUSED_SRN',
+            free_trial_block_reason = ?,
             monthly_free_evaluations_limit = 0,
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
-      `).run(userId);
-      console.info('[FreeTrialAbuse] Free quota withheld due to a previously claimed ICAI identity:', {
+      `).run(freeTrialDecision.reason, userId);
+      console.info('[FreeTrialAbuse] Standard free-trial quota withheld by account/device/IP eligibility:', {
         userId,
         reason: freeTrialDecision.reason,
       });
@@ -1248,7 +1246,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Welcome Notification
     const welcomeMessage = freeTrialGranted
       ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
-      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because this account did not pass the device/browser and network eligibility check. Paid credits and eligible institute or promotional benefits remain available.';
+      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because the device, IP, or student-identity eligibility check was not passed. Paid credits and eligible institute or promotional benefits remain available.';
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
