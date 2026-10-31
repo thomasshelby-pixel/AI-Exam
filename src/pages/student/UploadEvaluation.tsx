@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
@@ -117,6 +117,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   onOpenCreditsModal,
 }) => {
   const { user, profile, refreshUser } = useAuth();
+  const currentStudentIdRef = useRef(user?.id || '');
+  currentStudentIdRef.current = user?.id || '';
+  // Keep in-flight evaluation recovery scoped to the signed-in student account.
+  const activeEvaluationStorageKey = user?.id ? `ca_active_eval_id_${user.id}` : null;
+  const activeEvaluationStartStorageKey = user?.id ? `ca_active_eval_start_${user.id}` : null;
   const location = useLocation();
   const navigate = useNavigate();
   const navState = (location.state || {}) as {
@@ -180,22 +185,45 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const [evalStep, setEvalStep] = useState<EvaluationStep>('IDLE');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
+  const [activeEvaluationOwnerId, setActiveEvaluationOwnerId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [rejectionDetails, setRejectionDetails] = useState<string>('');
 
-  // Resilience: Check for existing in-flight evaluation on mount (resilience to page refresh / tab navigation)
+  // Resume only the current student's own job. A different account in the same
+  // browser must never inherit another account's progress indicator or poll ID.
   useEffect(() => {
-    const savedEvalId = localStorage.getItem('ca_active_eval_id');
-    const savedStartTime = localStorage.getItem('ca_active_eval_start');
+    setActiveEvaluationId(null);
+    setActiveEvaluationOwnerId(null);
+    setEvalStep('IDLE');
+    setElapsedSeconds(0);
+    setFile(null);
+    setFileBase64('');
+    setEnrolledInstitutes([]);
+    setSelectedInstituteId('');
+    setInstituteMaterials([]);
+    setSelectedInstituteMaterialId('');
+    setShowDisclaimerModal(false);
+    setCheckingDisclaimer(false);
+    setErrorMessage('');
+    setRejectionDetails('');
+    setDragOver(false);
+
+    if (!user?.id || !activeEvaluationStorageKey || !activeEvaluationStartStorageKey) return;
+
+    const savedEvalId = localStorage.getItem(activeEvaluationStorageKey);
+    const savedStartTime = localStorage.getItem(activeEvaluationStartStorageKey);
     if (savedEvalId) {
       setActiveEvaluationId(savedEvalId);
+      setActiveEvaluationOwnerId(user.id);
       if (savedStartTime) {
-        const elapsed = Math.max(0, Math.floor((Date.now() - parseInt(savedStartTime, 10)) / 1000));
-        setElapsedSeconds(elapsed);
+        const parsedStart = Number.parseInt(savedStartTime, 10);
+        if (Number.isFinite(parsedStart)) {
+          setElapsedSeconds(Math.max(0, Math.floor((Date.now() - parsedStart) / 1000)));
+        }
       }
       setEvalStep('VALIDATING_DOCUMENT');
     }
-  }, []);
+  }, [user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey]);
 
   // Elapsed timer tick when evaluating
   useEffect(() => {
@@ -234,7 +262,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Polling hook when activeEvaluationId is set
   useEffect(() => {
-    if (!activeEvaluationId) return;
+    if (!activeEvaluationId || !user?.id || activeEvaluationOwnerId !== user.id) return;
 
     let isSubscribed = true;
     const interval = setInterval(async () => {
@@ -256,10 +284,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
         if (data.evaluation?.status === 'COMPLETED' || data.evaluation?.status === 'NEEDS_REVIEW') {
           clearInterval(interval);
-          localStorage.removeItem('ca_active_eval_id');
-          localStorage.removeItem('ca_active_eval_start');
+          if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+          if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
+          setActiveEvaluationOwnerId(null);
           await refreshUser();
           if (data.evaluation.resultJson) {
             const finalEvalId = (data.evaluation as any).display_id || (data.evaluation as any).displayId || activeEvaluationId;
@@ -267,10 +296,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           }
         } else if (data.evaluation?.status === 'REJECTED' || data.evaluation?.status === 'FAILED') {
           clearInterval(interval);
-          localStorage.removeItem('ca_active_eval_id');
-          localStorage.removeItem('ca_active_eval_start');
+          if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+          if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
+          setActiveEvaluationOwnerId(null);
           setErrorMessage(data.evaluation.rejection_reason || data.evaluation.error_message || 'Evaluation could not be completed.');
           if (data.evaluation.status === 'REJECTED') {
             setRejectionDetails(
@@ -292,7 +322,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [activeEvaluationId, onEvaluationComplete, refreshUser]);
+  }, [activeEvaluationId, activeEvaluationOwnerId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, onEvaluationComplete, refreshUser]);
 
   const studentProfile = profile as {
     free_evaluations_used?: number;
@@ -336,28 +366,41 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const hasAccess =
     isInstituteEnrolled || user?.hasPermanentFreeAccess || freeRemaining > 0 || purchasedCredits > 0;
 
-  // Fetch student enrollments
+  // Reload institute memberships whenever the signed-in student changes.
   useEffect(() => {
+    let isCurrentAccount = true;
     const fetchEnrollments = async () => {
+      if (!user?.id) {
+        setEnrolledInstitutes([]);
+        setSelectedInstituteId('');
+        setLoadingEnrollments(false);
+        return;
+      }
       try {
         setLoadingEnrollments(true);
         const res = await apiRequest<{ enrollments: any[] }>('/api/student/enrollments');
+        if (!isCurrentAccount) return;
         const active = (res.enrollments || []).filter((e: any) => e.status === 'ACTIVE');
         setEnrolledInstitutes(active);
-        if (active.length > 0 && !selectedInstituteId) {
-          setSelectedInstituteId(navState.instituteId || active[0].institute_id);
-        }
+        const preferredEnrollment =
+          active.find((item: any) => item.institute_id === navState.instituteId) || active[0];
+        setSelectedInstituteId(preferredEnrollment?.institute_id || '');
         if (navState.initialEvaluationType === 'INSTITUTE' && active.length > 0) {
           setEvaluationSource('INSTITUTE');
+        } else if (active.length === 0) {
+          setEvaluationSource('PUBLIC');
         }
       } catch (err) {
-        console.warn('Could not load student enrollments:', err);
+        if (isCurrentAccount) console.warn('Could not load student enrollments:', err);
       } finally {
-        setLoadingEnrollments(false);
+        if (isCurrentAccount) setLoadingEnrollments(false);
       }
     };
-    fetchEnrollments();
-  }, []);
+    void fetchEnrollments();
+    return () => {
+      isCurrentAccount = false;
+    };
+  }, [user?.id, navState.instituteId, navState.initialEvaluationType]);
 
   // Sync available exam attempts dynamically when CA level changes
   useEffect(() => {
@@ -584,6 +627,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
   const handleCheckAnswerSheetClick = async () => {
+    const requestedUserId = user?.id || '';
+    if (!requestedUserId) {
+      setErrorMessage('Your student session is not ready. Please sign in again.');
+      return;
+    }
     if (evaluationSource === 'PUBLIC' && (!accountCourseLevel || level !== accountCourseLevel)) {
       setRequestedCourseLevel(level);
       setShowCourseAccessNotice(true);
@@ -617,6 +665,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     try {
       setCheckingDisclaimer(true);
       const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
+      if (currentStudentIdRef.current !== requestedUserId) return;
       if (!res.acknowledged) {
         setShowDisclaimerModal(true);
         return;
@@ -624,10 +673,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       // If already acknowledged, proceed with evaluation
       await handleStartEvaluation();
     } catch (err: unknown) {
+      if (currentStudentIdRef.current !== requestedUserId) return;
       console.warn('[UploadEvaluation] Error checking disclaimer status:', err);
       setShowDisclaimerModal(true);
     } finally {
-      setCheckingDisclaimer(false);
+      if (currentStudentIdRef.current === requestedUserId) setCheckingDisclaimer(false);
     }
   };
 
@@ -661,15 +711,23 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       return;
     }
 
+    const submissionOwnerId = user?.id || '';
+    if (!submissionOwnerId || !activeEvaluationStorageKey || !activeEvaluationStartStorageKey) {
+      setErrorMessage('Your student session is not ready. Please sign in again before starting an evaluation.');
+      return;
+    }
+
     const newEvaluationId = `eval_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
 
     try {
       setErrorMessage('');
       setRejectionDetails('');
       setElapsedSeconds(0);
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
       setActiveEvaluationId(newEvaluationId);
-      localStorage.setItem('ca_active_eval_id', newEvaluationId);
-      localStorage.setItem('ca_active_eval_start', Date.now().toString());
+      setActiveEvaluationOwnerId(submissionOwnerId);
+      localStorage.setItem(activeEvaluationStorageKey, newEvaluationId);
+      localStorage.setItem(activeEvaluationStartStorageKey, Date.now().toString());
       setEvalStep('VALIDATING_DOCUMENT');
 
       const response = await apiRequest<{
@@ -701,12 +759,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         }),
       });
 
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
+
       if (response.result) {
-        localStorage.removeItem('ca_active_eval_id');
-        localStorage.removeItem('ca_active_eval_start');
+        if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+        if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
         setActiveEvaluationId(null);
+        setActiveEvaluationOwnerId(null);
         setEvalStep('IDLE');
         await refreshUser();
+        if (currentStudentIdRef.current !== submissionOwnerId) return;
         const finalEvalId = (response as any).displayId || (response as any).display_id || response.evaluationId;
         onEvaluationComplete(finalEvalId, response.result);
       } else {
@@ -714,11 +776,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         setEvalStep('EVALUATING_ANSWERS');
       }
     } catch (err: unknown) {
+      if (currentStudentIdRef.current !== submissionOwnerId) return;
       // Resilience check: verify if the evaluation was enqueued and is running in backend
       try {
         const verifyRes = await apiRequest<{ evaluation?: { id: string; status: string } }>(
           `/api/student/evaluations/${newEvaluationId}`
         );
+        if (currentStudentIdRef.current !== submissionOwnerId) return;
         if (
           verifyRes.evaluation &&
           verifyRes.evaluation.status !== 'FAILED' &&
@@ -732,9 +796,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         // Fall through to error
       }
 
-      localStorage.removeItem('ca_active_eval_id');
-      localStorage.removeItem('ca_active_eval_start');
+      if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+      if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
       setActiveEvaluationId(null);
+      setActiveEvaluationOwnerId(null);
       setEvalStep('IDLE');
       const msg = err instanceof Error ? err.message : 'Evaluation could not be completed.';
       setErrorMessage(msg);
@@ -884,9 +949,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  localStorage.removeItem('ca_active_eval_id');
-                  localStorage.removeItem('ca_active_eval_start');
+                  if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+                  if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
                   setActiveEvaluationId(null);
+                  setActiveEvaluationOwnerId(null);
                   setEvalStep('IDLE');
                 }}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline cursor-pointer text-left sm:text-right"

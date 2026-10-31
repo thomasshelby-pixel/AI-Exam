@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   BrowserRouter,
   Routes,
@@ -79,12 +79,15 @@ import { DisclaimerModal } from './components/student/DisclaimerModal.js';
 // Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
 const EvaluationReportWrapper: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const reportAccountRef = useRef(user?.id || '');
+  reportAccountRef.current = user?.id || '';
+  const reportIdRef = useRef(id || '');
+  reportIdRef.current = id || '';
 
-  // If result was passed via navigation state
-  const passedResult = (location.state as any)?.result as EvaluationResult | undefined;
   const [report, setReport] = useState<EvaluationResult | null>(null);
+  const [reportOwnerId, setReportOwnerId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isCheckingDisclaimer, setIsCheckingDisclaimer] = useState<boolean>(true);
   const [isDisclaimerAcknowledged, setIsDisclaimerAcknowledged] = useState<boolean>(false);
@@ -93,34 +96,40 @@ const EvaluationReportWrapper: React.FC = () => {
 
   // Step 1: Verify disclaimer status before rendering any evaluation content
   const checkDisclaimerStatus = useCallback(async () => {
+    const requestedUserId = user?.id || '';
     try {
       setIsCheckingDisclaimer(true);
       const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
+      if (reportAccountRef.current !== requestedUserId) return;
       if (res.acknowledged) {
         setIsDisclaimerAcknowledged(true);
-        if (passedResult) {
-          setReport(passedResult);
-          setLoading(false);
-        }
+        // Report content must always come from the authenticated server endpoint.
       } else {
         setIsDisclaimerAcknowledged(false);
         setLoading(false);
       }
     } catch {
-      // In case of error checking disclaimer, enforce modal for safety
+      // In case of error checking disclaimer, enforce modal for safety.
+      if (reportAccountRef.current !== requestedUserId) return;
       setIsDisclaimerAcknowledged(false);
       setLoading(false);
     } finally {
-      setIsCheckingDisclaimer(false);
+      if (reportAccountRef.current === requestedUserId) setIsCheckingDisclaimer(false);
     }
-  }, [passedResult]);
+  }, [user?.id]);
 
   useEffect(() => {
+    setReport(null);
+    setReportOwnerId(null);
+    setError('');
+    setLoading(true);
+    setIsDisclaimerAcknowledged(false);
     checkDisclaimerStatus();
-  }, [checkDisclaimerStatus]);
+  }, [checkDisclaimerStatus, id]);
 
   const fetchReport = useCallback(async (isPolling = false) => {
-    if (!id) return;
+    if (!id || !user?.id) return;
+    const requestedUserId = user.id;
     try {
       const res = await apiRequest<{
         evaluation: {
@@ -133,10 +142,11 @@ const EvaluationReportWrapper: React.FC = () => {
         };
       }>(`/api/student/evaluations/${id}`);
 
+      if (reportAccountRef.current !== requestedUserId || reportIdRef.current !== id) return;
       const evalData = res.evaluation;
       const canonicalDisplayId = (evalData as any)?.display_id || (evalData as any)?.displayId;
       if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
-        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true, state: location.state });
+        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true });
       }
       if (evalData?.status === 'REJECTED') {
         setError(
@@ -148,6 +158,7 @@ const EvaluationReportWrapper: React.FC = () => {
 
       if (evalData?.resultJson) {
         setReport(evalData.resultJson);
+        setReportOwnerId(requestedUserId);
         setLoading(false);
         return;
       }
@@ -155,6 +166,7 @@ const EvaluationReportWrapper: React.FC = () => {
       if (evalData?.raw_result_json) {
         try {
           setReport(JSON.parse(evalData.raw_result_json));
+          setReportOwnerId(requestedUserId);
           setLoading(false);
           return;
         } catch {
@@ -200,6 +212,7 @@ const EvaluationReportWrapper: React.FC = () => {
         setLoading(false);
       }
     } catch (err: unknown) {
+      if (reportAccountRef.current !== requestedUserId || reportIdRef.current !== id) return;
       const msg = err instanceof Error ? err.message : 'Failed to load report';
       if (msg.includes('disclaimer') || msg.includes('DISCLAIMER_REQUIRED')) {
         setIsDisclaimerAcknowledged(false);
@@ -209,7 +222,7 @@ const EvaluationReportWrapper: React.FC = () => {
       setError(msg);
       setLoading(false);
     }
-  }, [id]);
+  }, [id, user?.id]);
 
   useEffect(() => {
     if (!id || isCheckingDisclaimer || !isDisclaimerAcknowledged) return;
@@ -256,20 +269,17 @@ const EvaluationReportWrapper: React.FC = () => {
           isOpen={true}
           onAcknowledge={() => {
             setIsDisclaimerAcknowledged(true);
-            if (passedResult) {
-              setReport(passedResult);
-              setLoading(false);
-            } else {
-              setLoading(true);
-              fetchReport();
-            }
+            setReport(null);
+            setReportOwnerId(null);
+            setError('');
+            setLoading(true);
           }}
         />
       </>
     );
   }
 
-  if (loading) {
+  if (loading || (report !== null && reportOwnerId !== user?.id)) {
     return (
       <div className="py-24 flex flex-col items-center justify-center gap-4 text-center px-4">
         <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -1425,8 +1435,8 @@ const AppRoutes: React.FC = () => {
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
                 <UploadEvaluation
-                  onEvaluationComplete={(id, result) =>
-                    navigate(`/student/evaluations/${id}`, { state: { result } })
+                  onEvaluationComplete={(id) =>
+                    navigate(`/student/evaluations/${id}`)
                   }
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                 />
