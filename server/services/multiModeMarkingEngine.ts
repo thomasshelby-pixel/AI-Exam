@@ -98,6 +98,15 @@ export function applyMultiModeMarkingPhilosophy(
 
     const qMax = Number(sq.maximumMarks) || 0;
 
+    // Unclear questions remain provisional across every marking mode. Do not apply
+    // strict deductions or moderate bonuses to unresolved/technical evaluations.
+    if (sq.status === 'unclear') {
+      return {
+        ...sq,
+        markingModeApplied: 'strict',
+      };
+    }
+
     // MCQs are deterministic: matching option gets full marks, non-matching gets 0
     if (isMcq) {
       return {
@@ -182,6 +191,14 @@ export function applyMultiModeMarkingPhilosophy(
     );
 
     const qMax = Number(sq.maximumMarks) || 0;
+
+    // Do not manufacture benefit-of-doubt marks for an unresolved question.
+    if (sq.status === 'unclear') {
+      return {
+        ...sq,
+        markingModeApplied: 'moderate',
+      };
+    }
 
     if (isMcq) {
       return {
