@@ -16,7 +16,7 @@ import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
-import { validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
+import { classifyPreEvaluationFailures, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
 import {
   getSupportedThinkingLevel,
@@ -29,6 +29,33 @@ console.log('--- REGRESSION TEST: STRICT RUNTIME AI MODEL WHITELIST & REGISTRY -
 console.log('========================================================================\n');
 
 async function runTests() {
+  const coverageDisposition = classifyPreEvaluationFailures([
+    'UNMAPPED_STUDENT_PAGE: Page 4 contains content without a confirmed question identity.',
+    'UNMAPPED_ATTEMPT_DETECTED: Candidate attempted Q9(a) which is absent from the parsed paper.',
+    'MISSING_OFFICIAL_MCQ_KEY: MCQ 2 lacks a verified authoritative answer key.',
+  ]);
+  assert.deepStrictEqual(
+    coverageDisposition.coverageReviewFailures,
+    [
+      'UNMAPPED_STUDENT_PAGE: Page 4 contains content without a confirmed question identity.',
+      'UNMAPPED_ATTEMPT_DETECTED: Candidate attempted Q9(a) which is absent from the parsed paper.',
+    ],
+    'Coverage-only uncertainty must preserve mapped-question scoring while forcing human review.',
+  );
+  assert.deepStrictEqual(
+    coverageDisposition.blockingFailures,
+    ['MISSING_OFFICIAL_MCQ_KEY: MCQ 2 lacks a verified authoritative answer key.'],
+    'An absent authoritative MCQ answer key must remain a hard scoring blocker.',
+  );
+  const hardOnlyDisposition = classifyPreEvaluationFailures([
+    'QUESTION_PAPER_NOT_PARSED: No valid question nodes found in authoritative structure.',
+  ]);
+  assert.strictEqual(
+    hardOnlyDisposition.coverageReviewFailures.length,
+    0,
+    'Invalid authoritative paper structure must not be downgraded to a coverage warning.',
+  );
+
   // Routing is exercised as a pure configuration test; use placeholder credentials
   // so CI can validate provider availability without making any external API calls.
   process.env.GEMINI_API_KEY = 'test-gemini-key';
