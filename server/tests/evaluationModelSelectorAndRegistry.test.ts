@@ -356,7 +356,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidateQuestionChunkOutput(JSON.stringify({
       ...validChunk,
-      markingComponents: [{ ...validChunk.markingComponents[0], marksAvailable: 4 }],
+      markingComponents: [{ ...validChunk.markingComponents[0], marksAvailable: 4, marksDeducted: 2 }],
     }), 5),
     /QUESTION_CHUNK_ALLOCATION_MISMATCH/,
     'Component allocation must equal the official question maximum.',
