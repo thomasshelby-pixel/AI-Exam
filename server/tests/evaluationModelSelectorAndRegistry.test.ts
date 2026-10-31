@@ -359,6 +359,32 @@ async function runTests() {
     }],
   };
   assert.equal(parseAndValidateQuestionChunkOutput(JSON.stringify(validChunk), 5).marksAwarded, 2);
+
+  const mislabeledPartialChunk = {
+    ...validChunk,
+    status: 'incorrect',
+  };
+  assert.equal(
+    parseAndValidateQuestionChunkOutput(JSON.stringify(mislabeledPartialChunk), 5).status,
+    'partially_correct',
+    'A valid positive step-mark score must not be discarded because the model mislabeled the status.',
+  );
+  const fullMarksMislabeledChunk = {
+    ...validChunk,
+    marksAwarded: 5,
+    status: 'partially_correct',
+    markingComponents: [{
+      ...validChunk.markingComponents[0],
+      marksAwarded: 5,
+      marksDeducted: 0,
+      assessment: 'CORRECT',
+    }],
+  };
+  assert.equal(
+    parseAndValidateQuestionChunkOutput(JSON.stringify(fullMarksMislabeledChunk), 5).status,
+    'correct',
+    'A fully reconciled maximum score must normalize to correct.',
+  );
   assert.throws(
     () => parseAndValidateQuestionChunkOutput('not valid JSON', 5),
     /QUESTION_CHUNK_INVALID_JSON/,
@@ -427,6 +453,63 @@ async function runTests() {
     assert.equal(modeResult.activeQuestions[0].marksAwarded, 0, `${mode} mode must not invent academic marks.`);
     assert.equal(modeResult.activeQuestions[0].marksLost, 0, `${mode} mode must not convert technical failure into academic mark loss.`);
   }
+
+  const strictnessFixture = {
+    questionNumber: '2',
+    subQuestion: 'a',
+    maximumMarks: 3,
+    marksAwarded: 2.5,
+    marksLost: 0.5,
+    status: 'partially_correct',
+    markingComponents: [
+      {
+        componentId: 'Q2a-provision',
+        componentType: 'PROVISION',
+        assessment: 'PARTIALLY_CORRECT',
+        expectedRequirement: 'Cite and explain the applicable statutory provision.',
+        studentEvidence: 'Candidate cited the section but omitted one material condition.',
+        marksAvailable: 2,
+        marksAwarded: 1.5,
+        marksDeducted: 0.5,
+        deductionReason: 'One material condition was omitted.',
+      },
+      {
+        componentId: 'Q2a-application',
+        componentType: 'APPLICATION',
+        assessment: 'CORRECT',
+        expectedRequirement: 'Apply the provision to the facts.',
+        studentEvidence: 'Candidate correctly applied the provision to the facts.',
+        marksAvailable: 1,
+        marksAwarded: 1,
+        marksDeducted: 0,
+        deductionReason: '',
+      },
+    ],
+  } as any;
+  const standardMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'standard', 100);
+  const strictMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'strict', 100);
+  const moderateMode = applyMultiModeMarkingPhilosophy([strictnessFixture], 'lenient', 100);
+  const questionMarkTotal = (questions: any[]) => questions.reduce((sum, question) => sum + question.marksAwarded, 0);
+  assert.equal(standardMode.activeTotalMarks, questionMarkTotal(standardMode.activeQuestions), 'Standard total must equal the sum of displayed question marks.');
+  assert.equal(strictMode.activeTotalMarks, questionMarkTotal(strictMode.activeQuestions), 'Strict total must equal the sum of displayed question marks.');
+  assert.equal(moderateMode.activeTotalMarks, questionMarkTotal(moderateMode.activeQuestions), 'Moderate total must equal the sum of displayed question marks.');
+  assert.ok(strictMode.activeTotalMarks <= standardMode.activeTotalMarks, 'Strict marking must not exceed Standard marking.');
+  assert.ok(moderateMode.activeTotalMarks >= standardMode.activeTotalMarks, 'Moderate marking must not be below Standard marking.');
+  assert.ok(strictMode.activeQuestions[0].markingComponents[1].marksAwarded === 1, 'Strict marking must preserve an independently correct application component.');
+
+  const clampedComponentFixture = {
+    ...strictnessFixture,
+    marksAwarded: 3,
+    markingComponents: [{
+      ...strictnessFixture.markingComponents[1],
+      marksAvailable: 1,
+      marksAwarded: 1.75,
+      marksDeducted: 0,
+    }],
+  } as any;
+  const clampedMode = applyMultiModeMarkingPhilosophy([clampedComponentFixture], 'standard', 100);
+  assert.equal(clampedMode.activeQuestions[0].markingComponents[0].marksAwarded, 1, 'Standard marking must clamp an over-awarded component to its available marks.');
+  assert.equal(clampedMode.activeQuestions[0].markingComponents[0].marksDeducted, 0, 'Component deductions must be calculated from the clamped awarded marks.');
 
 
   console.log('  ✓ Deterministic routing and wire config sanitization verified.');
