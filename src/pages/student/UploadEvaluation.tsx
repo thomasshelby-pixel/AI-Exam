@@ -281,7 +281,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
-        setActiveEvaluationOwnerId(null);
+          setActiveEvaluationOwnerId(null);
           await refreshUser();
           if (data.evaluation.resultJson) {
             const finalEvalId = (data.evaluation as any).display_id || (data.evaluation as any).displayId || activeEvaluationId;
@@ -293,7 +293,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
-      setActiveEvaluationOwnerId(null);
+          setActiveEvaluationOwnerId(null);
           setErrorMessage(data.evaluation.rejection_reason || data.evaluation.error_message || 'Evaluation could not be completed.');
           if (data.evaluation.status === 'REJECTED') {
             setRejectionDetails(
@@ -393,7 +393,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     return () => {
       isCurrentAccount = false;
     };
-  }, [user?.id]);
+  }, [user?.id, navState.instituteId, navState.initialEvaluationType]);
 
   // Sync available exam attempts dynamically when CA level changes
   useEffect(() => {
@@ -745,7 +745,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
         if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
         setActiveEvaluationId(null);
-          setActiveEvaluationOwnerId(null);
+        setActiveEvaluationOwnerId(null);
         setEvalStep('IDLE');
         await refreshUser();
         const finalEvalId = (response as any).displayId || (response as any).display_id || response.evaluationId;
@@ -776,7 +776,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
       if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
       setActiveEvaluationId(null);
-          setActiveEvaluationOwnerId(null);
+      setActiveEvaluationOwnerId(null);
       setEvalStep('IDLE');
       const msg = err instanceof Error ? err.message : 'Evaluation could not be completed.';
       setErrorMessage(msg);
@@ -929,7 +929,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
                   if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
                   setActiveEvaluationId(null);
-          setActiveEvaluationOwnerId(null);
+                  setActiveEvaluationOwnerId(null);
                   setEvalStep('IDLE');
                 }}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline cursor-pointer text-left sm:text-right"
