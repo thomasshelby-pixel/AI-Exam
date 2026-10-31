@@ -44,6 +44,14 @@ export function decideFreeTrialEligibility(input: FreeTrialSignalDecisionInput):
   return { eligible: true, reason: 'FIRST_CLAIM' };
 }
 
+export function isSignalOwnedByAnotherUser(
+  snapshotExists: boolean,
+  signalOwnerId: string | null | undefined,
+  requestingUserId: string
+): boolean {
+  return snapshotExists && String(signalOwnerId || '') !== requestingUserId;
+}
+
 /**
  * Claims hashed browser/device and IP signals in Firestore in one transaction.
  * Raw device identifiers and IP addresses are never persisted.
@@ -118,13 +126,13 @@ export async function claimFreeTrialEligibility(params: {
       const ipClaim = snapshots.filter((entry) => entry.type === 'ip');
       const srnClaim = snapshots.find((entry) => entry.type === 'srn');
       const reusedDevice = deviceClaim.some((entry) =>
-        entry.snapshot.exists && ownerFor(entry) !== params.userId
+        isSignalOwnedByAnotherUser(entry.snapshot.exists, ownerFor(entry), params.userId)
       );
       const reusedIp = ipClaim.some((entry) =>
         entry.snapshot.exists && ownerFor(entry) !== params.userId
       );
       const reusedSrn = Boolean(
-        srnClaim?.snapshot.exists && ownerFor(srnClaim) !== params.userId
+        isSignalOwnedByAnotherUser(Boolean(srnClaim?.snapshot.exists), srnClaim ? ownerFor(srnClaim) : null, params.userId)
       );
 
       // Claim any unseen signals in one transaction. The owner is an opaque
