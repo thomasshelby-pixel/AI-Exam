@@ -1485,6 +1485,10 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
                THEN COALESCE(NULLIF(TRIM(e.rejection_reason), ''), NULLIF(TRIM(e.error_message), ''))
                ELSE e.rejection_reason
              END AS rejection_reason,
+             CASE
+               WHEN ${finalizationReviewSql} THEN 'Your answer sheet has been preserved for academic review. No final result has been issued yet.'
+               ELSE e.progress_message
+             END AS progress_message,
              e.created_at, e.completed_at,
              e.evaluation_source, e.material_source, e.sponsoring_institute_id,
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
