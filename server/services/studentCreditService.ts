@@ -139,10 +139,9 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   let resetMonth = profile.free_evaluation_reset_month;
   let trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
-  // Repair legacy false-blocks only when the authenticated identity can be
-  // independently checked in our account registry. Device/IP signals are noisy
-  // (shared PCs, carrier NAT, changing networks), so they must not permanently
-  // deny a verified, active student whose ICAI registration identity is unique.
+  // Repair only legacy/unspecified false-blocks when the authenticated identity
+  // can be independently checked. Explicit REUSED_DEVICE / REUSED_IP / REUSED_SRN
+  // decisions are durable free-trial abuse blocks and must survive monthly resets.
   // We never grant an extra evaluation: usage is reconstructed from the current
   // month's authoritative consumption ledger and paid balances are untouched.
   if (trialBlocked || Number(profile.monthly_free_evaluations_limit || 0) <= 0) {
