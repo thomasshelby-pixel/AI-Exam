@@ -191,7 +191,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   // browser must never inherit another account's progress indicator or poll ID.
   useEffect(() => {
     setActiveEvaluationId(null);
-      setActiveEvaluationOwnerId(null);
     setActiveEvaluationOwnerId(null);
     setEvalStep('IDLE');
     setElapsedSeconds(0);
@@ -746,6 +745,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
         if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
         setActiveEvaluationId(null);
+          setActiveEvaluationOwnerId(null);
         setEvalStep('IDLE');
         await refreshUser();
         const finalEvalId = (response as any).displayId || (response as any).display_id || response.evaluationId;
@@ -776,6 +776,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
       if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
       setActiveEvaluationId(null);
+          setActiveEvaluationOwnerId(null);
       setEvalStep('IDLE');
       const msg = err instanceof Error ? err.message : 'Evaluation could not be completed.';
       setErrorMessage(msg);
@@ -928,6 +929,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
                   if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
                   setActiveEvaluationId(null);
+          setActiveEvaluationOwnerId(null);
                   setEvalStep('IDLE');
                 }}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline cursor-pointer text-left sm:text-right"
