@@ -3207,10 +3207,16 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       }
     }
 
-    if (isCompletingProfile && normalizedSrn) {
+    const alreadyGrantedStandardFreeTrial =
+      Number(previousProfile?.free_trial_blocked || 0) === 0 &&
+      Number(previousProfile?.monthly_free_evaluations_limit || 0) > 0;
+
+    if (isCompletingProfile && normalizedSrn && !alreadyGrantedStandardFreeTrial) {
       // Claim the SRN only after the validated profile write has been accepted by
-      // the durable profile adapter. If the signal store is unavailable or this SRN
-      // was used by a deleted account, fail closed for free-trial access.
+      // the durable profile adapter. Existing accounts that already have a standard
+      // free quota keep it; profile completion must not retroactively re-run signup
+      // abuse checks against their prior login/device history. New/ungranted accounts
+      // still pass the full device + IP + SRN gate.
       const deviceHeader = req.headers['x-device-id'];
       const bodyDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
       const deviceId = typeof deviceHeader === 'string' ? deviceHeader.trim() : bodyDeviceId?.trim();
