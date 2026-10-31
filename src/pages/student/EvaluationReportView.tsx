@@ -33,6 +33,7 @@ import { ModelAnswerComparisonView } from '../../components/student/ModelAnswerC
 import { ModelAnswerComparisonModal } from '../../components/student/ModelAnswerComparisonModal.js';
 import { formatDateIST } from '../../utils/timezone.js';
 import { StudentReviewCard } from '../../components/student/StudentReviewCard.js';
+import { buildMarksLeakReport } from '../../utils/marksLeakDetector.js';
 
 interface EvaluationReportViewProps {
   evaluationResult: EvaluationResult;
@@ -233,6 +234,8 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     questions,
     isMcqPaper,
   } = evaluationResult;
+
+  const marksLeakReport = buildMarksLeakReport(evaluationResult);
 
   const displayEvaluationId = (evaluationResult as any).displayId || (evaluationResult as any).display_id || evaluationResult.evaluationId;
   const studentCode = (evaluationResult as any).studentCode || (evaluationResult as any).student_code;
@@ -841,6 +844,81 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed print:text-gray-800">{overallSummary}</p>
         </div>
       </div>
+
+      {/* Evidence-led Marks Leak Detector */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              Marks Leak Detector
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Evidence-based review of where marks were left on the table, using this evaluation's existing marking and attempt records.
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-xl font-black font-mono text-slate-900 dark:text-white">
+              {marksLeakReport.totalMarksAtStake.toFixed(1)}m
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Marks at stake in recorded findings</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3">
+            <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">{marksLeakReport.unattemptedMarks.toFixed(1)}</div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Unattempted</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3">
+            <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">{marksLeakReport.incompleteAnswerMarks.toFixed(1)}</div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Working / explanation</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3">
+            <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">{marksLeakReport.stepMarksLost.toFixed(1)}</div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Other step deductions</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3">
+            <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">{marksLeakReport.technicalReviewCount}</div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Need manual review</div>
+          </div>
+        </div>
+
+        {marksLeakReport.findings.length > 0 ? (
+          <div className="mt-4 space-y-2">
+            {marksLeakReport.findings.map((finding) => (
+              <div key={finding.id} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-900 dark:text-white">
+                    {finding.questionId} · {finding.title}
+                  </div>
+                  <div className="text-xs font-bold font-mono text-amber-700 dark:text-amber-400">
+                    {finding.marksAtStake > 0 ? `${finding.marksAtStake.toFixed(1)}m at stake` : 'Review required'}
+                  </div>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">{finding.detail}</p>
+                {finding.pages.length > 0 && (
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">Answer-sheet page(s): {finding.pages.join(', ')}</p>
+                )}
+                {finding.evidence.length > 0 && (
+                  <ul className="mt-1 list-disc pl-4 text-[10px] text-slate-500 dark:text-slate-400">
+                    {finding.evidence.slice(0, 3).map((item, index) => <li key={index}>{item}</li>)}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 text-xs text-slate-600 dark:text-slate-300">
+            {marksLeakReport.isEvidenceLimited
+              ? 'Detailed step-level or canonical attempt evidence is not available in this saved evaluation, so the detector will not guess where marks were lost.'
+              : 'No additional evidence-backed marks-leak findings were detected.'}
+          </p>
+        )}
+        <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-3">
+          Diagnostic only: “marks at stake” are based on recorded marking gaps, not a guarantee that those marks would be awarded on rechecking. Refer to the official Suggested Answer and marking scheme.
+        </p>
+      </section>
 
       {/* Strengths & Weaknesses Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 print:grid-cols-2">

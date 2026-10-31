@@ -999,6 +999,52 @@ export function buildOpenAIUserContent(
  * Execute evaluation prompt against OpenAI provider
  * Supports GPT-5.6 Sol (Deep Reasoning) and GPT-5.6 Terra (Fast Multimodal)
  */
+/**
+ * Keep provider request capabilities aligned with the model registry.
+ * Astra is explicitly configured as HIGH-reasoning in APPROVED_MODELS.
+ */
+export function getOpenAIThinkingLevel(
+  modelId: string,
+  requested: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH'
+): 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' {
+  const normalized = String(modelId || '').toLowerCase();
+  if (normalized.includes('astra')) return requested === 'XHIGH' ? 'XHIGH' : requested === 'LOW' ? 'LOW' : 'HIGH';
+  if (normalized.includes('sol')) return requested === 'XHIGH' ? 'XHIGH' : 'HIGH';
+  if (normalized.includes('terra')) return 'LOW';
+  return requested;
+}
+
+export function isOpenAIParameterCompatibilityError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  const mentionsRequestParameter = [
+    'reasoning_effort',
+    'max_completion_tokens',
+    'max_tokens',
+    'response_format',
+  ].some((parameter) => normalized.includes(parameter));
+  const indicatesParameterRejection = [
+    'unsupported parameter',
+    'unknown parameter',
+    'unrecognized parameter',
+    'invalid parameter',
+    'unsupported value',
+    'not supported with this model',
+    'does not support parameter',
+    'unknown request argument',
+    'unrecognized request argument',
+  ].some((phrase) => normalized.includes(phrase));
+  return mentionsRequestParameter && indicatesParameterRejection;
+}
+
+export function isOpenAIReasoningModel(modelId: string): boolean {
+  const normalized = String(modelId || '').toLowerCase();
+  return normalized.includes('sol') ||
+    normalized.includes('terra') ||
+    normalized.includes('astra') ||
+    normalized.startsWith('o3') ||
+    normalized.startsWith('o1');
+}
+
 async function callOpenAI(
   modelId: string,
   params: ModelExecutionParams,
@@ -1026,7 +1072,7 @@ async function callOpenAI(
     messages,
   };
 
-  const isReasoningModel = modelId.includes('sol') || modelId.includes('terra') || modelId.startsWith('o3') || modelId.startsWith('o1');
+  const isReasoningModel = isOpenAIReasoningModel(modelId);
   if (isReasoningModel) {
     const reasoningEffort =
       effectiveThinkingLevel === 'XHIGH' || effectiveThinkingLevel === 'HIGH'
@@ -1051,8 +1097,10 @@ async function callOpenAI(
   } catch (err: any) {
     const errMsg = (err?.message || String(err)).toLowerCase();
     const isBillingOrQuota = errMsg.includes('credit') || errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('401') || errMsg.includes('billing');
-    // Only retry without reasoning_effort if it is a parameter incompatibility, NEVER on billing/quota/auth errors
-    if (!isBillingOrQuota && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
+    const isParameterCompatibilityError = isOpenAIParameterCompatibilityError(errMsg);
+    // Retry without reasoning only when the provider explicitly rejects a request parameter.
+    // Do not silently downgrade reasoning for unrelated 400/404/5xx failures.
+    if (!isBillingOrQuota && isParameterCompatibilityError && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
       delete requestPayload.reasoning_effort;
       requestPayload.max_tokens = requestPayload.max_completion_tokens || 8192;
       delete requestPayload.max_completion_tokens;
@@ -1511,8 +1559,11 @@ export async function executeModelWithFallback(
 
     // Determine thinking level for candidate (use LOW/MEDIUM thinking to minimize latency and prevent timeouts)
     let effectiveThinking: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'MEDIUM';
-    if (candidateModel === 'gpt-5.6-sol') {
-      effectiveThinking = routing.thinkingLevel === 'XHIGH' ? 'XHIGH' : 'HIGH';
+    if (candidateModel === 'gpt-6-astra') {
+      // Preserve the registry/admin-selected HIGH or XHIGH level for Astra.
+      effectiveThinking = getOpenAIThinkingLevel(candidateModel, routing.thinkingLevel);
+    } else if (candidateModel === 'gpt-5.6-sol') {
+      effectiveThinking = getOpenAIThinkingLevel(candidateModel, routing.thinkingLevel);
     } else if (
       candidateModel === 'gpt-5.6-terra' ||
       candidateModel === 'claude-sonnet-5' ||
