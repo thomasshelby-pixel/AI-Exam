@@ -1837,7 +1837,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       createdAt: record.created_at,
       updatedAt: record.updated_at || record.created_at,
       completedAt: record.completed_at || null,
-      errorMessage: normalizedRecord.error_message || record.error_message || null,
+      errorMessage: String(normalizedRecord.status || '').toUpperCase() === 'NEEDS_REVIEW' ? null : (normalizedRecord.error_message || record.error_message || null),
       rejectionReason: normalizedRecord.rejection_reason || null,
       resultSummary: record.status === 'COMPLETED' ? {
         totalMarks: record.total_marks,
