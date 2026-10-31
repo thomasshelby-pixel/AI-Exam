@@ -82,6 +82,8 @@ const EvaluationReportWrapper: React.FC = () => {
   const { user } = useAuth();
   const reportAccountRef = useRef(user?.id || '');
   reportAccountRef.current = user?.id || '';
+  const reportIdRef = useRef(id || '');
+  reportIdRef.current = id || '';
 
   const [report, setReport] = useState<EvaluationResult | null>(null);
   const [reportOwnerId, setReportOwnerId] = useState<string | null>(null);
@@ -122,7 +124,7 @@ const EvaluationReportWrapper: React.FC = () => {
     setLoading(true);
     setIsDisclaimerAcknowledged(false);
     checkDisclaimerStatus();
-  }, [checkDisclaimerStatus]);
+  }, [checkDisclaimerStatus, id]);
 
   const fetchReport = useCallback(async (isPolling = false) => {
     if (!id || !user?.id) return;
@@ -139,7 +141,7 @@ const EvaluationReportWrapper: React.FC = () => {
         };
       }>(`/api/student/evaluations/${id}`);
 
-      if (reportAccountRef.current !== requestedUserId) return;
+      if (reportAccountRef.current !== requestedUserId || reportIdRef.current !== id) return;
       const evalData = res.evaluation;
       const canonicalDisplayId = (evalData as any)?.display_id || (evalData as any)?.displayId;
       if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
@@ -209,7 +211,7 @@ const EvaluationReportWrapper: React.FC = () => {
         setLoading(false);
       }
     } catch (err: unknown) {
-      if (reportAccountRef.current !== requestedUserId) return;
+      if (reportAccountRef.current !== requestedUserId || reportIdRef.current !== id) return;
       const msg = err instanceof Error ? err.message : 'Failed to load report';
       if (msg.includes('disclaimer') || msg.includes('DISCLAIMER_REQUIRED')) {
         setIsDisclaimerAcknowledged(false);
