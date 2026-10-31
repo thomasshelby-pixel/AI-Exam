@@ -13,7 +13,10 @@ import {
   isOpenAIParameterCompatibilityError,
 } from '../models/modelRegistry.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
-import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
+import {
+  assessQuestionReferenceForEvaluation,
+  parseAndValidateQuestionChunkOutput,
+} from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
@@ -366,6 +369,34 @@ async function runTests() {
   } as any);
   assert.strictEqual(legacyLeakReport.stepMarksLost, 3, 'Legacy question-level marksLost must remain detectable');
 
+
+  // Question references must remain strict about Suggested Answers, but a missing
+  // exact QP text slice can use the already-parsed paper structure for provisional
+  // evaluation and must force human review.
+  const fullyLockedReference = assessQuestionReferenceForEvaluation({
+    questionPaperFound: true,
+    suggestedAnswerFound: true,
+    referenceNeedsReview: false,
+  });
+  assert.equal(fullyLockedReference.canScoreProvisionally, true);
+  assert.equal(fullyLockedReference.requiresHumanReview, false);
+
+  const parsedPaperWithLockedAnswer = assessQuestionReferenceForEvaluation({
+    questionPaperFound: false,
+    suggestedAnswerFound: true,
+    referenceNeedsReview: false,
+  });
+  assert.equal(parsedPaperWithLockedAnswer.canScoreProvisionally, true, 'A parsed authoritative paper node plus an exact Suggested Answer lock may be scored provisionally.');
+  assert.equal(parsedPaperWithLockedAnswer.requiresHumanReview, true, 'A missing exact QP text slice must never auto-certify the result.');
+  assert.ok(parsedPaperWithLockedAnswer.reason);
+
+  const missingSuggestedAnswer = assessQuestionReferenceForEvaluation({
+    questionPaperFound: true,
+    suggestedAnswerFound: false,
+    referenceNeedsReview: true,
+  });
+  assert.equal(missingSuggestedAnswer.canScoreProvisionally, false, 'Without a locked official Suggested Answer the question must remain a hard blocker.');
+  assert.equal(missingSuggestedAnswer.requiresHumanReview, true);
 
   // Evaluation output safety: malformed or internally inconsistent model output
   // must be rejected before it can be converted into a score.
