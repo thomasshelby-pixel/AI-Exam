@@ -157,11 +157,23 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
             AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = ?
         `).get(userId, srnDigits) as { count: number }
       : { count: 1 };
+    const normalizedBlockReason = String(profile.free_trial_block_reason || '')
+      .trim()
+      .toUpperCase()
+      .replace(/^PROFILE_COMPLETION_/, '');
+    const durableAbuseBlockReasons = new Set([
+      'REUSED_SRN',
+      'REUSED_DEVICE',
+      'REUSED_IP',
+      'DEVICE_CHANGED_DURING_SIGNUP',
+      'NO_RELIABLE_SIGNALS',
+      'SIGNAL_STORE_UNAVAILABLE',
+    ]);
     const identityVerified =
       Number(profile.email_verified) === 1 &&
       profile.account_status === 'ACTIVE' &&
       profile.account_role === 'STUDENT' &&
-      profile.free_trial_block_reason !== 'REUSED_SRN' &&
+      !durableAbuseBlockReasons.has(normalizedBlockReason) &&
       /^[A-Z]{3}[0-9]{7}$/.test(srn) &&
       Number(duplicateIdentity.count) === 0;
 
