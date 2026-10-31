@@ -33,7 +33,7 @@ import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
 import { deduplicateQuestionList, toCanonicalQuestionId } from './services/canonicalQuestionService.js';
-import { validatePreEvaluationGate } from './services/evaluationIntegrityHardening.js';
+import { classifyPreEvaluationFailures, validatePreEvaluationGate } from './services/evaluationIntegrityHardening.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -1056,6 +1056,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           level: params.level,
           subjectName: params.subjectName,
         });
+        const preGateDisposition = classifyPreEvaluationFailures(preGate.failedInvariants);
 
         // Determine if there are critical blockers that prevent any scoring (e.g. wrong course level, paper not parsed, or zero valid attempted questions)
         const validLeafQuestions = paperStructure.subQuestions.filter((s) => !s.isMcq);
@@ -1070,10 +1071,10 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           return validCanonicalIds.has(canon);
         }) || [];
 
-        // Never score a partially mapped script. In particular, an attempted
-        // page with an unidentified question must not disappear while other mapped
-        // questions continue to receive marks.
-        if (!preGate.passed || attemptedScorableQuestions.length === 0) {
+        // Stop only when the authoritative paper/marking basis is unsafe or no
+        // question can be mapped. Coverage-only ambiguity stays review-required,
+        // but must not suppress marking for other correctly mapped attempts.
+        if (preGateDisposition.blockingFailures.length > 0 || attemptedScorableQuestions.length === 0) {
           return createEvaluationReviewResult({
             evaluationId: params.evaluationId,
             studentName: params.studentName,
@@ -1426,6 +1427,49 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             coverageMap,
             paperStructure,
           });
+
+          // A mapped subset can still be evaluated when some pages/questions need
+          // manual mapping. Preserve the provisional marks and every unresolved
+          // coverage invariant, but never certify or unlock the partial result.
+          if (preGateDisposition.coverageReviewFailures.length > 0) {
+            const coverageErrors = preGateDisposition.coverageReviewFailures;
+            const validationErrors = Array.from(new Set([
+              ...(hardenedResult.validationErrors || []),
+              ...coverageErrors,
+            ]));
+            hardenedResult.validationStatus = 'NEEDS_REVIEW';
+            hardenedResult.certificationStatus = 'VERIFICATION_REQUIRED';
+            hardenedResult.downloadsUnlocked = false;
+            hardenedResult.validationErrors = validationErrors;
+            hardenedResult.overallSummary = [
+              hardenedResult.overallSummary,
+              `PROVISIONAL RESULT: ${attemptedScorableQuestions.length} mapped attempted question(s) were scored, but ${coverageMap.unmappedPages?.length || 0} page(s) or question mapping(s) still require review. These marks are not a certified full-paper result.`,
+            ].filter(Boolean).join('\n\n');
+            hardenedResult.completionGateReport = {
+              ...(hardenedResult.completionGateReport || { passedCount: 0, failedCount: 0, checks: [] }),
+              isPassed: false,
+              failedCount: Math.max(1, (hardenedResult.completionGateReport?.failedCount || 0) + coverageErrors.length),
+              checks: [
+                ...(hardenedResult.completionGateReport?.checks || []),
+                {
+                  ruleId: 'PRE_EVALUATION_COVERAGE_REVIEW',
+                  name: 'Unmapped page/question review',
+                  passed: false,
+                  details: coverageErrors.join(' | '),
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            };
+            hardenedResult.integrityAudit = {
+              ...(hardenedResult.integrityAudit || {}),
+              hardCompletionGatePassed: false,
+              errors: validationErrors,
+            };
+            hardenedResult.recommendations = Array.from(new Set([
+              ...(hardenedResult.recommendations || []),
+              'Review the unmapped page(s) and unresolved question identities before certifying the full-paper score.',
+            ]));
+          }
 
           return hardenedResult;
         }
