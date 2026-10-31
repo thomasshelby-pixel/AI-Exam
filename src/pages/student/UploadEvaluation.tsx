@@ -281,7 +281,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
-          setActiveEvaluationOwnerId(null);
+        setActiveEvaluationOwnerId(null);
           await refreshUser();
           if (data.evaluation.resultJson) {
             const finalEvalId = (data.evaluation as any).display_id || (data.evaluation as any).displayId || activeEvaluationId;
@@ -293,7 +293,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
-          setActiveEvaluationOwnerId(null);
+      setActiveEvaluationOwnerId(null);
           setErrorMessage(data.evaluation.rejection_reason || data.evaluation.error_message || 'Evaluation could not be completed.');
           if (data.evaluation.status === 'REJECTED') {
             setRejectionDetails(
