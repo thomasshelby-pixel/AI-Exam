@@ -1073,9 +1073,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         // Never score a partially mapped script. In particular, an attempted
         // page with an unidentified question must not disappear while other mapped
         // questions continue to receive marks.
-        const hasCriticalPreEvaluationFailure = (preGate.criticalFailures || []).length > 0;
-
-        if (!preGate.passed && (hasCriticalPreEvaluationFailure || attemptedScorableQuestions.length === 0)) {
+        if (!preGate.passed || attemptedScorableQuestions.length === 0) {
           return createEvaluationReviewResult({
             evaluationId: params.evaluationId,
             studentName: params.studentName,
