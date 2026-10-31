@@ -77,8 +77,9 @@ export function applyMultiModeMarkingPhilosophy(
       isMcqQuestion &&
       (q.markingComponents || []).some((component) => component.componentType === 'MCQ') &&
       Number.isFinite(configuredNegativePenalty) &&
-      configuredNegativePenalty < 0
-        ? configuredNegativePenalty
+      Math.abs(configuredNegativePenalty - (-0.25)) <= 0.001 &&
+      String(q.markingRule || '').startsWith('ICAI Foundation Rule')
+        ? -0.25
         : 0;
     const comps = (q.markingComponents || []).map((c) => {
       const marksAvailable = Math.max(0, Number(c.marksAvailable) || 0);
