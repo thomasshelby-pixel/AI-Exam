@@ -1487,7 +1487,12 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
              e.institute_id, e.batch_id,
              i.name as institute_name, si.name as sponsoring_institute_name, b.name as batch_name
-      FROM evaluations e`;
+      FROM evaluations e
+      LEFT JOIN institutes i ON i.id = e.institute_id
+      LEFT JOIN institutes si ON si.id = e.sponsoring_institute_id
+      LEFT JOIN batches b ON b.id = e.batch_id
+      LEFT JOIN users u ON u.id = e.student_id
+      WHERE ${buildStudentOwnershipSql('e', 'u')}`;
     const params: any[] = getStudentOwnershipParams(studentId, studentEmail);
 
     if (evaluationSource) {
