@@ -21,6 +21,7 @@ import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEng
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
+import { getQuestionReferenceReviewErrors } from '../services/evaluationIntegrityEngine.js';
 import {
   getSupportedThinkingLevel,
   getSupportedThinkingLevels,
@@ -369,6 +370,13 @@ async function runTests() {
   } as any);
   assert.strictEqual(legacyLeakReport.stepMarksLost, 3, 'Legacy question-level marksLost must remain detectable');
 
+
+  const questionReferenceGateErrors = getQuestionReferenceReviewErrors([
+    { questionNumber: '5', subQuestion: 'b', flags: ['QUESTION_REFERENCE_REVIEW_REQUIRED', 'REVIEW_REQUIRED'] },
+    { questionNumber: '6', subQuestion: 'a', flags: ['REVIEW_REQUIRED'] },
+  ]);
+  assert.equal(questionReferenceGateErrors.length, 1, 'Only specifically provisional Question Paper references must block certification.');
+  assert.ok(questionReferenceGateErrors[0].includes('Q5(b)'), 'The final certification error must identify the provisional question.');
 
   // Question references must remain strict about Suggested Answers, but a missing
   // exact QP text slice can use the already-parsed paper structure for provisional
