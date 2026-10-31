@@ -1121,7 +1121,7 @@ export function finalizeEvaluationRun(options: {
       finalizationStatus: 'INTEGRITY_FAILED',
       auditTrail: [
         ...runPackage.auditTrail,
-        `Finalization REJECTED at ${new Date().toISOString()}: ${errors.join('; ')}`,
+        `Finalization deferred for academic review at ${new Date().toISOString()}: ${errors.join('; ')}`,
       ],
     };
     // The async evaluation worker owns the evaluations row status, result_json,
