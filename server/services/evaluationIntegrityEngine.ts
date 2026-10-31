@@ -1022,8 +1022,15 @@ export function processEvaluationIntegrity(
 
     // Step C: Run the Zero-Mark Safety Gate only for academically scorable answers.
     // Technical failure / uncertainty must never be converted into a guessed academic score.
-    const zeroValidation = needsHumanReview
-      ? { isZeroAllowed: true, creditworthyComponentsFound: [], auditNotes: ['Human review required; automatic zero-mark arbitration skipped.'] }
+    const zeroValidation: ZeroMarkValidationResult = needsHumanReview
+      ? {
+          isZeroAllowed: true,
+          creditworthyComponentsFound: [],
+          zeroScoreReason: undefined,
+          zeroScoreEvidence: undefined,
+          suggestedAwardedMarks: undefined,
+          auditNotes: ['Human review required; automatic zero-mark arbitration skipped.'],
+        }
       : evaluateZeroMarkSafetyGate({
           questionNumber: qNum,
           subQuestion: subQ,
