@@ -81,8 +81,6 @@ const EvaluationReportWrapper: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // If result was passed via navigation state
-  const passedResult = (location.state as any)?.result as EvaluationResult | undefined;
   const [report, setReport] = useState<EvaluationResult | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isCheckingDisclaimer, setIsCheckingDisclaimer] = useState<boolean>(true);
@@ -97,10 +95,7 @@ const EvaluationReportWrapper: React.FC = () => {
       const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
       if (res.acknowledged) {
         setIsDisclaimerAcknowledged(true);
-        if (passedResult) {
-          setReport(passedResult);
-          setLoading(false);
-        }
+        // Report content must always come from the authenticated server endpoint.
       } else {
         setIsDisclaimerAcknowledged(false);
         setLoading(false);
@@ -112,7 +107,7 @@ const EvaluationReportWrapper: React.FC = () => {
     } finally {
       setIsCheckingDisclaimer(false);
     }
-  }, [passedResult]);
+  }, []);
 
   useEffect(() => {
     checkDisclaimerStatus();
@@ -135,7 +130,7 @@ const EvaluationReportWrapper: React.FC = () => {
       const evalData = res.evaluation;
       const canonicalDisplayId = (evalData as any)?.display_id || (evalData as any)?.displayId;
       if (canonicalDisplayId && id !== canonicalDisplayId && !id.startsWith('CEA-')) {
-        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true, state: location.state });
+        navigate(`/student/evaluations/${canonicalDisplayId}`, { replace: true });
       }
       if (evalData?.status === 'REJECTED') {
         setError(
@@ -255,13 +250,9 @@ const EvaluationReportWrapper: React.FC = () => {
           isOpen={true}
           onAcknowledge={() => {
             setIsDisclaimerAcknowledged(true);
-            if (passedResult) {
-              setReport(passedResult);
-              setLoading(false);
-            } else {
-              setLoading(true);
-              fetchReport();
-            }
+            setReport(null);
+            setError('');
+            setLoading(true);
           }}
         />
       </>
@@ -1386,8 +1377,8 @@ const AppRoutes: React.FC = () => {
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
                 <UploadEvaluation
-                  onEvaluationComplete={(id, result) =>
-                    navigate(`/student/evaluations/${id}`, { state: { result } })
+                  onEvaluationComplete={(id) =>
+                    navigate(`/student/evaluations/${id}`)
                   }
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                 />
