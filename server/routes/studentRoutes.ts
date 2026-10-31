@@ -24,7 +24,7 @@ import {
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
-import { persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
+import { permanentlyDeleteFromFirestore, persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
@@ -121,6 +121,67 @@ async function persistEvaluationRejectionAndNotify(
     if (notificationRow) await syncRecordToFirestore('notifications', notificationId, notificationRow);
   } catch (error) {
     console.warn('[StudentRoutes] Could not persist rejection detail/notification:', evaluationId, error);
+  }
+}
+
+
+/**
+ * Repair legacy false REJECTED rows for the student currently viewing their history.
+ * Only finalization/integrity markers are corrected; explicit document-validation
+ * rejections (invalid document / duplicate cross-account upload) remain untouched.
+ */
+function repairLegacyFinalizationRejectionsForStudent(studentId: string): void {
+  const staleRows = db.prepare(`
+    SELECT * FROM evaluations
+    WHERE student_id = ?
+      AND UPPER(COALESCE(status, '')) = 'REJECTED'
+      AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+      AND (
+        UPPER(COALESCE(error_message, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(rejection_reason, '')) LIKE '%FINALIZATION_FAILED:%'
+        OR UPPER(COALESCE(progress_message, '')) LIKE '%FINALIZATION_FAILED:%'
+      )
+  `).all(studentId) as any[];
+
+  for (const stale of staleRows) {
+    const normalized = normalizeEvaluationRejectionStatus(stale);
+    if (String(normalized.status || '').toUpperCase() !== 'NEEDS_REVIEW') continue;
+
+    const reviewReason = String(normalized.error_message || stale.error_message || stale.rejection_reason || '').trim() ||
+      'Automated finalization could not verify every detected answer. The evaluation is preserved for academic review.';
+    const update = db.prepare(`
+      UPDATE evaluations
+      SET status = 'NEEDS_REVIEW',
+          rejection_reason = NULL,
+          error_message = ?,
+          certification_status = 'REVIEW_REQUIRED',
+          downloads_unlocked = 0,
+          progress_stage = 'NEEDS_REVIEW',
+          progress_percentage = 100,
+          progress_message = 'Your answer sheet has been preserved for academic review. No final result has been issued yet.',
+          completed_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND UPPER(COALESCE(status, '')) = 'REJECTED'
+        AND UPPER(COALESCE(document_validation_status, '')) NOT IN ('REJECTED', 'DUPLICATE_ACCOUNT_UPLOAD')
+    `).run(reviewReason, String(stale.id));
+
+    if (update.changes !== 1) continue;
+
+    const repaired = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(String(stale.id)) as any;
+    if (repaired) {
+      syncRecordToFirestore('evaluations', String(repaired.id), repaired).catch((error) =>
+        console.warn('[StudentRoutes] Could not sync corrected review status:', repaired.id, error)
+      );
+    }
+
+    const notificationId = `notif_eval_rejected_${stale.id}`;
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(notificationId);
+    permanentlyDeleteFromFirestore(
+      'notifications',
+      notificationId,
+      'Removed stale false-rejection notice after restoring evaluation to NEEDS_REVIEW.'
+    ).catch(() => {});
   }
 }
 
@@ -1464,6 +1525,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    repairLegacyFinalizationRejectionsForStudent(studentId);
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
     const finalizationReviewSql = `(
@@ -1738,6 +1800,10 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       return res.status(404).json({ error: 'Evaluation not found' });
     }
 
+    if (String(record.student_id || '') === studentId) {
+      repairLegacyFinalizationRejectionsForStudent(studentId);
+      record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
+    }
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
