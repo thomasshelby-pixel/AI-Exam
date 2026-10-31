@@ -14,6 +14,7 @@ import {
   Home,
   FileCheck2,
   BookOpen,
+  Building2,
   LayoutGrid,
   BrainCircuit,
   ClipboardList,
@@ -353,7 +354,7 @@ const StudentWorkspaceLayout: React.FC<{
   const navigationItems: Array<{ label: string; icon: React.ElementType; path?: string; action?: string }> = [
     { label: 'Dashboard', icon: Home, path: '/student/dashboard' },
     { label: 'Evaluate Answer Sheet', icon: FileCheck2, path: '/student/upload' },
-    { label: 'Question Bank & Tests', icon: BookOpen, path: '/student/enrollments' },
+    { label: 'Institute Hub', icon: Building2, path: '/student/institute' },
     { label: 'MCQ Arena', icon: LayoutGrid, path: '/mcq-arena' },
     { label: 'Study Planner', icon: BrainCircuit, path: '/student/study-planner' },
     { label: 'My Evaluations', icon: ClipboardList, path: '/student/evaluations' },
@@ -528,7 +529,7 @@ const StudentWorkspaceLayout: React.FC<{
   };
 
   return (
-    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
+    <div className="student-glass-workspace dark relative min-h-screen overflow-x-clip text-slate-100">
       <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
       <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
 
@@ -565,6 +566,16 @@ const StudentWorkspaceLayout: React.FC<{
           >
             <Menu className="h-5 w-5" />
           </button>
+          <div className="min-w-0 flex-1 sm:hidden">
+            <p className="text-[9px] font-extrabold uppercase tracking-[.2em] text-cyan-200/65">CA Exam Checker AI</p>
+            <p className="truncate text-sm font-extrabold text-white">
+              {navigationItems.find((item) => item.path && (
+                item.path === '/student/dashboard'
+                  ? location.pathname === item.path
+                  : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
+              ))?.label || 'Student Workspace'}
+            </p>
+          </div>
           <div className="hidden min-w-0 flex-1 sm:block">
             <label className="relative flex max-w-[560px] items-center">
               <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-blue-200/60" />
@@ -620,10 +631,36 @@ const StudentWorkspaceLayout: React.FC<{
           </div>
         </header>
 
-        <main className="student-glass-page min-h-[calc(100vh-76px)] min-w-0 px-3 py-4 sm:px-5 sm:py-6 xl:px-8">
+        <main className="student-glass-page min-h-[calc(100vh-76px)] min-w-0 px-3 py-4 pb-28 sm:px-5 sm:py-6 sm:pb-28 xl:px-8 lg:pb-6">
           {children}
         </main>
       </div>
+
+      <nav className="student-mobile-bottom-nav lg:hidden" aria-label="Student quick navigation">
+        {[
+          { label: 'Home', icon: Home, path: '/student/dashboard' },
+          { label: 'Evaluate', icon: FileCheck2, path: '/student/upload' },
+          { label: 'Institute', icon: Building2, path: '/student/institute' },
+          { label: 'Results', icon: ClipboardList, path: '/student/evaluations' },
+        ].map((item) => {
+          const Icon = item.icon;
+          const isActive = item.path === '/student/dashboard'
+            ? location.pathname === item.path
+            : location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+          return (
+            <button
+              key={item.path}
+              type="button"
+              onClick={() => { setMobileNavOpen(false); navigate(item.path); }}
+              className={'student-mobile-bottom-nav-item' + (isActive ? ' is-active' : '')}
+              aria-current={isActive ? 'page' : undefined}
+            >
+              <span className="student-mobile-bottom-nav-icon"><Icon className="h-[18px] w-[18px]" /></span>
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 };
@@ -1339,7 +1376,7 @@ const AppRoutes: React.FC = () => {
                   onViewReport={(id) => navigate(`/student/evaluations/${id}`)}
                   onOpenCreditsModal={() => setIsCreditsModalOpen(true)}
                   onNavigateProfile={() => navigate('/student/profile')}
-                  onNavigateEnrollments={() => navigate('/student/enrollments')}
+                  onNavigateEnrollments={() => navigate('/student/institute')}
                   onNavigateExaminerProfile={() => navigate('/student/examiner-profile')}
                 />
               </PublicAndStudentLayout>
@@ -1358,8 +1395,10 @@ const AppRoutes: React.FC = () => {
           }
         />
 
+        <Route path="/student/enrollments" element={<Navigate to="/student/institute" replace />} />
+
         <Route
-          path="/student/enrollments"
+          path="/student/institute"
           element={
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>

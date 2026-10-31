@@ -147,7 +147,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8 text-slate-800 dark:text-slate-100">
+    <div className="student-institute-hub max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8 text-slate-800 dark:text-slate-100">
       {/* Header & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
@@ -159,14 +159,14 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               Dashboard
             </button>
             <span>/</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-300">Institute Enrollments</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">Institute Hub</span>
           </div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
             <Building2 className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
-            My Coaching Institute Enrollments
+            Your Institute Hub
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Manage your affiliated coaching academies, assigned batches, institute test papers, and sponsored evaluations.
+            Your coaching network, assigned batches, study materials, tests and sponsored evaluation access—together in one place.
           </p>
         </div>
 
@@ -178,13 +178,36 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               setInstituteCodeInput('');
               setIsJoinModalOpen(true);
             }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 active:scale-95 transition-all shadow-sm shadow-indigo-200 dark:shadow-none"
+            className="student-hub-primary-btn inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold hover:brightness-110 active:scale-95 transition-all shadow-sm"
           >
             <Plus className="w-4 h-4" />
             Join with Institute Code
           </button>
         </div>
       </div>
+
+      <section className="student-hub-overview" aria-label="Institute overview">
+        <article className="student-hub-stat">
+          <p className="student-hub-stat-label">Connected Institutes</p>
+          <p className="student-hub-stat-value">{enrollments.length}</p>
+          <p className="student-hub-stat-note">Your active learning partners</p>
+        </article>
+        <article className="student-hub-stat">
+          <p className="student-hub-stat-label">Study Materials</p>
+          <p className="student-hub-stat-value">{enrollments.reduce((total, item) => total + Number(item.materials_count || 0), 0)}</p>
+          <p className="student-hub-stat-note">Question papers shared with you</p>
+        </article>
+        <article className="student-hub-stat">
+          <p className="student-hub-stat-label">Tests & Assignments</p>
+          <p className="student-hub-stat-value">{enrollments.reduce((total, item) => total + Number(item.tests_count || 0), 0)}</p>
+          <p className="student-hub-stat-note">Institute practice activities</p>
+        </article>
+        <article className="student-hub-stat">
+          <p className="student-hub-stat-label">Sponsored Access</p>
+          <p className="student-hub-stat-value">{enrollments.filter((item) => Boolean(item.sponsored_access)).length}</p>
+          <p className="student-hub-stat-note">Institutes covering evaluation access</p>
+        </article>
+      </section>
 
       {/* Error alert */}
       {errorMessage && (
@@ -209,7 +232,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Loading your enrolled institutes & batches...</p>
         </div>
       ) : enrollments.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center max-w-2xl mx-auto shadow-sm">
+        <div className="student-hub-empty-state bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center max-w-2xl mx-auto shadow-sm">
           <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto mb-4">
             <GraduationCap className="w-8 h-8" />
           </div>
@@ -233,7 +256,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
             {enrollments.map((enr) => (
               <div
                 key={enr.membership_id}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden hover:border-indigo-300 dark:hover:border-indigo-700 transition-all"
+                className="student-hub-institute-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden hover:border-indigo-300 dark:hover:border-indigo-700 transition-all"
               >
                 {/* Institute Card Header */}
                 <div className="p-6 sm:p-7 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40">
@@ -317,7 +340,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                   {/* Materials & Tests Accordion / Previews */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
                     {/* Institute Question Papers & Materials */}
-                    <div className="border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+                    <div className="student-hub-subpanel border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
@@ -363,7 +386,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                     </div>
 
                     {/* Assigned Tests & Mock Series */}
-                    <div className="border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+                    <div className="student-hub-subpanel border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />

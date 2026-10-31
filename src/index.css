@@ -274,3 +274,145 @@ textarea {
   }
 }
 
+
+/* Premium app-style quick navigation for the shared student web/app experience. */
+.student-mobile-bottom-nav {
+  position: fixed;
+  z-index: 45;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 9px 10px calc(9px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(145, 177, 255, 0.16);
+  background: linear-gradient(180deg, rgba(8, 18, 43, 0.88), rgba(5, 11, 27, 0.97));
+  box-shadow: 0 -16px 42px rgba(1, 6, 24, 0.32);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+}
+.student-mobile-bottom-nav-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 50px;
+  padding: 5px 3px;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  color: rgba(193, 209, 239, 0.72);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.student-mobile-bottom-nav-icon {
+  display: grid;
+  width: 30px;
+  height: 25px;
+  place-items: center;
+  border-radius: 9px;
+}
+.student-mobile-bottom-nav-item.is-active {
+  border-color: rgba(88, 190, 255, 0.22);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(34, 211, 238, 0.11));
+  color: #ecfbff;
+  text-shadow: 0 0 16px rgba(103, 232, 249, 0.24);
+}
+.student-mobile-bottom-nav-item.is-active .student-mobile-bottom-nav-icon {
+  color: #7deaff;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.32), rgba(34, 211, 238, 0.16));
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.12);
+}
+.student-mobile-bottom-nav-item:active {
+  transform: scale(0.97);
+}
+
+/* Institute Hub: glass panels with strong contrast and clear actions. */
+.student-glass-workspace .student-institute-hub .student-hub-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.student-glass-workspace .student-institute-hub .student-hub-stat {
+  min-width: 0;
+  padding: 16px 17px;
+  border: 1px solid rgba(136, 174, 255, 0.2);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(91, 78, 255, 0.16), transparent 58%),
+    linear-gradient(145deg, rgba(16, 38, 79, 0.78), rgba(7, 19, 45, 0.82));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.045), 0 12px 32px rgba(1, 7, 24, 0.14);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.student-glass-workspace .student-institute-hub .student-hub-stat-label {
+  color: #9db3da;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.student-glass-workspace .student-institute-hub .student-hub-stat-value {
+  margin-top: 7px;
+  color: #f5f8ff;
+  font-size: 25px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+.student-glass-workspace .student-institute-hub .student-hub-stat-note {
+  margin-top: 6px;
+  color: #8298c1;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.student-glass-workspace .student-institute-hub .student-hub-primary-btn {
+  border: 1px solid rgba(157, 219, 255, 0.22);
+  background: linear-gradient(110deg, #2563eb 0%, #4774f5 52%, #0ea5c8 100%);
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.23), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+.student-glass-workspace .student-institute-hub .student-hub-empty-state,
+.student-glass-workspace .student-institute-hub .student-hub-institute-card {
+  border-color: rgba(139, 174, 255, 0.2) !important;
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(99, 102, 241, 0.1), transparent 44%),
+    linear-gradient(145deg, rgba(12, 29, 63, 0.9), rgba(7, 17, 41, 0.82)) !important;
+  box-shadow: 0 18px 46px rgba(1, 7, 24, 0.18), inset 0 1px 0 rgba(255,255,255,0.035);
+}
+.student-glass-workspace .student-institute-hub .student-hub-institute-card {
+  overflow: hidden;
+  border-radius: 22px;
+}
+.student-glass-workspace .student-institute-hub .student-hub-institute-card > div:first-child {
+  background: linear-gradient(115deg, rgba(19, 47, 91, 0.66), rgba(25, 30, 75, 0.54)) !important;
+}
+.student-glass-workspace .student-institute-hub .student-hub-subpanel {
+  border-color: rgba(136, 169, 235, 0.15) !important;
+  background: rgba(12, 25, 54, 0.52) !important;
+}
+.student-glass-workspace .student-institute-hub .student-hub-subpanel .bg-white {
+  background: rgba(16, 33, 68, 0.9) !important;
+}
+@media (max-width: 767px) {
+  .student-glass-workspace .student-institute-hub .student-hub-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+  .student-glass-workspace .student-institute-hub .student-hub-stat {
+    padding: 13px;
+    border-radius: 15px;
+  }
+  .student-glass-workspace .student-institute-hub .student-hub-stat-value {
+    font-size: 22px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .student-mobile-bottom-nav-item {
+    transition: none;
+  }
+}
