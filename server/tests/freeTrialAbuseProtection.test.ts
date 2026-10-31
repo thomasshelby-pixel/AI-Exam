@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
-import { decideFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
+import { decideFreeTrialEligibility, isSignalOwnedByAnotherUser } from '../services/freeTrialAbuseService.js';
 
 initDatabase();
 
@@ -57,6 +57,9 @@ const missingSignalDecision = decideFreeTrialEligibility({ ...baseSignals, hasDe
 assert(!missingSignalDecision.eligible && missingSignalDecision.reason === 'NO_RELIABLE_SIGNALS', 'Missing device identity does not silently grant a new free trial');
 const changedDeviceDecision = decideFreeTrialEligibility({ ...baseSignals, forceBlock: true });
 assert(!changedDeviceDecision.eligible && changedDeviceDecision.reason === 'DEVICE_CHANGED_DURING_SIGNUP', 'Device changed during signup does not receive a new free trial');
+assert(!isSignalOwnedByAnotherUser(true, 'usr_same_account', 'usr_same_account'), 'A student's own repeated login on the same device/IP is not treated as another account');
+assert(isSignalOwnedByAnotherUser(true, 'usr_first_account', 'usr_second_account'), 'A device/IP claim owned by a different account is treated as reuse');
+assert(isSignalOwnedByAnotherUser(true, null, 'usr_new_account'), 'Legacy ownerless device/IP claims remain protected from duplicate free-trial claims');
 
 try {
   db.prepare(`
