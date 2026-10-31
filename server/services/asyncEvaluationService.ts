@@ -552,11 +552,14 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       !ENABLE_EVALUATION_SUPERVISOR ||
       supervisorAuditStatus === undefined ||
       supervisorAuditStatus === 'PASS';
+    const evaluationValidationStatus = String(evaluationResult.validationStatus || '').toUpperCase();
+    const evaluationValidationPassed =
+      !evaluationValidationStatus ||
+      evaluationValidationStatus === 'VALID';
     const criticalIntegrityPassed =
       hasValidQuestions &&
       isMathConsistent &&
-      (evaluationResult.validationStatus as string) !== 'VALIDATION_FAILED' &&
-      (!ENABLE_EVALUATION_SUPERVISOR || (evaluationResult.validationStatus as string) !== 'NEEDS_REVIEW') &&
+      evaluationValidationPassed &&
       supervisorApproved;
 
     let durablePackagePersisted = false;
