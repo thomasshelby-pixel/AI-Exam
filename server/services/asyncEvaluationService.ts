@@ -19,6 +19,7 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
+import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
@@ -552,10 +553,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       !ENABLE_EVALUATION_SUPERVISOR ||
       supervisorAuditStatus === undefined ||
       supervisorAuditStatus === 'PASS';
-    const evaluationValidationStatus = String(evaluationResult.validationStatus || '').toUpperCase();
-    const evaluationValidationPassed =
-      !evaluationValidationStatus ||
-      evaluationValidationStatus === 'VALID';
+    const evaluationValidationPassed = isEvaluationValidationSafeForCertification(evaluationResult.validationStatus);
     const criticalIntegrityPassed =
       hasValidQuestions &&
       isMathConsistent &&
