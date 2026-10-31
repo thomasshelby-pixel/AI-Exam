@@ -29,6 +29,7 @@ const duplicateBlockedId = 'usr_trial_dup_blocked_' + suffix;
 const durableBlockedId = 'usr_trial_durable_blocked_' + suffix;
 const reusedDeviceBlockedId = 'usr_trial_device_reused_' + suffix;
 const reusedIpBlockedId = 'usr_trial_ip_reused_' + suffix;
+const unknownLegacyBlockedId = 'usr_trial_unknown_legacy_blocked_' + suffix;
 const nowMonth = getCurrentServerMonth();
 const repairSrnDigits = String(Date.now()).slice(-7);
 const duplicateSrnDigits = String(Number(repairSrnDigits) + 1).slice(-7).padStart(7, '0');
@@ -139,8 +140,9 @@ try {
     INSERT INTO student_profiles (
       user_id, icai_registration_number, ca_level, free_evaluations_used,
       monthly_free_evaluations_used, monthly_free_evaluations_limit,
-      free_evaluation_reset_month, purchased_credits, paid_credits, free_trial_blocked
-    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 3, 3, 1)
+      free_evaluation_reset_month, purchased_credits, paid_credits,
+      free_trial_blocked, free_trial_block_reason
+    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 3, 3, 1, 'LEGACY_FALSE_BLOCK_REVIEWED')
   `).run(repairableUserId, 'NRO' + repairSrnDigits, nowMonth);
 
   const restoredQuota = ensureMonthlyFreeEvaluationsReset(repairableUserId);
@@ -176,6 +178,22 @@ try {
 
   const duplicateQuota = ensureMonthlyFreeEvaluationsReset(duplicateBlockedId);
   assert(duplicateQuota.monthlyFreeEvaluationsLimit === 0 && duplicateQuota.freeEvaluationsRemaining === 0, 'Duplicate ICAI identity is not auto-unblocked');
+
+  // Unknown legacy blocks must fail closed: without an audited reason they may
+  // represent older device/IP abuse decisions from before reason codes existed.
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
+    VALUES (?, ?, 'test-hash', 'Unknown Legacy Block', 'STUDENT', 'ACTIVE', 1)
+  `).run(unknownLegacyBlockedId, 'trial_unknown_legacy_' + suffix + '@example.test');
+  db.prepare(`
+    INSERT INTO student_profiles (
+      user_id, icai_registration_number, ca_level, free_evaluations_used,
+      monthly_free_evaluations_used, monthly_free_evaluations_limit,
+      free_evaluation_reset_month, purchased_credits, paid_credits, free_trial_blocked
+    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1)
+  `).run(unknownLegacyBlockedId, 'ULO' + String(Number(repairSrnDigits) + 6).slice(-7).padStart(7, '0'), nowMonth);
+  const unknownLegacyQuota = ensureMonthlyFreeEvaluationsReset(unknownLegacyBlockedId);
+  assert(unknownLegacyQuota.monthlyFreeEvaluationsLimit === 0, 'An unknown legacy free-trial block is not auto-cleared without explicit review');
 
   // Explicit device/IP blocks must also survive identity-based monthly-reset repair.
   for (const [userId, email, srn, reason] of [
@@ -219,5 +237,5 @@ try {
 
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');
 } finally {
-  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, duplicateOwnerId, duplicateBlockedId, durableBlockedId, reusedDeviceBlockedId, reusedIpBlockedId);
+  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, duplicateOwnerId, duplicateBlockedId, durableBlockedId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
 }
