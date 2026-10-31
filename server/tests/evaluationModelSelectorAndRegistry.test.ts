@@ -380,6 +380,44 @@ async function runTests() {
   assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).mcqSelections['1'], 'B');
   assert.equal(
     parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: {},
+      isContinuation: true,
+      summary: 'Continuation of the previous answer.',
+    })).isContinuation,
+    true,
+    'Top-level continuation signal must survive validated page parsing.',
+  );
+  assert.deepEqual(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { 'MCQ 1': 'Option B', '1': 'B' },
+    })).mcqSelections,
+    { '1': 'B' },
+    'Equivalent MCQ keys must normalize to one canonical question number.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
+    })),
+    /PAGE_COVERAGE_CONFLICTING_MCQ_SELECTION/,
+    'Conflicting MCQ selections must trigger model fallback instead of arbitrarily choosing one.',
+  );
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'CLEARLY_UNATTEMPTED',
+      detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
+      mcqSelections: {},
+    })),
+    /PAGE_COVERAGE_STATUS_CONFLICT/,
+    'A page cannot be accepted as blank when it contains a detected answer.',
+  );
+  assert.equal(
+    parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
       detectedQuestions: [],
       mcqSelections: {},
