@@ -1002,36 +1002,6 @@ export function processEvaluationIntegrity(
       initialAwarded = Math.min(maxMarks, initialAwarded + restored);
     }
 
-    // Step C: Run Zero-Mark Safety Gate (Rule 3 & Rule 21)
-    const zeroValidation = evaluateZeroMarkSafetyGate({
-      questionNumber: qNum,
-      subQuestion: subQ,
-      maxMarks,
-      awardedMarks: initialAwarded,
-      status: rawQ.status || (initialAwarded > 0 ? 'partially_correct' : 'incorrect'),
-      components,
-      studentEvidence: rawQ.studentEvidence || rawQ.technicalEvaluation,
-      detailedFeedback: rawQ.detailedFeedback,
-      technicalEvaluation: rawQ.technicalEvaluation,
-      reasonForDeduction: rawQ.reasonForDeduction,
-      isMcq,
-      applicableProvisions: rawQ.applicableProvisions,
-    });
-
-    let finalAwarded = initialAwarded;
-    let zeroScoreReason: ZeroScoreReason | undefined;
-    let zeroScoreEvidence: string | undefined;
-
-    if (!zeroValidation.isZeroAllowed && zeroValidation.suggestedAwardedMarks) {
-      finalAwarded = zeroValidation.suggestedAwardedMarks;
-    } else if (finalAwarded === 0) {
-      zeroScoreReason = zeroValidation.zeroScoreReason;
-      zeroScoreEvidence = zeroValidation.zeroScoreEvidence;
-    }
-
-    // Step D: Normalize components to guarantee mathematical integrity (Rule 11)
-    const balancedComponents = normalizeQuestionComponents(components, maxMarks, finalAwarded, qNum);
-    const verifiedAwarded = balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0);
     const questionFlags: string[] = Array.isArray(rawQ.flags) ? [...rawQ.flags] : [];
     const isTechnicalFailure = questionFlags.includes('FAILED_TO_EVALUATE') || questionFlags.includes('TECHNICAL_FAILURE');
     const isModelUncertain = questionFlags.includes('MODEL_UNCERTAIN');
@@ -1046,7 +1016,50 @@ export function processEvaluationIntegrity(
       isModelUncertain ||
       questionFlags.includes('REVIEW_REQUIRED') ||
       isHandwritingUnclear;
-    // An unresolved/technical question has no confirmed academic deduction.
+
+    // Step C: Run the Zero-Mark Safety Gate only for academically scorable answers.
+    // Technical failure / uncertainty must never be converted into a guessed academic score.
+    const zeroValidation = needsHumanReview
+      ? { isZeroAllowed: true, creditworthyComponentsFound: [], auditNotes: ['Human review required; automatic zero-mark arbitration skipped.'] }
+      : evaluateZeroMarkSafetyGate({
+          questionNumber: qNum,
+          subQuestion: subQ,
+          maxMarks,
+          awardedMarks: initialAwarded,
+          status: rawQ.status || (initialAwarded > 0 ? 'partially_correct' : 'incorrect'),
+          components,
+          studentEvidence: rawQ.studentEvidence || rawQ.technicalEvaluation,
+          detailedFeedback: rawQ.detailedFeedback,
+          technicalEvaluation: rawQ.technicalEvaluation,
+          reasonForDeduction: rawQ.reasonForDeduction,
+          isMcq,
+          applicableProvisions: rawQ.applicableProvisions,
+        });
+
+    let finalAwarded = needsHumanReview
+      ? Math.max(0, Math.min(maxMarks, Number.isFinite(initialAwarded) ? initialAwarded : 0))
+      : initialAwarded;
+    let zeroScoreReason: ZeroScoreReason | undefined;
+    let zeroScoreEvidence: string | undefined;
+
+    if (!needsHumanReview && !zeroValidation.isZeroAllowed && (zeroValidation.suggestedAwardedMarks ?? 0) > 0) {
+      finalAwarded = zeroValidation.suggestedAwardedMarks!;
+    } else if (!needsHumanReview && finalAwarded === 0) {
+      zeroScoreReason = zeroValidation.zeroScoreReason;
+      zeroScoreEvidence = zeroValidation.zeroScoreEvidence;
+    }
+
+    // Step D: Do not fabricate component breakdowns for unresolved questions.
+    const balancedComponents = maxMarks > 0
+      ? (needsHumanReview && components.length === 0
+          ? []
+          : normalizeQuestionComponents(components, maxMarks, finalAwarded, qNum))
+      : [];
+    const verifiedAwarded = maxMarks > 0
+      ? (balancedComponents.length > 0
+          ? balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0)
+          : finalAwarded)
+      : 0;
     const verifiedLost = needsHumanReview
       ? Math.max(0, Math.round((Number(rawQ.marksLost) || 0) * 4) / 4)
       : Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
