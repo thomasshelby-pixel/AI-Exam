@@ -3,6 +3,7 @@ import {
   hasPersistedEvaluationRejection,
   normalizeEvaluationRejectionStatus,
 } from '../services/evaluationStatusService.js';
+import { buildCanonicalQuestionInventory, buildStudentAttemptManifest } from '../services/canonicalQuestionInventoryService.js';
 
 const duplicateUpload = normalizeEvaluationRejectionStatus({
   id: 'eval_duplicate',
@@ -87,4 +88,32 @@ const validProcessing = normalizeEvaluationRejectionStatus({
 assert.equal(validProcessing.status, 'PROCESSING');
 assert.equal(validProcessing.rejection_reason, '');
 
+// Regression: raw page OCR may emit both a parent heading (Q7) and its
+// child answer (Q7(b)). Page audit must use the resolved attempt manifest leaf ID,
+// otherwise finalization may incorrectly say none of the detected answers were evaluated.
+const paperStructure: any = {
+  paperTitle: 'CA Intermediate Taxation',
+  totalPaperMaxMarks: 100,
+  subQuestions: [
+    { fullQuestionCode: 'Q7(a)', questionNumber: '7', subQuestionNumber: 'a', maximumMarks: 4, topic: 'Income tax computation' },
+    { fullQuestionCode: 'Q7(b)', questionNumber: '7', subQuestionNumber: 'b', maximumMarks: 5, topic: 'GST input tax credit' },
+  ],
+  mcqs: [],
+};
+const inventory = buildCanonicalQuestionInventory({ paperStructure });
+const manifest = buildStudentAttemptManifest({
+  runId: 'run_parent_child_page_audit',
+  totalPages: 2,
+  inventory,
+  rawPageOccurrences: [
+    { questionCode: 'Q7', pageNumber: 1, studentSnippet: 'Question 7(b) GST input tax credit working and conclusion.' },
+    { questionCode: 'Q7(b)', pageNumber: 1, studentSnippet: 'GST input tax credit working and conclusion.' },
+    { questionCode: 'Q7', pageNumber: 2, studentSnippet: 'Question 7(b) continued calculation.' },
+  ],
+});
+const pageOneAudit = manifest.pageCoverageAudit.find((page) => page.pageNumber === 1);
+const pageTwoAudit = manifest.pageCoverageAudit.find((page) => page.pageNumber === 2);
+assert.deepEqual(pageOneAudit?.detectedQuestionIds, ['Q7(b)']);
+assert.deepEqual(pageTwoAudit?.detectedQuestionIds, ['Q7(b)']);
+assert.deepEqual(manifest.attempts.map((attempt) => attempt.questionId), ['Q7(b)']);
 console.log('✅ Evaluation status recovery tests passed (stale rejection markers remain terminal).');
