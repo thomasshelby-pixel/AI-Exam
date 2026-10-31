@@ -3127,7 +3127,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       // has been accepted. Existing accounts with an already-granted quota are never
       // rechecked; legacy blocks caused only by retired SRN/device-change/signal
       // rules may be re-evaluated against the current device/IP signals. New/ungranted accounts
-      // still pass the full device + IP + SRN gate.
+      // qualify only when at least one available device OR IP signal is not claimed by another account.
       const deviceHeader = req.headers['x-device-id'];
       const bodyDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : undefined;
       const deviceId = typeof deviceHeader === 'string' ? deviceHeader.trim() : bodyDeviceId?.trim();
