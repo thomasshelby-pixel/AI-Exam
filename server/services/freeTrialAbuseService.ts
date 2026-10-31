@@ -129,7 +129,7 @@ export async function claimFreeTrialEligibility(params: {
         isSignalOwnedByAnotherUser(entry.snapshot.exists, ownerFor(entry), params.userId)
       );
       const reusedIp = ipClaim.some((entry) =>
-        entry.snapshot.exists && ownerFor(entry) !== params.userId
+        isSignalOwnedByAnotherUser(entry.snapshot.exists, ownerFor(entry), params.userId)
       );
       const reusedSrn = Boolean(
         isSignalOwnedByAnotherUser(Boolean(srnClaim?.snapshot.exists), srnClaim ? ownerFor(srnClaim) : null, params.userId)
