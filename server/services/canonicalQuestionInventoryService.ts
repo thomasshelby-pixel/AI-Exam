@@ -1092,14 +1092,24 @@ export function finalizeEvaluationRun(options: {
     seenIds.add(r.questionId);
   }
 
-  // 8. Page coverage audit: verify every student page with content has evaluated questions
+  // 8. Page coverage audit: every detected answer must have a canonical attempt
+  // record. A record that exists but is FAILED_TO_EVALUATE / NEEDS_MAPPING_REVIEW
+  // is reported by rule 6 above; do not mislabel it as "no evaluated question"
+  // and duplicate the diagnostic with a misleading page-level rejection message.
+  const attemptRecordIds = new Set(
+    runPackage.evaluationRecords
+      .filter((record) => record.attempted)
+      .map((record) => String(record.questionId || '').toLowerCase())
+  );
   for (const pageAudit of runPackage.pageCoverageAudit) {
     if (pageAudit.hasStudentContent && pageAudit.detectedQuestionIds.length > 0) {
-      const anyEvaluated = pageAudit.detectedQuestionIds.some((qId) =>
-        runPackage.reconciliation.evaluatedSet.includes(qId)
+      const hasCanonicalAttemptRecord = pageAudit.detectedQuestionIds.some((questionId) =>
+        attemptRecordIds.has(String(questionId || '').toLowerCase())
       );
-      if (!anyEvaluated) {
-        errors.push(`FINALIZATION_FAILED: Page ${pageAudit.pageNumber} contains student content for ${pageAudit.detectedQuestionIds.join(', ')} but none are evaluated.`);
+      if (!hasCanonicalAttemptRecord) {
+        errors.push(
+          `FINALIZATION_FAILED: Page ${pageAudit.pageNumber} contains detected answer content for ${pageAudit.detectedQuestionIds.join(', ')}, but no matching canonical attempt record exists.`
+        );
       }
     }
   }
