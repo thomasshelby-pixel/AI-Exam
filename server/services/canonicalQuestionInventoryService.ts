@@ -811,28 +811,19 @@ export function buildStudentAttemptManifest(options: {
     });
   }
 
-  // Construct Page Coverage Audit for all pages 1 to totalPages
+  // Construct Page Coverage Audit from the normalized attempt manifest, not raw
+  // page-heading detections. Raw OCR can emit both a parent heading (Q7) and its
+  // actual child answer (Q7(b)); detectIndependentAttempts has already resolved
+  // that parent/child relationship and transferred the source pages to the leaf.
   const pageCoverageAudit: PageCoverageAuditItem[] = [];
   for (let p = 1; p <= totalPages; p++) {
     const pageOccs = rawPageOccurrences.filter((occ) => occ.pageNumber === p);
     const hasStudentContent = pageOccs.length > 0;
-    const detectedQuestionIds: string[] = [];
-
-    for (const occ of pageOccs) {
-      const canon = toCanonicalQuestionId(occ.questionCode);
-      const parsed = parseCanonicalQuestionIdentity(canon);
-      const matched = attempts.find((a) => a.questionId === parsed.canonicalId || a.questionId === canon);
-      const effId = matched ? matched.questionId : parsed.canonicalId;
-      if (!detectedQuestionIds.includes(effId)) {
-        detectedQuestionIds.push(effId);
-      }
-    }
-
-    for (const att of attempts) {
-      if (att.sourcePages.includes(p) && !detectedQuestionIds.includes(att.questionId)) {
-        detectedQuestionIds.push(att.questionId);
-      }
-    }
+    const detectedQuestionIds = attempts
+      .filter((attempt) => attempt.isAttempted && attempt.sourcePages.includes(p))
+      .map((attempt) => attempt.questionId)
+      .filter((questionId, index, all) => all.indexOf(questionId) === index)
+      .sort();
 
     pageCoverageAudit.push({
       pageNumber: p,
@@ -1123,16 +1114,20 @@ export function finalizeEvaluationRun(options: {
         `Finalization REJECTED at ${new Date().toISOString()}: ${errors.join('; ')}`,
       ],
     };
+    // The async evaluation worker owns the evaluations row status, result_json,
+    // user-facing review message and entitlement refund. Finalization must only
+    // persist the package decision; writing NEEDS_REVIEW here makes the worker's
+    // terminal-state guard exit before its refund/persistence path can complete.
     try {
       db.prepare(`
-        UPDATE evaluations
-        SET status = 'NEEDS_REVIEW',
-            rejection_reason = ?,
-            error_message = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?;
-      `).run(errors.join(' | '), errors.join(' | '), evaluationId);
-    } catch {}
+        UPDATE evaluation_run_packages
+        SET finalization_status = 'INTEGRITY_FAILED',
+            package_json = ?
+        WHERE evaluation_id = ?;
+      `).run(JSON.stringify(failedPackage), evaluationId);
+    } catch (persistErr) {
+      console.warn('[EvaluationFinalizer] Could not persist failed package status:', persistErr);
+    }
 
     return {
       success: false,
@@ -1162,16 +1157,8 @@ export function finalizeEvaluationRun(options: {
       WHERE evaluation_id = ?;
     `).run(JSON.stringify(finalizedPackage), evaluationId);
 
-    db.prepare(`
-      UPDATE evaluations
-      SET status = 'COMPLETED',
-          progress_stage = 'COMPLETED',
-          progress_percentage = 100,
-          total_marks = ?,
-          completed_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?;
-    `).run(finalizedPackage.scoreLedger.totalAwardedMarks, evaluationId);
+    // The caller persists the complete evaluation result and transitions the
+    // evaluation row to COMPLETED only after this package gate succeeds.
     db.exec('COMMIT;');
   } catch (err: any) {
     try { db.exec('ROLLBACK;'); } catch {}
