@@ -12,6 +12,15 @@ import {
   removeTesterFromFeature,
   FeatureApplication,
 } from '../services/featureControlService.js';
+import {
+  persistFeatureFlagToFirestore,
+  persistFeatureTesterToFirestore,
+  deleteFeatureTesterFromFirestore,
+  restoreFeatureFlagLocally,
+  deleteFeatureFlagLocally,
+  restoreFeatureTesterLocally,
+  deleteFeatureTesterLocally,
+} from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
@@ -8050,7 +8059,7 @@ router.get('/features', (req: AuthRequest, res: Response) => {
 });
 
 // 2. Add New Feature definition
-router.post('/features', (req: AuthRequest, res: Response) => {
+router.post('/features', async (req: AuthRequest, res: Response) => {
   try {
     const adminUser = { id: req.user!.id, email: req.user!.email };
     const {
@@ -8078,6 +8087,11 @@ router.post('/features', (req: AuthRequest, res: Response) => {
       adminUser,
       req.ip
     );
+    const cloudSaved = await persistFeatureFlagToFirestore(newFeature);
+    if (!cloudSaved) {
+      deleteFeatureFlagLocally(newFeature.id);
+      return res.status(503).json({ error: 'Feature settings could not be saved to durable cloud storage. Please retry.' });
+    }
 
     res.status(201).json({
       success: true,
@@ -8107,7 +8121,7 @@ router.get('/features/:featureKey', (req: AuthRequest, res: Response) => {
 });
 
 // 4. Update feature status, student message, visibility, or metadata
-router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
+router.patch('/features/:featureKey', async (req: AuthRequest, res: Response) => {
   try {
     const {
       status,
@@ -8119,6 +8133,10 @@ router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
       application,
     } = req.body;
     const adminUser = { id: req.user!.id, email: req.user!.email };
+    const currentFeature = getFeatureByKey(req.params.featureKey, application);
+    if (!currentFeature) {
+      return res.status(404).json({ error: 'Feature not found.' });
+    }
     const updated = updateFeatureControl(
       req.params.featureKey,
       {
@@ -8133,6 +8151,11 @@ router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
       adminUser,
       req.ip
     );
+    const cloudSaved = await persistFeatureFlagToFirestore(updated);
+    if (!cloudSaved) {
+      restoreFeatureFlagLocally(currentFeature);
+      return res.status(503).json({ error: 'Feature settings could not be saved to durable cloud storage. The previous settings were restored; please retry.' });
+    }
     res.json({
       success: true,
       message: 'Feature settings updated successfully.',
@@ -8145,7 +8168,7 @@ router.patch('/features/:featureKey', (req: AuthRequest, res: Response) => {
 });
 
 // 5. Add tester email to feature testing allowlist
-router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) => {
+router.post('/features/:featureKey/testers', async (req: AuthRequest, res: Response) => {
   try {
     const { email, application } = req.body;
     if (!email || typeof email !== 'string') {
@@ -8159,6 +8182,11 @@ router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) =
       req.ip,
       application ? (application.toUpperCase() as FeatureApplication) : undefined
     );
+    const cloudSaved = await persistFeatureTesterToFirestore(tester);
+    if (!cloudSaved) {
+      deleteFeatureTesterLocally(tester.id);
+      return res.status(503).json({ error: 'Tester allowlist could not be saved to durable cloud storage. Please retry.' });
+    }
     res.status(201).json({
       success: true,
       message: 'Tester added successfully.',
@@ -8171,12 +8199,24 @@ router.post('/features/:featureKey/testers', (req: AuthRequest, res: Response) =
 });
 
 // 6. Remove tester from feature testing allowlist
-router.delete('/features/:featureKey/testers/:testerId', (req: AuthRequest, res: Response) => {
+router.delete('/features/:featureKey/testers/:testerId', async (req: AuthRequest, res: Response) => {
   try {
     const adminUser = { id: req.user!.id, email: req.user!.email };
     const appQuery = (req.query.application || req.body?.application) as string | undefined;
     const application = appQuery ? (appQuery.toUpperCase() as FeatureApplication) : undefined;
+    const featureBeforeRemoval = getFeatureByKey(req.params.featureKey, application);
+    const testerBeforeRemoval = featureBeforeRemoval?.testers.find((tester) =>
+      tester.id === req.params.testerId || tester.email.toLowerCase() === req.params.testerId.toLowerCase()
+    );
+    if (!testerBeforeRemoval) {
+      return res.status(404).json({ error: 'Tester not found for this feature.' });
+    }
     const result = removeTesterFromFeature(req.params.featureKey, req.params.testerId, adminUser, req.ip, application);
+    const cloudDeleted = await deleteFeatureTesterFromFirestore(testerBeforeRemoval.id);
+    if (!cloudDeleted) {
+      restoreFeatureTesterLocally(testerBeforeRemoval);
+      return res.status(503).json({ error: 'Tester removal could not be saved to durable cloud storage. The tester was restored; please retry.' });
+    }
     res.json({
       success: true,
       message: 'Tester removed successfully.',

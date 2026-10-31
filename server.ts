@@ -25,6 +25,7 @@ import {
   syncAllStudentReadableIdentityViewsToFirestore,
 } from './server/services/firestoreSyncService.js';
 import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
+import { hydrateFeatureControlsFromFirestore } from './server/services/featureControlPersistenceService.js';
 import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
@@ -281,6 +282,10 @@ export default {};
     const requireCompleteHydration = isProduction && process.env.NODE_ENV !== 'test';
     const hydrationPromise = (async () => {
       await hydrateFromFirestore({ requireComplete: requireCompleteHydration });
+      const featureControlState = await hydrateFeatureControlsFromFirestore({ requireComplete: requireCompleteHydration });
+      console.log(
+        `[Server] Feature Control state restored from Firestore: ${featureControlState.hydratedFlags} feature(s), ${featureControlState.hydratedTesters} tester(s).`
+      );
       await seedBaselineToFirestoreIfEmpty();
       await hydrateNotificationCentreFromFirestore();
     })();
