@@ -1147,12 +1147,6 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?
       `).run(getCurrentServerMonth(), userId);
-      if (!freeTrialDecision.eligible) {
-        console.warn('[FreeTrialAbuse] Granting verified student quota despite non-identity risk signal:', {
-          userId,
-          reason: freeTrialDecision.reason,
-        });
-      }
     } else {
       db.prepare(`
         UPDATE student_profiles
