@@ -2405,7 +2405,7 @@ function seedInstitutePlans() {
     {
       id: 'inst_individual_monthly',
       name: 'Individual Institute (Monthly)',
-      price_inr: 80000,
+      price_inr: 79999,
       billing_period: 'MONTHLY',
       student_quota: 500,
       evaluation_credits: 1000,
@@ -2554,7 +2554,7 @@ function seedInstitutePlans() {
     {
       id: 'inst_enterprise_monthly',
       name: 'Enterprise Institute (Monthly)',
-      price_inr: 275000,
+      price_inr: 274999,
       billing_period: 'MONTHLY',
       student_quota: 5000,
       evaluation_credits: 5500,
@@ -2578,7 +2578,7 @@ function seedInstitutePlans() {
     {
       id: 'inst_enterprise_quarterly',
       name: 'Enterprise Institute (Quarterly)',
-      price_inr: 684000,
+      price_inr: 683999,
       billing_period: 'QUARTERLY',
       student_quota: 5000,
       evaluation_credits: 18000,
@@ -2602,7 +2602,7 @@ function seedInstitutePlans() {
     {
       id: 'inst_enterprise_annual',
       name: 'Enterprise Institute (Annual)',
-      price_inr: 1500000,
+      price_inr: 1499999,
       billing_period: 'ANNUAL',
       student_quota: 5000,
       evaluation_credits: 60000,
