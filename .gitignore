@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime databases, user uploads, and local encryption material
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+/data/uploads/
+/uploads/
+/data_backup_before_repair_*/
+/data/mfa_master.key
