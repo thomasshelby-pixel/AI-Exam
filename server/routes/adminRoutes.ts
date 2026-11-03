@@ -1277,7 +1277,9 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       });
     }
 
-    const insertBatch = db.transaction(() => {
+    const insertBatch = () => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
       const insert = db.prepare(`
         INSERT INTO evaluation_materials (
           id, level, material_type, mtp_series, model_test_number, unique_identity_key,
@@ -1313,7 +1315,14 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       for (const audit of auditRecords) {
         auditInsert.run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details, audit.created_at);
       }
-    });
+      db.exec('COMMIT');
+      } catch (transactionError) {
+        try { db.exec('ROLLBACK'); } catch (rollbackError) {
+          console.error('[AdminRoutes] SQLite rollback failed after Model Test batch import:', rollbackError);
+        }
+        throw transactionError;
+      }
+    };
     try {
       insertBatch();
     } catch (sqliteError) {
