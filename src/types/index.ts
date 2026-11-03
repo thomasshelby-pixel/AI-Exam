@@ -1082,6 +1082,8 @@ export interface EvaluationMaterial {
   attempt?: string;
   mtpSeries?: 1 | 2;
   mtp_series?: 1 | 2 | string;
+  modelTestNumber?: number;
+  model_test_number?: number;
   sourceFormat?: PYQSourceFormat;
   source_format?: PYQSourceFormat;
   combinedSourceMaterialId?: string;
