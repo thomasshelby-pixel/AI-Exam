@@ -73,4 +73,30 @@ assert.deepEqual(componentResult.materials.map((item) => item.modelTestNumber), 
 assert.equal(componentResult.materials[0].sourceFileNames.length, 3);
 assert.match(componentResult.materials[7].markingSchemeText, /conclusion 2 marks/);
 
+
+const sourceLikeComponentFiles = Array.from({ length: 8 }, (_, index) => {
+  const number = index + 1;
+  return [
+    {
+      fileName: `Model ${number} Question Paper.txt`,
+      content: `SOURCE PDF: Model_Test_Paper_${number}_Question_Paper.pdf\\nCONVERSION: Text extracted from source PDF with layout preservation.\\n\\nMODEL TEST PAPER ${number}\\n[QUESTION PAPER]\\nQuestion ${number}: Prepare the complete computation and state your conclusion. Maximum marks: 10.`,
+    },
+    {
+      fileName: `Model ${number} Suggested Answers.txt`,
+      content: `ANSWERS OF MODEL TEST PAPER ${number}\\nAnswer ${number}: Complete calculation, working notes and final conclusion for this model.`,
+    },
+    {
+      fileName: `Model ${number} Marking Scheme.txt`,
+      content: `MODEL TEST PAPER ${number}\\nMARKING SCHEME\\nQuestion ${number}: computation 5 marks, working notes 3 marks and conclusion 2 marks.`,
+    },
+  ];
+}).flat();
+
+const sourceLikeResult = parseModelTestBulkFiles(sourceLikeComponentFiles);
+assert.deepEqual(sourceLikeResult.errors, []);
+assert.equal(sourceLikeResult.materials.length, 8);
+assert.deepEqual(sourceLikeResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
+assert.match(sourceLikeResult.materials[0].questionPaperText, /Question 1/);
+assert.equal(sourceLikeResult.materials[0].sourceFileNames.length, 3);
+
 console.log('Model Test bulk TXT parser tests passed.');
