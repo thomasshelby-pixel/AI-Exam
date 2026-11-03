@@ -15,6 +15,7 @@ export interface MaterialIdentityInput {
   attempt?: string;
   materialType: string;
   mtpSeries?: any;
+  modelTestNumber?: number;
   paper?: string;
   version?: string;
   title?: string;
@@ -399,6 +400,7 @@ export function computeMaterialUniqueKey(input: MaterialIdentityInput): {
   normalizedLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
   normalizedType: string;
   normalizedSeriesNumber: number | null;
+  modelTestNumber: number | null;
   seriesId: string | null;
   seriesDisplay: string | null;
   canonicalPaper: string;
@@ -409,6 +411,8 @@ export function computeMaterialUniqueKey(input: MaterialIdentityInput): {
   const normalizedLevel = normalizeLevel(input.level);
   const normalizedType = normalizeMaterialType(input.materialType);
   const isMtp = normalizedType === 'MTP';
+  const isModelTest = normalizedType === 'MODEL_TEST_PAPER';
+  const normalizedModelTestNumber = isModelTest ? Number(input.modelTestNumber) : null;
 
   const subjectInfo = resolveCanonicalSubject(input.subjectKey, input.subjectName, normalizedLevel);
   const normAttempt = String(input.attempt || 'Current').trim().toLowerCase();
@@ -427,6 +431,8 @@ export function computeMaterialUniqueKey(input: MaterialIdentityInput): {
     seriesId = formatMtpSeriesId(normalizedSeriesNumber);
     seriesDisplay = formatMtpSeriesDisplay(normalizedSeriesNumber);
     uniqueKey = `MTP:::${normalizedLevel}:::${subjectInfo.canonicalKey}:::${normAttempt}:::${seriesId}`;
+  } else if (isModelTest) {
+    uniqueKey = `MODEL_TEST_PAPER:::${normalizedLevel}:::${subjectInfo.canonicalKey}:::${normAttempt}:::${canonicalPaper.toLowerCase()}:::model-${normalizedModelTestNumber || 'unknown'}`;
   } else {
     uniqueKey = `${normalizedType}:::${normalizedLevel}:::${subjectInfo.canonicalKey}:::${normAttempt}:::${canonicalPaper.toLowerCase()}`;
   }
@@ -437,6 +443,7 @@ export function computeMaterialUniqueKey(input: MaterialIdentityInput): {
     normalizedLevel,
     normalizedType,
     normalizedSeriesNumber,
+    modelTestNumber: normalizedModelTestNumber,
     seriesId,
     seriesDisplay,
     canonicalPaper,
@@ -471,6 +478,7 @@ export function checkMaterialDuplicate(
     normalizedLevel,
     normalizedType,
     normalizedSeriesNumber,
+    modelTestNumber,
     seriesDisplay,
     canonicalPaper,
     subjectDisplayName,
@@ -653,6 +661,10 @@ export function checkMaterialDuplicate(
         candidateParams.push(excludeMaterialId);
       }
 
+      if (normalizedType === 'MODEL_TEST_PAPER') {
+        candidateSql += ' AND material_type = ? AND model_test_number = ?';
+        candidateParams.push('MODEL_TEST_PAPER', modelTestNumber);
+      }
       const candidates = db.prepare(candidateSql).all(...candidateParams) as any[];
 
       let highestSimilarity = 0;
