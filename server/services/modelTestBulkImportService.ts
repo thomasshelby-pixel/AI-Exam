@@ -52,6 +52,14 @@ function getModelNumberFromFileName(fileName: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+
+function getComponentRoleFromFileName(fileName: string): 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText' | null {
+  const name = String(fileName || '').replace(/\\.[^.]+$/, '').toLowerCase();
+  if (/\\b(?:qp|question[ _-]*paper)\\b/i.test(name)) return 'questionPaperText';
+  if (/\\b(?:sa|suggested[ _-]*answers?|model[ _-]*(?:answers?|solutions?))\\b/i.test(name)) return 'suggestedAnswersText';
+  if (/\\b(?:ms|marking[ _-]*(?:scheme|rubric)|step[ _-]*wise[ _-]*marking)\\b/i.test(name)) return 'markingSchemeText';
+  return null;
+}
 function splitModelBlocks(file: ModelTestTextFile): Array<{ modelTestNumber: number | null; content: string; fileName: string }> {
   const normalized = cleanText(file.content);
   const lines = normalized.split('\n');
@@ -139,11 +147,27 @@ function parseModelSections(content: string): {
  */
 export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBulkParseResult {
   const errors: string[] = [];
-  const materialsByNumber = new Map<number, ParsedModelTestMaterial>();
+  const materialsByNumber = new Map<number, {
+    questionPaperText?: string;
+    suggestedAnswersText?: string;
+    markingSchemeText?: string;
+    sourceFileNames: string[];
+  }>();
 
   if (!Array.isArray(files) || files.length === 0) {
     return { materials: [], errors: ['Select at least one TXT file.'] };
   }
+
+  const addComponent = (modelNumber: number, key: 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText', text: string, fileName: string) => {
+    const current = materialsByNumber.get(modelNumber) || { sourceFileNames: [] };
+    if (current[key]) {
+      errors.push(`Model ${modelNumber}: duplicate ${key} file supplied (${fileName}).`);
+      return;
+    }
+    current[key] = cleanText(text);
+    if (!current.sourceFileNames.includes(fileName)) current.sourceFileNames.push(fileName);
+    materialsByNumber.set(modelNumber, current);
+  };
 
   for (const file of files) {
     const fileName = String(file?.fileName || 'unnamed.txt');
@@ -161,6 +185,7 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
       continue;
     }
 
+    const fileRole = getComponentRoleFromFileName(fileName);
     const blocks = splitModelBlocks({ fileName, content });
     for (const block of blocks) {
       const modelNumber = block.modelTestNumber;
@@ -169,34 +194,72 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
         continue;
       }
 
-      const parsed = parseModelSections(block.content);
-      if (parsed.errors.length > 0) {
-        errors.push(`Model ${modelNumber} (${fileName}): ${parsed.errors.join(' ')}`);
-        continue;
-      }
-      if (materialsByNumber.has(modelNumber)) {
-        errors.push(`Model ${modelNumber}: more than one TXT block was supplied. Keep all three sections in one block per model.`);
+      const lines = cleanText(block.content).split('\\n');
+      const presentHeaders = SECTION_HEADERS.filter((candidate) => lines.some((line) => candidate.pattern.test(line)));
+      if (presentHeaders.length === 3) {
+        const parsed = parseModelSections(block.content);
+        if (parsed.errors.length > 0) {
+          errors.push(`Model ${modelNumber} (${fileName}): ${parsed.errors.join(' ')}`);
+          continue;
+        }
+        addComponent(modelNumber, 'questionPaperText', parsed.questionPaperText, fileName);
+        addComponent(modelNumber, 'suggestedAnswersText', parsed.suggestedAnswersText, fileName);
+        addComponent(modelNumber, 'markingSchemeText', parsed.markingSchemeText, fileName);
         continue;
       }
 
-      materialsByNumber.set(modelNumber, {
+      if (presentHeaders.length === 1 && fileRole === presentHeaders[0].key) {
+        const activeHeader = presentHeaders[0];
+        const sectionLines: string[] = [];
+        let active = false;
+        for (const line of lines) {
+          if (!active && activeHeader.pattern.test(line)) { active = true; continue; }
+          if (active) sectionLines.push(line);
+        }
+        const sectionText = cleanText(sectionLines.join('\\n'));
+        const minLength = activeHeader.key === 'markingSchemeText' ? 10 : 30;
+        if (sectionText.length < minLength) {
+          errors.push(`Model ${modelNumber} (${fileName}): ${activeHeader.key} section is empty or too short.`);
+          continue;
+        }
+        addComponent(modelNumber, activeHeader.key, sectionText, fileName);
+        continue;
+      }
+
+      if (presentHeaders.length === 0 && fileRole) {
+        const minLength = fileRole === 'markingSchemeText' ? 10 : 30;
+        if (block.content.length < minLength) {
+          errors.push(`Model ${modelNumber} (${fileName}): ${fileRole} file is empty or too short.`);
+          continue;
+        }
+        addComponent(modelNumber, fileRole, block.content, fileName);
+        continue;
+      }
+
+      errors.push(`Model ${modelNumber} (${fileName}): use all three section headings in one file, or identify this file as Question Paper, Suggested Answers, or Marking Scheme in its filename.`);
+    }
+  }
+
+  const materials: ParsedModelTestMaterial[] = [];
+  for (let modelNumber = 1; modelNumber <= 8; modelNumber++) {
+    const item = materialsByNumber.get(modelNumber);
+    if (!item) {
+      errors.push(`Model ${modelNumber}: missing from this batch.`);
+      continue;
+    }
+    if (!item.questionPaperText || item.questionPaperText.length < 30) errors.push(`Model ${modelNumber}: missing or incomplete QUESTION PAPER file.`);
+    if (!item.suggestedAnswersText || item.suggestedAnswersText.length < 30) errors.push(`Model ${modelNumber}: missing or incomplete SUGGESTED ANSWERS file.`);
+    if (!item.markingSchemeText || item.markingSchemeText.length < 10) errors.push(`Model ${modelNumber}: missing or incomplete MARKING SCHEME file.`);
+    if (item.questionPaperText && item.suggestedAnswersText && item.markingSchemeText) {
+      materials.push({
         modelTestNumber: modelNumber,
-        questionPaperText: parsed.questionPaperText,
-        suggestedAnswersText: parsed.suggestedAnswersText,
-        markingSchemeText: parsed.markingSchemeText,
-        sourceFileNames: [fileName],
+        questionPaperText: item.questionPaperText,
+        suggestedAnswersText: item.suggestedAnswersText,
+        markingSchemeText: item.markingSchemeText,
+        sourceFileNames: item.sourceFileNames,
       });
     }
   }
 
-  for (let modelNumber = 1; modelNumber <= 8; modelNumber++) {
-    if (!materialsByNumber.has(modelNumber)) {
-      errors.push(`Model ${modelNumber}: missing from this batch.`);
-    }
-  }
-
-  return {
-    materials: Array.from(materialsByNumber.values()).sort((a, b) => a.modelTestNumber - b.modelTestNumber),
-    errors,
-  };
+  return { materials, errors };
 }
