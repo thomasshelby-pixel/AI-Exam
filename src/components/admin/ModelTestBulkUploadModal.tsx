@@ -46,22 +46,29 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
   subjectsByLevel,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [level, setLevel] = useState<CALevel>('INTERMEDIATE');
-  const [subjectKey, setSubjectKey] = useState<string>(subjectsByLevel.INTERMEDIATE[0]?.key || '');
+  const initialSubjectKey = subjectsByLevel.INTERMEDIATE[0]?.key || '';
+  const [subjectSelection, setSubjectSelection] = useState<string>(`INTERMEDIATE::${initialSubjectKey}`);
   const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<PreviewMaterial[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
-  const subjects = useMemo(() => subjectsByLevel[level] || [], [level, subjectsByLevel]);
-  const selectedSubject = subjects.find((subject) => subject.key === subjectKey) || subjects[0];
+  const allSubjects = useMemo(() => {
+    const levels: CALevel[] = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
+    return levels.flatMap((courseLevel) =>
+      (subjectsByLevel[courseLevel] || []).map((subject) => ({ ...subject, level: courseLevel }))
+    );
+  }, [subjectsByLevel]);
+  const selectedSubject = allSubjects.find((subject) => `${subject.level}::${subject.key}` === subjectSelection) || allSubjects[0];
+  const level: CALevel = selectedSubject?.level || 'INTERMEDIATE';
 
   useEffect(() => {
-    if (!subjects.some((subject) => subject.key === subjectKey)) {
-      setSubjectKey(subjects[0]?.key || '');
+    if (!allSubjects.some((subject) => `${subject.level}::${subject.key}` === subjectSelection)) {
+      const first = allSubjects[0];
+      setSubjectSelection(first ? `${first.level}::${first.key}` : '');
     }
-  }, [level, subjectKey, subjects]);
+  }, [allSubjects, subjectSelection]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -176,33 +183,21 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
         </div>
 
         <div className="p-5 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">CA Course *</label>
-              <select
-                value={level}
-                onChange={(event) => { setLevel(event.target.value as CALevel); setPreview(null); }}
-                className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm"
-                disabled={busy}
-              >
-                <option value="FOUNDATION">CA Foundation</option>
-                <option value="INTERMEDIATE">CA Intermediate</option>
-                <option value="FINAL">CA Final</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Subject *</label>
-              <select
-                value={selectedSubject?.key || ''}
-                onChange={(event) => { setSubjectKey(event.target.value); setPreview(null); }}
-                className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm"
-                disabled={busy}
-              >
-                {subjects.map((subject) => (
-                  <option key={subject.key} value={subject.key}>{subject.name} ({subject.paper})</option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">Subject *</label>
+            <select
+              value={subjectSelection}
+              onChange={(event) => { setSubjectSelection(event.target.value); setPreview(null); }}
+              className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm"
+              disabled={busy}
+            >
+              {allSubjects.map((subject) => (
+                <option key={`${subject.level}::${subject.key}`} value={`${subject.level}::${subject.key}`}>
+                  {subject.level === 'FOUNDATION' ? 'CA Foundation' : subject.level === 'INTERMEDIATE' ? 'CA Intermediate' : 'CA Final'} — {subject.name} ({subject.paper})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-slate-500 mt-1">CA Course is detected automatically from the selected subject.</p>
           </div>
 
           <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
