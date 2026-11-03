@@ -231,6 +231,12 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
         continue;
       }
 
+      if (presentHeaders.length > 0 && !fileRole) {
+        const parsed = parseModelSections(block.content);
+        errors.push(`Model ${modelNumber} (${fileName}): ${parsed.errors.join(' ')}`);
+        continue;
+      }
+
       if (presentHeaders.length === 0 && fileRole) {
         const minLength = fileRole === 'markingSchemeText' ? 10 : 30;
         if (block.content.length < minLength) {
