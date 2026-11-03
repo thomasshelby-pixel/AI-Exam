@@ -120,6 +120,45 @@ import {
 
 const router = Router();
 
+interface ModelTestSlotLookup {
+  level: string;
+  subjectKey: string;
+  paper: string;
+  syllabusVersion: string;
+  modelTestNumber: number;
+  excludeId?: string;
+}
+
+async function findActiveModelTestSlot(input: ModelTestSlotLookup, firestoreDocuments?: any[]): Promise<any | null> {
+  let sql = `
+    SELECT id, question_paper_title, status, model_test_number
+    FROM evaluation_materials
+    WHERE UPPER(level) = UPPER(?)
+      AND LOWER(subject_key) = LOWER(?)
+      AND material_type = 'MODEL_TEST_PAPER'
+      AND model_test_number = ?
+      AND COALESCE(paper, 'Paper 1') = ?
+      AND COALESCE(syllabus_version, 'New Scheme 2024') = ?
+      AND status = 'ACTIVE'
+  `;
+  const params: any[] = [input.level, input.subjectKey, input.modelTestNumber, input.paper || 'Paper 1', input.syllabusVersion || 'New Scheme 2024'];
+  if (input.excludeId) { sql += ' AND id != ?'; params.push(input.excludeId); }
+  const localMatch = db.prepare(sql).get(...params) as any;
+  if (localMatch) return localMatch;
+  const documents = firestoreDocuments || await getAllFirestoreDocs<any>('evaluation_materials');
+  return documents.find((doc) =>
+    String(doc.level || '').toUpperCase() === input.level.toUpperCase() &&
+    String(doc.subject_key || '').toLowerCase() === input.subjectKey.toLowerCase() &&
+    String(doc.material_type || '').toUpperCase() === 'MODEL_TEST_PAPER' &&
+    Number(doc.model_test_number ?? doc.modelTestNumber) === input.modelTestNumber &&
+    String(doc.paper || 'Paper 1') === (input.paper || 'Paper 1') &&
+    String(doc.syllabus_version || 'New Scheme 2024') === (input.syllabusVersion || 'New Scheme 2024') &&
+    String(doc.status || 'ACTIVE').toUpperCase() === 'ACTIVE' &&
+    (!input.excludeId || String(doc.id) !== input.excludeId)
+  ) || null;
+}
+
+
 /**
  * Heal legacy evaluation rows where a persisted rejection marker survived but an old
  * worker/Firestore snapshot rewrote status back to PROCESSING or COMPLETED.
@@ -1061,6 +1100,33 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
     }
 
     const nowIso = new Date().toISOString();
+    const existingFirestoreMaterials = await getAllFirestoreDocs<any>('evaluation_materials');
+    const occupiedSlots: Array<{ modelTestNumber: number; existingTitle: string; existingId: string }> = [];
+    for (const item of parsed.materials) {
+      const existing = await findActiveModelTestSlot({
+        level: normalizedLevel,
+        subjectKey: cleanSubjectKey,
+        paper: paper || 'Paper 1',
+        syllabusVersion: 'New Scheme 2024',
+        modelTestNumber: item.modelTestNumber,
+      }, existingFirestoreMaterials);
+      if (existing) {
+        occupiedSlots.push({
+          modelTestNumber: item.modelTestNumber,
+          existingTitle: existing.question_paper_title || existing.title || 'Existing Model Test Paper',
+          existingId: existing.id,
+        });
+      }
+    }
+    if (occupiedSlots.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'MODEL_TEST_SLOT_ALREADY_EXISTS',
+        blocked: occupiedSlots,
+        error: 'One or more Model Test numbers already have an active reference set for this subject. Edit or deactivate those records before bulk replacement. Nothing was uploaded.',
+      });
+    }
+
     const materials = parsed.materials.map((item) => {
       const title = `${cleanSubjectName} Model Test Paper ${item.modelTestNumber}`;
       const combinedText = `${item.questionPaperText}\n\n${item.suggestedAnswersText}\n\n${item.markingSchemeText}`.trim();
@@ -1482,6 +1548,23 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       computedFileHash = computeFileHash(parsedFileBuffer);
     } else if (req.body.fileHash) {
       computedFileHash = String(req.body.fileHash).toLowerCase().trim();
+    }
+
+    if (materialType === 'MODEL_TEST_PAPER') {
+      const existingSlot = await findActiveModelTestSlot({
+        level: String(level),
+        subjectKey: String(subjectKey),
+        paper: String(paper || 'Paper 1'),
+        syllabusVersion: String(syllabusVersion || 'New Scheme 2024'),
+        modelTestNumber: Number(parsedModelTestNumber),
+      });
+      if (existingSlot) {
+        return res.status(409).json({
+          error: 'MODEL_TEST_SLOT_ALREADY_EXISTS',
+          message: 'Model Test Paper ' + parsedModelTestNumber + ' already exists for this subject. Edit or deactivate the existing record before replacing it.',
+          existingMaterial: existingSlot,
+        });
+      }
     }
 
     const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}\n\n${String(markingSchemeText || '').trim()}`.trim();
