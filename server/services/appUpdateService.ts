@@ -96,6 +96,7 @@ export async function uploadAppUpdateRelease(input: {
   if (!SEMVER_RE.test(versionName)) throw new Error('Version must use semantic versioning, for example 1.2.3.');
   if (!input.buffer?.length) throw new Error('The uploaded release file is empty.');
   const fileBytes = input.buffer;
+  const computedSha256 = crypto.createHash('sha256').update(fileBytes).digest('hex');
 
   if (kind === 'APK') {
     if (!Number.isSafeInteger(versionCode) || Number(versionCode) < 1) {
@@ -109,8 +110,12 @@ export async function uploadAppUpdateRelease(input: {
     if (fileBytes[0] !== 0x50 || fileBytes[1] !== 0x4b || !fileBytes.includes(Buffer.from('index.html'))) {
       throw new Error('OTA upload must be a Capgo-compatible ZIP bundle containing index.html.');
     }
-    if (!/^[a-f0-9]{64}$/i.test(String(input.otaChecksum || '').trim())) {
+    const suppliedOtaChecksum = String(input.otaChecksum || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(suppliedOtaChecksum)) {
       throw new Error('Provide the 64-character checksum printed by the Capgo CLI when creating the OTA ZIP.');
+    }
+    if (suppliedOtaChecksum !== computedSha256) {
+      throw new Error('The Capgo CLI checksum does not match the uploaded OTA ZIP. Recreate the bundle and use its matching SHA-256 checksum.');
     }
     if (fileBytes.length > 45 * 1024 * 1024) throw new Error('OTA bundle exceeds the 45 MB upload limit.');
   }
@@ -124,7 +129,6 @@ export async function uploadAppUpdateRelease(input: {
     : `exam-checker-ai-live-${versionName}.zip`;
   const fileId = kind === 'APK' ? `app_android_apk_v${versionCode}` : `app_ota_bundle_v${versionName.replace(/[^A-Za-z0-9.-]/g, '-')}`;
   const mimeType = kind === 'APK' ? 'application/vnd.android.package-archive' : 'application/zip';
-  const computedSha256 = crypto.createHash('sha256').update(fileBytes).digest('hex');
   const cloud: CloudFileMetadata = await uploadFileToCloudStorage({
     fileId,
     filename,
@@ -145,7 +149,7 @@ export async function uploadAppUpdateRelease(input: {
     ...(kind === 'APK' ? { versionCode: Number(versionCode) } : {}),
     mandatory: Boolean(input.mandatory),
     releaseNotes: String(input.releaseNotes || '').trim().slice(0, 4000),
-    checksum: kind === 'OTA' ? String(input.otaChecksum).trim().toLowerCase() : computedSha256,
+    checksum: computedSha256,
     fileId: cloud.fileId,
     storagePath: cloud.storagePath,
     storageBucket: cloud.storageBucket,
@@ -236,8 +240,12 @@ export async function downloadAppUpdateRelease(release: AppUpdateRelease): Promi
   const file = await downloadFileFromCloudStorage(release.fileId);
   if (!file?.buffer?.length) throw new Error('The published update file could not be downloaded from Cloud Storage.');
   const computed = crypto.createHash('sha256').update(file.buffer).digest('hex');
-  if (release.kind === 'APK' && computed.toLowerCase() !== String(release.checksum || '').toLowerCase()) {
-    throw new Error('APK checksum verification failed. Download has been blocked.');
+  if (computed.toLowerCase() !== String(release.checksum || '').toLowerCase()) {
+    throw new Error(
+      release.kind === 'APK'
+        ? 'APK checksum verification failed. Download has been blocked.'
+        : 'OTA bundle checksum verification failed. Download has been blocked.'
+    );
   }
   if (release.kind === 'OTA' && file.buffer.length !== release.sizeBytes) {
     throw new Error('OTA bundle size verification failed. Download has been blocked.');

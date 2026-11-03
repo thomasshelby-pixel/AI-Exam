@@ -185,22 +185,32 @@ router.get('/android-app/update', async (_req: Request, res: Response) => {
 // info payload and returns a bundle only for this Android package when a newer
 // semver release is published.
 router.post('/app-updates/ota', async (req: Request, res: Response) => {
+  // Update manifests must never be cached: each request is scoped to the
+  // currently installed bundle version reported by the native updater.
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const release = await getPublishedAppRelease('OTA');
-    res.setHeader('Cache-Control', 'no-store');
     if (!shouldServeOtaUpdate((req.body || {}) as Record<string, unknown>, release)) {
-      return res.json({});
+      // Capgo's self-hosted protocol uses this explicit code to classify a
+      // normal no-update check as "up to date" rather than an unknown response.
+      return res.status(200).json({
+        error: 'no_new_version_available',
+        message: 'No new version available',
+      });
     }
-    return res.json({
+    return res.status(200).json({
       version: release!.versionName,
       url: `https://caexamcheckerai.com/api/public/app-updates/ota/bundle/${encodeURIComponent(release!.versionName)}`,
       checksum: release!.checksum,
     });
   } catch (error) {
     console.warn('[AppUpdates] OTA manifest request failed:', error);
-    // A server-side error should not brick an app; return no update and allow the
-    // currently installed bundle to continue running.
-    return res.json({});
+    // Do not disguise a Firestore/storage failure as a successful no-update
+    // response; the updater can retry this transient server-side failure.
+    return res.status(503).json({
+      error: 'ota_update_check_unavailable',
+      message: 'The OTA update check is temporarily unavailable.',
+    });
   }
 });
 
