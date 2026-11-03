@@ -31,7 +31,7 @@ interface BulkResponse {
   validated?: number;
   materials?: PreviewMaterial[];
   errors?: string[];
-  blocked?: Array<{ modelTestNumber: number; status: string; message: string; reason?: string }>;
+  blocked?: Array<{ modelTestNumber: number; status?: string; message?: string; reason?: string; existingTitle?: string; existingId?: string }>;
   error?: string;
   message?: string;
 }
@@ -115,7 +115,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
         setPreview(null);
         setErrors(result.errors?.length
           ? result.errors
-          : result.blocked?.map((item) => `Model ${item.modelTestNumber}: ${item.message}`) || [result.error || 'Batch validation failed.']);
+          : result.blocked?.map((item) => `Model ${item.modelTestNumber}: ${item.message || item.reason || item.status || (item.existingTitle ? `already exists — ${item.existingTitle}` : 'this model slot is already occupied')}`) || [result.error || 'Batch validation failed.']);
         return;
       }
 
@@ -134,7 +134,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
       setErrors(Array.isArray(apiErrors) && apiErrors.length
         ? apiErrors
         : Array.isArray(blocked) && blocked.length
-          ? blocked.map((item: any) => `Model ${item.modelTestNumber}: ${item.message || item.reason || item.status}`)
+          ? blocked.map((item: any) => `Model ${item.modelTestNumber}: ${item.message || item.reason || item.status || (item.existingTitle ? `already exists — ${item.existingTitle}` : 'this model slot is already occupied')}`)
           : [error instanceof Error ? error.message : 'Unable to process this TXT batch.']);
     } finally {
       setBusy(false);
