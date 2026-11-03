@@ -1071,7 +1071,7 @@ router.post('/materials/extract-pdf', async (req: AuthRequest, res: Response) =>
 
 
 /**
- * Bulk import Model 1–8 from plain TXT files.
+ * Bulk import all course-specific Model Test Papers from plain TXT files.
  * The parser validates every model and its three source sections before the first write.
  * No Gemini/PDF extraction is used in this path.
  */
