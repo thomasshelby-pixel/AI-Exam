@@ -37,7 +37,7 @@ const duplicatedModel = parseModelTestBulkFiles([
   ...files,
   { fileName: 'Model 1 duplicate.txt', content: modelText(1) },
 ]);
-assert.ok(duplicatedModel.errors.some((error) => error.includes('more than one TXT block')));
+assert.ok(duplicatedModel.errors.some((error) => error.includes('duplicate questionPaperText file')));
 
 const masterFile = {
   fileName: 'all-models.txt',
