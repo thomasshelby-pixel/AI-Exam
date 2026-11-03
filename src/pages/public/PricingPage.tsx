@@ -555,8 +555,6 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Institution Partner Pricing */}
           <div className="text-center space-y-1">
             <span className="inline-flex items-center rounded-full border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
               Institution Partner Pricing
@@ -566,7 +564,8 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             </p>
           </div>
 
-          {/* Tier 1: Individual Institute */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Tier 1: Individual Institute */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 flex flex-col justify-between shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition">
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
