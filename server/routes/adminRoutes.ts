@@ -45,7 +45,7 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { setFirestoreDoc, setFirestoreDocsAtomically, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -1179,6 +1179,38 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       };
     });
 
+    const auditRecords = materialRecords.map((record) => ({
+      id: `log_${crypto.randomBytes(8).toString('hex')}`,
+      user_id: req.user!.id,
+      action: 'BULK_UPLOAD_MODEL_TEST_PAPER',
+      entity_type: 'MATERIAL',
+      entity_id: record.id,
+      details: `Bulk imported Model ${record.model_test_number} for ${cleanSubjectName}; TXT sources: ${record.file_name}`,
+      created_at: nowIso,
+    }));
+
+    // Firestore is the durable source of truth. Write all eight materials and audit
+    // records in one batch before acknowledging or updating the local cache.
+    const firestoreSaved = await setFirestoreDocsAtomically([
+      ...materialRecords.map((record) => ({
+        collectionName: 'evaluation_materials',
+        docId: record.id,
+        data: record,
+      })),
+      ...auditRecords.map((record) => ({
+        collectionName: 'audit_logs',
+        docId: record.id,
+        data: record,
+      })),
+    ]);
+    if (!firestoreSaved) {
+      return res.status(502).json({
+        success: false,
+        code: 'MODEL_TEST_FIRESTORE_PERSISTENCE_FAILED',
+        error: 'The Model Test batch could not be safely saved to the shared database. No local records were created; please retry.',
+      });
+    }
+
     const insertBatch = db.transaction(() => {
       const insert = db.prepare(`
         INSERT INTO evaluation_materials (
@@ -1194,11 +1226,6 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `);
-      const audit = db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'BULK_UPLOAD_MODEL_TEST_PAPER', 'MATERIAL', ?, ?)
-      `);
-
       for (const record of materialRecords) {
         insert.run(
           record.id, record.level, record.material_type, record.mtp_series, record.model_test_number,
@@ -1212,24 +1239,16 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
           record.file_size, record.checksum, record.download_url, record.uploaded_by, record.created_at,
           record.updated_at, record.content_hash, record.file_hash, null, record.language, record.source
         );
-        audit.run(
-          `log_${crypto.randomBytes(8).toString('hex')}`,
-          req.user!.id,
-          record.id,
-          `Bulk imported Model ${record.model_test_number} for ${cleanSubjectName}; TXT sources: ${record.file_name}`
-        );
+      }
+      const auditInsert = db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const audit of auditRecords) {
+        auditInsert.run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details, audit.created_at);
       }
     });
     insertBatch();
-
-    const firestoreResults = await Promise.allSettled(
-      materialRecords.map((record) => setFirestoreDoc('evaluation_materials', record.id, record))
-    );
-
-    const firestoreFailed = firestoreResults.filter((result) => result.status === 'rejected').length;
-    if (firestoreFailed > 0) {
-      console.error(`[AdminRoutes] ${firestoreFailed} Model Test material record(s) could not be synced to Firestore.`);
-    }
 
     return res.status(201).json({
       success: true,
@@ -1242,7 +1261,6 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
         suggestedAnswerCharacters: record.suggested_answers_text.length,
         markingSchemeCharacters: record.marking_scheme_text.length,
       })),
-      firestoreSyncWarnings: firestoreFailed,
       message: 'All eight Model Test Papers were saved in Model 1–8 sequence.',
     });
   } catch (error: unknown) {
