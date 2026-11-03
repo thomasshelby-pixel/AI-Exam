@@ -596,6 +596,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     }
 
     const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER' ? Number(modelTestNumber ?? req.body.model_test_number) : undefined;
+    const evaluationMaterialAttempt = materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt;
     if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
       return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
     }
@@ -603,7 +604,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     const referenceMaterial = await findAuthoritativeMaterialWithFallback({
       level,
       subjectKey,
-      attempt,
+      attempt: materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt,
       paper,
       materialType,
       mtpSeries: parsedMtpSeries,
@@ -1097,7 +1098,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         preloadedMat = await findAuthoritativeMaterialWithFallback({
           level,
           subjectKey,
-          attempt,
+          attempt: evaluationMaterialAttempt,
           paper: req.body.paper,
           materialType,
           mtpSeries: parsedMtpSeries,
@@ -1118,7 +1119,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         subjectKey,
         subjectName,
         paper: req.body.paper,
-        attempt,
+        attempt: evaluationMaterialAttempt,
         syllabusVersion: req.body.syllabusVersion,
         materialType,
         mtpSeries: parsedMtpSeries,
@@ -1260,7 +1261,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       subjectKey,
       subjectName,
       referenceMaterial.paper || 'Paper 1',
-      attempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
+      evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       referenceMaterial.syllabus_version || 'New Scheme 2024',
       referenceMaterial.id,
       referenceMaterial.version || '1.0',
@@ -1390,7 +1391,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       subjectKey,
       subjectName,
       paper: referenceMaterial.paper || 'Paper 1',
-      attempt: attempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
+      attempt: evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
       fileBase64,
