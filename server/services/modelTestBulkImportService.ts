@@ -9,6 +9,8 @@
  * section headings. No AI extraction or inferred model numbering is used.
  */
 
+import { DEFAULT_MODEL_TEST_MAX_NUMBER } from './modelTestLimits.js';
+
 export interface ModelTestTextFile {
   fileName: string;
   content: string;
@@ -27,7 +29,7 @@ export interface ModelTestBulkParseResult {
   errors: string[];
 }
 
-const MODEL_HEADER = /^\s*(?:={2,}\s*)?MODEL(?:\s+TEST)?(?:\s+PAPER)?\s*(?:NO\.?\s*|#\s*)?0?([1-8])\s*(?:={2,})?\s*$/i;
+const MODEL_HEADER = /^\s*(?:={2,}\s*)?MODEL(?:\s+TEST)?(?:\s+PAPER)?\s*(?:NO\.?\s*|#\s*)?(10|0?[1-9])\s*(?:={2,})?\s*$/i;
 
 const SECTION_HEADERS: Array<{ key: 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText'; pattern: RegExp }> = [
   { key: 'questionPaperText', pattern: /^\s*(?:\[\s*)?(?:QUESTION\s+PAPER(?:\s+TEXT)?|QUESTIONS|QP)(?:\s*\])?\s*:?\s*$/i },
@@ -47,8 +49,8 @@ function cleanText(value: string): string {
 }
 
 function getModelNumberFromFileName(fileName: string): number | null {
-  const match = String(fileName || '').match(/\bmodel(?:[ _-]*test)?(?:[ _-]*paper)?[ _-]*(?:no\.?[ _-]*|#)?0?([1-8])\b/i)
-    || String(fileName || '').match(/\bmtp[ _-]*0?([1-8])\b/i);
+  const match = String(fileName || '').match(/\bmodel(?:[ _-]*test)?(?:[ _-]*paper)?[ _-]*(?:no\.?[ _-]*|#)?(10|0?[1-9])\b/i)
+    || String(fileName || '').match(/\bmtp[ _-]*(10|0?[1-9])\b/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -152,8 +154,15 @@ function parseModelSections(content: string): {
  * Parses and validates an entire Model 1–8 batch before any database writes occur.
  * A model number must be explicit in the filename or in a MODEL TEST PAPER N block.
  */
-export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBulkParseResult {
+export function parseModelTestBulkFiles(
+  files: ModelTestTextFile[],
+  options: { maxModelNumber?: number } = {},
+): ModelTestBulkParseResult {
   const errors: string[] = [];
+  const maxModelNumber = options.maxModelNumber ?? DEFAULT_MODEL_TEST_MAX_NUMBER;
+  if (!Number.isInteger(maxModelNumber) || maxModelNumber < 1 || maxModelNumber > 10) {
+    return { materials: [], errors: ['The configured Model Test limit must be an integer from 1 to 10.'] };
+  }
   const totalBytes = files.reduce((sum, file) => sum + Buffer.byteLength(String(file?.content || ''), 'utf8'), 0);
   if (totalBytes > 32 * 1024 * 1024) {
     return { materials: [], errors: ['The complete TXT batch exceeds the 32 MB total limit.'] };
@@ -201,8 +210,8 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
     const blocks = splitModelBlocks({ fileName, content });
     for (const block of blocks) {
       const modelNumber = block.modelTestNumber;
-      if (!modelNumber || modelNumber < 1 || modelNumber > 8) {
-        errors.push(`${fileName}: Model Number 1–8 was not clearly identified in the filename or MODEL TEST PAPER heading.`);
+      if (!modelNumber || modelNumber < 1 || modelNumber > maxModelNumber) {
+        errors.push(`${fileName}: Model Number must be clearly identified and within the allowed range 1–${maxModelNumber} in the filename or MODEL TEST PAPER heading.`);
         continue;
       }
 
@@ -259,7 +268,7 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
   }
 
   const materials: ParsedModelTestMaterial[] = [];
-  for (let modelNumber = 1; modelNumber <= 8; modelNumber++) {
+  for (let modelNumber = 1; modelNumber <= maxModelNumber; modelNumber++) {
     const item = materialsByNumber.get(modelNumber);
     if (!item) {
       errors.push(`Model ${modelNumber}: missing from this batch.`);
