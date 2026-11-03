@@ -1158,7 +1158,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
               )}
 
               {/* Row 1: Level, Material Type, MTP Series / PYQ Format, Subject */}
-              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' || formData.materialType === 'PYQ' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
+              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' || formData.materialType === 'PYQ' || formData.materialType === 'MODEL_TEST_PAPER' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">CA Level *</label>
                   <select
@@ -1186,7 +1186,10 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                   <label className="block font-bold text-slate-700 mb-1">Material Type *</label>
                   <select
                     value={formData.materialType}
-                    onChange={(e) => setFormData({ ...formData, materialType: e.target.value as MaterialType })}
+                    onChange={(e) => {
+                      const materialType = e.target.value as MaterialType;
+                      setFormData({ ...formData, materialType, ...(materialType === 'MODEL_TEST_PAPER' ? { attempt: 'All' } : {}) });
+                    }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none"
                   >
                     {ALLOWED_MATERIAL_TYPES.map((t) => (
@@ -1299,7 +1302,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                   />
                 </div>
 
-                <div>
+                {formData.materialType !== 'MODEL_TEST_PAPER' && <div>
                   <label className="block font-bold text-slate-700 mb-1">Exam Attempt</label>
                   <select
                     value={formData.attempt}
@@ -1312,7 +1315,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       </option>
                     ))}
                   </select>
-                </div>
+                </div>}
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Syllabus Version</label>
