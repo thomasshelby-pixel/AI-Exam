@@ -204,7 +204,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
           <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
             <p className="text-xs font-bold text-indigo-950 mb-1">TXT format required</p>
             <pre className="text-[11px] leading-relaxed whitespace-pre-wrap text-indigo-900">{'MODEL TEST PAPER 1\n[QUESTION PAPER]\n...full question paper...\n[SUGGESTED ANSWERS]\n...full model answers...\n[MARKING SCHEME]\n...step-wise marks...'}</pre>
-            <p className="text-[11px] text-indigo-800 mt-2">`Upload ${maxModelTestNumber} combined TXT files, one master TXT with Model 1–${maxModelTestNumber} blocks, or ${maxModelTestNumber * 3} separate files named like Model 1 Question Paper.txt, Model 1 Suggested Answers.txt and Model 1 Marking Scheme.txt (repeat for Models 2–${maxModelTestNumber}).`</p>
+            <p className="text-[11px] text-indigo-800 mt-2">{`Upload ${maxModelTestNumber} combined TXT files, one master TXT with Model 1–${maxModelTestNumber} blocks, or ${maxModelTestNumber * 3} separate files named like Model 1 Question Paper.txt, Model 1 Suggested Answers.txt and Model 1 Marking Scheme.txt (repeat for Models 2–${maxModelTestNumber}).`}</p>
           </div>
 
           <div
