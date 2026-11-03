@@ -402,6 +402,7 @@ export function initDatabase() {
       subject_name TEXT NOT NULL,
       paper TEXT DEFAULT 'Paper 1',
       attempt TEXT,
+      model_test_number INTEGER,
       syllabus_version TEXT DEFAULT 'New Scheme 2024',
       chapter_topic TEXT,
       question_paper_title TEXT NOT NULL,
@@ -439,6 +440,7 @@ export function initDatabase() {
       paper TEXT,
       attempt TEXT,
       mtp_series INTEGER,
+      model_test_number INTEGER,
       syllabus_version TEXT,
       material_id TEXT,
       material_version TEXT,
@@ -1286,6 +1288,7 @@ function runMigrations() {
   addColumnIfNotExists('evaluation_materials', 'approved_by', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'approved_at', "TEXT");
   addColumnIfNotExists('evaluation_materials', 'mtp_series', "TEXT");
+  addColumnIfNotExists('evaluation_materials', 'model_test_number', 'INTEGER');
   addColumnIfNotExists('evaluation_materials', 'paper', "TEXT DEFAULT 'Paper 1'");
   addColumnIfNotExists('evaluation_materials', 'syllabus_version', "TEXT DEFAULT 'New Scheme 2024'");
   addColumnIfNotExists('evaluation_materials', 'chapter_topic', 'TEXT');
@@ -1328,6 +1331,7 @@ function runMigrations() {
   // Ensure evaluations has all enhanced columns
   addColumnIfNotExists('evaluations', 'evaluation_source', "TEXT DEFAULT 'PUBLIC'");
   addColumnIfNotExists('evaluations', 'mtp_series', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'model_test_number', 'INTEGER');
   addColumnIfNotExists('evaluations', 'institute_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'institute_enrollment_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'batch_id', 'TEXT');
