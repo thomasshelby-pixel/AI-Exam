@@ -86,44 +86,48 @@ export const PricingPage: React.FC<PricingPageProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 text-slate-800 dark:text-slate-100 space-y-10">
+    <div className="relative isolate mx-auto max-w-7xl overflow-hidden px-4 py-8 text-slate-800 dark:text-slate-100 sm:px-6 lg:px-8 lg:py-12">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[30rem] bg-[radial-gradient(ellipse_at_top,rgba(37,99,235,0.13),transparent_68%)] dark:bg-[radial-gradient(ellipse_at_top,rgba(79,70,229,0.20),transparent_68%)]" />
       {/* Header */}
-      <div className="text-center space-y-3 max-w-2xl mx-auto">
-        <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-          Transparent, Fair Pricing
-        </span>
-        <h1 className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-white">
-          {audience === 'student' ? 'Simple, Honest Pricing for CA Aspirants' : 'Institutional Plans for CA Academies'}
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-          {audience === 'student'
-            ? 'Start with 2 free evaluations every month. Choose affordable Combo plans or custom pay-per-paper evaluation.'
-            : 'Equip your coaching academy with automated ICAI mock evaluations, batch rankings, and faculty analytics.'}
-        </p>
+      <div className="relative mx-auto mb-10 max-w-5xl overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white/85 px-5 py-9 text-center shadow-[0_24px_80px_-40px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-10 sm:py-12">
+        <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
+        <div className="relative mx-auto max-w-3xl space-y-4">
+          <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-blue-700 dark:border-blue-900 dark:bg-blue-950/70 dark:text-blue-300">
+            <Sparkles className="h-3.5 w-3.5" /> Transparent pricing · No hidden surprises
+          </span>
+          <h1 className="text-3xl font-black leading-tight tracking-tight text-slate-950 dark:text-white sm:text-5xl">
+            {audience === 'student' ? <>Your next attempt deserves <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">better feedback.</span></> : <>Turn every test into <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">measurable progress.</span></>}
+          </h1>
+          <p className="mx-auto max-w-2xl text-sm leading-7 text-slate-600 dark:text-slate-300 sm:text-base">
+            {audience === 'student'
+              ? 'Understand where you lose marks, improve your answer presentation, and prepare with feedback that helps you move forward.'
+              : 'Give your faculty a structured evaluation workflow and give every student clearer visibility into their performance.'}
+          </p>
 
         {/* Audience Toggle */}
-        <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800/90 rounded-xl border border-slate-200 dark:border-slate-700 mt-2">
+        <div className="mx-auto inline-flex w-full max-w-xl rounded-2xl border border-slate-200 bg-slate-100/90 p-1.5 shadow-inner dark:border-slate-700 dark:bg-slate-900/90">
           <button
             onClick={() => setAudience('student')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+            className={`flex-1 rounded-xl px-3 py-3 text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 sm:text-sm ${
               audience === 'student'
-                ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-300 shadow-xs'
+                ? 'bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 shadow-md ring-1 ring-slate-200 dark:ring-slate-700'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            <span>CA Students (Combos & Custom)</span>
+            <span>For CA Students</span>
           </button>
           <button
             onClick={() => setAudience('institute')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+            className={`flex-1 rounded-xl px-3 py-3 text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 sm:text-sm ${
               audience === 'institute'
-                ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                ? 'bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 shadow-md ring-1 ring-slate-200 dark:ring-slate-700'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <Building2 className="w-3.5 h-3.5" />
-            <span>Coaching Institutes & Faculties</span>
+            <span>For Institutes</span>
           </button>
         </div>
 
@@ -148,16 +152,27 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             <Lock className="w-2.5 h-2.5 text-slate-400" /> CMA (Coming Soon)
           </button>
         </div>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Secure checkout</span>
+            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> Clear, upfront pricing</span>
+            <span className="inline-flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 text-blue-600" /> Feedback built around your progress</span>
+          </div>
+        </div>
       </div>
 
       {/* STUDENT PRICING VIEW */}
       {audience === 'student' && (
-        <div className="space-y-10 max-w-4xl mx-auto">
+        <div className="mx-auto max-w-6xl space-y-8">
           {/* Top Row: Free Tier & Custom Evaluation Option */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="mb-1 max-w-3xl space-y-2">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Start where you are</p>
+            <h2 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white sm:text-3xl">One free start. Flexible ways to keep improving.</h2>
+            <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">Try the evaluation experience, then choose a pack that fits your practice routine.</p>
+          </div>
+          <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-2">
             {/* Card 1: Free Registration */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 sm:p-7 space-y-6 flex flex-col justify-between shadow-sm hover:border-slate-300 dark:hover:border-slate-700 transition">
-              <div className="space-y-4">
+            <div className="group flex h-full flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_55px_-40px_rgba(15,23,42,0.35)] transition duration-300 hover:-translate-y-1 hover:border-emerald-300 hover:shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:p-8 space-y-6">
+              <div className="space-y-5">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Free Tier</span>
                   <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
@@ -204,7 +219,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             </div>
 
             {/* Card 2: Custom Evaluation (Pay As You Need) */}
-            <div className="bg-white dark:bg-slate-900 border-2 border-blue-600 dark:border-blue-500 rounded-xl p-6 sm:p-7 space-y-5 flex flex-col justify-between shadow-md">
+            <div className="relative flex h-full flex-col justify-between overflow-hidden rounded-3xl border border-blue-300 bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-6 shadow-[0_24px_70px_-35px_rgba(37,99,235,0.45)] ring-1 ring-blue-200 dark:border-blue-900 dark:from-blue-950/50 dark:via-slate-900 dark:to-indigo-950/40 dark:ring-blue-900 sm:p-8 space-y-5">
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300">
@@ -329,14 +344,14 @@ export const PricingPage: React.FC<PricingPageProps> = ({
           </div>
 
           {/* COMBO PLANS SECTION */}
-          <div className="bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 space-y-6">
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-50/80 p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 sm:p-9 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold mb-1">
                   <Layers className="w-3 h-3" /> Combo Plans
                 </div>
-                <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
-                  Course-Specific Combo Offers
+                <h2 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white sm:text-3xl">
+                  Choose your practice pack
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
                   The number of evaluations and pricing depend on the selected course/level.
@@ -373,7 +388,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             {/* Combo Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* COMBO 1 */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 flex flex-col justify-between space-y-5 shadow-xs hover:border-blue-400 transition">
+              <div className="flex flex-col justify-between space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-950">
                 <div className="space-y-4">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-bold text-slate-900 dark:text-white">COMBO 1</span>
@@ -435,7 +450,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
               </div>
 
               {/* COMBO 2 */}
-              <div className="bg-white dark:bg-slate-900 border-2 border-indigo-500/70 dark:border-indigo-500/60 rounded-xl p-6 flex flex-col justify-between space-y-5 shadow-sm relative hover:border-indigo-600 transition">
+              <div className="relative flex flex-col justify-between space-y-5 rounded-2xl border-2 border-indigo-500 bg-gradient-to-br from-white via-indigo-50/50 to-blue-50/70 p-6 shadow-[0_22px_60px_-35px_rgba(79,70,229,0.55)] transition duration-300 hover:-translate-y-1 hover:shadow-xl dark:from-indigo-950/40 dark:via-slate-950 dark:to-blue-950/30">
                 <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wider px-3 py-0.5 rounded-full bg-indigo-600 text-white shadow-xs flex items-center gap-1">
                   <Sparkles className="w-3 h-3" /> Most Recommended Combo
                 </span>
@@ -506,9 +521,14 @@ export const PricingPage: React.FC<PricingPageProps> = ({
 
       {/* INSTITUTE PRICING VIEW */}
       {audience === 'institute' && (
-        <div className="space-y-8">
+        <div className="mx-auto max-w-6xl space-y-8">
+          <div className="max-w-3xl space-y-2">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-indigo-700 dark:text-indigo-300">Built to scale with your academy</p>
+            <h2 className="text-2xl font-black tracking-tight text-slate-950 dark:text-white sm:text-3xl">One platform. Your entire evaluation workflow.</h2>
+            <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">Choose capacity based on your enrolled students and select a billing cycle that suits your institution.</p>
+          </div>
           {/* Cycle Selector Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">Choose Institutional Billing Cycle</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -555,18 +575,9 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             </div>
           </div>
 
-          <div className="text-center space-y-1">
-            <span className="inline-flex items-center rounded-full border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-              Institution Partner Pricing
-            </span>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Flexible plans built for coaching institutes and growing faculties.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
             {/* Tier 1: Individual Institute */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 flex flex-col justify-between shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition">
+            <div className="flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_55px_-40px_rgba(15,23,42,0.35)] transition duration-300 hover:-translate-y-1 hover:shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:p-7">
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h4 className="text-base font-bold text-slate-900 dark:text-white">Individual Institute</h4>
@@ -576,7 +587,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
                 </div>
 
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-black text-slate-900 dark:text-white font-mono">
+                  <span className="text-3xl font-black tracking-tight text-slate-950 dark:text-white sm:text-4xl">
                     {instituteCycle === 'MONTHLY' ? '₹79,999' : instituteCycle === 'QUARTERLY' ? '₹1,29,999' : '₹3,49,999'}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -630,8 +641,8 @@ export const PricingPage: React.FC<PricingPageProps> = ({
             </div>
 
             {/* Tier 2: Mid Institute */}
-            <div className="bg-white dark:bg-slate-900 border-2 border-indigo-600 dark:border-indigo-500 rounded-xl p-6 flex flex-col justify-between relative shadow-md">
-              <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wider px-3 py-0.5 rounded-full bg-indigo-600 text-white shadow-sm flex items-center gap-1">
+            <div className="relative flex flex-col justify-between rounded-3xl border-2 border-indigo-500 bg-gradient-to-b from-indigo-50/80 via-white to-white p-6 shadow-[0_28px_75px_-40px_rgba(79,70,229,0.6)] ring-1 ring-indigo-200 dark:from-indigo-950/60 dark:via-slate-900 dark:to-slate-900 dark:ring-indigo-900 sm:p-7">
+              <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wider px-3 py-0.5 rounded-full bg-indigo-600 px-4 py-1 text-white shadow-md flex items-center gap-1">
                 <Sparkles className="w-3 h-3" /> Most Popular for Academies
               </span>
 
@@ -644,7 +655,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
                 </div>
 
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-black text-indigo-700 dark:text-indigo-400 font-mono">
+                  <span className="text-3xl font-black tracking-tight text-indigo-700 dark:text-indigo-300 sm:text-4xl">
                     {instituteCycle === 'MONTHLY' ? '₹1,09,999' : instituteCycle === 'QUARTERLY' ? '₹3,29,999' : '₹8,99,999'}
                   </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -765,7 +776,7 @@ export const PricingPage: React.FC<PricingPageProps> = ({
       )}
 
       {/* Trust & Guarantee Banner */}
-      <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 pt-4 sm:grid-cols-3">
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
           <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-xs">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -798,10 +809,10 @@ export const PricingPage: React.FC<PricingPageProps> = ({
       </div>
 
       {/* Pricing FAQs */}
-      <div className="max-w-3xl mx-auto space-y-4 pt-6">
-        <h3 className="text-lg font-bold text-slate-900 dark:text-white text-center">Frequently Asked Questions</h3>
-        <div className="space-y-3 text-xs">
-          <div className="p-4 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1 shadow-sm">
+      <div className="mx-auto max-w-4xl space-y-5 rounded-[2rem] border border-slate-200 bg-white/80 p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950/70 sm:p-8">
+        <div className="text-center"><p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Need clarity?</p><h3 className="mt-1 text-2xl font-black text-slate-950 dark:text-white">Frequently asked questions</h3></div>
+        <div className="grid gap-3 text-sm md:grid-cols-2">
+          <div className="p-4 rounded-2xl bg-slate-50/80 p-5 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2 shadow-sm">
             <h4 className="font-bold text-slate-900 dark:text-white">How do student evaluation credits work?</h4>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
               1 credit allows 1 complete handwritten answer sheet evaluation (up to 100 marks) with full question-wise step marking and examiner feedback.
