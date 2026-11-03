@@ -151,7 +151,7 @@ function parseModelSections(content: string): {
 }
 
 /**
- * Parses and validates an entire Model 1–8 batch before any database writes occur.
+ * Parses and validates a complete course-specific Model 1–N batch before any database writes occur.
  * A model number must be explicit in the filename or in a MODEL TEST PAPER N block.
  */
 export function parseModelTestBulkFiles(
