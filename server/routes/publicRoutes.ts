@@ -590,7 +590,7 @@ router.post('/referral/validate', (req: Request, res: Response) => {
 // Check whether reference material exists for a given subject, paper, and attempt
 router.get('/materials-check', async (req: Request, res: Response) => {
   try {
-    const { level, subjectKey, attempt, paper, materialType, mtpSeries, mtp_series, sourceFormat, source_format } = req.query;
+    const { level, subjectKey, attempt, paper, materialType, mtpSeries, mtp_series, modelTestNumber, model_test_number, sourceFormat, source_format } = req.query;
     if (!level || !subjectKey) {
       return res.status(400).json({ error: 'Level and subjectKey are required.' });
     }
@@ -598,6 +598,7 @@ router.get('/materials-check', async (req: Request, res: Response) => {
     const isPyq = materialType === 'PYQ';
     const rawSeries = mtpSeries || mtp_series;
     const reqSourceFormat = sourceFormat || source_format;
+    const rawModelTestNumber = modelTestNumber || model_test_number;
 
     const material = await findAuthoritativeMaterialWithFallback({
       level: String(level),
@@ -606,6 +607,7 @@ router.get('/materials-check', async (req: Request, res: Response) => {
       paper: paper ? String(paper) : undefined,
       materialType: materialType ? String(materialType) : undefined,
       mtpSeries: rawSeries,
+      modelTestNumber: rawModelTestNumber ? Number(rawModelTestNumber) : undefined,
       sourceFormat: isPyq && reqSourceFormat && reqSourceFormat !== 'ALL' ? String(reqSourceFormat).toUpperCase() : undefined,
       minTextLength: 20,
       isAdminApprovedRequired: false,
@@ -641,6 +643,7 @@ router.get('/materials-check', async (req: Request, res: Response) => {
             paper: material.paper,
             material_type: material.material_type,
             mtp_series: normalizeMtpSeries(material.mtp_series) ? String(normalizeMtpSeries(material.mtp_series)) : material.mtp_series,
+            model_test_number: material.model_test_number ?? material.modelTestNumber ?? null,
             source_format: material.source_format,
             combined_source_material_id: material.combined_source_material_id,
             question_material_id: material.question_material_id,

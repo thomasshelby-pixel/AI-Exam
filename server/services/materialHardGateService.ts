@@ -32,6 +32,7 @@ export interface MaterialSourceManifest {
   syllabusVersion: string;
   materialType: string;
   mtpSeries?: number;
+  modelTestNumber?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
   combinedSourceMaterialId?: string;
   questionMaterialId?: string;
@@ -54,6 +55,7 @@ export interface EvaluationEvidenceComponentMetadata {
   checksum: string;
   textLength: number;
   mtpSeries?: number | null;
+  modelTestNumber?: number | null;
   componentType: 'QUESTION_PAPER' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME' | 'REFERENCE_GUIDANCE' | 'AMENDMENTS_PROVISIONS';
   title?: string;
   detectedSeries?: number | null;
@@ -67,6 +69,7 @@ export interface EvaluationEvidenceComponent {
 export interface EvaluationEvidencePackage {
   evaluationId: string;
   requestedMtpSeries?: 1 | 2 | number | null;
+  requestedModelTestNumber?: number | null;
   materialType: string;
   caLevel: string;
   subjectKey: string;
@@ -82,6 +85,7 @@ export interface EvaluationEvidencePackage {
   rawMaterialId?: string;
   rawMaterialTitle?: string;
   rawMaterialMtpSeries?: 1 | 2 | number | null;
+  rawMaterialModelTestNumber?: number | null;
   retrievedAt: string;
   integrityGateStatus: 'PENDING' | 'PASSED' | 'FAILED';
 }
@@ -93,6 +97,7 @@ export interface VerifiedReferencePackage {
   syllabusVersion: string;
   officialPaperMaxMarks: number;
   mtpSeries?: number;
+  modelTestNumber?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY';
   combinedSourceMaterialId?: string;
   questionMaterialId?: string;
@@ -118,6 +123,7 @@ export interface MaterialGateRequest {
   syllabusVersion?: string;
   materialType?: string;
   mtpSeries?: 1 | 2 | string | number;
+  modelTestNumber?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY' | string;
   evaluationSource?: 'PUBLIC' | 'INSTITUTE';
   instituteId?: string;
@@ -139,6 +145,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const subjectKey = String(request.subjectKey || '').trim();
   const isMtp = request.materialType === 'MTP';
   const isPyq = request.materialType === 'PYQ';
+  const isModelTest = request.materialType === 'MODEL_TEST_PAPER';
+  const normalizedModelTestNumber = isModelTest ? Number(request.modelTestNumber) : undefined;
+  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > 8)) {
+    throw new Error('Please select a valid Model Test Paper number (1–8) to continue.');
+  }
 
   let normalizedSeries: number | undefined = undefined;
   if (isMtp) {
@@ -193,7 +204,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, mtp_series,
+             attempt, syllabus_version, material_type, mtp_series, model_test_number,
              source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
              file_id, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
@@ -206,7 +217,8 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     const params: any[] = [normLevel, subjectKey];
 
     if (request.attempt && request.attempt !== 'Current' && request.attempt !== 'All' && request.attempt !== 'Institute Series') {
-      query += " AND (attempt = ? OR attempt = 'All')";
+      if (isMtp || isPyq || isModelTest) query += ' AND attempt = ?';
+      else query += " AND (attempt = ? OR attempt = 'All')";
       params.push(request.attempt);
     }
 
@@ -218,6 +230,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     if (request.materialType && request.materialType !== 'ALL') {
       query += " AND (material_type = ? OR material_type = 'ALL')";
       params.push(request.materialType);
+    }
+
+    if (isModelTest && normalizedModelTestNumber) {
+      query += ' AND model_test_number = ?';
+      params.push(normalizedModelTestNumber);
     }
 
     if (isMtp && normalizedSeries) {
@@ -235,7 +252,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
 
     // Fallback: If specific attempt was not matched, find active approved material for the subject & level
     // CRITICAL: NEVER fallback across MTP Series or PYQ Attempts!
-    if (!rawMaterial && !isMtp && !isPyq) {
+    if (!rawMaterial && !isMtp && !isPyq && !isModelTest) {
       rawMaterial = db.prepare(`
         SELECT id, question_paper_title, level, subject_key, subject_name, paper,
                attempt, syllabus_version, material_type, mtp_series,
@@ -271,6 +288,10 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     );
   }
 
+  if (isModelTest && Number(rawMaterial.model_test_number ?? rawMaterial.modelTestNumber) !== normalizedModelTestNumber) {
+    throw new Error('MODEL_TEST_NUMBER_MISMATCH: Retrieved reference material does not match the selected Model Test Paper.');
+  }
+
   if (isMtp && normalizedSeries) {
     if (Number(rawMaterial.mtp_series) !== normalizedSeries) {
       throw new Error(
@@ -296,6 +317,10 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   }
 
   // HARD-GATE CHECK: Verified TXT content must not be blank or superficial
+  if (isModelTest && msText.length < 10) {
+    throw new Error('MODEL_TEST_MARKING_SCHEME_MISSING: A complete marking scheme is required for the selected Model Test Paper.');
+  }
+
   if (qpText.length < 50 || saText.length < 50) {
     throw new Error(
       `Evaluation material is not available for this paper yet. Please try again once the required material has been added.`
@@ -333,6 +358,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     syllabusVersion: rawMaterial.syllabus_version || request.syllabusVersion || 'New Scheme 2024',
     materialType: rawMaterial.material_type || request.materialType || 'MTP',
     mtpSeries: normalizedSeries,
+    modelTestNumber: normalizedModelTestNumber,
     materialSource,
     officialPaperMaxMarks,
     materialVerificationStatus: 'VERIFIED',
@@ -372,6 +398,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     syllabusVersion: rawMaterial.syllabus_version || 'New Scheme 2024',
     officialPaperMaxMarks,
     mtpSeries: normalizedSeries,
+    modelTestNumber: normalizedModelTestNumber,
     sourceFormat: (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY',
     combinedSourceMaterialId: rawMaterial.source_format === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${rawMaterial.id}`) : undefined,
     questionMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${rawMaterial.id}`) : undefined,
@@ -429,6 +456,8 @@ export function buildEvaluationEvidencePackage(
   return {
     evaluationId: request.evaluationId,
     requestedMtpSeries: normSeries,
+    requestedModelTestNumber: request.modelTestNumber,
+    rawMaterialModelTestNumber: pkg.modelTestNumber,
     materialType: pkg.manifest?.materialType || request.materialType || 'MTP',
     caLevel: pkg.manifest?.caLevel || request.level || 'INTERMEDIATE',
     subjectKey: pkg.manifest?.subjectKey || request.subjectKey,
@@ -449,6 +478,7 @@ export function buildEvaluationEvidencePackage(
         checksum: qpChecksum,
         textLength: pkg.questionPaperText.length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'QUESTION_PAPER',
         title: pkg.questionPaperTitle,
         detectedSeries: qpDetected,
@@ -462,6 +492,7 @@ export function buildEvaluationEvidencePackage(
         checksum: saChecksum,
         textLength: pkg.suggestedAnswersText.length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'SUGGESTED_ANSWERS',
         title: pkg.questionPaperTitle,
         detectedSeries: saDetected,
@@ -475,6 +506,7 @@ export function buildEvaluationEvidencePackage(
         checksum: msChecksum,
         textLength: (pkg.markingSchemeText || '').length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'MARKING_SCHEME',
         title: `${pkg.questionPaperTitle} Marking Scheme`,
         detectedSeries: msDetected,
@@ -490,6 +522,30 @@ export function buildEvaluationEvidencePackage(
  * Suggested Answer, and Marking Scheme.
  */
 export function enforceEvaluationEvidencePackageMtpGate(evidencePackage: EvaluationEvidencePackage): void {
+  const isModelTest = String(evidencePackage.materialType || '').toUpperCase() === 'MODEL_TEST_PAPER';
+  if (isModelTest) {
+    const expectedModel = Number(evidencePackage.requestedModelTestNumber);
+    if (!Number.isInteger(expectedModel) || expectedModel < 1 || expectedModel > 8) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_GATE_ERROR: Please select a valid Model Test Paper number (1–8).');
+    }
+    if (Number(evidencePackage.rawMaterialModelTestNumber) !== expectedModel) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_INTEGRITY_MISMATCH: Retrieved reference material does not match the selected Model Test Paper.');
+    }
+    const metadataNumbers = [
+      evidencePackage.questionPaper?.metadata?.modelTestNumber,
+      evidencePackage.suggestedAnswers?.metadata?.modelTestNumber,
+      evidencePackage.markingScheme?.metadata?.modelTestNumber,
+    ].filter((value) => value !== undefined && value !== null).map(Number);
+    if (metadataNumbers.some((value) => value !== expectedModel)) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_COMPONENT_MISMATCH: Question Paper, Suggested Answers and Marking Scheme must belong to the same Model Test Paper.');
+    }
+    evidencePackage.integrityGateStatus = 'PASSED';
+    return;
+  }
+
   const isMtp =
     String(evidencePackage.materialType || '').toUpperCase() === 'MTP' ||
     (evidencePackage.requestedMtpSeries !== undefined && evidencePackage.requestedMtpSeries !== null);

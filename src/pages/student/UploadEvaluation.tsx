@@ -157,6 +157,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   );
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [mtpSeries, setMtpSeries] = useState<1 | 2>(1);
+  const [modelTestNumber, setModelTestNumber] = useState<number>(1);
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
@@ -547,8 +548,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         message?: string;
       }>(
         `/api/public/materials-check?level=${level}&subjectKey=${selectedSubjectKey}&attempt=${encodeURIComponent(
-          attempt
-        )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}`
+          materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt
+        )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}${materialType === 'MODEL_TEST_PAPER' ? `&modelTestNumber=${modelTestNumber}` : ''}`
       );
 
       if (res.available && res.material) {
@@ -580,6 +581,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     attempt,
     materialType,
     mtpSeries,
+    modelTestNumber,
   ]);
 
   useEffect(() => {
@@ -744,10 +746,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           level,
           materialType: evaluationSource === 'INSTITUTE' ? 'MOCK_EXAM' : materialType,
           mtpSeries: evaluationSource !== 'INSTITUTE' && materialType === 'MTP' ? mtpSeries : undefined,
+          modelTestNumber: evaluationSource !== 'INSTITUTE' && materialType === 'MODEL_TEST_PAPER' ? modelTestNumber : undefined,
           modelGroup: selectedGroup !== 'ALL' ? selectedGroup : undefined,
           subjectKey: selectedSubjectKey,
           subjectName: currentSubject?.name || 'CA Subject',
-          attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : attempt,
+          attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : (materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt),
           checkingMode,
           fileBase64,
           mimeType: file.type || 'application/pdf',
@@ -1310,7 +1313,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     </select>
                   </div>
 
-                  <div className={`grid ${materialType === 'MTP' ? 'grid-cols-2' : 'grid-cols-1'} gap-2.5`}>
+                  <div className={`grid ${materialType === 'MTP' || materialType === 'MODEL_TEST_PAPER' ? 'grid-cols-2' : 'grid-cols-1'} gap-2.5`}>
                     {materialType === 'MTP' && (
                       <div className="min-w-0">
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -1328,6 +1331,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       </div>
                     )}
 
+                    {materialType === 'MODEL_TEST_PAPER' && (
+                      <div className="min-w-0">
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Model Test Paper
+                        </label>
+                        <select
+                          id="evaluation-model-test-number-select"
+                          value={modelTestNumber}
+                          onChange={(e) => setModelTestNumber(Number(e.target.value))}
+                          className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 font-semibold"
+                        >
+                          {Array.from({ length: 8 }, (_, index) => index + 1).map((number) => (
+                            <option key={number} value={number}>Model {number}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {materialType !== 'MODEL_TEST_PAPER' && (
                     <div className="min-w-0">
                       <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                         Target Attempt
@@ -1345,6 +1367,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                         ))}
                       </select>
                     </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -1387,9 +1410,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   <span className="min-w-0 flex-1 break-words">
                     {evaluationSource === 'INSTITUTE'
                       ? 'Institute Question Paper & Model Answers Loaded'
-                      : materialType === 'PYQ'
+                       : materialType === 'PYQ'
                         ? 'Official ICAI Past Year Question Paper & Suggested Answers Loaded'
-                        : 'ICAI Suggested Answers & Marking Scheme Loaded'}
+                        : materialType === 'MODEL_TEST_PAPER'
+                          ? `Model Test Paper ${modelTestNumber} & Marking Scheme Loaded`
+                          : 'ICAI Suggested Answers & Marking Scheme Loaded'}
                   </span>
                 </div>
               ) : (
@@ -1400,7 +1425,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       ? 'Test material pending upload by academy.'
                       : materialType === 'PYQ'
                         ? 'Official PYQ not available for this attempt.'
-                        : 'Evaluation material is pending upload for this paper.'}
+                        : materialType === 'MODEL_TEST_PAPER'
+                          ? `Model Test Paper ${modelTestNumber} is not available for this subject yet.`
+                          : 'Evaluation material is pending upload for this paper.'}
                   </span>
                 </div>
               )}

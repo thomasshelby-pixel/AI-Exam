@@ -37,6 +37,7 @@ export interface EvaluationJobData {
   level: CALevel;
   materialType: MaterialType;
   mtpSeries?: 1 | 2;
+  modelTestNumber?: number;
   modelGroup?: string;
   subjectKey: string;
   subjectName: string;
@@ -166,6 +167,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const evidencePackage: EvaluationEvidencePackage = {
       evaluationId,
       requestedMtpSeries: job.mtpSeries,
+      requestedModelTestNumber: job.modelTestNumber,
+      rawMaterialModelTestNumber: job.modelTestNumber,
       materialType: job.materialType,
       caLevel: job.level,
       subjectKey: job.subjectKey,
@@ -186,6 +189,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.referenceQuestionPaperText || '', 'utf8').digest('hex'),
           textLength: (job.referenceQuestionPaperText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'QUESTION_PAPER',
           title: job.referenceMaterialTitle,
           detectedSeries:
@@ -201,6 +205,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.referenceSuggestedAnswersText || '', 'utf8').digest('hex'),
           textLength: (job.referenceSuggestedAnswersText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'SUGGESTED_ANSWERS',
           title: job.referenceMaterialTitle,
           detectedSeries:
@@ -216,6 +221,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.markingSchemeText || '', 'utf8').digest('hex'),
           textLength: (job.markingSchemeText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'MARKING_SCHEME',
           title: `${job.referenceMaterialTitle || 'Reference Material'} Marking Scheme`,
           detectedSeries: detectMtpSeriesFromText((job.markingSchemeText || '').slice(0, 1000)),
@@ -395,6 +401,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
       const meta = {
         id: evaluationId,
+        modelTestNumber: job.modelTestNumber,
         displayId: resolvedDisplayId,
         studentCode: resolvedStudentCode,
         icaiRegistrationNumber: resolvedRegNo,
@@ -531,6 +538,66 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
               await syncStudentCreditsToFirestore(studentId);
             } catch (refundErr) {
               console.warn(`[AsyncEval] MTP integrity failure refund error for ${evaluationId}:`, refundErr);
+            }
+          }
+          const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+          if (failedRow) await syncRecordToFirestore('evaluations', evaluationId, failedRow);
+        }
+        return;
+      }
+    }
+
+    // Model Test Paper identity must still match across the job, saved evaluation,
+    // and exact reference material before a result can be certified.
+    if (job.materialType === 'MODEL_TEST_PAPER') {
+      const evalRow = db.prepare('SELECT model_test_number, material_id FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      const dbModelNumber = evalRow?.model_test_number !== undefined && evalRow?.model_test_number !== null
+        ? Number(evalRow.model_test_number)
+        : null;
+      const jobModelNumber = job.modelTestNumber !== undefined && job.modelTestNumber !== null
+        ? Number(job.modelTestNumber)
+        : null;
+
+      let materialModelNumber: number | null = null;
+      if (evalRow?.material_id) {
+        const materialRow = db.prepare(
+          'SELECT model_test_number FROM evaluation_materials WHERE id = ? AND material_type = ?'
+        ).get(evalRow.material_id, 'MODEL_TEST_PAPER') as any;
+        if (materialRow?.model_test_number !== undefined && materialRow?.model_test_number !== null) {
+          materialModelNumber = Number(materialRow.model_test_number);
+        }
+      }
+
+      const isModelNumberValid = Number.isInteger(jobModelNumber) && jobModelNumber! >= 1 && jobModelNumber! <= 8;
+      const matchesEvaluation = dbModelNumber === jobModelNumber;
+      const matchesMaterial = materialModelNumber === jobModelNumber;
+
+      if (!isModelNumberValid || !matchesEvaluation || !matchesMaterial) {
+        const mismatchErr = `CRITICAL_INTEGRITY_VIOLATION: Model Test Paper identity mismatch detected (Job: ${jobModelNumber}, Evaluation: ${dbModelNumber}, Material: ${materialModelNumber}). Evaluation halted to protect academic validity.`;
+        console.error(`[AsyncEval] ${mismatchErr}`);
+        const failureClaim = db.prepare(`
+          UPDATE evaluations
+          SET status = 'FAILED',
+              progress_stage = 'FAILED',
+              progress_percentage = 0,
+              progress_message = ?,
+              error_message = ?,
+              completed_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
+        `).run(mismatchErr, mismatchErr, evaluationId);
+
+        if (failureClaim.changes === 1) {
+          if (
+            job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+            (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+          ) {
+            try {
+              refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+              await syncStudentCreditsToFirestore(studentId);
+            } catch (refundErr) {
+              console.warn(`[AsyncEval] Model Test integrity failure refund error for ${evaluationId}:`, refundErr);
             }
           }
           const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;

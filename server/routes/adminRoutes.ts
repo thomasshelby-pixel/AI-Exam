@@ -23,6 +23,7 @@ import {
 } from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
+import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
@@ -44,7 +45,7 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { setFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { setFirestoreDoc, setFirestoreDocsAtomically, deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -118,6 +119,45 @@ import {
 } from '../services/appUpdateService.js';
 
 const router = Router();
+
+interface ModelTestSlotLookup {
+  level: string;
+  subjectKey: string;
+  paper: string;
+  syllabusVersion: string;
+  modelTestNumber: number;
+  excludeId?: string;
+}
+
+async function findActiveModelTestSlot(input: ModelTestSlotLookup, firestoreDocuments?: any[]): Promise<any | null> {
+  let sql = `
+    SELECT id, question_paper_title, status, model_test_number
+    FROM evaluation_materials
+    WHERE UPPER(level) = UPPER(?)
+      AND LOWER(subject_key) = LOWER(?)
+      AND material_type = 'MODEL_TEST_PAPER'
+      AND model_test_number = ?
+      AND COALESCE(paper, 'Paper 1') = ?
+      AND COALESCE(syllabus_version, 'New Scheme 2024') = ?
+      AND status = 'ACTIVE'
+  `;
+  const params: any[] = [input.level, input.subjectKey, input.modelTestNumber, input.paper || 'Paper 1', input.syllabusVersion || 'New Scheme 2024'];
+  if (input.excludeId) { sql += ' AND id != ?'; params.push(input.excludeId); }
+  const localMatch = db.prepare(sql).get(...params) as any;
+  if (localMatch) return localMatch;
+  const documents = firestoreDocuments || await getAllFirestoreDocs<any>('evaluation_materials');
+  return documents.find((doc) =>
+    String(doc.level || '').toUpperCase() === input.level.toUpperCase() &&
+    String(doc.subject_key || '').toLowerCase() === input.subjectKey.toLowerCase() &&
+    String(doc.material_type || '').toUpperCase() === 'MODEL_TEST_PAPER' &&
+    Number(doc.model_test_number ?? doc.modelTestNumber) === input.modelTestNumber &&
+    String(doc.paper || 'Paper 1') === (input.paper || 'Paper 1') &&
+    String(doc.syllabus_version || 'New Scheme 2024') === (input.syllabusVersion || 'New Scheme 2024') &&
+    String(doc.status || 'ACTIVE').toUpperCase() === 'ACTIVE' &&
+    (!input.excludeId || String(doc.id) !== input.excludeId)
+  ) || null;
+}
+
 
 /**
  * Heal legacy evaluation rows where a persisted rejection marker survived but an old
@@ -900,7 +940,7 @@ router.delete('/free-access/:id', (req: AuthRequest, res: Response) => {
 // 4. Reference Evaluation Materials Management
 router.get('/materials', async (req: AuthRequest, res: Response) => {
   try {
-    const { level, materialType, subjectKey, status, search } = req.query;
+    const { level, materialType, subjectKey, status, search, modelTestNumber } = req.query;
 
     // 1. Sync from Cloud Firestore (single persistent source of truth)
     try {
@@ -940,7 +980,7 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
     }
 
     let query = `
-      SELECT id, level, material_type, mtp_series, source_format,
+      SELECT id, level, material_type, mtp_series, model_test_number, source_format,
              combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
              model_group, subject_key, subject_name,
              paper, attempt, syllabus_version, chapter_topic,
@@ -980,6 +1020,10 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
         params.push(normSeries, String(normSeries), normSeries);
       }
     }
+    if (modelTestNumber && modelTestNumber !== 'ALL') {
+      query += ' AND model_test_number = ?';
+      params.push(Number(modelTestNumber));
+    }
     if (subjectKey && subjectKey !== 'ALL') {
       query += ' AND subject_key = ?';
       params.push(subjectKey);
@@ -993,7 +1037,7 @@ router.get('/materials', async (req: AuthRequest, res: Response) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += " ORDER BY CASE WHEN material_type = 'MODEL_TEST_PAPER' THEN model_test_number END ASC, created_at DESC";
     const materials = db.prepare(query).all(...params);
     return res.json({ materials });
   } catch (error: unknown) {
@@ -1021,6 +1065,297 @@ router.post('/materials/extract-pdf', async (req: AuthRequest, res: Response) =>
     console.error('PDF extraction error:', error);
     const msg = error instanceof Error ? error.message : 'Failed to extract text from document';
     return res.status(500).json({ error: msg });
+  }
+});
+
+
+/**
+ * Bulk import Model 1–8 from plain TXT files.
+ * The parser validates every model and its three source sections before the first write.
+ * No Gemini/PDF extraction is used in this path.
+ */
+router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Response) => {
+  try {
+    const { level, subjectKey, subjectName, paper, files } = req.body || {};
+    const normalizedLevel = String(level || '').trim().toUpperCase();
+    const cleanSubjectKey = String(subjectKey || '').trim();
+    const cleanSubjectName = String(subjectName || '').trim();
+    if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(normalizedLevel) ||
+        !cleanSubjectKey || !cleanSubjectName) {
+      return res.status(400).json({
+        success: false,
+        code: 'MODEL_TEST_SUBJECT_REQUIRED',
+        error: 'Select the CA level and subject before uploading Model Test Papers.',
+      });
+    }
+
+    const parsed = parseModelTestBulkFiles(files);
+    if (parsed.errors.length > 0 || parsed.materials.length !== 8) {
+      return res.status(400).json({
+        success: false,
+        code: 'MODEL_TEST_BATCH_INVALID',
+        errors: parsed.errors,
+        error: 'The Model Test batch is incomplete or contains invalid TXT sections. No materials were uploaded.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const existingFirestoreMaterials = await getAllFirestoreDocs<any>('evaluation_materials');
+    const occupiedSlots: Array<{ modelTestNumber: number; existingTitle: string; existingId: string }> = [];
+    for (const item of parsed.materials) {
+      const existing = await findActiveModelTestSlot({
+        level: normalizedLevel,
+        subjectKey: cleanSubjectKey,
+        paper: paper || 'Paper 1',
+        syllabusVersion: 'New Scheme 2024',
+        modelTestNumber: item.modelTestNumber,
+      }, existingFirestoreMaterials);
+      if (existing) {
+        occupiedSlots.push({
+          modelTestNumber: item.modelTestNumber,
+          existingTitle: existing.question_paper_title || existing.title || 'Existing Model Test Paper',
+          existingId: existing.id,
+        });
+      }
+    }
+    if (occupiedSlots.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'MODEL_TEST_SLOT_ALREADY_EXISTS',
+        blocked: occupiedSlots,
+        error: 'One or more Model Test numbers already have an active reference set for this subject. Edit or deactivate those records before bulk replacement. Nothing was uploaded.',
+      });
+    }
+
+    const materials = parsed.materials.map((item) => {
+      const title = `${cleanSubjectName} Model Test Paper ${item.modelTestNumber}`;
+      const combinedText = `${item.questionPaperText}\n\n${item.suggestedAnswersText}\n\n${item.markingSchemeText}`.trim();
+      const duplicate = checkMaterialDuplicate({
+        level: normalizedLevel,
+        subjectKey: cleanSubjectKey,
+        subjectName: cleanSubjectName,
+        attempt: 'All',
+        materialType: 'MODEL_TEST_PAPER',
+        modelTestNumber: item.modelTestNumber,
+        paper: paper || 'Paper 1',
+        version: '1.0',
+        title,
+        rawText: combinedText,
+      });
+
+      return {
+        item,
+        title,
+        combinedText,
+        duplicate,
+        id: `mat_${crypto.randomBytes(8).toString('hex')}`,
+      };
+    });
+
+    const blocked = materials
+      .filter((entry) => entry.duplicate.status === 'EXACT_DUPLICATE' || entry.duplicate.status === 'POSSIBLE_DUPLICATE')
+      .map((entry) => ({
+        modelTestNumber: entry.item.modelTestNumber,
+        status: entry.duplicate.status,
+        message: entry.duplicate.message,
+        reason: entry.duplicate.reason,
+        existingMaterial: entry.duplicate.existingMaterial,
+      }));
+
+    if (blocked.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'MODEL_TEST_DUPLICATE_REVIEW',
+        blocked,
+        error: 'One or more Model Test Papers match existing material. Nothing in this batch was uploaded.',
+      });
+    }
+
+    if (req.body?.dryRun === true) {
+      return res.json({
+        success: true,
+        validated: materials.length,
+        materials: materials.map((entry) => ({
+          modelTestNumber: entry.item.modelTestNumber,
+          title: entry.title,
+          questionPaperCharacters: entry.item.questionPaperText.length,
+          suggestedAnswerCharacters: entry.item.suggestedAnswersText.length,
+          markingSchemeCharacters: entry.item.markingSchemeText.length,
+        })),
+        message: 'All eight model TXT bundles passed structural and duplicate validation. Nothing has been saved yet.',
+      });
+    }
+
+    const materialRecords = materials.map((entry) => {
+      const contentHash = computeContentHash(normalizeExtractedContent(entry.combinedText));
+      const identity = computeMaterialUniqueKey({
+        level: normalizedLevel,
+        subjectKey: cleanSubjectKey,
+        subjectName: cleanSubjectName,
+        attempt: 'All',
+        materialType: 'MODEL_TEST_PAPER',
+        modelTestNumber: entry.item.modelTestNumber,
+        paper: paper || 'Paper 1',
+        title: entry.title,
+      });
+
+      return {
+        id: entry.id,
+        level: normalizedLevel,
+        material_type: 'MODEL_TEST_PAPER',
+        mtp_series: null,
+        model_test_number: entry.item.modelTestNumber,
+        unique_identity_key: identity.uniqueKey,
+        source_format: 'SEPARATE',
+        combined_source_material_id: null,
+        question_material_id: `mat_qp_${entry.id}`,
+        suggested_answer_material_id: `mat_sa_${entry.id}`,
+        marking_scheme_material_id: `mat_ms_${entry.id}`,
+        model_group: null,
+        subject_key: cleanSubjectKey,
+        subject_name: cleanSubjectName,
+        paper: paper || 'Paper 1',
+        attempt: 'All',
+        syllabus_version: 'New Scheme 2024',
+        chapter_topic: null,
+        question_paper_title: entry.title,
+        question_paper_text: entry.item.questionPaperText,
+        suggested_answers_text: entry.item.suggestedAnswersText,
+        marking_scheme_text: entry.item.markingSchemeText,
+        reference_guidance_text: null,
+        amendments_provisions_text: null,
+        effective_date: nowIso.slice(0, 10),
+        version: '1.0',
+        status: 'ACTIVE',
+        source_type: 'ADMIN',
+        admin_approved: 1,
+        file_id: null,
+        storage_path: null,
+        file_name: entry.item.sourceFileNames.join(', '),
+        file_size: entry.combinedText.length,
+        checksum: null,
+        file_hash: null,
+        content_hash: contentHash,
+        download_url: null,
+        uploaded_by: req.user?.email || 'ADMIN',
+        created_at: nowIso,
+        updated_at: nowIso,
+        source: 'ADMIN_TXT_BULK_IMPORT',
+        language: 'English',
+      };
+    });
+
+    const auditRecords = materialRecords.map((record) => ({
+      id: `log_${crypto.randomBytes(8).toString('hex')}`,
+      user_id: req.user!.id,
+      action: 'BULK_UPLOAD_MODEL_TEST_PAPER',
+      entity_type: 'MATERIAL',
+      entity_id: record.id,
+      details: `Bulk imported Model ${record.model_test_number} for ${cleanSubjectName}; TXT sources: ${record.file_name}`,
+      created_at: nowIso,
+    }));
+
+    // Firestore is the durable source of truth. Write all eight materials and audit
+    // records in one batch before acknowledging or updating the local cache.
+    const firestoreSaved = await setFirestoreDocsAtomically([
+      ...materialRecords.map((record) => ({
+        collectionName: 'evaluation_materials',
+        docId: record.id,
+        data: record,
+      })),
+      ...auditRecords.map((record) => ({
+        collectionName: 'audit_logs',
+        docId: record.id,
+        data: record,
+      })),
+    ]);
+    if (!firestoreSaved) {
+      return res.status(502).json({
+        success: false,
+        code: 'MODEL_TEST_FIRESTORE_PERSISTENCE_FAILED',
+        error: 'The Model Test batch could not be safely saved to the shared database. No local records were created; please retry.',
+      });
+    }
+
+    const insertBatch = () => {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+      const insert = db.prepare(`
+        INSERT INTO evaluation_materials (
+          id, level, material_type, mtp_series, model_test_number, unique_identity_key,
+          source_format, combined_source_material_id, question_material_id, suggested_answer_material_id,
+          marking_scheme_material_id, model_group, subject_key, subject_name, paper, attempt,
+          syllabus_version, chapter_topic, question_paper_title, question_paper_text,
+          suggested_answers_text, marking_scheme_text, reference_guidance_text, amendments_provisions_text,
+          effective_date, version, status, source_type, admin_approved, file_id, storage_path,
+          file_name, file_size, checksum, download_url, uploaded_by, created_at, updated_at,
+          content_hash, file_hash, year, language, source
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+      `);
+      for (const record of materialRecords) {
+        insert.run(
+          record.id, record.level, record.material_type, record.mtp_series, record.model_test_number,
+          record.unique_identity_key, record.source_format, record.combined_source_material_id,
+          record.question_material_id, record.suggested_answer_material_id, record.marking_scheme_material_id,
+          record.model_group, record.subject_key, record.subject_name, record.paper, record.attempt,
+          record.syllabus_version, record.chapter_topic, record.question_paper_title, record.question_paper_text,
+          record.suggested_answers_text, record.marking_scheme_text, record.reference_guidance_text,
+          record.amendments_provisions_text, record.effective_date, record.version, record.status,
+          record.source_type, record.admin_approved, record.file_id, record.storage_path, record.file_name,
+          record.file_size, record.checksum, record.download_url, record.uploaded_by, record.created_at,
+          record.updated_at, record.content_hash, record.file_hash, null, record.language, record.source
+        );
+      }
+      const auditInsert = db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const audit of auditRecords) {
+        auditInsert.run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details, audit.created_at);
+      }
+      db.exec('COMMIT');
+      } catch (transactionError) {
+        try { db.exec('ROLLBACK'); } catch (rollbackError) {
+          console.error('[AdminRoutes] SQLite rollback failed after Model Test batch import:', rollbackError);
+        }
+        throw transactionError;
+      }
+    };
+    try {
+      insertBatch();
+    } catch (sqliteError) {
+      // Avoid leaving Firestore-only records if the local cache transaction fails.
+      const rollbackResults = await Promise.allSettled([
+        ...materialRecords.map((record) => deleteFirestoreDoc('evaluation_materials', record.id)),
+        ...auditRecords.map((record) => deleteFirestoreDoc('audit_logs', record.id)),
+      ]);
+      if (rollbackResults.some((result) => result.status === 'rejected' || (result.status === 'fulfilled' && result.value !== true))) {
+        console.error('[AdminRoutes] Firestore rollback was incomplete after the bulk Model Test SQLite transaction failed.');
+      }
+      throw sqliteError;
+    }
+
+    return res.status(201).json({
+      success: true,
+      uploaded: materialRecords.length,
+      materials: materialRecords.map((record) => ({
+        id: record.id,
+        modelTestNumber: record.model_test_number,
+        title: record.question_paper_title,
+        questionPaperCharacters: record.question_paper_text.length,
+        suggestedAnswerCharacters: record.suggested_answers_text.length,
+        markingSchemeCharacters: record.marking_scheme_text.length,
+      })),
+      message: 'All eight Model Test Papers were saved in Model 1–8 sequence.',
+    });
+  } catch (error: unknown) {
+    console.error('[AdminRoutes] Bulk Model Test TXT upload error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to upload Model Test Papers.',
+    });
   }
 });
 
@@ -1082,6 +1417,8 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       paper,
       version,
       title,
@@ -1094,6 +1431,7 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
     } = params;
 
     const series = mtpSeries !== undefined ? mtpSeries : mtp_series;
+    const modelNumber = modelTestNumber !== undefined ? modelTestNumber : model_test_number;
     const result = checkMaterialDuplicate(
       {
         level: String(level || ''),
@@ -1102,6 +1440,7 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
         attempt: String(attempt || ''),
         materialType: String(materialType || ''),
         mtpSeries: series,
+        modelTestNumber: modelNumber !== undefined ? Number(modelNumber) : undefined,
         paper: paper ? String(paper) : undefined,
         version: version ? String(version) : undefined,
         title: title ? String(title) : undefined,
@@ -1128,6 +1467,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       modelGroup,
       subjectKey,
       subjectName,
@@ -1152,6 +1493,15 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     } = req.body;
 
     const parsedMtpSeries = normalizeMtpSeriesNumber(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
+    const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER'
+      ? Number(modelTestNumber !== undefined ? modelTestNumber : model_test_number)
+      : null;
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
+      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    }
+    if (materialType === 'MODEL_TEST_PAPER' && !String(req.body.markingSchemeText || '').trim()) {
+      return res.status(400).json({ error: 'A marking scheme is required for each Model Test Paper.' });
+    }
 
     if (materialType === 'MTP') {
       if (!parsedMtpSeries) {
@@ -1209,7 +1559,24 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       computedFileHash = String(req.body.fileHash).toLowerCase().trim();
     }
 
-    const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}`.trim();
+    if (materialType === 'MODEL_TEST_PAPER') {
+      const existingSlot = await findActiveModelTestSlot({
+        level: String(level),
+        subjectKey: String(subjectKey),
+        paper: String(paper || 'Paper 1'),
+        syllabusVersion: String(syllabusVersion || 'New Scheme 2024'),
+        modelTestNumber: Number(parsedModelTestNumber),
+      });
+      if (existingSlot) {
+        return res.status(409).json({
+          error: 'MODEL_TEST_SLOT_ALREADY_EXISTS',
+          message: 'Model Test Paper ' + parsedModelTestNumber + ' already exists for this subject. Edit or deactivate the existing record before replacing it.',
+          existingMaterial: existingSlot,
+        });
+      }
+    }
+
+    const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}\n\n${String(markingSchemeText || '').trim()}`.trim();
 
     // =========================================================================
     // STAGED DUPLICATE-UPLOAD PROTECTION (File Hash -> Content Hash -> Metadata)
@@ -1221,6 +1588,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       attempt,
       materialType,
       mtpSeries: parsedMtpSeries,
+      modelTestNumber: parsedModelTestNumber || undefined,
       paper,
       version: version || '1.0',
       title: questionPaperTitle,
@@ -1377,6 +1745,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       level,
       material_type: materialType,
       mtp_series: parsedMtpSeries || null,
+      model_test_number: parsedModelTestNumber,
       unique_identity_key: duplicateCheck.duplicateKey,
       source_format: normSourceFormat,
       combined_source_material_id: combinedSourceMaterialId,
@@ -1428,7 +1797,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     try {
       db.prepare(`
         INSERT INTO evaluation_materials (
-          id, level, material_type, mtp_series, unique_identity_key, source_format, combined_source_material_id,
+          id, level, material_type, mtp_series, model_test_number, unique_identity_key, source_format, combined_source_material_id,
           question_material_id, suggested_answer_material_id, marking_scheme_material_id,
           model_group, subject_key, subject_name,
           paper, attempt, syllabus_version, chapter_topic,
@@ -1438,10 +1807,10 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           file_id, storage_path, file_name, file_size, checksum, download_url,
           uploaded_by, created_at, updated_at,
           content_hash, file_hash, year, language, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
-        materialRecord.unique_identity_key,
+        materialRecord.model_test_number, materialRecord.unique_identity_key,
         materialRecord.source_format, materialRecord.combined_source_material_id,
         materialRecord.question_material_id, materialRecord.suggested_answer_material_id, materialRecord.marking_scheme_material_id,
         materialRecord.modelGroup,
@@ -1505,6 +1874,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       sourceFormat,
       source_format,
       modelGroup,
@@ -1529,6 +1900,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const parsedMtpSeries = (mtpSeries !== undefined || mtp_series !== undefined)
       ? normalizeMtpSeriesNumber(mtpSeries !== undefined ? mtpSeries : mtp_series)
       : undefined;
+    const parsedModelTestNumber = (modelTestNumber !== undefined || model_test_number !== undefined)
+      ? Number(modelTestNumber !== undefined ? modelTestNumber : model_test_number)
+      : undefined;
 
     const effLevel = level || existing.level;
     const effMatType = materialType || existing.material_type;
@@ -1537,6 +1911,10 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const effAttempt = attempt || existing.attempt;
     const effPaper = paper || existing.paper;
     const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
+    const effModelTestNumber = parsedModelTestNumber !== undefined ? parsedModelTestNumber : existing.model_test_number;
+    if (effMatType === 'MODEL_TEST_PAPER' && (!Number.isInteger(Number(effModelTestNumber)) || Number(effModelTestNumber) < 1 || Number(effModelTestNumber) > 8)) {
+      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    }
 
     const effQp = questionPaperText !== undefined ? questionPaperText : existing.question_paper_text;
     const effSa = suggestedAnswersText !== undefined ? suggestedAnswersText : existing.suggested_answers_text;
@@ -1550,6 +1928,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       attempt: effAttempt,
       materialType: effMatType,
       mtpSeries: effSeries,
+      modelTestNumber: effMatType === 'MODEL_TEST_PAPER' ? Number(effModelTestNumber) : undefined,
       paper: effPaper,
       version: version || existing.version,
       title: questionPaperTitle || existing.question_paper_title,
@@ -1671,6 +2050,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
           mtp_series = COALESCE(?, mtp_series),
+          model_test_number = COALESCE(?, model_test_number),
           source_format = COALESCE(?, source_format),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
@@ -1701,6 +2081,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       level || null,
       materialType || null,
       parsedMtpSeries !== undefined ? parsedMtpSeries : null,
+      parsedModelTestNumber !== undefined ? parsedModelTestNumber : null,
       normPutSourceFormat,
       modelGroup || null,
       subjectKey || null,

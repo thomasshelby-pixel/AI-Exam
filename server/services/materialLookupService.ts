@@ -86,7 +86,7 @@ export function syncMaterialRowToSqlite(m: any): void {
       marking_scheme_text, reference_guidance_text, amendments_provisions_text,
       effective_date, version, status, source_type, admin_approved,
       file_id, storage_path, file_name, file_size, checksum, download_url, uploaded_by,
-      mtp_series, source_format, combined_source_material_id, question_material_id,
+      mtp_series, model_test_number, source_format, combined_source_material_id, question_material_id,
       suggested_answer_material_id, marking_scheme_material_id, institute_id,
       approved_by, approved_at, attempt_id, attempt_code,
       created_at, updated_at
@@ -97,7 +97,7 @@ export function syncMaterialRowToSqlite(m: any): void {
       ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?, ?,
       COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP
@@ -130,6 +130,7 @@ export function syncMaterialRowToSqlite(m: any): void {
       checksum = excluded.checksum,
       download_url = excluded.download_url,
       mtp_series = excluded.mtp_series,
+      model_test_number = excluded.model_test_number,
       source_format = excluded.source_format,
       combined_source_material_id = excluded.combined_source_material_id,
       question_material_id = excluded.question_material_id,
@@ -171,6 +172,7 @@ export function syncMaterialRowToSqlite(m: any): void {
     m.download_url || null,
     m.uploaded_by || 'ADMIN',
     canonicalSeries !== null ? String(canonicalSeries) : null,
+    m.model_test_number ?? m.modelTestNumber ?? null,
     m.source_format || 'SEPARATE',
     m.combined_source_material_id || null,
     m.question_material_id || null,
@@ -192,6 +194,7 @@ export interface MaterialLookupOptions {
   paper?: string;
   materialType?: string;
   mtpSeries?: any;
+  modelTestNumber?: number;
   sourceFormat?: string;
   isAdminApprovedRequired?: boolean;
   minTextLength?: number;
@@ -209,6 +212,7 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
     paper,
     materialType,
     mtpSeries,
+    modelTestNumber,
     sourceFormat,
     isAdminApprovedRequired = false,
     minTextLength = 20,
@@ -216,6 +220,11 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
 
   const isMtp = materialType === 'MTP';
   const isPyq = materialType === 'PYQ';
+  const isModelTest = materialType === 'MODEL_TEST_PAPER';
+  const normalizedModelTestNumber = isModelTest ? Number(modelTestNumber) : null;
+  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > 8)) {
+    throw new Error('Please select a valid Model Test Paper number (1–8).');
+  }
   const normalizedSeries = isMtp ? normalizeMtpSeries(mtpSeries) : null;
   const keyCandidates = getSubjectKeyCandidates(subjectKey, level);
   const keyPlaceholders = keyCandidates.map(() => '?').join(', ');
@@ -238,7 +247,7 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
   }
 
   if (attempt && attempt !== 'Current' && attempt !== 'All' && attempt !== 'Institute Series') {
-    if (isPyq || isMtp) {
+    if (isPyq || isMtp || isModelTest) {
       query += ' AND attempt = ?';
       params.push(String(attempt));
     } else {
@@ -255,6 +264,11 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
   if (materialType && materialType !== 'ALL') {
     query += " AND (material_type = ? OR material_type = 'ALL')";
     params.push(String(materialType));
+  }
+
+  if (isModelTest && normalizedModelTestNumber) {
+    query += ' AND model_test_number = ?';
+    params.push(normalizedModelTestNumber);
   }
 
   if (isMtp && normalizedSeries) {
@@ -298,7 +312,7 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
       }
 
       if (attempt && attempt !== 'Current' && attempt !== 'All' && attempt !== 'Institute Series') {
-        if (isPyq || isMtp) {
+        if (isPyq || isMtp || isModelTest) {
           if (doc.attempt !== attempt) continue;
         } else {
           if (doc.attempt !== attempt && doc.attempt !== 'All') continue;
@@ -312,6 +326,8 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
       if (materialType && materialType !== 'ALL') {
         if (doc.material_type !== materialType && doc.material_type !== 'ALL') continue;
       }
+
+      if (isModelTest && Number(doc.model_test_number ?? doc.modelTestNumber) !== normalizedModelTestNumber) continue;
 
       if (isMtp && normalizedSeries) {
         const docSeries = normalizeMtpSeries(doc.mtp_series);

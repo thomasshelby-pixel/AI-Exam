@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiRequest, ApiError } from '../../api/client';
+import { ModelTestBulkUploadModal } from './ModelTestBulkUploadModal.js';
 import { EvaluationMaterial, CALevel, MaterialType } from '../../types';
 import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts';
 import {
@@ -52,6 +53,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   const [loadingInspect, setLoadingInspect] = useState<boolean>(false);
 
   const [showFormModal, setShowFormModal] = useState<boolean>(false);
+  const [showBulkModelUpload, setShowBulkModelUpload] = useState<boolean>(false);
   const [editingMaterial, setEditingMaterial] = useState<EvaluationMaterial | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isExtractingDoc, setIsExtractingDoc] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     level: 'INTERMEDIATE' as CALevel,
     materialType: 'MTP' as MaterialType,
     mtpSeries: 1 as 1 | 2,
+    modelTestNumber: 1,
     modelGroup: 'GROUP_1',
     subjectKey: 'inter_advanced_accounting',
     subjectName: 'Advanced Accounting',
@@ -175,6 +178,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             attempt: formData.attempt,
             materialType: formData.materialType,
             mtpSeries: formData.mtpSeries,
+            modelTestNumber: formData.modelTestNumber,
             paper: formData.paper,
             version: formData.version,
             title: formData.questionPaperTitle,
@@ -423,6 +427,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         level: m.level || 'INTERMEDIATE',
         materialType: (m.material_type || 'MTP') as MaterialType,
         mtpSeries: (m.mtp_series || m.mtpSeries || 1) as 1 | 2,
+        modelTestNumber: Number(m.model_test_number || m.modelTestNumber || 1),
         modelGroup: m.model_group || 'GROUP_1',
         subjectKey: m.subject_key || 'inter_advanced_accounting',
         subjectName: m.subject_name || 'Advanced Accounting',
@@ -631,6 +636,13 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
   return (
     <div className="space-y-6">
+      <ModelTestBulkUploadModal
+        isOpen={showBulkModelUpload}
+        onClose={() => setShowBulkModelUpload(false)}
+        onComplete={() => { setShowBulkModelUpload(false); fetchMaterials(); }}
+        subjectsByLevel={subjectsMap}
+      />
+
       {/* Header bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -645,7 +657,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setShowBulkModelUpload(true)}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <FileUp className="w-4 h-4" />
+            <span>Bulk Model Test Upload</span>
+          </button>
           <button
             onClick={fetchMaterials}
             className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition cursor-pointer"
@@ -802,6 +821,11 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                         {m.material_type === 'MTP' && (
                           <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-blue-100 text-blue-700">
                             S{m.mtp_series || m.mtpSeries || 1}
+                          </span>
+                        )}
+                        {m.material_type === 'MODEL_TEST_PAPER' && (
+                          <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-indigo-100 text-indigo-700">
+                            Model {m.model_test_number || m.modelTestNumber || '?'}
                           </span>
                         )}
                         {m.material_type === 'PYQ' && (
@@ -1134,7 +1158,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
               )}
 
               {/* Row 1: Level, Material Type, MTP Series / PYQ Format, Subject */}
-              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' || formData.materialType === 'PYQ' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
+              <div className={`grid grid-cols-1 ${formData.materialType === 'MTP' || formData.materialType === 'PYQ' || formData.materialType === 'MODEL_TEST_PAPER' ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">CA Level *</label>
                   <select
@@ -1162,7 +1186,10 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                   <label className="block font-bold text-slate-700 mb-1">Material Type *</label>
                   <select
                     value={formData.materialType}
-                    onChange={(e) => setFormData({ ...formData, materialType: e.target.value as MaterialType })}
+                    onChange={(e) => {
+                      const materialType = e.target.value as MaterialType;
+                      setFormData({ ...formData, materialType, ...(materialType === 'MODEL_TEST_PAPER' ? { attempt: 'All' } : {}) });
+                    }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none"
                   >
                     {ALLOWED_MATERIAL_TYPES.map((t) => (
@@ -1198,6 +1225,22 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       <option value={2}>Series 2 (Model Test 2)</option>
                       <option value={3}>Series 3 (Model Test 3)</option>
                       <option value={4}>Series 4 (Model Test 4)</option>
+                    </select>
+                  </div>
+                )}
+
+                {formData.materialType === 'MODEL_TEST_PAPER' && (
+                  <div>
+                    <label className="block font-bold text-indigo-700 mb-1">Model Test Number *</label>
+                    <select
+                      id="admin-form-model-test-number-select"
+                      value={formData.modelTestNumber}
+                      onChange={(e) => setFormData({ ...formData, modelTestNumber: Number(e.target.value) })}
+                      className="w-full px-3 py-2 border border-indigo-300 rounded-lg bg-indigo-50/50 text-indigo-800 font-semibold focus:outline-none focus:border-indigo-600"
+                    >
+                      {Array.from({ length: 8 }, (_, index) => index + 1).map((number) => (
+                        <option key={number} value={number}>Model {number}</option>
+                      ))}
                     </select>
                   </div>
                 )}
@@ -1259,7 +1302,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                   />
                 </div>
 
-                <div>
+                {formData.materialType !== 'MODEL_TEST_PAPER' && <div>
                   <label className="block font-bold text-slate-700 mb-1">Exam Attempt</label>
                   <select
                     value={formData.attempt}
@@ -1272,7 +1315,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       </option>
                     ))}
                   </select>
-                </div>
+                </div>}
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Syllabus Version</label>
