@@ -85,6 +85,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   };
 
   const [formData, setFormData] = useState(initialFormState);
+  const maxModelTestNumber = formData.level === 'FOUNDATION' ? 10 : 8;
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(initialFormState.level)
   );
@@ -1172,6 +1173,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                         subjectKey: subs[0]?.key || '',
                         subjectName: subs[0]?.name || '',
                         paper: subs[0]?.paper || 'Paper 1',
+                        modelTestNumber: formData.modelTestNumber > (lvl === 'FOUNDATION' ? 10 : 8) ? 1 : formData.modelTestNumber,
                       });
                     }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 focus:outline-none"
@@ -1238,7 +1240,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       onChange={(e) => setFormData({ ...formData, modelTestNumber: Number(e.target.value) })}
                       className="w-full px-3 py-2 border border-indigo-300 rounded-lg bg-indigo-50/50 text-indigo-800 font-semibold focus:outline-none focus:border-indigo-600"
                     >
-                      {Array.from({ length: 8 }, (_, index) => index + 1).map((number) => (
+                      {Array.from({ length: maxModelTestNumber }, (_, index) => index + 1).map((number) => (
                         <option key={number} value={number}>Model {number}</option>
                       ))}
                     </select>

@@ -30,6 +30,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
+import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
 import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
@@ -597,8 +598,9 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
 
     const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER' ? Number(modelTestNumber ?? req.body.model_test_number) : undefined;
     const evaluationMaterialAttempt = materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt;
-    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
-      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(level);
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > maxModelTestNumber)) {
+      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: `Please select a Model Test Paper number from 1 to ${maxModelTestNumber}.` });
     }
 
     const referenceMaterial = await findAuthoritativeMaterialWithFallback({
@@ -915,8 +917,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       ? Number(modelTestNumber ?? req.body.model_test_number)
       : undefined;
     const evaluationMaterialAttempt = materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt;
-    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
-      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(level);
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > maxModelTestNumber)) {
+      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: `Please select a Model Test Paper number from 1 to ${maxModelTestNumber}.` });
     }
 
     // 1. Fetch all active institute enrollments for this student

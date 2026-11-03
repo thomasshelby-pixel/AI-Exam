@@ -24,6 +24,7 @@ import {
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
+import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
@@ -1070,7 +1071,7 @@ router.post('/materials/extract-pdf', async (req: AuthRequest, res: Response) =>
 
 
 /**
- * Bulk import Model 1–8 from plain TXT files.
+ * Bulk import all course-specific Model Test Papers from plain TXT files.
  * The parser validates every model and its three source sections before the first write.
  * No Gemini/PDF extraction is used in this path.
  */
@@ -1089,8 +1090,9 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       });
     }
 
-    const parsed = parseModelTestBulkFiles(files);
-    if (parsed.errors.length > 0 || parsed.materials.length !== 8) {
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(normalizedLevel);
+    const parsed = parseModelTestBulkFiles(files, { maxModelNumber: maxModelTestNumber });
+    if (parsed.errors.length > 0 || parsed.materials.length !== maxModelTestNumber) {
       return res.status(400).json({
         success: false,
         code: 'MODEL_TEST_BATCH_INVALID',
@@ -1182,7 +1184,7 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
           suggestedAnswerCharacters: entry.item.suggestedAnswersText.length,
           markingSchemeCharacters: entry.item.markingSchemeText.length,
         })),
-        message: 'All eight model TXT bundles passed structural and duplicate validation. Nothing has been saved yet.',
+        message: `All ${maxModelTestNumber} model TXT bundles passed structural and duplicate validation. Nothing has been saved yet.`,
       });
     }
 
@@ -1255,7 +1257,7 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       created_at: nowIso,
     }));
 
-    // Firestore is the durable source of truth. Write all eight materials and audit
+    // Firestore is the durable source of truth. Write the complete model batch and audit
     // records in one batch before acknowledging or updating the local cache.
     const firestoreSaved = await setFirestoreDocsAtomically([
       ...materialRecords.map((record) => ({
@@ -1348,7 +1350,7 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
         suggestedAnswerCharacters: record.suggested_answers_text.length,
         markingSchemeCharacters: record.marking_scheme_text.length,
       })),
-      message: 'All eight Model Test Papers were saved in Model 1–8 sequence.',
+      message: `All ${maxModelTestNumber} Model Test Papers were saved in Model 1–${maxModelTestNumber} sequence.`,
     });
   } catch (error: unknown) {
     console.error('[AdminRoutes] Bulk Model Test TXT upload error:', error);
@@ -1496,8 +1498,9 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER'
       ? Number(modelTestNumber !== undefined ? modelTestNumber : model_test_number)
       : null;
-    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
-      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(level);
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > maxModelTestNumber)) {
+      return res.status(400).json({ error: `Please select a valid Model Test Paper number (1–${maxModelTestNumber}).` });
     }
     if (materialType === 'MODEL_TEST_PAPER' && !String(req.body.markingSchemeText || '').trim()) {
       return res.status(400).json({ error: 'A marking scheme is required for each Model Test Paper.' });
@@ -1912,8 +1915,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const effPaper = paper || existing.paper;
     const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
     const effModelTestNumber = parsedModelTestNumber !== undefined ? parsedModelTestNumber : existing.model_test_number;
-    if (effMatType === 'MODEL_TEST_PAPER' && (!Number.isInteger(Number(effModelTestNumber)) || Number(effModelTestNumber) < 1 || Number(effModelTestNumber) > 8)) {
-      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(effLevel);
+    if (effMatType === 'MODEL_TEST_PAPER' && (!Number.isInteger(Number(effModelTestNumber)) || Number(effModelTestNumber) < 1 || Number(effModelTestNumber) > maxModelTestNumber)) {
+      return res.status(400).json({ error: `Please select a valid Model Test Paper number (1–${maxModelTestNumber}).` });
     }
 
     const effQp = questionPaperText !== undefined ? questionPaperText : existing.question_paper_text;

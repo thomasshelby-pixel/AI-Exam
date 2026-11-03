@@ -1,5 +1,6 @@
 import { db } from '../db.js';
 import { getAllFirestoreDocs, setFirestoreDoc } from './firestoreDbService.js';
+import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 
 /**
  * Normalizes MTP Series input to canonical integer 1, 2, 3... or null.
@@ -222,8 +223,9 @@ export async function findAuthoritativeMaterialWithFallback(options: MaterialLoo
   const isPyq = materialType === 'PYQ';
   const isModelTest = materialType === 'MODEL_TEST_PAPER';
   const normalizedModelTestNumber = isModelTest ? Number(modelTestNumber) : null;
-  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > 8)) {
-    throw new Error('Please select a valid Model Test Paper number (1–8).');
+  const maxModelTestNumber = getMaxModelTestNumberForLevel(level);
+  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > maxModelTestNumber)) {
+    throw new Error(`Please select a valid Model Test Paper number (1–${maxModelTestNumber}).`);
   }
   const normalizedSeries = isMtp ? normalizeMtpSeries(mtpSeries) : null;
   const keyCandidates = getSubjectKeyCandidates(subjectKey, level);

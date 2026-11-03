@@ -158,6 +158,11 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const [materialType, setMaterialType] = useState<MaterialType>('MTP');
   const [mtpSeries, setMtpSeries] = useState<1 | 2>(1);
   const [modelTestNumber, setModelTestNumber] = useState<number>(1);
+  const maxModelTestNumber = level === 'FOUNDATION' ? 10 : 8;
+
+  useEffect(() => {
+    if (modelTestNumber > maxModelTestNumber) setModelTestNumber(1);
+  }, [level, maxModelTestNumber, modelTestNumber]);
   const [attempt, setAttempt] = useState<string>('May 2026');
   const [availableAttempts, setAvailableAttempts] = useState<ExamAttempt[]>(() =>
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
@@ -1342,7 +1347,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                           onChange={(e) => setModelTestNumber(Number(e.target.value))}
                           className="w-full px-2.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 font-semibold"
                         >
-                          {Array.from({ length: 8 }, (_, index) => index + 1).map((number) => (
+                          {Array.from({ length: maxModelTestNumber }, (_, index) => index + 1).map((number) => (
                             <option key={number} value={number}>Model {number}</option>
                           ))}
                         </select>
