@@ -28,7 +28,7 @@ assert.match(result.materials[3].markingSchemeText, /3 marks/);
 
 const missingScheme = parseModelTestBulkFiles(
   files.map((file, index) => index === 0
-    ? { ...file, content: file.content.replace('[MARKING SCHEME]\nQuestion 1: Calculation 5 marks, working note 3 marks, conclusion 2 marks.\n', '') }
+    ? { ...file, content: file.content.replace('[MARKING SCHEME]\nQuestion 1: Calculation 5 marks, working note 3 marks, conclusion 2 marks.', '') }
     : file)
 );
 assert.ok(missingScheme.errors.some((error) => error.includes('Missing MARKING SCHEME section')));
