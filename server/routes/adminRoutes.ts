@@ -1358,6 +1358,8 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       modelGroup,
       subjectKey,
       subjectName,
@@ -1382,6 +1384,12 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     } = req.body;
 
     const parsedMtpSeries = normalizeMtpSeriesNumber(mtpSeries !== undefined && mtpSeries !== null && mtpSeries !== '' ? mtpSeries : mtp_series);
+    const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER'
+      ? Number(modelTestNumber !== undefined ? modelTestNumber : model_test_number)
+      : null;
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
+      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    }
 
     if (materialType === 'MTP') {
       if (!parsedMtpSeries) {
@@ -1451,6 +1459,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       attempt,
       materialType,
       mtpSeries: parsedMtpSeries,
+      modelTestNumber: parsedModelTestNumber || undefined,
       paper,
       version: version || '1.0',
       title: questionPaperTitle,
@@ -1607,6 +1616,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       level,
       material_type: materialType,
       mtp_series: parsedMtpSeries || null,
+      model_test_number: parsedModelTestNumber,
       unique_identity_key: duplicateCheck.duplicateKey,
       source_format: normSourceFormat,
       combined_source_material_id: combinedSourceMaterialId,
@@ -1658,7 +1668,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     try {
       db.prepare(`
         INSERT INTO evaluation_materials (
-          id, level, material_type, mtp_series, unique_identity_key, source_format, combined_source_material_id,
+          id, level, material_type, mtp_series, model_test_number, unique_identity_key, source_format, combined_source_material_id,
           question_material_id, suggested_answer_material_id, marking_scheme_material_id,
           model_group, subject_key, subject_name,
           paper, attempt, syllabus_version, chapter_topic,
@@ -1668,10 +1678,10 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           file_id, storage_path, file_name, file_size, checksum, download_url,
           uploaded_by, created_at, updated_at,
           content_hash, file_hash, year, language, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         materialRecord.id, materialRecord.level, materialRecord.material_type, materialRecord.mtp_series,
-        materialRecord.unique_identity_key,
+        materialRecord.model_test_number, materialRecord.unique_identity_key,
         materialRecord.source_format, materialRecord.combined_source_material_id,
         materialRecord.question_material_id, materialRecord.suggested_answer_material_id, materialRecord.marking_scheme_material_id,
         materialRecord.modelGroup,
@@ -1735,6 +1745,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       sourceFormat,
       source_format,
       modelGroup,
@@ -1759,6 +1771,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const parsedMtpSeries = (mtpSeries !== undefined || mtp_series !== undefined)
       ? normalizeMtpSeriesNumber(mtpSeries !== undefined ? mtpSeries : mtp_series)
       : undefined;
+    const parsedModelTestNumber = (modelTestNumber !== undefined || model_test_number !== undefined)
+      ? Number(modelTestNumber !== undefined ? modelTestNumber : model_test_number)
+      : undefined;
 
     const effLevel = level || existing.level;
     const effMatType = materialType || existing.material_type;
@@ -1767,6 +1782,10 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const effAttempt = attempt || existing.attempt;
     const effPaper = paper || existing.paper;
     const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
+    const effModelTestNumber = parsedModelTestNumber !== undefined ? parsedModelTestNumber : existing.model_test_number;
+    if (effMatType === 'MODEL_TEST_PAPER' && (!Number.isInteger(Number(effModelTestNumber)) || Number(effModelTestNumber) < 1 || Number(effModelTestNumber) > 8)) {
+      return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
+    }
 
     const effQp = questionPaperText !== undefined ? questionPaperText : existing.question_paper_text;
     const effSa = suggestedAnswersText !== undefined ? suggestedAnswersText : existing.suggested_answers_text;
@@ -1780,6 +1799,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       attempt: effAttempt,
       materialType: effMatType,
       mtpSeries: effSeries,
+      modelTestNumber: effMatType === 'MODEL_TEST_PAPER' ? Number(effModelTestNumber) : undefined,
       paper: effPaper,
       version: version || existing.version,
       title: questionPaperTitle || existing.question_paper_title,
@@ -1901,6 +1921,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
           mtp_series = COALESCE(?, mtp_series),
+          model_test_number = COALESCE(?, model_test_number),
           source_format = COALESCE(?, source_format),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
@@ -1931,6 +1952,7 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       level || null,
       materialType || null,
       parsedMtpSeries !== undefined ? parsedMtpSeries : null,
+      parsedModelTestNumber !== undefined ? parsedModelTestNumber : null,
       normPutSourceFormat,
       modelGroup || null,
       subjectKey || null,
