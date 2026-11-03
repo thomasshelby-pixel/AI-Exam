@@ -1105,6 +1105,21 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       });
     }
 
+    if (req.body?.dryRun === true) {
+      return res.json({
+        success: true,
+        validated: materials.length,
+        materials: materials.map((entry) => ({
+          modelTestNumber: entry.item.modelTestNumber,
+          title: entry.title,
+          questionPaperCharacters: entry.item.questionPaperText.length,
+          suggestedAnswerCharacters: entry.item.suggestedAnswersText.length,
+          markingSchemeCharacters: entry.item.markingSchemeText.length,
+        })),
+        message: 'All eight model TXT bundles passed structural and duplicate validation. Nothing has been saved yet.',
+      });
+    }
+
     const materialRecords = materials.map((entry) => {
       const contentHash = computeContentHash(normalizeExtractedContent(entry.combinedText));
       const identity = computeMaterialUniqueKey({
