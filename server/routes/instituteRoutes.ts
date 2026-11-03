@@ -1560,10 +1560,14 @@ router.post('/subscription/create-order', async (req: AuthRequest, res: Response
       return res.status(400).json({ error: 'Plan ID is required' });
     }
 
+    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(billingPeriod)) {
+      return res.status(400).json({ error: 'A valid billing period is required.' });
+    }
+
     const order = await createInstituteSubscriptionOrder({
       instituteId,
       planId,
-      billingPeriod: billingPeriod === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY',
+      billingPeriod,
     });
 
     return res.status(201).json(order);
@@ -1580,7 +1584,7 @@ router.post('/subscription/verify-payment', async (req: AuthRequest, res: Respon
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId } = req.body;
-    if (!razorpay_order_id || !razorpay_payment_id || !planId) {
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !planId) {
       return res.status(400).json({ error: 'Missing payment verification credentials' });
     }
 
