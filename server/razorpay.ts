@@ -623,7 +623,7 @@ export async function processRazorpayWebhook(
 export interface CreateInstituteOrderParams {
   instituteId: string;
   planId: string;
-  billingPeriod?: 'MONTHLY' | 'ANNUAL';
+  billingPeriod?: 'MONTHLY' | 'QUARTERLY' | 'ANNUAL';
 }
 
 export interface InstituteOrderResult {
@@ -639,16 +639,27 @@ export interface InstituteOrderResult {
 export async function createInstituteSubscriptionOrder(params: CreateInstituteOrderParams): Promise<InstituteOrderResult> {
   const { instituteId, planId, billingPeriod = 'MONTHLY' } = params;
 
-  // 1. Fetch plan from DB
-  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ?').get(planId) as any;
+  // The plan catalog is authoritative: never trust a client-supplied billing cycle or amount.
+  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ? AND is_active = 1').get(planId) as any;
   if (!plan) {
-    throw new Error(`Invalid plan ID: ${planId}`);
+    throw new Error('Selected institute plan is not available.');
+  }
+
+  if (plan.billing_period !== billingPeriod) {
+    throw new Error('Selected plan does not match the requested billing cycle.');
+  }
+  if (!Number.isSafeInteger(plan.price_inr) || plan.price_inr <= 0) {
+    throw new Error('Selected institute plan has an invalid price.');
   }
 
   // 2. Fetch institute
   const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
   if (!inst) {
     throw new Error(`Institute not found: ${instituteId}`);
+  }
+
+  if (!isRazorpayConfigured()) {
+    throw new Error('Payment gateway is not configured. Institute subscriptions cannot be activated.');
   }
 
   const amountPaise = plan.price_inr * 100;
@@ -673,7 +684,8 @@ export async function createInstituteSubscriptionOrder(params: CreateInstituteOr
         notes: {
           instituteId,
           planId,
-          billingPeriod,
+          billingPeriod: plan.billing_period,
+          planPriceINR: String(plan.price_inr),
           instituteName: inst.name,
           purpose: `Institute Subscription: ${plan.name}`,
         },
@@ -719,22 +731,58 @@ export interface VerifyInstitutePaymentParams {
 export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymentParams) {
   const { instituteId, razorpayOrderId, razorpayPaymentId, razorpaySignature, planId } = params;
 
-  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ?').get(planId) as any;
-  if (!plan) throw new Error('Selected plan not found');
+  const plan = db.prepare('SELECT * FROM institute_plans WHERE id = ? AND is_active = 1').get(planId) as any;
+  if (!plan) throw new Error('Selected institute plan is not available.');
 
   const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
   if (!inst) throw new Error('Institute not found');
 
-  const keySecret = getCleanEnv('RAZORPAY_KEY_SECRET');
-  if (isRazorpayConfigured()) {
-    const generatedSignature = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-      .digest('hex');
+  if (!isRazorpayConfigured()) {
+    throw new Error('Payment gateway is not configured. Payment verification is unavailable.');
+  }
+  if (!razorpaySignature) {
+    throw new Error('Missing Razorpay payment signature.');
+  }
 
-    if (generatedSignature !== razorpaySignature) {
-      throw new Error('Payment signature verification failed. Untrusted payment.');
-    }
+  const order = db.prepare(`
+    SELECT id, student_id, quantity, amount_paise, currency, status
+    FROM payment_orders
+    WHERE razorpay_order_id = ? AND student_id = ?
+    LIMIT 1
+  `).get(razorpayOrderId, `inst_${instituteId}`) as {
+    id: string;
+    student_id: string;
+    quantity: number;
+    amount_paise: number;
+    currency: string;
+    status: string;
+  } | undefined;
+
+  if (!order) throw new Error('Payment order not found for this institute.');
+  if (order.status === 'SUCCESS') {
+    const existing = db.prepare(`
+      SELECT plan_name, student_capacity, expiry_date
+      FROM institute_subscriptions
+      WHERE institute_id = ? AND payment_order_ref = ? AND payment_id = ? AND status = 'ACTIVE'
+      LIMIT 1
+    `).get(instituteId, razorpayOrderId, razorpayPaymentId) as any;
+    if (!existing) throw new Error('Payment order was already consumed by a different subscription.');
+    return { success: true, plan: existing.plan_name, maxStudents: existing.student_capacity, expiresAt: existing.expiry_date, alreadyActivated: true };
+  }
+  if (order.status !== 'PENDING') throw new Error('Payment order is not pending.');
+  if (order.amount_paise !== plan.price_inr * 100 || order.quantity !== (plan.evaluation_credits || 500) || order.currency.toUpperCase() !== 'INR') {
+    throw new Error('Payment order does not match the selected plan amount, allowance, or currency.');
+  }
+
+  const generatedSignature = crypto
+    .createHmac('sha256', getCleanEnv('RAZORPAY_KEY_SECRET'))
+    .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+    .digest('hex');
+
+  const expected = Buffer.from(generatedSignature, 'hex');
+  const received = Buffer.from(razorpaySignature, 'hex');
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+    throw new Error('Payment signature verification failed. Untrusted payment.');
   }
 
   // Calculate expiration date based on plan billing period
@@ -746,14 +794,25 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
   }
   const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // Archive any previous active subscriptions for this institute
-  db.prepare(`
-    UPDATE institute_subscriptions
-    SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
-    WHERE institute_id = ? AND status = 'ACTIVE'
-  `).run(instituteId);
+  // Atomically consume the pending payment order and activate the subscription.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const consumed = db.prepare(`
+      UPDATE payment_orders SET status = 'SUCCESS'
+      WHERE id = ? AND status = 'PENDING'
+    `).run(order.id);
+    if (consumed.changes !== 1) {
+      throw new Error('Payment order has already been processed.');
+    }
 
-  // Insert new active subscription
+    // Archive any previous active subscriptions for this institute
+    db.prepare(`
+      UPDATE institute_subscriptions
+      SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
+      WHERE institute_id = ? AND status = 'ACTIVE'
+    `).run(instituteId);
+
+    // Insert new active subscription
   const subId = `sub_${crypto.randomBytes(8).toString('hex')}`;
   db.prepare(`
     INSERT INTO institute_subscriptions (
@@ -786,10 +845,7 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
     WHERE id = ?
   `).run(plan.name, plan.student_quota, expiresAt, instituteId);
 
-  // Update payment_order
-  db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE razorpay_order_id = ?").run(razorpayOrderId);
-
-  // Record in payment_transactions for financial and audit integrity
+    // Record in payment_transactions for financial and audit integrity
   const txId = `tx_${crypto.randomBytes(8).toString('hex')}`;
   const orderRow = db.prepare('SELECT id FROM payment_orders WHERE razorpay_order_id = ?').get(razorpayOrderId) as { id: string } | undefined;
   if (orderRow) {
@@ -820,10 +876,17 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
     `Subscribed to ${plan.name} (${plan.billing_period}, Student Quota: ${plan.student_quota}, Allowance: ${plan.evaluation_credits}). Payment ID: ${razorpayPaymentId}`
   );
 
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+
   return {
     success: true,
     plan: plan.name,
     maxStudents: plan.student_quota,
     expiresAt,
+    alreadyActivated: false,
   };
 }
