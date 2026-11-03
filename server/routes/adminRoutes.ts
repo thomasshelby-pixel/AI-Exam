@@ -45,7 +45,7 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { setFirestoreDoc, setFirestoreDocsAtomically, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { setFirestoreDoc, setFirestoreDocsAtomically, deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -1248,7 +1248,19 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
         auditInsert.run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details, audit.created_at);
       }
     });
-    insertBatch();
+    try {
+      insertBatch();
+    } catch (sqliteError) {
+      // Avoid leaving Firestore-only records if the local cache transaction fails.
+      const rollbackResults = await Promise.allSettled([
+        ...materialRecords.map((record) => deleteFirestoreDoc('evaluation_materials', record.id)),
+        ...auditRecords.map((record) => deleteFirestoreDoc('audit_logs', record.id)),
+      ]);
+      if (rollbackResults.some((result) => result.status === 'rejected' || (result.status === 'fulfilled' && result.value !== true))) {
+        console.error('[AdminRoutes] Firestore rollback was incomplete after the bulk Model Test SQLite transaction failed.');
+      }
+      throw sqliteError;
+    }
 
     return res.status(201).json({
       success: true,
