@@ -76,18 +76,33 @@ assert.match(componentResult.materials[7].markingSchemeText, /conclusion 2 marks
 
 const sourceLikeComponentFiles = Array.from({ length: 8 }, (_, index) => {
   const number = index + 1;
+  const newline = String.fromCharCode(10);
   return [
     {
-      fileName: `Model ${number} Question Paper.txt`,
-      content: `SOURCE PDF: Model_Test_Paper_${number}_Question_Paper.pdf\\nCONVERSION: Text extracted from source PDF with layout preservation.\\n\\nMODEL TEST PAPER ${number}\\n[QUESTION PAPER]\\nQuestion ${number}: Prepare the complete computation and state your conclusion. Maximum marks: 10.`,
+      fileName: "Model " + number + " Question Paper.txt",
+      content: [
+        "SOURCE PDF: Model_Test_Paper_" + number + "_Question_Paper.pdf",
+        "CONVERSION: Text extracted from source PDF with layout preservation.",
+        "",
+        "MODEL TEST PAPER " + number,
+        "[QUESTION PAPER]",
+        "Question " + number + ": Prepare the complete computation and state your conclusion. Maximum marks: 10.",
+      ].join(newline),
     },
     {
-      fileName: `Model ${number} Suggested Answers.txt`,
-      content: `ANSWERS OF MODEL TEST PAPER ${number}\\nAnswer ${number}: Complete calculation, working notes and final conclusion for this model.`,
+      fileName: "Model " + number + " Suggested Answers.txt",
+      content: [
+        "ANSWERS OF MODEL TEST PAPER " + number,
+        "Answer " + number + ": Complete calculation, working notes and final conclusion for this model.",
+      ].join(newline),
     },
     {
-      fileName: `Model ${number} Marking Scheme.txt`,
-      content: `MODEL TEST PAPER ${number}\\nMARKING SCHEME\\nQuestion ${number}: computation 5 marks, working notes 3 marks and conclusion 2 marks.`,
+      fileName: "Model " + number + " Marking Scheme.txt",
+      content: [
+        "MODEL TEST PAPER " + number,
+        "MARKING SCHEME",
+        "Question " + number + ": computation 5 marks, working notes 3 marks and conclusion 2 marks.",
+      ].join(newline),
     },
   ];
 }).flat();
