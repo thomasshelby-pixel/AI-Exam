@@ -147,6 +147,11 @@ function parseModelSections(content: string): {
  */
 export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBulkParseResult {
   const errors: string[] = [];
+  const totalBytes = files.reduce((sum, file) => sum + Buffer.byteLength(String(file?.content || ''), 'utf8'), 0);
+  if (totalBytes > 32 * 1024 * 1024) {
+    return { materials: [], errors: ['The complete TXT batch exceeds the 32 MB total limit.'] };
+  }
+
   const materialsByNumber = new Map<number, {
     questionPaperText?: string;
     suggestedAnswersText?: string;
