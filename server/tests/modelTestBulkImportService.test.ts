@@ -47,4 +47,30 @@ const masterResult = parseModelTestBulkFiles([masterFile]);
 assert.deepEqual(masterResult.errors, []);
 assert.equal(masterResult.materials.length, 8);
 
+
+const componentFiles = Array.from({ length: 8 }, (_, index) => {
+  const number = index + 1;
+  return [
+    {
+      fileName: `Model ${number} Question Paper.txt`,
+      content: `[QUESTION PAPER]\\nQuestion ${number}: Prepare the complete computation and state your conclusion. Maximum marks: 10.`,
+    },
+    {
+      fileName: `Model ${number} Suggested Answers.txt`,
+      content: `Suggested answer ${number}: Complete calculation, working notes and final conclusion for this model.`,
+    },
+    {
+      fileName: `Model ${number} Marking Scheme.txt`,
+      content: `Question ${number}: computation 5 marks, working notes 3 marks and conclusion 2 marks.`,
+    },
+  ];
+}).flat();
+
+const componentResult = parseModelTestBulkFiles(componentFiles);
+assert.deepEqual(componentResult.errors, []);
+assert.equal(componentResult.materials.length, 8);
+assert.deepEqual(componentResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
+assert.equal(componentResult.materials[0].sourceFileNames.length, 3);
+assert.match(componentResult.materials[7].markingSchemeText, /conclusion 2 marks/);
+
 console.log('Model Test bulk TXT parser tests passed.');
