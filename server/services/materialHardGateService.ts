@@ -14,6 +14,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { normalizeMtpSeries } from './materialLookupService.js';
+import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 
 export interface MaterialManifestItem {
   materialId: string;
@@ -147,8 +148,9 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const isPyq = request.materialType === 'PYQ';
   const isModelTest = request.materialType === 'MODEL_TEST_PAPER';
   const normalizedModelTestNumber = isModelTest ? Number(request.modelTestNumber) : undefined;
-  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > 8)) {
-    throw new Error('Please select a valid Model Test Paper number (1–8) to continue.');
+  const maxModelTestNumber = getMaxModelTestNumberForLevel(normLevel);
+  if (isModelTest && (!Number.isInteger(normalizedModelTestNumber) || normalizedModelTestNumber! < 1 || normalizedModelTestNumber! > maxModelTestNumber)) {
+    throw new Error(`Please select a valid Model Test Paper number (1–${maxModelTestNumber}) to continue.`);
   }
 
   let normalizedSeries: number | undefined = undefined;
@@ -525,9 +527,10 @@ export function enforceEvaluationEvidencePackageMtpGate(evidencePackage: Evaluat
   const isModelTest = String(evidencePackage.materialType || '').toUpperCase() === 'MODEL_TEST_PAPER';
   if (isModelTest) {
     const expectedModel = Number(evidencePackage.requestedModelTestNumber);
-    if (!Number.isInteger(expectedModel) || expectedModel < 1 || expectedModel > 8) {
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(evidencePackage.caLevel);
+    if (!Number.isInteger(expectedModel) || expectedModel < 1 || expectedModel > maxModelTestNumber) {
       evidencePackage.integrityGateStatus = 'FAILED';
-      throw new Error('MODEL_TEST_NUMBER_GATE_ERROR: Please select a valid Model Test Paper number (1–8).');
+      throw new Error(`MODEL_TEST_NUMBER_GATE_ERROR: Please select a valid Model Test Paper number (1–${maxModelTestNumber}).`);
     }
     if (Number(evidencePackage.rawMaterialModelTestNumber) !== expectedModel) {
       evidencePackage.integrityGateStatus = 'FAILED';
