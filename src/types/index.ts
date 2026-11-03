@@ -1023,6 +1023,8 @@ export interface EvaluationRecord {
   attempt?: string;
   mtpSeries?: 1 | 2;
   mtp_series?: 1 | 2;
+  modelTestNumber?: number;
+  model_test_number?: number;
   syllabusVersion?: string;
   materialId?: string;
   materialVersion?: string;
