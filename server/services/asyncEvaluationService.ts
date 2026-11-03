@@ -37,6 +37,7 @@ export interface EvaluationJobData {
   level: CALevel;
   materialType: MaterialType;
   mtpSeries?: 1 | 2;
+  modelTestNumber?: number;
   modelGroup?: string;
   subjectKey: string;
   subjectName: string;
@@ -166,6 +167,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const evidencePackage: EvaluationEvidencePackage = {
       evaluationId,
       requestedMtpSeries: job.mtpSeries,
+      requestedModelTestNumber: job.modelTestNumber,
+      rawMaterialModelTestNumber: job.modelTestNumber,
       materialType: job.materialType,
       caLevel: job.level,
       subjectKey: job.subjectKey,
@@ -186,6 +189,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.referenceQuestionPaperText || '', 'utf8').digest('hex'),
           textLength: (job.referenceQuestionPaperText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'QUESTION_PAPER',
           title: job.referenceMaterialTitle,
           detectedSeries:
@@ -201,6 +205,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.referenceSuggestedAnswersText || '', 'utf8').digest('hex'),
           textLength: (job.referenceSuggestedAnswersText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'SUGGESTED_ANSWERS',
           title: job.referenceMaterialTitle,
           detectedSeries:
@@ -216,6 +221,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           checksum: crypto.createHash('sha256').update(job.markingSchemeText || '', 'utf8').digest('hex'),
           textLength: (job.markingSchemeText || '').length,
           mtpSeries: job.mtpSeries,
+          modelTestNumber: job.modelTestNumber,
           componentType: 'MARKING_SCHEME',
           title: `${job.referenceMaterialTitle || 'Reference Material'} Marking Scheme`,
           detectedSeries: detectMtpSeriesFromText((job.markingSchemeText || '').slice(0, 1000)),
@@ -395,6 +401,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
       const meta = {
         id: evaluationId,
+        modelTestNumber: job.modelTestNumber,
         displayId: resolvedDisplayId,
         studentCode: resolvedStudentCode,
         icaiRegistrationNumber: resolvedRegNo,
