@@ -76,7 +76,14 @@ function splitModelBlocks(file: ModelTestTextFile): Array<{ modelTestNumber: num
   for (const line of lines) {
     const match = line.match(MODEL_HEADER);
     if (match) {
-      foundHeader = true;
+      if (!foundHeader) {
+        // Keep leading PDF source/conversion metadata with the first numbered
+        // model block. These lines are not a separate, unnumbered model.
+        foundHeader = true;
+        currentNumber = Number(match[1]);
+        continue;
+      }
+
       flush();
       currentLines = [];
       currentNumber = Number(match[1]);
