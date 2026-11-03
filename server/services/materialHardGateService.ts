@@ -204,7 +204,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
-             attempt, syllabus_version, material_type, mtp_series,
+             attempt, syllabus_version, material_type, mtp_series, model_test_number,
              source_format, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id,
              file_id, version, status, admin_approved,
              question_paper_text, suggested_answers_text, marking_scheme_text,
@@ -317,6 +317,10 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   }
 
   // HARD-GATE CHECK: Verified TXT content must not be blank or superficial
+  if (isModelTest && msText.length < 10) {
+    throw new Error('MODEL_TEST_MARKING_SCHEME_MISSING: A complete marking scheme is required for the selected Model Test Paper.');
+  }
+
   if (qpText.length < 50 || saText.length < 50) {
     throw new Error(
       `Evaluation material is not available for this paper yet. Please try again once the required material has been added.`
