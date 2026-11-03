@@ -115,38 +115,20 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
 
       const res = await apiRequest<{
         success: boolean;
-        order?: any;
+        order: {
+          keyId: string;
+          amountPaise: number;
+          razorpayOrderId: string;
+          planName: string;
+        };
         isConfigured: boolean;
-        directActivated?: boolean;
-        message?: string;
       }>('/api/institute/subscription/create-order', {
         method: 'POST',
-        body: JSON.stringify({ planId: plan.id }),
+        body: JSON.stringify({ planId: plan.id, billingPeriod: plan.billing_period }),
       });
 
-      if (res.directActivated) {
-        onNotify?.(res.message || `Successfully activated ${plan.name} plan!`, 'success');
-        await onRefresh();
-        setLoading(false);
-        setSubscribingPlanId(null);
-        return;
-      }
-
       if (!res.isConfigured || !res.order) {
-        // Direct subscription activation fallback if Razorpay credentials are not yet set
-        const verifyRes = await apiRequest<{ success: boolean; message: string }>('/api/institute/subscription/verify-payment', {
-          method: 'POST',
-          body: JSON.stringify({
-            planId: plan.id,
-            directActivation: true,
-          }),
-        });
-
-        onNotify?.(verifyRes.message || `Successfully subscribed to ${plan.name} plan!`, 'success');
-        await onRefresh();
-        setLoading(false);
-        setSubscribingPlanId(null);
-        return;
+        throw new Error('Payment gateway is not configured. Please contact the administrator; no subscription was activated.');
       }
 
       if (!window.Razorpay) {
@@ -164,7 +146,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
         amount: res.order.amountPaise,
         currency: 'INR',
         name: 'CA Exam Checker AI - Institute Portal',
-        description: `${plan.name} Plan Annual License`,
+        description: `${plan.name} Plan Subscription`,
         order_id: res.order.razorpayOrderId,
         prefill: {
           name: data.institute?.name || '',
@@ -178,9 +160,9 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
               method: 'POST',
               body: JSON.stringify({
                 planId: plan.id,
-                razorpayOrderId: paymentResp.razorpay_order_id,
-                razorpayPaymentId: paymentResp.razorpay_payment_id,
-                razorpaySignature: paymentResp.razorpay_signature,
+                razorpay_order_id: paymentResp.razorpay_order_id,
+                razorpay_payment_id: paymentResp.razorpay_payment_id,
+                razorpay_signature: paymentResp.razorpay_signature,
               }),
             });
             onNotify?.(`Payment successful! Your institute is now on the ${plan.name} plan.`, 'success');
