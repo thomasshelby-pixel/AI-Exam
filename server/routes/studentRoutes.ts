@@ -914,6 +914,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER'
       ? Number(modelTestNumber ?? req.body.model_test_number)
       : undefined;
+    const evaluationMaterialAttempt = materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt;
     if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
       return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
     }
