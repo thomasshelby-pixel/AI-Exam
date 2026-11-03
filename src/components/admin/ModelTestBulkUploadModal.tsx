@@ -37,7 +37,7 @@ interface BulkResponse {
 }
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_BATCH_BYTES = 16 * 1024 * 1024;
+const MAX_BATCH_BYTES = 32 * 1024 * 1024;
 
 export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> = ({
   isOpen,
@@ -80,7 +80,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
     if (files.length === 0) throw new Error('Select one or more TXT files first.');
     const oversized = files.find((file) => file.size > MAX_FILE_BYTES);
     if (oversized) throw new Error(`${oversized.name} exceeds the 2 MB per-file limit.`);
-    if (totalBytes > MAX_BATCH_BYTES) throw new Error('The complete TXT batch exceeds the 16 MB limit.');
+    if (totalBytes > MAX_BATCH_BYTES) throw new Error('The complete TXT batch exceeds the 32 MB limit.');
 
     return Promise.all(files.map(async (file) => ({
       fileName: file.name,
@@ -222,7 +222,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
               <Upload className="w-6 h-6" />
             </div>
             <p className="text-sm font-bold text-slate-800">Choose all Model Test TXT files</p>
-            <p className="text-xs text-slate-500 mt-1">Multiple files supported · 2 MB each · 16 MB total</p>
+            <p className="text-xs text-slate-500 mt-1">Multiple files supported · 2 MB each · 32 MB total</p>
             <input ref={fileInputRef} type="file" accept=".txt,text/plain" multiple className="hidden" onChange={handleFilesChanged} />
           </div>
 
