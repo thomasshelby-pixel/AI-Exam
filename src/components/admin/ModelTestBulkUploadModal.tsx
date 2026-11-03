@@ -62,6 +62,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
   }, [subjectsByLevel]);
   const selectedSubject = allSubjects.find((subject) => `${subject.level}::${subject.key}` === subjectSelection) || allSubjects[0];
   const level: CALevel = selectedSubject?.level || 'INTERMEDIATE';
+  const maxModelTestNumber = level === 'FOUNDATION' ? 10 : 8;
 
   useEffect(() => {
     if (!allSubjects.some((subject) => `${subject.level}::${subject.key}` === subjectSelection)) {
@@ -128,9 +129,9 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
 
       if (dryRun) {
         setPreview(result.materials || []);
-        setSuccessMessage(result.message || 'All eight model files passed validation.');
+        setSuccessMessage(result.message || `All ${maxModelTestNumber} model files passed validation.`);
       } else {
-        setSuccessMessage(result.message || `Uploaded ${result.uploaded || 8} Model Test Papers.`);
+        setSuccessMessage(result.message || `Uploaded ${result.uploaded || maxModelTestNumber} Model Test Papers.`);
         setPreview(result.materials || []);
         onComplete();
       }
@@ -173,7 +174,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900">Bulk Model Test Paper Upload</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Upload Model 1–8 together using TXT files. No PDF extraction or Gemini call.</p>
+                <p className="text-xs text-slate-500 mt-0.5">{`Upload Model 1–${maxModelTestNumber} together using TXT files. No PDF extraction or Gemini call.`}</p>
               </div>
             </div>
           </div>
@@ -203,7 +204,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
           <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
             <p className="text-xs font-bold text-indigo-950 mb-1">TXT format required</p>
             <pre className="text-[11px] leading-relaxed whitespace-pre-wrap text-indigo-900">{'MODEL TEST PAPER 1\n[QUESTION PAPER]\n...full question paper...\n[SUGGESTED ANSWERS]\n...full model answers...\n[MARKING SCHEME]\n...step-wise marks...'}</pre>
-            <p className="text-[11px] text-indigo-800 mt-2">Upload 8 combined TXT files, one master TXT with Model 1–8 blocks, or 24 separate files named like Model 1 Question Paper.txt, Model 1 Suggested Answers.txt and Model 1 Marking Scheme.txt (repeat for Models 2–8).</p>
+            <p className="text-[11px] text-indigo-800 mt-2">`Upload ${maxModelTestNumber} combined TXT files, one master TXT with Model 1–${maxModelTestNumber} blocks, or ${maxModelTestNumber * 3} separate files named like Model 1 Question Paper.txt, Model 1 Suggested Answers.txt and Model 1 Marking Scheme.txt (repeat for Models 2–${maxModelTestNumber}).`</p>
           </div>
 
           <div
@@ -258,7 +259,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <p className="text-xs font-bold text-slate-800">Validated Model Sequence</p>
-                <span className="text-[10px] font-bold text-emerald-700">{preview.length}/8 ready</span>
+                <span className="text-[10px] font-bold text-emerald-700">{preview.length}/{maxModelTestNumber} ready</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {[...preview].sort((a, b) => a.modelTestNumber - b.modelTestNumber).map((item) => (
@@ -280,12 +281,12 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
             {!preview ? (
               <button type="button" onClick={() => submitBatch(true)} disabled={busy || files.length === 0 || !selectedSubject} className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Validate 8 Models
+                {`Validate ${maxModelTestNumber} Models`}
               </button>
             ) : (
-              <button type="button" onClick={() => submitBatch(false)} disabled={busy || preview.length !== 8} className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40">
+              <button type="button" onClick={() => submitBatch(false)} disabled={busy || preview.length !== maxModelTestNumber} className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                Upload All 8 Models
+                {`Upload All ${maxModelTestNumber} Models`}
               </button>
             )}
           </div>
