@@ -172,6 +172,9 @@ jobs:
       - name: Study planner regression suite
         run: npm run test:study-planner
 
+      - name: Model Test TXT bulk-import regression
+        run: npm run test:model-test-bulk
+
       - name: Typecheck
         run: npm run lint
 
