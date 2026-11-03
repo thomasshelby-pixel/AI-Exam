@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
+import { getMaxModelTestNumberForLevel, isValidModelTestNumber } from '../services/modelTestLimits.js';
 
 function modelText(number: number): string {
   return [
@@ -113,5 +114,25 @@ assert.equal(sourceLikeResult.materials.length, 8);
 assert.deepEqual(sourceLikeResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
 assert.match(sourceLikeResult.materials[0].questionPaperText, /Question 1/);
 assert.equal(sourceLikeResult.materials[0].sourceFileNames.length, 3);
+
+
+assert.equal(getMaxModelTestNumberForLevel('FOUNDATION'), 10);
+assert.equal(getMaxModelTestNumberForLevel('INTERMEDIATE'), 8);
+assert.equal(getMaxModelTestNumberForLevel('FINAL'), 8);
+assert.equal(isValidModelTestNumber(10, 'FOUNDATION'), true);
+assert.equal(isValidModelTestNumber(10, 'INTERMEDIATE'), false);
+
+const foundationFiles = Array.from({ length: 10 }, (_, index) => ({
+  fileName: `Model ${index + 1}.txt`,
+  content: index === 9 ? modelText(10).replace('MODEL TEST PAPER 10\\n', '') : modelText(index + 1),
+}));
+const foundationResult = parseModelTestBulkFiles(foundationFiles, { maxModelNumber: 10 });
+assert.deepEqual(foundationResult.errors, []);
+assert.equal(foundationResult.materials.length, 10);
+assert.deepEqual(foundationResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+assert.match(foundationResult.materials[9].questionPaperText, /Question 10/);
+
+const foundationAsIntermediate = parseModelTestBulkFiles(foundationFiles);
+assert.ok(foundationAsIntermediate.errors.some((error) => error.includes('Model Number must be clearly identified') && error.includes('1–8')));
 
 console.log('Model Test bulk TXT parser tests passed.');
