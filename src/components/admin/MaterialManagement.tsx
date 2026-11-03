@@ -63,6 +63,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     level: 'INTERMEDIATE' as CALevel,
     materialType: 'MTP' as MaterialType,
     mtpSeries: 1 as 1 | 2,
+    modelTestNumber: 1,
     modelGroup: 'GROUP_1',
     subjectKey: 'inter_advanced_accounting',
     subjectName: 'Advanced Accounting',
@@ -177,6 +178,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             attempt: formData.attempt,
             materialType: formData.materialType,
             mtpSeries: formData.mtpSeries,
+            modelTestNumber: formData.modelTestNumber,
             paper: formData.paper,
             version: formData.version,
             title: formData.questionPaperTitle,
@@ -425,6 +427,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         level: m.level || 'INTERMEDIATE',
         materialType: (m.material_type || 'MTP') as MaterialType,
         mtpSeries: (m.mtp_series || m.mtpSeries || 1) as 1 | 2,
+        modelTestNumber: Number(m.model_test_number || m.modelTestNumber || 1),
         modelGroup: m.model_group || 'GROUP_1',
         subjectKey: m.subject_key || 'inter_advanced_accounting',
         subjectName: m.subject_name || 'Advanced Accounting',
@@ -818,6 +821,11 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                         {m.material_type === 'MTP' && (
                           <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-blue-100 text-blue-700">
                             S{m.mtp_series || m.mtpSeries || 1}
+                          </span>
+                        )}
+                        {m.material_type === 'MODEL_TEST_PAPER' && (
+                          <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-indigo-100 text-indigo-700">
+                            Model {m.model_test_number || m.modelTestNumber || '?'}
                           </span>
                         )}
                         {m.material_type === 'PYQ' && (
@@ -1214,6 +1222,22 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       <option value={2}>Series 2 (Model Test 2)</option>
                       <option value={3}>Series 3 (Model Test 3)</option>
                       <option value={4}>Series 4 (Model Test 4)</option>
+                    </select>
+                  </div>
+                )}
+
+                {formData.materialType === 'MODEL_TEST_PAPER' && (
+                  <div>
+                    <label className="block font-bold text-indigo-700 mb-1">Model Test Number *</label>
+                    <select
+                      id="admin-form-model-test-number-select"
+                      value={formData.modelTestNumber}
+                      onChange={(e) => setFormData({ ...formData, modelTestNumber: Number(e.target.value) })}
+                      className="w-full px-3 py-2 border border-indigo-300 rounded-lg bg-indigo-50/50 text-indigo-800 font-semibold focus:outline-none focus:border-indigo-600"
+                    >
+                      {Array.from({ length: 8 }, (_, index) => index + 1).map((number) => (
+                        <option key={number} value={number}>Model {number}</option>
+                      ))}
                     </select>
                   </div>
                 )}
