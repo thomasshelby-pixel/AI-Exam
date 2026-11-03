@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiRequest, ApiError } from '../../api/client';
+import { ModelTestBulkUploadModal } from './ModelTestBulkUploadModal';
 import { EvaluationMaterial, CALevel, MaterialType } from '../../types';
 import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts';
 import {
@@ -52,6 +53,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   const [loadingInspect, setLoadingInspect] = useState<boolean>(false);
 
   const [showFormModal, setShowFormModal] = useState<boolean>(false);
+  const [showBulkModelUpload, setShowBulkModelUpload] = useState<boolean>(false);
   const [editingMaterial, setEditingMaterial] = useState<EvaluationMaterial | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isExtractingDoc, setIsExtractingDoc] = useState<string | null>(null);
@@ -631,6 +633,13 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
   return (
     <div className="space-y-6">
+      <ModelTestBulkUploadModal
+        isOpen={showBulkModelUpload}
+        onClose={() => setShowBulkModelUpload(false)}
+        onComplete={() => { setShowBulkModelUpload(false); fetchMaterials(); }}
+        subjectsByLevel={subjectsMap}
+      />
+
       {/* Header bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -645,7 +654,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setShowBulkModelUpload(true)}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <FileUp className="w-4 h-4" />
+            <span>Bulk Model Test Upload</span>
+          </button>
           <button
             onClick={fetchMaterials}
             className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition cursor-pointer"
