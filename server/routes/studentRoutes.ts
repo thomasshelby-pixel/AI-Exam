@@ -562,6 +562,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       command, // can be 'How AI will evaluate'
       level,
       materialType,
+      modelTestNumber,
       subjectKey,
       subjectName,
       attempt,
@@ -594,6 +595,11 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       parsedMtpSeries = norm;
     }
 
+    const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER' ? Number(modelTestNumber ?? req.body.model_test_number) : undefined;
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
+      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
+    }
+
     const referenceMaterial = await findAuthoritativeMaterialWithFallback({
       level,
       subjectKey,
@@ -601,6 +607,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       paper,
       materialType,
       mtpSeries: parsedMtpSeries,
+      modelTestNumber: parsedModelTestNumber,
       minTextLength: 20,
       isAdminApprovedRequired: true,
     });
@@ -803,6 +810,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       icaiRegistrationNumber,
       level,
       materialType,
+      modelTestNumber,
       modelGroup,
       subjectKey,
       subjectName,
@@ -900,6 +908,13 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       if (parsedMtpSeries !== 1 && parsedMtpSeries !== 2) {
         return res.status(400).json({ error: 'Invalid MTP Series selected. Allowed options are Series 1 or Series 2.' });
       }
+    }
+
+    const parsedModelTestNumber = materialType === 'MODEL_TEST_PAPER'
+      ? Number(modelTestNumber ?? req.body.model_test_number)
+      : undefined;
+    if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
+      return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: 'Please select a Model Test Paper number from 1 to 8.' });
     }
 
     // 1. Fetch all active institute enrollments for this student
@@ -1086,6 +1101,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           paper: req.body.paper,
           materialType,
           mtpSeries: parsedMtpSeries,
+          modelTestNumber: parsedModelTestNumber,
           sourceFormat,
           minTextLength: 20,
         });
@@ -1106,6 +1122,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         syllabusVersion: req.body.syllabusVersion,
         materialType,
         mtpSeries: parsedMtpSeries,
+        modelTestNumber: parsedModelTestNumber,
         sourceFormat,
         evaluationSource: requestedEvalSource,
         instituteId: resolvedSponsoringInstituteId || undefined,
@@ -1130,6 +1147,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       question_material_id: verifiedPackage.questionMaterialId,
       suggested_answer_material_id: verifiedPackage.suggestedAnswerMaterialId,
       marking_scheme_material_id: verifiedPackage.markingSchemeMaterialId,
+      model_test_number: verifiedPackage.modelTestNumber ?? parsedModelTestNumber ?? null,
       official_max_marks: verifiedPackage.officialPaperMaxMarks,
       question_paper_title: verifiedPackage.questionPaperTitle,
       question_paper_text: verifiedPackage.questionPaperText,
@@ -1210,14 +1228,14 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       INSERT INTO evaluations (
         id, display_id, evaluation_sequence, student_id, evaluation_source, material_source, sponsoring_institute_id,
         institute_id, institute_enrollment_id, batch_id,
-        level, material_type, mtp_series, pyq_source_format, model_group, subject_key, subject_name,
+        level, material_type, mtp_series, model_test_number, pyq_source_format, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status,
         entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, 'PROCESSING', 'VALID',
         ?, 0, 0
@@ -1236,6 +1254,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       level,
       materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP'),
       parsedMtpSeries || null,
+      parsedModelTestNumber || null,
       referenceMaterial.source_format || null,
       modelGroup || null,
       subjectKey,
@@ -1366,6 +1385,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       level: level as CALevel,
       materialType: materialType as MaterialType,
       mtpSeries: (parsedMtpSeries as 1 | 2) || undefined,
+      modelTestNumber: parsedModelTestNumber,
       modelGroup: modelGroup || undefined,
       subjectKey,
       subjectName,
