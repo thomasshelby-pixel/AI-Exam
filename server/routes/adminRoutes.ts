@@ -1312,6 +1312,8 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
       materialType,
       mtpSeries,
       mtp_series,
+      modelTestNumber,
+      model_test_number,
       paper,
       version,
       title,
@@ -1324,6 +1326,7 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
     } = params;
 
     const series = mtpSeries !== undefined ? mtpSeries : mtp_series;
+    const modelNumber = modelTestNumber !== undefined ? modelTestNumber : model_test_number;
     const result = checkMaterialDuplicate(
       {
         level: String(level || ''),
@@ -1332,6 +1335,7 @@ router.all('/materials/check-duplicate', (req: AuthRequest, res: Response) => {
         attempt: String(attempt || ''),
         materialType: String(materialType || ''),
         mtpSeries: series,
+        modelTestNumber: modelNumber !== undefined ? Number(modelNumber) : undefined,
         paper: paper ? String(paper) : undefined,
         version: version ? String(version) : undefined,
         title: title ? String(title) : undefined,
@@ -1390,6 +1394,9 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
     if (materialType === 'MODEL_TEST_PAPER' && (!Number.isInteger(parsedModelTestNumber) || parsedModelTestNumber! < 1 || parsedModelTestNumber! > 8)) {
       return res.status(400).json({ error: 'Please select a valid Model Test Paper number (1–8).' });
     }
+    if (materialType === 'MODEL_TEST_PAPER' && !String(req.body.markingSchemeText || '').trim()) {
+      return res.status(400).json({ error: 'A marking scheme is required for each Model Test Paper.' });
+    }
 
     if (materialType === 'MTP') {
       if (!parsedMtpSeries) {
@@ -1447,7 +1454,7 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
       computedFileHash = String(req.body.fileHash).toLowerCase().trim();
     }
 
-    const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}`.trim();
+    const fullContentText = `${questionPaperText}\n\n${suggestedAnswersText}\n\n${String(markingSchemeText || '').trim()}`.trim();
 
     // =========================================================================
     // STAGED DUPLICATE-UPLOAD PROTECTION (File Hash -> Content Hash -> Metadata)
