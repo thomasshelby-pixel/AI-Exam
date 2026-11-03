@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiRequest, ApiError } from '../../api/client';
-import { ModelTestBulkUploadModal } from './ModelTestBulkUploadModal';
+import { ModelTestBulkUploadModal } from './ModelTestBulkUploadModal.js';
 import { EvaluationMaterial, CALevel, MaterialType } from '../../types';
 import { fetchExamAttempts, getAttemptsForLevel, ExamAttempt, ALLOWED_MATERIAL_TYPES } from '../../lib/attempts';
 import {
