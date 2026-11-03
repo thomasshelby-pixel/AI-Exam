@@ -124,13 +124,25 @@ assert.equal(isValidModelTestNumber(10, 'INTERMEDIATE'), false);
 
 const foundationFiles = Array.from({ length: 10 }, (_, index) => ({
   fileName: `Model ${index + 1}.txt`,
-  content: index === 9 ? modelText(10).replace('MODEL TEST PAPER 10\\n', '') : modelText(index + 1),
+  content: index === 9 ? modelText(10).replace('MODEL TEST PAPER 10', '') : modelText(index + 1),
 }));
 const foundationResult = parseModelTestBulkFiles(foundationFiles, { maxModelNumber: 10 });
 assert.deepEqual(foundationResult.errors, []);
 assert.equal(foundationResult.materials.length, 10);
 assert.deepEqual(foundationResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 assert.match(foundationResult.materials[9].questionPaperText, /Question 10/);
+
+
+const foundationHeaderBatch = parseModelTestBulkFiles(
+  [{
+    fileName: 'foundation-master.txt',
+    content: Array.from({ length: 10 }, (_, index) => modelText(index + 1)).join('\n\n'),
+  }],
+  { maxModelNumber: 10 },
+);
+assert.deepEqual(foundationHeaderBatch.errors, []);
+assert.equal(foundationHeaderBatch.materials.length, 10);
+assert.equal(foundationHeaderBatch.materials[9].modelTestNumber, 10);
 
 const foundationAsIntermediate = parseModelTestBulkFiles(foundationFiles);
 assert.ok(foundationAsIntermediate.errors.some((error) => error.includes('Model Number must be clearly identified') && error.includes('1–8')));
