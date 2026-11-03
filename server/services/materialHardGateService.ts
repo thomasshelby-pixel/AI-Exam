@@ -452,6 +452,8 @@ export function buildEvaluationEvidencePackage(
   return {
     evaluationId: request.evaluationId,
     requestedMtpSeries: normSeries,
+    requestedModelTestNumber: request.modelTestNumber,
+    rawMaterialModelTestNumber: pkg.modelTestNumber,
     materialType: pkg.manifest?.materialType || request.materialType || 'MTP',
     caLevel: pkg.manifest?.caLevel || request.level || 'INTERMEDIATE',
     subjectKey: pkg.manifest?.subjectKey || request.subjectKey,
@@ -472,6 +474,7 @@ export function buildEvaluationEvidencePackage(
         checksum: qpChecksum,
         textLength: pkg.questionPaperText.length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'QUESTION_PAPER',
         title: pkg.questionPaperTitle,
         detectedSeries: qpDetected,
@@ -485,6 +488,7 @@ export function buildEvaluationEvidencePackage(
         checksum: saChecksum,
         textLength: pkg.suggestedAnswersText.length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'SUGGESTED_ANSWERS',
         title: pkg.questionPaperTitle,
         detectedSeries: saDetected,
@@ -498,6 +502,7 @@ export function buildEvaluationEvidencePackage(
         checksum: msChecksum,
         textLength: (pkg.markingSchemeText || '').length,
         mtpSeries: normSeries,
+        modelTestNumber: pkg.modelTestNumber,
         componentType: 'MARKING_SCHEME',
         title: `${pkg.questionPaperTitle} Marking Scheme`,
         detectedSeries: msDetected,
@@ -513,6 +518,30 @@ export function buildEvaluationEvidencePackage(
  * Suggested Answer, and Marking Scheme.
  */
 export function enforceEvaluationEvidencePackageMtpGate(evidencePackage: EvaluationEvidencePackage): void {
+  const isModelTest = String(evidencePackage.materialType || '').toUpperCase() === 'MODEL_TEST_PAPER';
+  if (isModelTest) {
+    const expectedModel = Number(evidencePackage.requestedModelTestNumber);
+    if (!Number.isInteger(expectedModel) || expectedModel < 1 || expectedModel > 8) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_GATE_ERROR: Please select a valid Model Test Paper number (1–8).');
+    }
+    if (Number(evidencePackage.rawMaterialModelTestNumber) !== expectedModel) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_INTEGRITY_MISMATCH: Retrieved reference material does not match the selected Model Test Paper.');
+    }
+    const metadataNumbers = [
+      evidencePackage.questionPaper?.metadata?.modelTestNumber,
+      evidencePackage.suggestedAnswers?.metadata?.modelTestNumber,
+      evidencePackage.markingScheme?.metadata?.modelTestNumber,
+    ].filter((value) => value !== undefined && value !== null).map(Number);
+    if (metadataNumbers.some((value) => value !== expectedModel)) {
+      evidencePackage.integrityGateStatus = 'FAILED';
+      throw new Error('MODEL_TEST_NUMBER_COMPONENT_MISMATCH: Question Paper, Suggested Answers and Marking Scheme must belong to the same Model Test Paper.');
+    }
+    evidencePackage.integrityGateStatus = 'PASSED';
+    return;
+  }
+
   const isMtp =
     String(evidencePackage.materialType || '').toUpperCase() === 'MTP' ||
     (evidencePackage.requestedMtpSeries !== undefined && evidencePackage.requestedMtpSeries !== null);
