@@ -54,10 +54,10 @@ function getModelNumberFromFileName(fileName: string): number | null {
 
 
 function getComponentRoleFromFileName(fileName: string): 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText' | null {
-  const name = String(fileName || '').replace(/\\.[^.]+$/, '').toLowerCase();
-  if (/\\b(?:qp|question[ _-]*paper)\\b/i.test(name)) return 'questionPaperText';
-  if (/\\b(?:sa|suggested[ _-]*answers?|model[ _-]*(?:answers?|solutions?))\\b/i.test(name)) return 'suggestedAnswersText';
-  if (/\\b(?:ms|marking[ _-]*(?:scheme|rubric)|step[ _-]*wise[ _-]*marking)\\b/i.test(name)) return 'markingSchemeText';
+  const name = String(fileName || '').replace(/\.[^.]+$/, '').toLowerCase();
+  if (/\b(?:qp|question[ _-]*paper)\b/i.test(name)) return 'questionPaperText';
+  if (/\b(?:sa|suggested[ _-]*answers?|model[ _-]*(?:answers?|solutions?))\b/i.test(name)) return 'suggestedAnswersText';
+  if (/\b(?:ms|marking[ _-]*(?:scheme|rubric)|step[ _-]*wise[ _-]*marking)\b/i.test(name)) return 'markingSchemeText';
   return null;
 }
 function splitModelBlocks(file: ModelTestTextFile): Array<{ modelTestNumber: number | null; content: string; fileName: string }> {
@@ -194,7 +194,7 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
         continue;
       }
 
-      const lines = cleanText(block.content).split('\\n');
+      const lines = cleanText(block.content).split('\n');
       const presentHeaders = SECTION_HEADERS.filter((candidate) => lines.some((line) => candidate.pattern.test(line)));
       if (presentHeaders.length === 3) {
         const parsed = parseModelSections(block.content);
@@ -216,7 +216,7 @@ export function parseModelTestBulkFiles(files: ModelTestTextFile[]): ModelTestBu
           if (!active && activeHeader.pattern.test(line)) { active = true; continue; }
           if (active) sectionLines.push(line);
         }
-        const sectionText = cleanText(sectionLines.join('\\n'));
+        const sectionText = cleanText(sectionLines.join('\n'));
         const minLength = activeHeader.key === 'markingSchemeText' ? 10 : 30;
         if (sectionText.length < minLength) {
           errors.push(`Model ${modelNumber} (${fileName}): ${activeHeader.key} section is empty or too short.`);
