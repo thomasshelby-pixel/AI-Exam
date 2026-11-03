@@ -1560,17 +1560,26 @@ router.post('/subscription/create-order', async (req: AuthRequest, res: Response
       return res.status(400).json({ error: 'Plan ID is required' });
     }
 
-    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(billingPeriod)) {
-      return res.status(400).json({ error: 'A valid billing period is required.' });
+    const selectedPlan = db.prepare('SELECT billing_period FROM institute_plans WHERE id = ? AND is_active = 1').get(planId) as { billing_period: string } | undefined;
+    if (!selectedPlan) {
+      return res.status(404).json({ error: 'Selected institute plan is not available.' });
+    }
+    const requestedCycle = billingPeriod || selectedPlan.billing_period;
+    if (!['MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(requestedCycle) || requestedCycle !== selectedPlan.billing_period) {
+      return res.status(400).json({ error: 'Selected plan does not match a valid billing period.' });
     }
 
     const order = await createInstituteSubscriptionOrder({
       instituteId,
       planId,
-      billingPeriod,
+      billingPeriod: requestedCycle as 'MONTHLY' | 'QUARTERLY' | 'ANNUAL',
     });
 
-    return res.status(201).json(order);
+    return res.status(201).json({
+      success: true,
+      isConfigured: true,
+      order,
+    });
   } catch (error: any) {
     console.error('Create institute subscription order error:', error);
     return res.status(500).json({ error: error?.message || 'Failed to create subscription order' });
@@ -1583,16 +1592,27 @@ router.post('/subscription/verify-payment', async (req: AuthRequest, res: Respon
     const instituteId = getAdminInstituteId(req);
     if (!instituteId) return res.status(404).json({ error: 'Institute not found' });
 
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId } = req.body;
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !planId) {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      planId,
+    } = req.body || {};
+    const orderId = razorpay_order_id || razorpayOrderId;
+    const paymentId = razorpay_payment_id || razorpayPaymentId;
+    const signature = razorpay_signature || razorpaySignature;
+    if (!orderId || !paymentId || !signature || !planId) {
       return res.status(400).json({ error: 'Missing payment verification credentials' });
     }
 
     const result = verifyInstituteSubscriptionPayment({
       instituteId,
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
-      razorpaySignature: razorpay_signature || '',
+      razorpayOrderId: orderId,
+      razorpayPaymentId: paymentId,
+      razorpaySignature: signature,
       planId,
     });
 
