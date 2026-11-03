@@ -266,7 +266,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
                 <span className="text-[10px] font-bold text-emerald-700">{preview.length}/8 ready</span>
               </div>
               <div className="divide-y divide-slate-100">
-                {preview.sort((a, b) => a.modelTestNumber - b.modelTestNumber).map((item) => (
+                {[...preview].sort((a, b) => a.modelTestNumber - b.modelTestNumber).map((item) => (
                   <div key={item.modelTestNumber} className="px-3 py-2 flex items-center gap-3">
                     <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center text-xs font-extrabold">{item.modelTestNumber}</div>
                     <div className="flex-1 min-w-0">
