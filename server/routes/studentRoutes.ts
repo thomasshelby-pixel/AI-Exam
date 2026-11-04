@@ -794,8 +794,8 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         version: '1.0',
         status: 'ACTIVE',
         admin_approved: 1,
-        file_id: mock.question_paper_file_id,
-        question_material_id: mock.question_paper_file_id,
+        file_id: mock.suggested_answer_file_id,
+        question_material_id: mock.suggested_answer_file_id,
         suggested_answer_material_id: mock.suggested_answer_file_id,
         marking_scheme_material_id: mock.suggested_answer_file_id,
         model_test_number: null,
@@ -1274,8 +1274,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       // exact selected mock. The student never submits or receives the TXT.
       preloadedMat = {
         id: facultyMockRecord.id,
-        file_id: facultyMockRecord.question_paper_file_id,
-        question_material_id: facultyMockRecord.question_paper_file_id,
+        file_id: facultyMockRecord.suggested_answer_file_id,
+        question_material_id: facultyMockRecord.suggested_answer_file_id,
         suggested_answer_material_id: facultyMockRecord.suggested_answer_file_id,
         marking_scheme_material_id: facultyMockRecord.suggested_answer_file_id,
         question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
