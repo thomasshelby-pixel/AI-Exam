@@ -225,6 +225,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
         <div>
           <h2 className="text-lg font-black text-slate-900">Faculty Mock Evaluation</h2>
           <p className="text-xs text-slate-500">Add faculty, upload attempt-wise reference papers, and publish numbered mocks to students.</p>
+          <p className="mt-1 text-[11px] font-semibold text-indigo-700">Student access: first copy of each faculty mock is free; repeat copies are ₹35 each (same as the current custom evaluation rate).</p>
         </div>
         <button type="button" onClick={() => void loadData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50">
           <RefreshCw className="h-4 w-4" /> Refresh
