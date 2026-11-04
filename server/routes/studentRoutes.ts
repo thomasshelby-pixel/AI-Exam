@@ -1603,6 +1603,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
         `).run(evaluationId, paidOrderId, studentId, selectedMockId);
         if (Number(consumed.changes || 0) !== 1) {
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('A verified paid repeat-copy entitlement was not available for this submission.', evaluationId);
           return res.status(402).json({
             error: 'The repeat-copy payment is not available for this student and selected mock. Complete a fresh payment and try again.',
             code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
