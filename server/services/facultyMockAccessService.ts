@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import {
   getFirestoreDoc,
+  queryFirestoreDocs,
   runFirestoreTransaction,
   setFirestoreDoc,
 } from './firestoreDbService.js';
@@ -11,11 +12,29 @@ const ACCESS_COLLECTION = 'faculty_mock_access';
 const PAYMENT_GRANTS_COLLECTION = 'faculty_mock_payment_grants';
 const EVALUATION_CLAIMS_COLLECTION = 'faculty_mock_evaluation_claims';
 
-function hasLegacyFacultyMockCopy(studentId: string, testId: string, excludeEvaluationId?: string): boolean {
+async function hasLegacyFacultyMockCopy(studentId: string, testId: string, excludeEvaluationId?: string): Promise<boolean> {
   // Before per-mock entitlements existed, accepted faculty mock evaluations were
   // marked FACULTY_MOCK_SPONSORED. Migrate those students to "free copy used"
   // rather than accidentally giving a second free copy after this rollout.
   try {
+    // Firestore is shared across app instances; query by the single indexed mock
+    // field, then filter the student and the old sponsored entitlement locally.
+    const cloudRows = await queryFirestoreDocs<Record<string, unknown>>(
+      'evaluations',
+      [{ field: 'faculty_mock_test_id', op: '==', value: testId }],
+      { failOnError: true },
+    );
+    const hasCloudHistory = cloudRows.some((row) =>
+      String(row.student_id || '') === studentId &&
+      String(row.evaluation_source || '') === 'FACULTY_MOCK' &&
+      String(row.entitlement_source || 'FACULTY_MOCK_SPONSORED') === 'FACULTY_MOCK_SPONSORED' &&
+      !['FAILED', 'CANCELLED', 'REJECTED'].includes(String(row.status || '').toUpperCase()) &&
+      String(row.id || '') !== String(excludeEvaluationId || '')
+    );
+    if (hasCloudHistory) return true;
+
+    // Keep a local SQLite fallback for older accepted evaluations that have not
+    // finished syncing to Firestore yet.
     const prior = db.prepare(`
       SELECT id
       FROM evaluations
@@ -23,7 +42,7 @@ function hasLegacyFacultyMockCopy(studentId: string, testId: string, excludeEval
         AND faculty_mock_test_id = ?
         AND evaluation_source = 'FACULTY_MOCK'
         AND COALESCE(entitlement_source, 'FACULTY_MOCK_SPONSORED') = 'FACULTY_MOCK_SPONSORED'
-        AND UPPER(COALESCE(status, '')) NOT IN ('FAILED', 'CANCELLED', 'REJECTED')
+        AND UPPER(COALESCE(status, '')) NOT IN ('FAILED', 'CANCELLED', 'REJECTED', 'PROCESSING')
         AND (? IS NULL OR id <> ?)
       ORDER BY created_at ASC
       LIMIT 1
@@ -87,7 +106,7 @@ export async function getFacultyMockAccessState(
     getFacultyMockRepeatPrice(),
   ]);
   const legacyFreeCopyUsed = access?.free_copy_used !== true
-    ? hasLegacyFacultyMockCopy(studentId, testId)
+    ? await hasLegacyFacultyMockCopy(studentId, testId)
     : false;
   return {
     freeCopyAvailable: access?.free_copy_used !== true && !legacyFreeCopyUsed,
@@ -159,7 +178,7 @@ export async function consumeFacultyMockCopy(input: {
 }): Promise<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const claimId = stableId(`${input.studentId}:${input.testId}:${input.evaluationId}`);
-  const legacyFreeCopyUsed = hasLegacyFacultyMockCopy(input.studentId, input.testId, input.evaluationId);
+  const legacyFreeCopyUsed = await hasLegacyFacultyMockCopy(input.studentId, input.testId, input.evaluationId);
   const result = await runFirestoreTransaction<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }>(async (transaction) => {
     const claim = await transaction.get(EVALUATION_CLAIMS_COLLECTION, claimId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
