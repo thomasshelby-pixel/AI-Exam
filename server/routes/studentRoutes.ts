@@ -384,6 +384,9 @@ router.post('/disclaimer/reset', (req: AuthRequest, res: Response) => {
 // Suggested answers and marking schemes are intentionally never returned to students.
 router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) => {
   try {
+    if (String(req.user?.role || '').toUpperCase() !== 'STUDENT') {
+      return res.status(403).json({ error: 'Only student accounts can access faculty mock tests.' });
+    }
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
     if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(courseLevel)) {
@@ -442,6 +445,9 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
 
 router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, res: Response) => {
   try {
+    if (String(req.user?.role || '').toUpperCase() !== 'STUDENT') {
+      return res.status(403).json({ error: 'Only student accounts can download faculty mock papers.' });
+    }
     const testId = String(req.params.id || '').trim();
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
