@@ -139,11 +139,13 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   let resetMonth = profile.free_evaluation_reset_month;
   let trialBlocked = Number(profile.free_trial_blocked || 0) === 1;
 
-  // Repair only legacy false-blocks that were explicitly reviewed and marked
-  // LEGACY_FALSE_BLOCK_REVIEWED. Unknown/blank reasons fail closed because they may
-  // be old device/IP abuse decisions made before reason codes were persisted.
-  // Explicit REUSED_DEVICE / REUSED_IP / REUSED_SRN blocks survive monthly resets.
-  // The current-month ledger still prevents any extra free evaluation from being granted.
+  // Repair only explicitly identified false-positive blocks. REUSED_IP is
+  // recoverable automatically because shared public IPs are not a reliable
+  // duplicate-student signal; the student must still have a verified email,
+  // active account, unique valid ICAI registration identity, and <=2 current-
+  // month free evaluations in the authoritative consumption ledger.
+  // Unknown/blank reasons and REUSED_DEVICE / REUSED_SRN remain blocked.
+  // The current-month ledger prevents any extra free evaluation from being granted.
   if (trialBlocked || Number(profile.monthly_free_evaluations_limit || 0) <= 0) {
     const srn = String(profile.icai_registration_number || '').trim().toUpperCase();
     const srnDigits = srn.length === 10 ? srn.slice(3) : '';
@@ -160,7 +162,9 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
       .trim()
       .toUpperCase()
       .replace(/^PROFILE_COMPLETION_/, '');
-    const explicitlyReviewedFalseBlock = normalizedBlockReason === 'LEGACY_FALSE_BLOCK_REVIEWED';
+    const explicitlyReviewedFalseBlock =
+      normalizedBlockReason === 'LEGACY_FALSE_BLOCK_REVIEWED' ||
+      normalizedBlockReason === 'REUSED_IP';
     const identityVerified =
       explicitlyReviewedFalseBlock &&
       Number(profile.email_verified) === 1 &&
