@@ -690,7 +690,20 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       });
     }
 
-    // 1. Failure Condition: Load ICAI suggested answers & marking scheme from verified official materials
+    const isFacultyMockPreflight =
+      String(evaluationSource || '').trim().toUpperCase() === 'FACULTY_MOCK' ||
+      String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+    if (isFacultyMockPreflight &&
+        (String(evaluationSource || '').trim().toUpperCase() !== 'FACULTY_MOCK' ||
+         String(materialType || '').trim().toUpperCase() !== 'FACULTY_MOCK_TEST')) {
+      return res.status(400).json({
+        success: false,
+        code: 'FACULTY_MOCK_SOURCE_REQUIRED',
+        error: 'Faculty Mock preflight must include both the Faculty Mock source and exact Faculty Mock test type.',
+      });
+    }
+
+    // 1. Failure Condition: Load the exact Faculty Mock private TXT or verified ICAI reference materials.
     let parsedMtpSeries: number | undefined = undefined;
     if (materialType === 'MTP') {
       const rawSeries = req.body.mtpSeries !== undefined ? req.body.mtpSeries : req.body.mtp_series;
@@ -713,7 +726,6 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     }
 
     let referenceMaterial: VerifiedReferencePackage | null = null;
-    const isFacultyMockPreflight = evaluationSource === 'FACULTY_MOCK';
     if (isFacultyMockPreflight) {
       const selectedMockId = String(facultyMockTestId || '').trim();
       if (!selectedMockId || materialType !== 'FACULTY_MOCK_TEST') {
@@ -1167,10 +1179,18 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }>;
 
     // 2. Determine Evaluation Mode & Material Source
+    const normalizedEvaluationSource = String(evaluationSource || '').trim().toUpperCase();
     const requestedEvalSource: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK' =
-      evaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
+      normalizedEvaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : normalizedEvaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
     const isFacultyMockMode = requestedEvalSource === 'FACULTY_MOCK';
     const isInstituteMode = requestedEvalSource === 'INSTITUTE';
+    const isFacultyMockMaterialType = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+    if (isFacultyMockMode !== isFacultyMockMaterialType) {
+      return res.status(400).json({
+        error: 'Faculty Mock submissions must use the Faculty Mock evaluation source and exact Faculty Mock test type.',
+        code: 'FACULTY_MOCK_SOURCE_REQUIRED',
+      });
+    }
     const materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK' = isFacultyMockMode ? 'FACULTY_MOCK' : isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
     let resolvedSponsoringInstituteId: string | null = null;
