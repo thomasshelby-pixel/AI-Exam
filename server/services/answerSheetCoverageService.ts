@@ -314,8 +314,14 @@ export function resolveContextualQuestionIdentity(options: {
     const activeLeaf = authoritativeLeaves.find(
       (question) => question.fullQuestionCode.toLowerCase() === context.canonicalId.toLowerCase()
     );
-    if (isContinuation && activeLeaf) {
-      return { canonicalId: activeLeaf.fullQuestionCode, requiresReview: false };
+    if (isContinuation) {
+      // Preserve an explicitly identified parent-level continuation even when the
+      // inventory has only child parts and no separately scorable parent leaf.
+      // It remains review-only unless an authoritative child/max-mark mapping exists.
+      return {
+        canonicalId: activeLeaf?.fullQuestionCode || context.canonicalId,
+        requiresReview: false,
+      };
     }
     return {
       requiresReview: true,

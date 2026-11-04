@@ -1100,8 +1100,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         const preGateDisposition = classifyPreEvaluationFailures(preGate.failedInvariants);
 
         // Determine if there are critical blockers that prevent any scoring (e.g. wrong course level, paper not parsed, or zero valid attempted questions)
-        const validLeafQuestions = paperStructure.subQuestions.filter((s) => !s.isMcq);
-        const validMcqs = paperStructure.mcqs;
+        const validLeafQuestions = paperStructure.subQuestions.filter((s) => !s.isMcq && Number.isFinite(Number(s.maximumMarks)) && Number(s.maximumMarks) > 0);
+        const validMcqs = paperStructure.mcqs.filter((m) => Number.isFinite(Number(m.maximumMarks)) && Number(m.maximumMarks) > 0 && Boolean(String(m.officialKey || '').trim()));
         const validCanonicalIds = new Set([
           ...validLeafQuestions.map((s) => toCanonicalQuestionId(s.fullQuestionCode || s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions)),
           ...validMcqs.map((m) => toCanonicalQuestionId(m.fullQuestionCode || m.questionNumber, 'MCQ'))
@@ -1197,7 +1197,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   );
                 }
 
-                if (!subQ) {
+                if (!subQ || !Number.isFinite(Number(subQ.maximumMarks)) || Number(subQ.maximumMarks) <= 0) {
+                  const missingMaximum = Boolean(subQ) && Number(subQ?.maximumMarks) <= 0;
                   return {
                     questionNumber: mapping.questionNumber,
                     subQuestion: mapping.subQuestionNumber,
@@ -1206,9 +1207,9 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     marksAwarded: 0,
                     marksLost: 0,
                     status: 'unclear',
-                    reasonForDeduction: 'Authoritative question mapping unresolved: Question detected on answer sheet could not be mapped to official question paper inventory.',
-                    detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. No matching canonical question found in authoritative inventory. Preserved for review.`,
-                    flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                    reasonForDeduction: missingMaximum ? 'Authoritative maximum marks are missing for this question. No marks have been deducted or awarded; examiner mapping review is required.' : 'Authoritative question mapping unresolved: Question detected on answer sheet could not be mapped to official question paper inventory.',
+                    detailedFeedback: missingMaximum ? `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. The answer is retained, but the verified paper structure does not provide a scorable maximum mark. No academic zero or invented marks were applied.` : `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. No matching canonical question found in authoritative inventory. Preserved for review.`, 
+                    flags: ['NEEDS_MAPPING_REVIEW', 'RECHECK_RECOMMENDED'],
                     pageNumber: mapping.pages[0] || 1,
                   } as QuestionEvaluation;
                 }
@@ -1275,7 +1276,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               const targetSubQ = paperStructure.subQuestions.find(
                 (s) => toCanonicalQuestionId(s.questionNumber, s.subQuestionNumber, paperStructure.subQuestions) === canonId
               );
-              if (targetSubQ) {
+              if (targetSubQ && Number.isFinite(Number(targetSubQ.maximumMarks)) && Number(targetSubQ.maximumMarks) > 0) {
                 try {
                   const recoveredQ = await evaluateQuestionChunk({
                     subQuestion: targetSubQ,

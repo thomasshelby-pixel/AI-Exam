@@ -234,9 +234,11 @@ export function extractLockedQuestionSlice(
   }
 
   const num = parseInt(qNum, 10);
-  const isSectionB = num >= 5 && num <= 8; // In CA Inter Taxation, Q5 to Q8 belong to Section B (GST)
-
   const { sectionA, sectionB } = splitIntoSections(docText);
+  // Q5-Q8 restart under Section B only for Taxation papers. Other CA papers
+  // (e.g. Advanced Accounting) also number descriptive questions 5-8.
+  const isTaxationMaterial = /income\s*tax\s+law|goods\s+and\s+services\s+tax|\bGST\b/i.test(docText);
+  const isSectionB = isTaxationMaterial && num >= 5 && num <= 8;
   let targetText = docText;
   if (!isFallback) {
     if (sectionB && isSectionB) {
@@ -249,7 +251,7 @@ export function extractLockedQuestionSlice(
   // Descriptive Q1-Q8 answers commonly sit under "Division B" while the
   // preceding "Division A" contains a separate MCQ numbering sequence.
   // Search the descriptive division first to avoid crossing those identities.
-  if (!isFallback && subQ && subQ.toUpperCase() !== 'MCQ') {
+  if (!isFallback && (!subQ || subQ.toUpperCase() !== 'MCQ')) {
     const divisionBIndex = targetText.search(/\bDivision\s*B\b/i);
     if (divisionBIndex >= 0) targetText = targetText.slice(divisionBIndex);
   }
@@ -311,13 +313,18 @@ export function extractLockedQuestionSlice(
     } else {
       // Section A questions (Q1 to Q4)
       if (qNum === '1') {
+        // Generic Division B Q1 heading for non-Taxation papers (e.g. "1. (a) ...").
+        startRegexes.push(/^\s*1\s*[.)]\s+(?=\S)/i);
         startRegexes.push(/(?:Division\s*B[^\n]*\n)?.*1\.\s+Computation\s+of\s+Total\s+Income\s+of\s+Ms\.\s*Sana/i);
         startRegexes.push(/(?:Question\s*(?:No\.?)?\s*1|Q\.?\s*1|Answer\s*1)\b/i);
         startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
       } else if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
       } else {
-        startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Questions?\\s*${qNum}\\.|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
+        // Division B descriptive answers can restart numbering (e.g. "2. Delta Limited").
+        // Division B is scoped above, so this matcher cannot take Division A MCQ keys.
+        startRegexes.push(new RegExp(String.raw`^\s*${qNum}\s*[.)]\s+(?=\S)`, 'i'));
+        startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Questions?\\s*${qNum}\\.|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum})\\b`, 'i'));
       }
     }
   } else {

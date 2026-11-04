@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { extractLockedQuestionSlice, lockQuestionReference } from '../services/questionReferenceLock.js';
+import { resolveContextualQuestionIdentity } from '../services/answerSheetCoverageService.js';
 
 // Minimized structure from the uploaded Model Test Paper 1 Suggested Answers.
 // Division A is intentionally separate; descriptive answers sit under Division B.
@@ -52,6 +53,48 @@ assert.doesNotMatch(q1c.snippet, /Delta Limited/i);
 const falseQ6d = extractLockedQuestionSlice(suggestedAnswers, '6', 'd', 'SA');
 assert.equal(falseQ6d.found, false, 'Q6(d) must not borrow the unrelated Q2(d) short-term provision line');
 assert.equal(falseQ6d.snippet, '');
+
+// Division A MCQ and Division B descriptive questions restart numbering.
+const q1Parent = extractLockedQuestionSlice(suggestedAnswers, '1', undefined, 'SA');
+assert.equal(q1Parent.found, true, 'Top-level Q1 must lock to Division B, not the MCQ key');
+assert.match(q1Parent.snippet, /AS 13/i);
+assert.doesNotMatch(q1Parent.snippet, /\(i\)\s*\(a\)/i);
+
+const q2Parent = extractLockedQuestionSlice(suggestedAnswers, '2', undefined, 'SA');
+assert.equal(q2Parent.found, true, 'Top-level Q2 must lock to Division B');
+assert.match(q2Parent.snippet, /Delta Limited/i);
+assert.match(q2Parent.snippet, /Balance Sheet/i);
+assert.doesNotMatch(q2Parent.snippet, /\(i\)\s*\(a\)/i);
+
+const q4Parent = extractLockedQuestionSlice(suggestedAnswers, '4', undefined, 'SA');
+assert.equal(q4Parent.found, true, 'Top-level Q4 must lock to the business-purchase answer');
+assert.match(q4Parent.snippet, /In the Books of Hari Ltd/i);
+assert.doesNotMatch(q4Parent.snippet, /^4\.\s*\(b\)/m);
+
+const q5Parent = extractLockedQuestionSlice(suggestedAnswers, '5', undefined, 'SA');
+assert.equal(q5Parent.found, true, 'Advanced Accounting Q5 must not be treated as Taxation Section B');
+assert.match(q5Parent.snippet, /Consolidated Balance Sheet/i);
+assert.doesNotMatch(q5Parent.snippet, /^5\.\s*\(b\)/m);
+
+// Parent-level continuation is retained even when the paper inventory only has child leaves.
+// It stays non-scorable until an authoritative child/mark allocation is found.
+const q2Continuation = resolveContextualQuestionIdentity({
+  isContinuation: true,
+  previousActiveQuestion: 'Q2',
+  paperSubQuestions: [
+    { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 0, compulsory: false, isMcq: false, section: 'A' },
+    { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 0, compulsory: false, isMcq: false, section: 'A' },
+  ],
+});
+assert.equal(q2Continuation.canonicalId, 'Q2');
+assert.equal(q2Continuation.requiresReview, false);
+
+const unanchoredContinuation = resolveContextualQuestionIdentity({
+  isContinuation: true,
+  paperSubQuestions: [],
+});
+assert.equal(unanchoredContinuation.canonicalId, undefined);
+assert.equal(unanchoredContinuation.requiresReview, true);
 
 const lockedQ1c = lockQuestionReference('Q1(c)', '', suggestedAnswers, '');
 assert.equal(lockedQ1c.suggestedAnswerSlice.found, true);
