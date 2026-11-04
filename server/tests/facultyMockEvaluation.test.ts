@@ -141,6 +141,94 @@ try {
   assert.equal(lockedFacultyReference.referenceTrace.facultyMockTestId, testId, 'Question-level trace retains the exact selected mock ID');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
 
+  // Model Test Paper uses this same question-level reference lock while
+  // preserving the selected test number and the exact uploaded official files.
+  const modelQuestionPaperText = [
+    'CA Intermediate Advanced Accounting — Model Test Paper 2',
+    'Maximum Marks: 100',
+    'Question 1. Prepare journal entries and supporting working notes.',
+  ].join('\\n');
+  const modelSuggestedAnswersText = [
+    'Suggested Answers — Model Test Paper 2',
+    'Question 1. Correct treatment, journal entries and calculations are given below.',
+  ].join('\\n');
+  const modelMarkingSchemeText = [
+    'Question 1: 5 marks for treatment, 3 marks for workings and 2 marks for conclusion.',
+  ].join('\\n');
+  const selectedModelTest = {
+    id: `model_test_2_${suffix}`,
+    question_paper_title: 'CA Intermediate Advanced Accounting MTP 2',
+    level: 'INTERMEDIATE',
+    subject_key: 'inter_advanced_accounting',
+    subject_name: 'Advanced Accounting',
+    paper: 'Paper 1',
+    attempt: 'All',
+    syllabus_version: 'New Scheme 2024',
+    material_type: 'MODEL_TEST_PAPER',
+    model_test_number: 2,
+    source_format: 'SEPARATE',
+    version: '1.0',
+    status: 'ACTIVE',
+    admin_approved: 1,
+    file_id: 'model-test-2-question-paper',
+    question_material_id: 'model-test-2-question-paper',
+    suggested_answer_material_id: 'model-test-2-suggested-answers',
+    marking_scheme_material_id: 'model-test-2-marking-scheme',
+    official_max_marks: 100,
+    question_paper_text: modelQuestionPaperText,
+    suggested_answers_text: modelSuggestedAnswersText,
+    marking_scheme_text: modelMarkingSchemeText,
+  };
+  const verifiedModelTest = enforceMaterialHardGate({
+    evaluationId: `eval_model_test_${suffix}`,
+    level: 'INTERMEDIATE',
+    subjectKey: 'inter_advanced_accounting',
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    attempt: 'All',
+    materialType: 'MODEL_TEST_PAPER',
+    modelTestNumber: 2,
+    preloadedMaterial: selectedModelTest,
+  });
+  assert.equal(verifiedModelTest.id, selectedModelTest.id, 'Selected Model Test 2 material is retained');
+  assert.equal(verifiedModelTest.modelTestNumber, 2, 'Model Test number is retained by the verified reference package');
+  assert.equal(verifiedModelTest.questionMaterialId, 'model-test-2-question-paper', 'Model Test QP file ID is retained');
+  assert.equal(verifiedModelTest.suggestedAnswerMaterialId, 'model-test-2-suggested-answers', 'Model Test suggested-answer source ID is retained');
+  assert.throws(
+    () => enforceMaterialHardGate({
+      evaluationId: `eval_wrong_model_test_${suffix}`,
+      level: 'INTERMEDIATE',
+      subjectKey: 'inter_advanced_accounting',
+      subjectName: 'Advanced Accounting',
+      paper: 'Paper 1',
+      attempt: 'All',
+      materialType: 'MODEL_TEST_PAPER',
+      modelTestNumber: 1,
+      preloadedMaterial: selectedModelTest,
+    }),
+    /MODEL_TEST_NUMBER_MISMATCH/,
+    'A Model Test 2 reference can never be reused for a Model Test 1 selection',
+  );
+
+  const lockedModelTestReference = extractRelevantReferenceSnippets(
+    'Q1',
+    modelQuestionPaperText,
+    modelSuggestedAnswersText,
+    modelMarkingSchemeText,
+    {
+      qpMaterialId: verifiedModelTest.questionMaterialId,
+      saMaterialId: verifiedModelTest.suggestedAnswerMaterialId,
+      msMaterialId: verifiedModelTest.markingSchemeMaterialId,
+      materialVersions: verifiedModelTest.version,
+      sourceType: 'GLOBAL',
+      materialType: 'MODEL_TEST_PAPER',
+      modelTestNumber: 2,
+      materialTitle: verifiedModelTest.questionPaperTitle,
+    },
+  );
+  assert.equal(lockedModelTestReference.referenceTrace.modelTestNumber, 2, 'Question-level Model Test trace preserves the chosen test number');
+  assert.equal(lockedModelTestReference.referenceTrace.suggestedAnswerMaterialId, 'model-test-2-suggested-answers', 'Question-level Model Test trace preserves its exact answer material ID');
+
   assert.throws(() => enforceMaterialHardGate({
     evaluationId: 'eval_unlocked_' + suffix,
     level: 'INTERMEDIATE',
