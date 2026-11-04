@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import { paymentOrderRateLimiter } from '../utils/rateLimiter.js';
 import { db } from '../db.js';
+import { getFirestoreDoc } from '../services/firestoreDbService.js';
+import { getFacultyMockAccessState } from '../services/facultyMockAccessService.js';
 import { checkComboPurchaseCourseAccess } from '../services/studentCourseAccessService.js';
 import {
   createRazorpayOrder,
@@ -20,7 +22,45 @@ router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (
     const { purchaseType, courseLevel } = req.body;
 
     let orderResult;
-    if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
+    if (purchaseType === 'FACULTY_MOCK') {
+      if (req.user!.role !== 'STUDENT') {
+        return res.status(403).json({ error: 'Faculty mock repeat copies are available to student accounts only.' });
+      }
+      const testId = String(req.body?.facultyMockTestId || '').trim();
+      if (!testId) return res.status(400).json({ error: 'Select a faculty mock before purchasing a repeat copy.' });
+      const test = await getFirestoreDoc<any>('faculty_mock_tests', testId)
+        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+      if (!test || String(test.status || '').toUpperCase() !== 'PUBLISHED') {
+        return res.status(404).json({ error: 'This faculty mock is no longer published.' });
+      }
+      const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(studentId) as { ca_level?: string } | undefined;
+      if (String(profile?.ca_level || '').trim().toUpperCase() !== String(test.course_level || '').trim().toUpperCase()) {
+        return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.' });
+      }
+      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(test.faculty_id))
+        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(test.faculty_id) as any;
+      if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+        return res.status(404).json({ error: 'This faculty is not currently active.' });
+      }
+      const access = await getFacultyMockAccessState(studentId, String(test.faculty_id), testId);
+      if (access.freeCopyAvailable) {
+        return res.status(409).json({ error: 'Your first copy of this mock is free. Submit it directly without making a payment.' });
+      }
+      if (access.paidCopiesRemaining > 0) {
+        return res.status(409).json({ error: 'You already have a paid repeat copy for this mock. Submit your answer sheet directly.' });
+      }
+      if (!access.repeatPriceINR) {
+        return res.status(503).json({ error: 'Faculty mock repeat-copy pricing has not been configured by the administrator yet.' });
+      }
+      orderResult = await createRazorpayOrder({
+        studentId,
+        purchaseType: 'FACULTY_MOCK',
+        quantity: 1,
+        facultyMockTestId: testId,
+        facultyMockFacultyId: String(test.faculty_id),
+        facultyMockPriceINR: access.repeatPriceINR,
+      });
+    } else if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
       if (req.user!.role !== 'STUDENT') {
         return res.status(403).json({
           error: 'Course-specific student combo plans are available to student accounts only.',
@@ -83,7 +123,7 @@ router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (
 });
 
 // Verify Payment and Fulfill Credits Idempotently
-router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
@@ -92,7 +132,7 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Missing required payment verification parameters.' });
     }
 
-    const result = verifyAndFulfillPayment({
+    const result = await verifyAndFulfillPayment({
       studentId,
       razorpayOrderId,
       razorpayPaymentId,
@@ -102,7 +142,7 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
     return res.json({
       success: true,
       creditsAdded: result.creditsAdded,
-      message: 'Payment verified successfully and evaluation credits have been added.',
+      message: result.creditsAdded > 0 ? 'Payment verified successfully and evaluation credits have been added.' : 'Payment verified successfully.',
     });
   } catch (error: unknown) {
     console.error('Verify payment error:', error);
