@@ -675,6 +675,8 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       subjectName,
       attempt,
       paper,
+      evaluationSource,
+      facultyMockTestId,
       fileBase64,
       mimeType,
       filename,
@@ -710,23 +712,148 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       return res.status(400).json({ success: false, code: 'MODEL_TEST_NUMBER_REQUIRED', error: `Please select a Model Test Paper number from 1 to ${maxModelTestNumber}.` });
     }
 
-    const referenceMaterial = await findAuthoritativeMaterialWithFallback({
-      level,
-      subjectKey,
-      attempt: materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt,
-      paper,
-      materialType,
-      mtpSeries: parsedMtpSeries,
-      modelTestNumber: parsedModelTestNumber,
-      minTextLength: 20,
-      isAdminApprovedRequired: true,
-    });
+    let referenceMaterial: VerifiedReferencePackage | null = null;
+    const isFacultyMockPreflight = evaluationSource === 'FACULTY_MOCK';
+    if (isFacultyMockPreflight) {
+      const selectedMockId = String(facultyMockTestId || '').trim();
+      if (!selectedMockId || materialType !== 'FACULTY_MOCK_TEST') {
+        return res.status(400).json({
+          success: false,
+          code: 'FACULTY_MOCK_TEST_REQUIRED',
+          error: 'Select the exact published Faculty Mock before running preflight.',
+        });
+      }
+
+      const mock = await getFirestoreDoc<any>('faculty_mock_tests', selectedMockId)
+        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedMockId) as any;
+      if (!mock || String(mock.status || '').toUpperCase() !== 'PUBLISHED') {
+        return res.status(404).json({ success: false, code: 'FACULTY_MOCK_NOT_PUBLISHED', error: 'The selected Faculty Mock is no longer published.' });
+      }
+      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(mock.faculty_id))
+        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(mock.faculty_id) as any;
+      if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+        return res.status(404).json({ success: false, code: 'FACULTY_MOCK_FACULTY_INACTIVE', error: 'The selected faculty is not active.' });
+      }
+
+      const matchesSelection =
+        String(mock.course_level || '').trim().toUpperCase() === String(level || '').trim().toUpperCase() &&
+        String(mock.subject_key || '').trim() === String(subjectKey || '').trim() &&
+        String(mock.subject_name || '').trim().toUpperCase() === String(subjectName || '').trim().toUpperCase() &&
+        String(mock.attempt || '').trim() === String(attempt || '').trim() &&
+        String(mock.paper || 'Paper 1').trim() === String(paper || 'Paper 1').trim();
+      if (!matchesSelection) {
+        return res.status(403).json({
+          success: false,
+          code: 'FACULTY_MOCK_SELECTION_MISMATCH',
+          error: 'The selected Faculty Mock does not match the requested course, subject, attempt and paper.',
+        });
+      }
+      if (String(mock.question_paper_text || '').trim().length < 50 ||
+          String(mock.suggested_answers_text || '').trim().length < 50 ||
+          String(mock.marking_scheme_text || '').trim().length < 10) {
+        return res.status(422).json({
+          success: false,
+          code: 'FACULTY_MOCK_REFERENCE_INCOMPLETE',
+          error: 'The selected Faculty Mock has an incomplete private TXT reference.',
+        });
+      }
+
+      const facultyMockPreloadedMaterial = {
+        id: mock.id,
+        question_paper_title: mock.title || `${faculty.name} Mock ${mock.mock_number}`,
+        level: mock.course_level,
+        subject_key: mock.subject_key,
+        subject_name: mock.subject_name,
+        paper: mock.paper || 'Paper 1',
+        attempt: mock.attempt,
+        syllabus_version: mock.syllabus_version || 'New Scheme 2024',
+        material_type: 'FACULTY_MOCK_TEST',
+        source_format: 'SEPARATE',
+        version: '1.0',
+        status: 'ACTIVE',
+        admin_approved: 1,
+        file_id: mock.suggested_answer_file_id,
+        question_material_id: mock.suggested_answer_file_id,
+        suggested_answer_material_id: mock.suggested_answer_file_id,
+        marking_scheme_material_id: mock.suggested_answer_file_id,
+        model_test_number: null,
+        official_max_marks: Number(mock.maximum_marks || 100),
+        question_paper_text: mock.question_paper_text,
+        suggested_answers_text: mock.suggested_answers_text,
+        marking_scheme_text: mock.marking_scheme_text || '',
+      };
+
+      try {
+        referenceMaterial = enforceMaterialHardGate({
+          evaluationId: `preflight_${crypto.randomBytes(6).toString('hex')}`,
+          level,
+          subjectKey,
+          subjectName,
+          paper,
+          attempt,
+          materialType: 'FACULTY_MOCK_TEST',
+          evaluationSource: 'FACULTY_MOCK',
+          preloadedMaterial: facultyMockPreloadedMaterial,
+        });
+      } catch (gateError: any) {
+        return res.status(422).json({
+          success: false,
+          code: 'FACULTY_MOCK_REFERENCE_INVALID',
+          error: gateError?.message || 'The selected Faculty Mock reference failed verification.',
+        });
+      }
+    } else {
+      const rawPreflightMaterial = await findAuthoritativeMaterialWithFallback({
+        level,
+        subjectKey,
+        attempt: materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt,
+        paper,
+        materialType,
+        mtpSeries: parsedMtpSeries,
+        modelTestNumber: parsedModelTestNumber,
+        minTextLength: 20,
+        isAdminApprovedRequired: true,
+      });
+
+      if (rawPreflightMaterial && evaluationSource !== 'INSTITUTE') {
+        try {
+          // Apply the same MTP / PYQ / Model Test material hard-gate used by the
+          // actual submission path, including exact selected Model Test number.
+          referenceMaterial = enforceMaterialHardGate({
+            evaluationId: `preflight_${crypto.randomBytes(6).toString('hex')}`,
+            level,
+            subjectKey,
+            subjectName,
+            paper,
+            attempt: evaluationMaterialAttempt,
+            materialType,
+            mtpSeries: parsedMtpSeries,
+            modelTestNumber: parsedModelTestNumber,
+            sourceFormat: req.body.sourceFormat || req.body.source_format,
+            evaluationSource: 'PUBLIC',
+            preloadedMaterial: rawPreflightMaterial,
+          });
+        } catch (gateError: any) {
+          return res.status(422).json({
+            success: false,
+            code: 'REFERENCE_MATERIAL_GATE_FAILED',
+            error: gateError?.message || 'The selected evaluation material failed verification.',
+          });
+        }
+      } else if (rawPreflightMaterial) {
+        // Preserve the existing institute preflight lookup behavior; its actual
+        // submit route applies the institute enrollment and material hard-gates.
+        referenceMaterial = rawPreflightMaterial as any;
+      }
+    }
 
     if (!referenceMaterial) {
       return res.status(422).json({
         success: false,
         code: 'MARKING_SCHEME_MISSING',
-        error: `ICAI Suggested Answers and Marking Scheme for ${level} – ${subjectName || subjectKey} (${attempt || 'Current Attempt'}) are not uploaded or verified yet. Administrator verification is required before evaluation can proceed.`,
+        error: isFacultyMockPreflight
+          ? 'The selected Faculty Mock reference is not available or verified.'
+          : `ICAI Suggested Answers and Marking Scheme for ${level} – ${subjectName || subjectKey} (${attempt || 'Current Attempt'}) are not uploaded or verified yet. Administrator verification is required before evaluation can proceed.`,
       });
     }
 
@@ -869,10 +996,10 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       preflightAudit: {
         documentLegibility,
         pageCount,
-        questionPaperTitle: referenceMaterial.question_paper_title || `${level} ${subjectName}`,
-        syllabusVersion: referenceMaterial.syllabus_version || 'New Scheme 2024',
-        attemptVerified: referenceMaterial.attempt || attempt || 'May 2026',
-        materialSource: 'VERIFIED_ICAI_ADMIN_APPROVED',
+        questionPaperTitle: referenceMaterial.questionPaperTitle || (referenceMaterial as any).question_paper_title || `${level} ${subjectName}`,
+        syllabusVersion: referenceMaterial.syllabusVersion || (referenceMaterial as any).syllabus_version || 'New Scheme 2024',
+        attemptVerified: (referenceMaterial as any).attempt || attempt || 'May 2026',
+        materialSource: isFacultyMockPreflight ? 'FACULTY_MOCK_EXACT_PRIVATE_REFERENCE' : 'VERIFIED_ICAI_ADMIN_APPROVED',
       },
       evaluationPlan: {
         verifiedRubric,
@@ -1063,7 +1190,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       evaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
     const isFacultyMockMode = requestedEvalSource === 'FACULTY_MOCK';
     const isInstituteMode = requestedEvalSource === 'INSTITUTE';
-    const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+    const materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK' = isFacultyMockMode ? 'FACULTY_MOCK' : isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
     let resolvedSponsoringInstituteId: string | null = null;
     let resolvedSponsoringEnrollmentId: string | null = null;
@@ -1145,6 +1272,10 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       // exact selected mock. The student never submits or receives the TXT.
       preloadedMat = {
         id: facultyMockRecord.id,
+        file_id: facultyMockRecord.suggested_answer_file_id,
+        question_material_id: facultyMockRecord.suggested_answer_file_id,
+        suggested_answer_material_id: facultyMockRecord.suggested_answer_file_id,
+        marking_scheme_material_id: facultyMockRecord.suggested_answer_file_id,
         question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
         level: storedLevel,
         subject_key: storedSubjectKey,
@@ -1657,6 +1788,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       materialType: materialType as MaterialType,
       mtpSeries: (parsedMtpSeries as 1 | 2) || undefined,
       modelTestNumber: parsedModelTestNumber,
+      facultyMockTestId: isFacultyMockMode ? String(facultyMockRecord.id) : undefined,
       modelGroup: modelGroup || undefined,
       subjectKey,
       subjectName,
@@ -1964,7 +2096,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
         resultJson = JSON.parse(record.result_json);
         if (resultJson) {
           resultJson.evaluationSource = (record.evaluation_source as any) || (record.institute_id ? 'INSTITUTE' : 'PUBLIC');
-          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
+          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
           resultJson.sponsoringInstituteName = sponsoringInstituteName || instituteName || undefined;
           resultJson.entitlementSource = (record.entitlement_source as any) || undefined;
           resultJson.instituteName = instituteName || undefined;
@@ -2220,6 +2352,18 @@ router.get(
       const evalDisplayId = record.display_id || record.id;
       const studentCode = getOrAssignStudentCode(record.student_id);
 
+      const adminReviewPending =
+        ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(String(record.admin_review_status || '').trim().toUpperCase()) ||
+        String(record.status || '').trim().toUpperCase() === 'NEEDS_REVIEW' ||
+        String(record.certification_status || '').trim().toUpperCase() === 'REVIEW_REQUIRED';
+      if (adminReviewPending) {
+        return res.status(409).json({
+          error: 'This evaluation is held for examiner review. No final checked copy is available until the review is finalized.',
+          code: 'EVALUATION_NEEDS_REVIEW',
+          status: 'NEEDS_REVIEW',
+        });
+      }
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
       const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
 
@@ -2362,6 +2506,11 @@ router.get(
           percentage: record.percentage,
           grade: record.grade,
           createdAt: record.created_at,
+          evaluationStatus: record.status,
+          adminReviewStatus: record.admin_review_status,
+          certificationStatus: record.certification_status,
+          validationStatus: resultJson?.validationStatus,
+          isTechnicalReviewState: resultJson?.isTechnicalReviewState,
           evaluationSource: record.evaluation_source || (record.institute_id ? 'INSTITUTE' : 'PUBLIC'),
           instituteName: instName,
           batchName: bName,
@@ -2477,8 +2626,20 @@ router.get(
       const evalDisplayId = record.display_id || record.id;
       const studentCode = getOrAssignStudentCode(record.student_id);
 
+      const adminReviewPending =
+        ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(String(record.admin_review_status || '').trim().toUpperCase()) ||
+        String(record.status || '').trim().toUpperCase() === 'NEEDS_REVIEW' ||
+        String(record.certification_status || '').trim().toUpperCase() === 'REVIEW_REQUIRED';
+      if (adminReviewPending && !['SUPER_ADMIN', 'ADMIN'].includes(roleStr)) {
+        return res.status(409).json({
+          error: 'This evaluation is held for examiner review. No final result or report is available until the review is finalized.',
+          code: 'EVALUATION_NEEDS_REVIEW',
+          status: 'NEEDS_REVIEW',
+        });
+      }
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
-      const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
+      const isAlreadyCertified = !adminReviewPending && (record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1);
 
       if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
         const verifyRes = await verifyEvaluationConsistency(realEvaluationId);
@@ -2587,6 +2748,11 @@ router.get(
           percentage: record.percentage,
           grade: record.grade,
           createdAt: record.created_at,
+          evaluationStatus: record.status,
+          adminReviewStatus: record.admin_review_status,
+          certificationStatus: record.certification_status,
+          validationStatus: resultJson?.validationStatus,
+          isTechnicalReviewState: resultJson?.isTechnicalReviewState,
           evaluationSource: record.evaluation_source || (record.institute_id ? 'INSTITUTE' : 'PUBLIC'),
           instituteName: reportInstName,
           batchName: reportBName,

@@ -79,7 +79,7 @@ import fs from 'node:fs';
 import { sendRecheckCompletedEmail, sendCheckedCopyEmail, getEmailAuditLogs } from '../services/emailService.js';
 import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../services/pdfCheckedCopyService.js';
 import { enqueueEvaluation, isEvaluationJobActive } from '../services/asyncEvaluationService.js';
-import { generateDetailedReportPdf } from '../services/detailedReportPdfService.js';
+import { generateDetailedReportPdf, isEvaluationPendingReview } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
@@ -4742,6 +4742,10 @@ router.get('/evaluations/:id/artifacts/checked-copy', async (req: AuthRequest, r
           percentage: evalRecord.percentage,
           grade: evalRecord.grade,
           createdAt: evalRecord.created_at,
+          evaluationStatus: evalRecord.status,
+          certificationStatus: evalRecord.certification_status,
+          validationStatus: rJson?.validationStatus,
+          isTechnicalReviewState: rJson?.isTechnicalReviewState,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson, origBuf);
 
@@ -4780,38 +4784,52 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
     const requestedVersion = (req.query.version as string || '').toLowerCase();
     const uploadsDir = path.join(process.cwd(), 'uploads');
 
+    const currentEvalRecord = db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
+    const currentEvalJson = currentEvalRecord?.result_json ? (() => { try { return JSON.parse(currentEvalRecord.result_json); } catch { return null; } })() : null;
+    const forceReviewReport = Boolean(currentEvalRecord && isEvaluationPendingReview({
+      evaluationStatus: currentEvalRecord.status,
+      adminReviewStatus: currentEvalRecord.admin_review_status,
+      certificationStatus: currentEvalRecord.certification_status,
+      grade: currentEvalRecord.grade,
+    }, currentEvalJson));
+
     let buffer: Buffer | null = null;
 
-    if (requestedVersion === 'v1') {
-      const v1Path = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
-      if (fs.existsSync(v1Path)) {
-        buffer = fs.readFileSync(v1Path);
-      } else {
-        const p = await getPersistentFile(`${evaluationId}_report_v1`, `${evaluationId}_report_v1.pdf`);
-        if (p?.buffer) buffer = p.buffer;
+    if (!forceReviewReport) {
+  
+      if (requestedVersion === 'v1') {
+        const v1Path = path.join(uploadsDir, `${evaluationId}_report_v1.pdf`);
+        if (fs.existsSync(v1Path)) {
+          buffer = fs.readFileSync(v1Path);
+        } else {
+          const p = await getPersistentFile(`${evaluationId}_report_v1`, `${evaluationId}_report_v1.pdf`);
+          if (p?.buffer) buffer = p.buffer;
+        }
+      } else if (requestedVersion === 'v2') {
+        const v2Path = path.join(uploadsDir, `${evaluationId}_report_v2.pdf`);
+        if (fs.existsSync(v2Path)) {
+          buffer = fs.readFileSync(v2Path);
+        } else {
+          const p = await getPersistentFile(`${evaluationId}_report_v2`, `${evaluationId}_report_v2.pdf`);
+          if (p?.buffer) buffer = p.buffer;
+        }
       }
-    } else if (requestedVersion === 'v2') {
-      const v2Path = path.join(uploadsDir, `${evaluationId}_report_v2.pdf`);
-      if (fs.existsSync(v2Path)) {
-        buffer = fs.readFileSync(v2Path);
-      } else {
-        const p = await getPersistentFile(`${evaluationId}_report_v2`, `${evaluationId}_report_v2.pdf`);
-        if (p?.buffer) buffer = p.buffer;
+  
+      if (!buffer) {
+        const activePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+        if (fs.existsSync(activePath)) {
+          buffer = fs.readFileSync(activePath);
+        } else {
+          const p = await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`);
+          if (p?.buffer) buffer = p.buffer;
+        }
       }
+  
+  
     }
 
     if (!buffer) {
-      const activePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
-      if (fs.existsSync(activePath)) {
-        buffer = fs.readFileSync(activePath);
-      } else {
-        const p = await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`);
-        if (p?.buffer) buffer = p.buffer;
-      }
-    }
-
-    if (!buffer) {
-      const evalRecord = db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
+      const evalRecord = currentEvalRecord || db.prepare('SELECT e.*, u.full_name as student_name FROM evaluations e JOIN users u ON u.id = e.student_id WHERE e.id = ?').get(evaluationId) as any;
       if (evalRecord && evalRecord.result_json) {
         const rJson = JSON.parse(evalRecord.result_json);
         buffer = await generateDetailedReportPdf({
@@ -4827,6 +4845,11 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
           percentage: evalRecord.percentage,
           grade: evalRecord.grade,
           createdAt: evalRecord.created_at,
+          evaluationStatus: evalRecord.status,
+          adminReviewStatus: evalRecord.admin_review_status,
+          certificationStatus: evalRecord.certification_status,
+          validationStatus: rJson?.validationStatus,
+          isTechnicalReviewState: rJson?.isTechnicalReviewState,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson);
 
