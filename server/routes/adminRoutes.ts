@@ -4788,6 +4788,7 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
     const currentEvalJson = currentEvalRecord?.result_json ? (() => { try { return JSON.parse(currentEvalRecord.result_json); } catch { return null; } })() : null;
     const forceReviewReport = Boolean(currentEvalRecord && isEvaluationPendingReview({
       evaluationStatus: currentEvalRecord.status,
+      adminReviewStatus: currentEvalRecord.admin_review_status,
       certificationStatus: currentEvalRecord.certification_status,
       grade: currentEvalRecord.grade,
     }, currentEvalJson));
@@ -4845,6 +4846,7 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
           grade: evalRecord.grade,
           createdAt: evalRecord.created_at,
           evaluationStatus: evalRecord.status,
+          adminReviewStatus: evalRecord.admin_review_status,
           certificationStatus: evalRecord.certification_status,
           validationStatus: rJson?.validationStatus,
           isTechnicalReviewState: rJson?.isTechnicalReviewState,
