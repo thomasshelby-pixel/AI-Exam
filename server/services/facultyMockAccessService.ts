@@ -131,13 +131,13 @@ export async function consumeFacultyMockCopy(input: {
 }): Promise<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const claimId = stableId(`${input.studentId}:${input.testId}:${input.evaluationId}`);
-  const result = await runFirestoreTransaction(async (transaction) => {
+  const result = await runFirestoreTransaction<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }>(async (transaction) => {
     const claim = await transaction.get(EVALUATION_CLAIMS_COLLECTION, claimId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
     const access = accessSnapshot.exists ? (accessSnapshot.data() || {}) : {};
     const paidBalance = Math.max(0, Math.floor(Number(access.paid_copies_remaining) || 0));
     if (claim.exists) {
-      const source = String(claim.data()?.source || 'FREE_FIRST_COPY') === 'PAID_REPEAT_COPY' ? 'PAID_REPEAT_COPY' : 'FREE_FIRST_COPY';
+      const source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY' = String(claim.data()?.source || 'FREE_FIRST_COPY') === 'PAID_REPEAT_COPY' ? 'PAID_REPEAT_COPY' : 'FREE_FIRST_COPY';
       return { source, paidCopiesRemaining: paidBalance };
     }
 
