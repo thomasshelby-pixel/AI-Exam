@@ -276,14 +276,17 @@ export function shouldServeOtaUpdate(
  * paths from being lost during a permissions or transient storage failure.
  */
 export async function deletePreviousApkReleases(): Promise<{ deletedCount: number; freedBytes: number; skippedCount: number }> {
-  const [currentApk, releases] = await Promise.all([
-    getPublishedAppRelease('APK'),
+  const [currentChannel, releases] = await Promise.all([
+    getFirestoreDoc<Record<string, any>>(CHANNELS_COLLECTION, 'android_current', { failOnError: true }),
     getAllFirestoreDocs<AppUpdateRelease>(RELEASES_COLLECTION, { failOnError: true }),
   ]);
+  // Protect the release referenced by the channel even if its metadata status is
+  // temporarily inconsistent; the channel pointer is the source of truth for "live".
+  const currentReleaseId = String(currentChannel?.releaseId || '');
   const candidates = releases.filter((release) =>
     release.kind === 'APK' &&
     release.status === 'ARCHIVED' &&
-    release.id !== currentApk?.id
+    release.id !== currentReleaseId
   );
 
   let deletedCount = 0;
