@@ -147,14 +147,14 @@ try {
     'CA Intermediate Advanced Accounting — Model Test Paper 2',
     'Maximum Marks: 100',
     'Question 1. Prepare journal entries and supporting working notes.',
-  ].join('\\n');
+  ].join('\n');
   const modelSuggestedAnswersText = [
     'Suggested Answers — Model Test Paper 2',
     'Question 1. Correct treatment, journal entries and calculations are given below.',
-  ].join('\\n');
+  ].join('\n');
   const modelMarkingSchemeText = [
     'Question 1: 5 marks for treatment, 3 marks for workings and 2 marks for conclusion.',
-  ].join('\\n');
+  ].join('\n');
   const selectedModelTest = {
     id: `model_test_2_${suffix}`,
     question_paper_title: 'CA Intermediate Advanced Accounting MTP 2',
