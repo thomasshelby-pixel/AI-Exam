@@ -5,6 +5,12 @@ import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
 import { Download, UploadCloud, CheckCircle2, AlertCircle, RefreshCw, GraduationCap, BookOpen, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CALevel } from '../../types/index.js';
+import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
+
+type FacultyMockAccess = { freeCopyAvailable: boolean; paidCopiesRemaining: number; repeatPriceINR: number | null };
+interface RazorpayResponse { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
+interface RazorpayInstance { open: () => void; on: (event: string, callback: (response: unknown) => void) => void }
+declare global { interface Window { Razorpay?: new (options: Record<string, unknown>) => RazorpayInstance } }
 
 type Faculty = { id: string; name: string; description?: string | null; attempts: string[] };
 type FacultyMockTest = {
@@ -34,6 +40,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [loadingFile, setLoadingFile] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checkingDisclaimer, setCheckingDisclaimer] = useState(false);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [accessState, setAccessState] = useState<FacultyMockAccess | null>(null);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -67,6 +76,24 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   };
 
   useEffect(() => { void loadCatalogue(); }, [user?.id]);
+
+  useEffect(() => {
+    if (!selectedTest?.id) {
+      setAccessState(null);
+      return;
+    }
+    let active = true;
+    setAccessLoading(true);
+    setAccessState(null);
+    apiRequest<FacultyMockAccess>(`/api/student/faculty-mocks/tests/${encodeURIComponent(selectedTest.id)}/access`)
+      .then((state) => { if (active) setAccessState(state); })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : 'Could not load this mock’s free/paid copy status.');
+      })
+      .finally(() => { if (active) setAccessLoading(false); });
+    return () => { active = false; };
+  }, [selectedTest?.id]);
+
 
   useEffect(() => {
     if (!availableAttempts.includes(attempt)) setAttempt(availableAttempts[0] || '');
@@ -171,6 +198,85 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     }
   };
 
+  const submitWithCurrentEntitlement = async () => {
+    if (!selectedTest) return;
+    let current = accessState;
+    if (!current) {
+      current = await apiRequest<FacultyMockAccess>(`/api/student/faculty-mocks/tests/${encodeURIComponent(selectedTest.id)}/access`);
+      setAccessState(current);
+    }
+    if (current.freeCopyAvailable || current.paidCopiesRemaining > 0) {
+      await submitAnswerSheet();
+      return;
+    }
+    if (!current.repeatPriceINR) {
+      setError('The administrator has not configured the repeat-copy price yet. Please contact support.');
+      return;
+    }
+
+    setPaymentLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        isConfigured: boolean;
+        order: { razorpayOrderId: string; amountPaise: number; amountINR: number; currency: string; keyId: string; description?: string };
+      }>('/api/payments/create-order', {
+        method: 'POST',
+        body: JSON.stringify({ purchaseType: 'FACULTY_MOCK', facultyMockTestId: selectedTest.id }),
+      });
+      if (!result.isConfigured) {
+        throw new Error('Online payment is not configured right now. Your free/paid copy status has not changed.');
+      }
+      if (!window.Razorpay) {
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) throw new Error('Razorpay checkout could not be loaded. Please retry.');
+      }
+      const order = result.order;
+      const options = {
+        key: order.keyId,
+        amount: order.amountPaise,
+        currency: order.currency,
+        name: 'CA Exam Checker AI',
+        description: order.description || 'Faculty Mock Repeat Copy',
+        order_id: order.razorpayOrderId,
+        prefill: { name: user?.fullName || '', email: user?.email || '', contact: user?.phone || '' },
+        theme: { color: '#2563eb' },
+        modal: { ondismiss: () => setPaymentLoading(false) },
+        handler: async (response: RazorpayResponse) => {
+          try {
+            await apiRequest('/api/payments/verify', {
+              method: 'POST',
+              body: JSON.stringify({
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySignature: response.razorpay_signature,
+              }),
+            });
+            const latest = await apiRequest<FacultyMockAccess>(`/api/student/faculty-mocks/tests/${encodeURIComponent(selectedTest.id)}/access`);
+            setAccessState(latest);
+            setSuccess('Payment verified. Your repeat copy is activated; submitting the answer sheet now.');
+            await submitAnswerSheet();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Payment verification failed. Do not retry payment until you check your payment status.');
+          } finally {
+            setPaymentLoading(false);
+          }
+        },
+      };
+      const checkout = new window.Razorpay(options);
+      checkout.on('payment.failed', () => {
+        setError('Payment was declined or cancelled. No repeat-copy credit was added.');
+        setPaymentLoading(false);
+      });
+      checkout.open();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start repeat-copy payment.');
+      setPaymentLoading(false);
+    }
+  };
+
   const handleSubmitClick = async () => {
     if (!selectedTest || !answerFile) {
       setError('Choose a faculty mock and upload your handwritten answer sheet.');
@@ -181,7 +287,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     try {
       const status = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
       if (!status.acknowledged) setShowDisclaimer(true);
-      else await submitAnswerSheet();
+      else await submitWithCurrentEntitlement();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not verify your evaluation disclaimer.');
     } finally {
@@ -200,8 +306,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         <h1 className="mt-2 text-xl font-black sm:text-2xl">Practice faculty mock papers</h1>
         <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-300">Choose a faculty, attempt, subject and numbered mock. Download the Question Paper, write your answers by hand, then submit the scanned answer sheet for AI evaluation against the faculty's uploaded Suggested Answer and marking reference.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">Free for students</span>
-          <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-2.5 py-1 text-[10px] font-bold text-blue-100">No personal credit deduction</span>
+          <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">1st copy of each mock free</span>
+          <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-2.5 py-1 text-[10px] font-bold text-blue-100">Repeat copies paid separately</span>
         </div>
       </div>
 
@@ -272,10 +378,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               {loadingFile && <p className="mt-2 text-xs text-blue-600">Reading your answer sheet…</p>}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />Faculty mock submissions do not use your personal or purchased evaluation credits.</div>
-                <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer} onClick={() => void handleSubmitClick()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-                  {submitting || checkingDisclaimer ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : 'Submit for AI Evaluation'}
+                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />First copy of each faculty mock is free. Repeat copies are paid separately and never use your regular evaluation credits.</div>
+                <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer || accessLoading || paymentLoading} onClick={() => void handleSubmitClick()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  {submitting || checkingDisclaimer || paymentLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                  {paymentLoading ? 'Payment…' : submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : !accessLoading && accessState && !accessState.freeCopyAvailable && accessState.paidCopiesRemaining === 0 ? (accessState.repeatPriceINR ? 'Pay ₹' + accessState.repeatPriceINR + ' & Evaluate' : 'Repeat price not set') : 'Submit for AI Evaluation'}
                 </button>
               </div>
             </section>
@@ -286,7 +392,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       <DisclaimerModal
         isOpen={showDisclaimer}
         disclaimerVersion="v1.0"
-        onAcknowledged={() => { setShowDisclaimer(false); void submitAnswerSheet(); }}
+        onAcknowledged={() => { setShowDisclaimer(false); void submitWithCurrentEntitlement(); }}
       />
     </div>
   );
