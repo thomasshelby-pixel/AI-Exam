@@ -1152,6 +1152,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               sourceMaterialTitle: params.referenceMaterialTitle || 'Authoritative Suggested Answers',
               sourceMaterialVersion: params.referenceMaterialVersion || 'UNSPECIFIED',
               sourceMaterialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId || 'UNSPECIFIED',
+              sourceType: referenceSourceType,
+              materialType: params.materialType,
+              modelTestNumber: params.modelTestNumber,
+              facultyMockTestId: params.facultyMockTestId,
+              questionPaperMaterialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+              markingSchemeMaterialId: params.markingSchemeMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
               mcqPageNumbers: Object.fromEntries(
                 coverageMap.attemptedQuestions
                   .filter((attempt) => attempt.isMcq && attempt.pages.length > 0)
