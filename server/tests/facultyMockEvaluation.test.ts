@@ -39,7 +39,7 @@ assert.equal(parsedReference.questionPaperText, questionPaperText, 'Parser separ
 assert.equal(parsedReference.suggestedAnswersText, suggestedAnswersText, 'Parser separates Suggested Answers from the single TXT');
 assert.equal(parsedReference.markingSchemeText, markingSchemeText, 'Parser separates Marking Scheme from the single TXT');
 assert.throws(
-  () => parseFacultyMockEvaluationReference('[QUESTION PAPER]\\n' + questionPaperText + '\\n[SUGGESTED ANSWERS]\\n' + suggestedAnswersText),
+  () => parseFacultyMockEvaluationReference('[QUESTION PAPER]\n' + questionPaperText + '\n[SUGGESTED ANSWERS]\n' + suggestedAnswersText),
   /MARKING SCHEME/,
   'Parser rejects evaluation TXT files that omit the required Marking Scheme section',
 );
@@ -99,7 +99,7 @@ try {
       official_max_marks: stored.maximum_marks,
       question_paper_text: stored.question_paper_text,
       suggested_answers_text: stored.suggested_answers_text,
-      marking_scheme_text: '',
+      marking_scheme_text: stored.marking_scheme_text,
     },
   });
 
