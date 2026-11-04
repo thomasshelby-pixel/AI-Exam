@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { db } from './db.js';
 import { recordCreditPurchase } from './services/studentCreditService.js';
 import { safeTimingCompare } from './utils/cryptoSecurity.js';
+import { grantFacultyMockPaidCopy } from './services/facultyMockEntitlementService.js';
 
 function getCleanEnv(name: string): string {
   const val = process.env[name] || '';
@@ -282,7 +283,26 @@ export interface FulfillPaymentResult {
  * Authoritative single point for credit granting, transactional recording,
  * and ledger updates across both Checkout verification and Webhook delivery.
  */
-export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymentResult {
+async function ensureFacultyMockPaidCopyEntitlement(order: {
+  id: string;
+  student_id: string;
+  purchase_type?: string;
+  faculty_mock_test_id?: string | null;
+}): Promise<void> {
+  if (String(order.purchase_type || '').toUpperCase() !== 'FACULTY_MOCK_COPY') return;
+  const mockTestId = String(order.faculty_mock_test_id || '').trim();
+  if (!mockTestId) throw new Error('Faculty Mock payment order is missing its test reference.');
+
+  // Shared Firestore entitlement is authoritative across App Hosting instances.
+  // The SQLite row is only a local diagnostic/cache mirror.
+  await grantFacultyMockPaidCopy(order.id, order.student_id, mockTestId);
+  db.prepare(`
+    INSERT OR IGNORE INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status)
+    VALUES (?, ?, ?, 'AVAILABLE')
+  `).run(order.id, order.student_id, mockTestId);
+}
+
+export async function fulfillPaymentOrder(params: FulfillPaymentParams): Promise<FulfillPaymentResult> {
   const {
     razorpayOrderId,
     razorpayPaymentId,
@@ -347,7 +367,9 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
   `).get(idempotencyKey, razorpayPaymentId) as { id: string } | undefined;
 
   if (existingTx || order.status === 'SUCCESS') {
-    // Already fulfilled cleanly and idempotently
+    // A prior SQL commit may have completed before a Firestore write was retried.
+    // Recreate the shared paid-copy grant idempotently on every verification replay.
+    await ensureFacultyMockPaidCopyEntitlement(order);
     return {
       success: true,
       creditsAdded: 0,
@@ -375,6 +397,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
     if (txCheck || orderCheck?.status === 'SUCCESS') {
       db.exec('COMMIT');
       inTx = false;
+      await ensureFacultyMockPaidCopyEntitlement(order);
       return {
         success: true,
         creditsAdded: 0,
@@ -408,11 +431,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
     // for one exact faculty mock and must never enter the student's general credit lot.
     if (String(order.purchase_type || 'CUSTOM').toUpperCase() === 'FACULTY_MOCK_COPY') {
       const mockTestId = String(order.faculty_mock_test_id || '').trim();
-      if (!mockTestId) throw new Error('Faculty Mock payment order is missing its test reference.');
-      db.prepare(`
-        INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status)
-        VALUES (?, ?, ?, 'AVAILABLE')
-      `).run(order.id, authoritativeStudentId, mockTestId);
+      await ensureFacultyMockPaidCopyEntitlement(order);
 
       const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
@@ -525,7 +544,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
  * Verifies Razorpay HMAC SHA256 Checkout signature and applies credits idempotently.
  * Preserves the exact signature and interface used by /api/payments/verify.
  */
-export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success: boolean; creditsAdded: number } {
+export async function verifyAndFulfillPayment(params: VerifyPaymentParams): Promise<{ success: boolean; creditsAdded: number }> {
   const { studentId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
 
   // 1. Fetch internal order
@@ -561,7 +580,7 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
   }
 
   // 3. Shared idempotent fulfillment
-  const fulfillment = fulfillPaymentOrder({
+  const fulfillment = await fulfillPaymentOrder({
     razorpayOrderId,
     razorpayPaymentId,
     studentId,
@@ -626,7 +645,7 @@ export async function processRazorpayWebhook(
     }
 
     // Call shared idempotent fulfillment directly
-    const result = fulfillPaymentOrder({
+    const result = await fulfillPaymentOrder({
       razorpayOrderId: orderId,
       razorpayPaymentId: paymentId,
       studentId: studentId || undefined,
