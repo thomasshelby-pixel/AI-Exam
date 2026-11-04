@@ -1235,7 +1235,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
     // Welcome Notification
     const welcomeMessage = freeTrialGranted
       ? 'Your email is verified and your account is active! You receive 2 free full-paper evaluations this month.'
-      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because the device, IP, or student-identity eligibility check was not passed. Paid credits and eligible institute or promotional benefits remain available.';
+      : 'Your email is verified and your account is active. The standard free-trial allowance was not granted because the device or account eligibility check could not be completed. Shared network IP addresses alone are not used to deny free-trial eligibility. Paid credits and eligible institute or promotional benefits remain available. If you believe this is a mistake, please contact support.';
     db.prepare(`
       INSERT INTO notifications (id, user_id, title, message, type)
       VALUES (?, ?, 'Welcome to CA Exam Checker AI', ?, 'SYSTEM')
