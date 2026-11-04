@@ -772,8 +772,8 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         version: '1.0',
         status: 'ACTIVE',
         admin_approved: 1,
-        file_id: mock.question_paper_file_id,
-        question_material_id: mock.question_paper_file_id,
+        file_id: mock.suggested_answer_file_id,
+        question_material_id: mock.suggested_answer_file_id,
         suggested_answer_material_id: mock.suggested_answer_file_id,
         marking_scheme_material_id: mock.suggested_answer_file_id,
         model_test_number: null,
@@ -1190,7 +1190,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       evaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
     const isFacultyMockMode = requestedEvalSource === 'FACULTY_MOCK';
     const isInstituteMode = requestedEvalSource === 'INSTITUTE';
-    const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+    const materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK' = isFacultyMockMode ? 'FACULTY_MOCK' : isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
     let resolvedSponsoringInstituteId: string | null = null;
     let resolvedSponsoringEnrollmentId: string | null = null;
@@ -1272,8 +1272,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       // exact selected mock. The student never submits or receives the TXT.
       preloadedMat = {
         id: facultyMockRecord.id,
-        file_id: facultyMockRecord.question_paper_file_id,
-        question_material_id: facultyMockRecord.question_paper_file_id,
+        file_id: facultyMockRecord.suggested_answer_file_id,
+        question_material_id: facultyMockRecord.suggested_answer_file_id,
         suggested_answer_material_id: facultyMockRecord.suggested_answer_file_id,
         marking_scheme_material_id: facultyMockRecord.suggested_answer_file_id,
         question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
@@ -2096,7 +2096,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
         resultJson = JSON.parse(record.result_json);
         if (resultJson) {
           resultJson.evaluationSource = (record.evaluation_source as any) || (record.institute_id ? 'INSTITUTE' : 'PUBLIC');
-          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
+          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
           resultJson.sponsoringInstituteName = sponsoringInstituteName || instituteName || undefined;
           resultJson.entitlementSource = (record.entitlement_source as any) || undefined;
           resultJson.instituteName = instituteName || undefined;
