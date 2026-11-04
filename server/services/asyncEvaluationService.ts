@@ -24,6 +24,7 @@ import { isEvaluationValidationSafeForCertification } from './evaluationIntegrit
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
+import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -39,6 +40,7 @@ export interface EvaluationJobData {
   materialType: MaterialType;
   mtpSeries?: 1 | 2;
   modelTestNumber?: number;
+  facultyMockTestId?: string;
   modelGroup?: string;
   subjectKey: string;
   subjectName: string;
@@ -86,6 +88,83 @@ const TERMINAL_EVALUATION_STATUSES = new Set([
 
 function isTerminalEvaluationStatus(status: unknown): boolean {
   return TERMINAL_EVALUATION_STATUSES.has(String(status || '').toUpperCase());
+}
+
+/**
+ * Revalidate the selected source before the expensive AI run. This keeps
+ * Model Test / Faculty jobs on the shared MTP/PYQ evaluator without accepting
+ * a stale UI selection or a reference TXT from another test.
+ */
+function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
+  const evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(job.evaluationId) as any;
+  if (!evaluation) {
+    throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Evaluation record not found.');
+  }
+
+  const sameText = (left: unknown, right: unknown): boolean => {
+    const leftHash = crypto.createHash('sha256').update(String(left || '').trim(), 'utf8').digest('hex');
+    const rightHash = crypto.createHash('sha256').update(String(right || '').trim(), 'utf8').digest('hex');
+    return leftHash === rightHash;
+  };
+  const same = (left: unknown, right: unknown): boolean =>
+    String(left ?? '').trim().toUpperCase() === String(right ?? '').trim().toUpperCase();
+
+  if (!same(evaluation.level, job.level) ||
+      !same(evaluation.subject_key, job.subjectKey) ||
+      !same(evaluation.subject_name, job.subjectName) ||
+      !same(evaluation.paper, job.paper || 'Paper 1') ||
+      !same(evaluation.attempt, job.attempt)) {
+    throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Selected course, subject, paper or attempt no longer matches the accepted evaluation.');
+  }
+
+  if (job.materialType === 'MODEL_TEST_PAPER') {
+    const maxModelTestNumber = getMaxModelTestNumberForLevel(job.level);
+    const expectedNumber = Number(job.modelTestNumber);
+    if (!Number.isInteger(expectedNumber) || expectedNumber < 1 || expectedNumber > maxModelTestNumber ||
+        Number(evaluation.model_test_number) !== expectedNumber ||
+        String(evaluation.material_id || '') !== String(job.referenceMaterialId || '')) {
+      throw new Error('MODEL_TEST_SOURCE_BINDING_FAILED: Selected Model Test number or material ID does not match the saved evaluation.');
+    }
+
+    const material = db.prepare(
+      "SELECT id, level, subject_key, subject_name, paper, model_test_number, question_paper_text, suggested_answers_text, marking_scheme_text FROM evaluation_materials WHERE id = ? AND material_type = 'MODEL_TEST_PAPER' AND status = 'ACTIVE' AND source_type = 'ADMIN' AND admin_approved = 1 LIMIT 1"
+    ).get(job.referenceMaterialId) as any;
+    if (!material ||
+        Number(material.model_test_number) !== expectedNumber ||
+        !same(material.level, job.level) ||
+        !same(material.subject_key, job.subjectKey) ||
+        !same(material.subject_name, job.subjectName) ||
+        !same(material.paper, job.paper || 'Paper 1') ||
+        !sameText(material.question_paper_text, job.referenceQuestionPaperText) ||
+        !sameText(material.suggested_answers_text, job.referenceSuggestedAnswersText) ||
+        !sameText(material.marking_scheme_text, job.markingSchemeText)) {
+      throw new Error('MODEL_TEST_SOURCE_BINDING_FAILED: The selected Model Test Question Paper, Suggested Answer or Marking Scheme changed or belongs to another test.');
+    }
+  }
+
+  if (job.requestedEvalSource === 'FACULTY_MOCK' || job.materialType === 'FACULTY_MOCK_TEST') {
+    const mockId = String(job.facultyMockTestId || '').trim();
+    if (!mockId || job.requestedEvalSource !== 'FACULTY_MOCK' ||
+        job.materialType !== 'FACULTY_MOCK_TEST' ||
+        String(evaluation.faculty_mock_test_id || '') !== mockId ||
+        String(evaluation.material_id || '') !== mockId ||
+        String(job.referenceMaterialId || '') !== mockId) {
+      throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: Selected Faculty Mock ID does not match the saved evaluation.');
+    }
+
+    const mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    if (!mock ||
+        !same(mock.course_level, job.level) ||
+        !same(mock.subject_key, job.subjectKey) ||
+        !same(mock.subject_name, job.subjectName) ||
+        !same(mock.paper || 'Paper 1', job.paper || 'Paper 1') ||
+        !same(mock.attempt, job.attempt) ||
+        !sameText(mock.question_paper_text, job.referenceQuestionPaperText) ||
+        !sameText(mock.suggested_answers_text, job.referenceSuggestedAnswersText) ||
+        !sameText(mock.marking_scheme_text, job.markingSchemeText)) {
+      throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: The selected Faculty Mock QP or private TXT reference changed or belongs to another mock.');
+    }
+  }
 }
 
 
@@ -271,6 +350,10 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       },
     };
 
+    // Fail closed before any AI work if the selected Model / Faculty material
+    // no longer matches the exact submission captured by the API route.
+    assertExactEvaluationSourceBinding(job);
+
     try {
       enforceEvaluationEvidencePackageMtpGate(evidencePackage);
     } catch (gateErr: any) {
@@ -326,6 +409,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       level: job.level,
       materialType: job.materialType,
       mtpSeries: job.mtpSeries,
+      modelTestNumber: job.modelTestNumber,
+      facultyMockTestId: job.facultyMockTestId,
+      evaluationSource: job.requestedEvalSource,
       subjectKey: job.subjectKey,
       subjectName: job.subjectName,
       paper: job.paper,
@@ -611,7 +697,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         }
       }
 
-      const isModelNumberValid = Number.isInteger(jobModelNumber) && jobModelNumber! >= 1 && jobModelNumber! <= 8;
+      const isModelNumberValid = Number.isInteger(jobModelNumber) && jobModelNumber! >= 1 && jobModelNumber! <= getMaxModelTestNumberForLevel(job.level);
       const matchesEvaluation = dbModelNumber === jobModelNumber;
       const matchesMaterial = materialModelNumber === jobModelNumber;
 
