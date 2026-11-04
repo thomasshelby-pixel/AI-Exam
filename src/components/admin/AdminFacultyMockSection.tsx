@@ -18,7 +18,7 @@ async function fileToBase64(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-    reader.onerror = () => reject(new Error('Could not read the selected PDF.'));
+    reader.onerror = () => reject(new Error('Could not read the selected file.'));
     reader.readAsDataURL(file);
   });
 }
@@ -165,7 +165,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     setExtracting('EVALUATION_REFERENCE');
     try {
       const [rawText, base64] = await Promise.all([file.text(), fileToBase64(file)]);
-      const text = rawText.replace(/^\\uFEFF/, '').trim();
+      const text = rawText.replace(/^\uFEFF/, '').trim();
       if (text.length < 50) throw new Error('The TXT reference must contain at least 50 characters of suggested answers / marking guidance.');
       setEvaluationReference({ name: file.name, type: 'text/plain', size: file.size, base64, text });
       onNotify?.(`${file.name} loaded as the private AI evaluation reference.`, 'success');
