@@ -99,46 +99,99 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   provision?: string;
 }> {
   const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
-  if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') {
+  if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
+
+  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Descriptive\s*Questions\b|$))/gi;
+  const blocks: string[] = [];
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
+  const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
+
+  // ICAI answer keys sometimes group four MCQs inside each numbered question:
+  // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
+  // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
+  type ParsedAnswer = { key: string; explanation: string; sourceLabel: string };
+  const parentNested = /^\s*(?:QUESTION\s*)?(\d{1,2})(?:\s*[.):-]\s*|\s+)\(\s*(xii|xi|ix|viii|vii|vi|iv|v|iii|ii|i|x)\s*\)\s*\(\s*([a-d])\s*\)(.*)$/i;
+  const childNested = /^\s*\(\s*(xii|xi|ix|viii|vii|vi|iv|v|iii|ii|i|x)\s*\)\s*\(\s*([a-d])\s*\)(.*)$/i;
+  const standalone = /^\s*(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?)(\d{1,2})(?:\s*[.:)\-]\s*|\s+)\(([a-d])\)(.*)$/i;
+
+  const parseBlock = (block: string): { entries: ParsedAnswer[]; hasNestedGroups: boolean } => {
+    const entries: ParsedAnswer[] = [];
+    let activeParent = '';
+    let hasNestedGroups = false;
+    for (const line of block.split(/\r?\n/)) {
+      let match = line.match(parentNested);
+      if (match) {
+        const parent = match[1];
+        const romanPart = match[2].toLowerCase();
+        activeParent = parent;
+        hasNestedGroups = true;
+        entries.push({
+          key: match[3].toUpperCase(),
+          explanation: String(match[4] || '').trim(),
+          sourceLabel: 'Question ' + parent + '(' + romanPart + ')',
+        });
+        continue;
+      }
+
+      match = line.match(childNested);
+      if (match && activeParent) {
+        const romanPart = match[1].toLowerCase();
+        entries.push({
+          key: match[2].toUpperCase(),
+          explanation: String(match[3] || '').trim(),
+          sourceLabel: 'Question ' + activeParent + '(' + romanPart + ')',
+        });
+        continue;
+      }
+
+      match = line.match(standalone);
+      if (match) {
+        activeParent = '';
+        entries.push({
+          key: match[2].toUpperCase(),
+          explanation: String(match[3] || '').trim(),
+          sourceLabel: 'Question ' + match[1],
+        });
+      }
+    }
+    return { entries, hasNestedGroups };
+  };
+
+  const parsedBlocks = searchTexts.map(parseBlock);
+  if (parsedBlocks.some((block) => block.hasNestedGroups)) {
+    const flattened = parsedBlocks.flatMap((block) => block.entries);
+    flattened.forEach((entry, index) => {
+      const qNum = String(index + 1);
+      const explanation = entry.explanation || ('Suggested answer for ' + entry.sourceLabel + ': option (' + entry.key + ').');
+      const provisionMatch = explanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
+      result.set(qNum, {
+        officialKey: entry.key,
+        explanation,
+        provision: provisionMatch?.[0],
+      });
+    });
     return result;
   }
 
-  // 1. Look for bounded Division A / Multiple Choice Questions blocks first
-  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Descriptive\s*Questions\b|$))/gi;
-  let blockMatches: string[] = [];
-  let blockMatch: RegExpExecArray | null;
-  while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) {
-    blockMatches.push(blockMatch[0]);
-  }
-
-  const searchTexts = blockMatches.length > 0 ? blockMatches : [suggestedAnswersText];
-
+  // Backward-compatible flat parser: "1. (c)", "2. (d)", and "MCQ 3. (a)".
   for (const block of searchTexts) {
-    // Matches patterns like:
-    // "1. (c) 1,84,000..." or "MCQ 1. (c)..." or "1. (c)..." or "9. (d)..."
-    const mcqRegex = /(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?(\b\d{1,2}\b)\s*[\.\:\-\)]\s*(?:\(([a-dA-D])\)|([a-dA-D])\b)([\s\S]*?)(?=(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?\b\d{1,2}\b\s*[\.\:\-\)]\s*(?:\([a-dA-D]\)|[a-dA-D]\b))|$)/gi;
+    const mcqRegex = /(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?(\b\d{1,2}\b)\s*[\.:\-)]\s*(?:\(([a-dA-D])\)|([a-dA-D])\b)([\s\S]*?)(?=(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?\b\d{1,2}\b\s*[\.:\-)]\s*(?:\([a-dA-D]\)|[a-dA-D]\b))|$)/gi;
     let match: RegExpExecArray | null;
-
     while ((match = mcqRegex.exec(block)) !== null) {
       const qNum = match[1];
       const rawKey = (match[2] || match[3] || '').toUpperCase();
       const rawExplanation = (match[4] || '').trim();
       const num = parseInt(qNum, 10);
-
-      if (num >= 1 && num <= 30 && ['A', 'B', 'C', 'D'].includes(rawKey)) {
-        // Extract provision citation if present (e.g., section 24(b), rule 28, section 115BAC, etc.)
-        const provMatch = rawExplanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
-        const provision = provMatch ? provMatch[0] : undefined;
-
-        result.set(qNum, {
-          officialKey: rawKey,
-          explanation: rawExplanation,
-          provision,
-        });
-      }
+      if (num < 1 || num > 30 || !['A', 'B', 'C', 'D'].includes(rawKey)) continue;
+      const provisionMatch = rawExplanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
+      result.set(qNum, {
+        officialKey: rawKey,
+        explanation: rawExplanation,
+        provision: provisionMatch?.[0],
+      });
     }
   }
-
   return result;
 }
 
