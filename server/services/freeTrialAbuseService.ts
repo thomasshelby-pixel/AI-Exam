@@ -22,19 +22,24 @@ export interface FreeTrialSignalDecisionInput {
 }
 
 /**
- * Free-trial eligibility is based only on a device OR IP already claimed by a
- * different account. At least one reliable signal is required; the other may
- * be unavailable (for example, a browser without a device header).
+ * Device reuse is a strong duplicate-account signal. IP reuse is deliberately
+ * treated as a soft risk signal only because homes, hostels, colleges, offices,
+ * and carrier-grade mobile networks commonly share public IP addresses.
  *
- * This decision controls only the free-trial quota. It never rejects an
- * account, paid/institute entitlement, or answer-sheet evaluation.
+ * At least one reliable device/IP signal is required. A reused IP alone must
+ * never deny a genuine student the standard free-trial allowance. A reused
+ * device can withhold only the free-trial quota; it never rejects the account
+ * or removes paid/institute entitlements.
  */
 export function decideFreeTrialEligibility(input: FreeTrialSignalDecisionInput): FreeTrialEligibilityDecision {
   if (!input.hasDeviceSignal && !input.hasIpSignal) {
     return { eligible: false, reason: 'NO_RELIABLE_SIGNALS' };
   }
   if (input.reusedDevice) return { eligible: false, reason: 'REUSED_DEVICE' };
-  if (input.reusedIp) return { eligible: false, reason: 'REUSED_IP' };
+
+  // IP reuse is not a denial condition: the same public IP can legitimately
+  // belong to many unrelated students. Existing IP claims are left untouched,
+  // while any new device signal can still be safely claimed for this account.
   return { eligible: true, reason: 'FIRST_CLAIM' };
 }
 
