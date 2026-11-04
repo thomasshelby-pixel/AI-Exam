@@ -605,6 +605,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </button>
 
           <button
+            id="dashboard-faculty-mock-btn"
+            type="button"
+            onClick={() => navigate('/student/faculty-mock-evaluation')}
+            className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-700 shadow-sm transition hover:bg-indigo-100"
+            title="Browse faculty-wise free mock tests"
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Faculty Mock Tests</span>
+          </button>
+
+          <button
             id="dashboard-study-planner-btn"
             type="button"
             onClick={() => navigate('/student/study-planner')}
