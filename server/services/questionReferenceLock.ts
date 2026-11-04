@@ -249,7 +249,7 @@ export function extractLockedQuestionSlice(
   // Descriptive Q1-Q8 answers commonly sit under "Division B" while the
   // preceding "Division A" contains a separate MCQ numbering sequence.
   // Search the descriptive division first to avoid crossing those identities.
-  if (!isFallback && subQ && subQ.toUpperCase() !== 'MCQ') {
+  if (!isFallback && (!subQ || subQ.toUpperCase() !== 'MCQ')) {
     const divisionBIndex = targetText.search(/\bDivision\s*B\b/i);
     if (divisionBIndex >= 0) targetText = targetText.slice(divisionBIndex);
   }
