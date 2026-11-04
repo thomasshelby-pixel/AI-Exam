@@ -34,6 +34,7 @@ export interface EvaluationData {
   evaluationSource?: string;
   /** Workflow certification state; separates review hold from academic pass/fail. */
   evaluationStatus?: string;
+  adminReviewStatus?: string;
   validationStatus?: string;
   certificationStatus?: string;
   isTechnicalReviewState?: boolean;
