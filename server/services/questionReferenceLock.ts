@@ -20,6 +20,20 @@ export interface LockedReferenceSlice {
   checksum: string;
 }
 
+export type ReferenceSourceType = 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
+
+export interface QuestionReferenceLockMetadata {
+  qpMaterialId?: string;
+  saMaterialId?: string;
+  msMaterialId?: string;
+  materialVersions?: string;
+  sourceType?: ReferenceSourceType;
+  materialType?: string;
+  modelTestNumber?: number;
+  facultyMockTestId?: string;
+  materialTitle?: string;
+}
+
 export interface LockedQuestionReference {
   fullQuestionCode: string;
   questionNumber: string;
@@ -40,7 +54,11 @@ export interface LockedQuestionReference {
     contentHashes: string;
     exactReferenceSections: string;
     retrievedCharacterCount: number;
-    sourceType: 'GLOBAL' | 'INSTITUTE';
+    sourceType: ReferenceSourceType;
+    materialType?: string;
+    modelTestNumber?: number;
+    facultyMockTestId?: string;
+    materialTitle?: string;
     verificationStatus: 'VERIFIED';
   };
 }
@@ -475,13 +493,7 @@ export function lockQuestionReference(
   questionPaperText: string,
   suggestedAnswersText: string,
   markingSchemeText: string,
-  metadata?: {
-    qpMaterialId?: string;
-    saMaterialId?: string;
-    msMaterialId?: string;
-    materialVersions?: string;
-    sourceType?: 'GLOBAL' | 'INSTITUTE';
-  }
+  metadata?: QuestionReferenceLockMetadata
 ): LockedQuestionReference {
   const { qNum, subQ, isMcq, cleanCode } = parseQuestionCode(fullCode);
 
@@ -525,6 +537,10 @@ export function lockQuestionReference(
       exactReferenceSections: `QP: ${qpSlice.sectionHeader || 'N/A'} | SA: ${saSlice.sectionHeader || 'N/A'} | MS: ${msSlice.sectionHeader || 'N/A'}`,
       retrievedCharacterCount: combinedRef.length,
       sourceType: metadata?.sourceType || 'GLOBAL',
+      materialType: metadata?.materialType,
+      modelTestNumber: metadata?.modelTestNumber,
+      facultyMockTestId: metadata?.facultyMockTestId,
+      materialTitle: metadata?.materialTitle,
       verificationStatus: 'VERIFIED',
     },
   };
