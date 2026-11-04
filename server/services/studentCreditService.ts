@@ -328,7 +328,8 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
  * ICAI registration identity. Existing consumption is reconstructed from the
  * ledger so this can never add more than the unused portion of the 2/month quota.
  */
-export function repairTransientFreeTrialBlockAfterVerifiedSignals(userId: string): boolean {
+export function repairTransientFreeTrialBlockAfterVerifiedSignals(userId: string, freshEligibilityConfirmed: boolean): boolean {
+  if (!freshEligibilityConfirmed) return false;
   const profile = db.prepare(`
     SELECT p.user_id, p.icai_registration_number, p.free_trial_blocked,
            p.free_trial_block_reason, u.email_verified, u.status AS account_status,
