@@ -4,7 +4,7 @@ import { executeModelWithFallback } from '../models/modelRegistry.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { AttemptedQuestionMapping } from './answerSheetCoverageService.js';
-import { lockQuestionReference } from './questionReferenceLock.js';
+import { lockQuestionReference, QuestionReferenceLockMetadata, LockedQuestionReference } from './questionReferenceLock.js';
 import { extractSourceGroundedTransformations } from './sourceGroundedTransformationService.js';
 
 export interface ChunkEvaluationContext {
@@ -17,6 +17,8 @@ export interface ChunkEvaluationContext {
   checkingMode: 'standard' | 'strict' | 'lenient';
   level: string;
   subjectName: string;
+  /** Exact immutable source metadata for question-wise reference locking. */
+  referenceMetadata?: QuestionReferenceLockMetadata;
   /** Issues identified by the supervisor; when present, the model must re-check this question. */
   supervisorIssues?: string[];
   supervisorCorrectionAttempt?: number;
@@ -36,6 +38,7 @@ export interface ExtractedReferenceSnippets {
   suggestedAnswerFound: boolean;
   markingSchemeFound: boolean;
   referenceNeedsReview: boolean;
+  referenceTrace: LockedQuestionReference['referenceTrace'];
 }
 
 /**
@@ -46,9 +49,10 @@ export function extractRelevantReferenceSnippets(
   fullQuestionCode: string, // e.g. 'Q5(a)', 'Q5(b)', 'Q1'
   qpText: string,
   saText: string,
-  msText: string
+  msText: string,
+  metadata?: QuestionReferenceLockMetadata
 ): ExtractedReferenceSnippets {
-  const lockedRef = lockQuestionReference(fullQuestionCode, qpText, saText, msText);
+  const lockedRef = lockQuestionReference(fullQuestionCode, qpText, saText, msText, metadata);
   const qp = lockedRef.questionPaperSlice;
   const sa = lockedRef.suggestedAnswerSlice;
   const ms = lockedRef.markingSchemeSlice;
@@ -72,6 +76,7 @@ export function extractRelevantReferenceSnippets(
     suggestedAnswerFound: sa.found,
     markingSchemeFound: ms.found,
     referenceNeedsReview: lockedRef.needsReview,
+    referenceTrace: lockedRef.referenceTrace,
   };
 }
 
@@ -252,7 +257,8 @@ export async function evaluateQuestionChunk(
     fullCode,
     ctx.questionPaperText,
     ctx.suggestedAnswersText,
-    ctx.markingSchemeText
+    ctx.markingSchemeText,
+    ctx.referenceMetadata
   );
   const referenceDisposition = assessQuestionReferenceForEvaluation(snippets);
   if (!referenceDisposition.canScoreProvisionally) {
@@ -485,8 +491,14 @@ Return strictly valid JSON with this schema:
       pageNumber: mapping.pages[0] || 1,
       flags: questionFlags,
       referenceTrace: {
-        materialId: 'ICAI_OFFICIAL_SUGGESTED',
-        materialTitle: 'ICAI Verified Suggested Answers & Step Marking Scheme',
+        materialId: snippets.referenceTrace.suggestedAnswerMaterialId,
+        materialTitle: snippets.referenceTrace.materialTitle ||
+          (snippets.referenceTrace.sourceType === 'FACULTY_MOCK'
+            ? 'Faculty Mock Private TXT Reference'
+            : 'Verified Evaluation Reference'),
+        materialVersion: snippets.referenceTrace.materialVersions,
+        source: snippets.referenceTrace.sourceType,
+        paperId: fullCode,
         markingSchemeSection: snippets.markingSchemeSection,
         suggestedAnswerSection: snippets.suggestedAnswerSection,
         suggestedAnswerRef: `${fullCode} Suggested Solution`,
@@ -494,6 +506,12 @@ Return strictly valid JSON with this schema:
         contentHash: snippets.contentHash,
         verifiedTruthSnippet: snippets.verifiedTruthSnippet,
         verifiedGroundTruthSnippet: snippets.verifiedTruthSnippet,
+        questionPaperMaterialId: snippets.referenceTrace.questionPaperMaterialId,
+        suggestedAnswerMaterialId: snippets.referenceTrace.suggestedAnswerMaterialId,
+        markingSchemeMaterialId: snippets.referenceTrace.markingSchemeMaterialId,
+        materialType: snippets.referenceTrace.materialType,
+        modelTestNumber: snippets.referenceTrace.modelTestNumber,
+        facultyMockTestId: snippets.referenceTrace.facultyMockTestId,
         deductionReason: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} marks deducted.` : 'Full marks awarded.'),
       },
       structuredEvidence: {
