@@ -144,11 +144,16 @@ export async function grantFacultyMockPaidCopy(
 export async function findAvailableFacultyMockPaidCopy(
   studentId: string,
   facultyMockTestId: string,
+  preferredOrderId?: string,
 ): Promise<string | null> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
   const ledger = await getFirestoreDoc<PaidCopyLedger>(PAID_COPY_COLLECTION, id, { failOnError: true });
   if (!ledger || ledger.studentId !== studentId || ledger.facultyMockTestId !== facultyMockTestId) return null;
-  const available = Object.values(ledger.copies || {})
+  const copies = Object.values(ledger.copies || {});
+  if (preferredOrderId) {
+    return copies.find((copy) => copy.orderId === preferredOrderId && copy.status === 'AVAILABLE')?.orderId || null;
+  }
+  const available = copies
     .filter((copy) => copy.status === 'AVAILABLE')
     .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   return available[0]?.orderId || null;
