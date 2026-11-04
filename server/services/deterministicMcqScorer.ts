@@ -242,6 +242,12 @@ export function evaluateAllAuthoritativeMcqs(
     sourceMaterialId?: string;
     sourceMaterialVersion?: string;
     sourceMaterialTitle?: string;
+    sourceType?: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
+    materialType?: string;
+    modelTestNumber?: number;
+    facultyMockTestId?: string;
+    questionPaperMaterialId?: string;
+    markingSchemeMaterialId?: string;
   }
 ): QuestionEvaluation[] {
   const result = evaluateAllAuthoritativeMcqsWithAudit(mcqs, mcqSelections, config);
@@ -255,6 +261,12 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
     sourceMaterialId?: string;
     sourceMaterialVersion?: string;
     sourceMaterialTitle?: string;
+    sourceType?: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
+    materialType?: string;
+    modelTestNumber?: number;
+    facultyMockTestId?: string;
+    questionPaperMaterialId?: string;
+    markingSchemeMaterialId?: string;
   }
 ): AuthoritativeMcqEvaluationResult {
   const level = (config.caLevel || 'INTERMEDIATE').toUpperCase();
@@ -443,9 +455,19 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
       pageNumber: config.mcqPageNumbers?.[qNum] ?? mcq.sourcePage,
       referenceTrace: {
         materialId: matId,
+        materialTitle: matTitle,
+        materialVersion: matVersion,
+        source: config.sourceType || 'GLOBAL',
+        paperId: mcq.fullQuestionCode,
+        questionPaperMaterialId: config.questionPaperMaterialId,
+        suggestedAnswerMaterialId: matId,
+        markingSchemeMaterialId: config.markingSchemeMaterialId,
+        materialType: config.materialType,
+        modelTestNumber: config.modelTestNumber,
+        facultyMockTestId: config.facultyMockTestId,
         markingSchemeSection: `Section ${mcq.section} - Division A (MCQ ${qNum})`,
         suggestedAnswerRef: `MCQ ${qNum}: Option (${officialKey})`,
-        deductionReason: deductionReason || 'Correct answer matches official key.',
+        deductionReason: deductionReason || 'Correct answer matches the selected reference key.',
         verifiedGroundTruthSnippet: `MCQ ${qNum} Official Answer: (${officialKey}) [${maxMarks} Mark(s)]`,
       },
       structuredEvidence: {
