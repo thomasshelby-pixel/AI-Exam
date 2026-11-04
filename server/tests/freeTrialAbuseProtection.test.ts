@@ -32,9 +32,8 @@ const nowMonth = getCurrentServerMonth();
 const repairSrnDigits = String(Date.now()).slice(-7);
 const unverifiedSrnDigits = String(Number(repairSrnDigits) + 2).slice(-7).padStart(7, '0');
 
-// The account-level free-trial policy blocks a second claim from either
-// a previously claimed device OR a previously claimed IP. A normal unique
-// student with fresh signals remains eligible.
+// Device reuse is a strong duplicate signal. IP reuse is not a hard
+// denial because unrelated students often share home/hostel/college networks.
 const baseSignals = {
   hasDeviceSignal: true,
   hasIpSignal: true,
@@ -46,7 +45,13 @@ assert(normalDecision.eligible && normalDecision.reason === 'FIRST_CLAIM', 'A ne
 const reusedDeviceDecision = decideFreeTrialEligibility({ ...baseSignals, reusedDevice: true });
 assert(!reusedDeviceDecision.eligible && reusedDeviceDecision.reason === 'REUSED_DEVICE', 'A new account on a previously claimed device is denied only the free trial');
 const reusedIpDecision = decideFreeTrialEligibility({ ...baseSignals, reusedIp: true });
-assert(!reusedIpDecision.eligible && reusedIpDecision.reason === 'REUSED_IP', 'A new account on a previously claimed IP is denied only the free trial');
+assert(reusedIpDecision.eligible && reusedIpDecision.reason === 'FIRST_CLAIM', 'A new account sharing a previously claimed public IP still receives the standard free trial');
+const reusedIpOnlyDecision = decideFreeTrialEligibility({
+  ...baseSignals,
+  hasDeviceSignal: false,
+  reusedIp: true,
+});
+assert(reusedIpOnlyDecision.eligible, 'A shared public IP alone never blocks a student when the app device signal is unavailable');
 const ipOnlyDecision = decideFreeTrialEligibility({ ...baseSignals, hasDeviceSignal: false });
 assert(ipOnlyDecision.eligible && ipOnlyDecision.reason === 'FIRST_CLAIM', 'A reliable fresh IP is sufficient when a device identifier is unavailable');
 const deviceOnlyDecision = decideFreeTrialEligibility({ ...baseSignals, hasIpSignal: false });
@@ -210,8 +215,18 @@ try {
     const passedSignalCheck = reason === 'REUSED_DEVICE' ? reusedDeviceDecision.eligible : reusedIpDecision.eligible;
     const transientRepair = repairTransientFreeTrialBlockAfterVerifiedSignals(userId, passedSignalCheck);
     const saved = db.prepare('SELECT free_trial_blocked, monthly_free_evaluations_limit FROM student_profiles WHERE user_id = ?').get(userId) as any;
-    assert(result.monthlyFreeEvaluationsLimit === 0 && result.freeEvaluationsRemaining === 0, reason + ' account is not auto-unblocked by monthly quota repair');
-    assert(!transientRepair && saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0, reason + ' block remains protected from transient recovery');
+    assert(result.monthlyFreeEvaluationsLimit === 0 && result.freeEvaluationsRemaining === 0, reason + ' legacy block remains until a verified login rechecks eligibility');
+
+    if (reason === 'REUSED_DEVICE') {
+      assert(!transientRepair && saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0,
+        'A genuinely reused device remains blocked from duplicate free-trial claims');
+    } else {
+      assert(transientRepair && saved.free_trial_blocked === 0 && saved.monthly_free_evaluations_limit === 2,
+        'A legacy REUSED_IP block is repaired after a fresh check and unique verified ICAI identity');
+      const recoveredQuota = ensureMonthlyFreeEvaluationsReset(userId);
+      assert(recoveredQuota.monthlyFreeEvaluationsLimit === 2 && recoveredQuota.freeEvaluationsRemaining === 2,
+        'A genuine student previously blocked only by shared IP receives exactly 2 unused free evaluations');
+    }
   }
 
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');

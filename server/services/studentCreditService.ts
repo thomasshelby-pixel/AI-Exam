@@ -350,6 +350,9 @@ export function repairTransientFreeTrialBlockAfterVerifiedSignals(userId: string
     'SIGNAL_STORE_UNAVAILABLE',
     'PROFILE_COMPLETION_NO_RELIABLE_SIGNALS',
     'PROFILE_COMPLETION_SIGNAL_STORE_UNAVAILABLE',
+    // Legacy registrations were incorrectly blocked by shared public IPs.
+    // A fresh check now ignores IP reuse; unique verified SRN is checked below.
+    'REUSED_IP',
   ]);
   if (!recoverableReasons.has(blockReason)) return false;
 
