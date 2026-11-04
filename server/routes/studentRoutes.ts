@@ -26,6 +26,7 @@ import {
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
 import { getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { consumeFacultyMockCopy, getFacultyMockAccessState } from '../services/facultyMockAccessService.js';
 import { permanentlyDeleteFromFirestore, persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
@@ -440,6 +441,36 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
   } catch (error) {
     console.error('[FacultyMocks] Student catalogue error:', error);
     return res.status(503).json({ error: 'Faculty mock catalogue is temporarily unavailable. Please retry.' });
+  }
+});
+
+router.get('/faculty-mocks/tests/:id/access', async (req: AuthRequest, res: Response) => {
+  try {
+    if (String(req.user?.role || '').toUpperCase() !== 'STUDENT') {
+      return res.status(403).json({ error: 'Only student accounts can access faculty mock evaluations.' });
+    }
+    const testId = String(req.params.id || '').trim();
+    if (!testId) return res.status(400).json({ error: 'A faculty mock test ID is required.' });
+    const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
+    const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
+    const test = await getFirestoreDoc<any>('faculty_mock_tests', testId)
+      || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    if (!test || String(test.status || '').toUpperCase() !== 'PUBLISHED') {
+      return res.status(404).json({ error: 'Faculty mock test not found or not published.' });
+    }
+    if (String(test.course_level || '').toUpperCase() !== courseLevel) {
+      return res.status(403).json({ error: 'This mock test does not match your registered CA course.' });
+    }
+    const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(test.faculty_id))
+      || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(test.faculty_id) as any;
+    if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+      return res.status(404).json({ error: 'This faculty mock is not currently available.' });
+    }
+    const access = await getFacultyMockAccessState(req.user!.id, String(test.faculty_id), testId);
+    return res.json({ success: true, ...access });
+  } catch (error) {
+    console.error('[FacultyMocks] Student access state lookup failed:', error);
+    return res.status(503).json({ error: 'Could not load your free-copy and paid-copy status.' });
   }
 });
 
@@ -1526,8 +1557,33 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Free-trial abuse is handled only by new-account device/IP eligibility; identical
     // practice PDFs must continue through academic validation and evaluation.
 
-    // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
+    // Step D.2: Consume the Faculty Mock first-free-copy / paid-repeat-copy allowance
+    // only after document and subject validation, so rejected uploads do not use an entitlement.
     let creditAlreadyConsumed = false;
+    if (isFacultyMockMode) {
+      try {
+        const accessResult = await consumeFacultyMockCopy({
+          studentId,
+          facultyId: String(facultyMockRecord.faculty_id),
+          testId: String(facultyMockRecord.id),
+          evaluationId,
+        });
+        entitlementSource = accessResult.source === 'FREE_FIRST_COPY' ? 'FACULTY_MOCK_FREE' : 'FACULTY_MOCK_PAID';
+      } catch (accessError: any) {
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(accessError.message || 'Faculty mock copy entitlement could not be consumed.', evaluationId);
+        const requiresPayment = accessError?.code === 'FACULTY_MOCK_PAYMENT_REQUIRED';
+        return res.status(requiresPayment ? 402 : 503).json({
+          error: accessError.message || 'Could not verify faculty mock copy entitlement.',
+          code: accessError.code || 'FACULTY_MOCK_ENTITLEMENT_UNAVAILABLE',
+        });
+      }
+    }
+
+    // Existing personal entitlement deduction applies only to standard public evaluations.
     if (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
       try {
         const deductionResult = consumeEvaluationEntitlementAtomic({
