@@ -406,9 +406,10 @@ export function buildStructuredAnnotations(
 
   // 1. Single Canonical Render Source: Resolve authoritative EvaluationRunPackage or scoreLedger
   const evaluationQuestionsById = new Map<string, any>();
+  const normalizeRenderQuestionId = (value: unknown) => String(value || '').toUpperCase().replace(/\\s+/g, '');
   for (const question of (Array.isArray(resultJson?.questions) ? resultJson.questions : [])) {
-    const questionId = String(question.canonicalId || question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestion) || '').trim();
-    if (questionId) evaluationQuestionsById.set(questionId.toUpperCase(), question);
+    const questionId = normalizeRenderQuestionId(question.canonicalId || question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestion) || '');
+    if (questionId) evaluationQuestionsById.set(questionId, question);
   }
   let canonicalRecords: CanonicalEvaluationRecord[] = [];
   const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
@@ -417,7 +418,7 @@ export function buildStructuredAnnotations(
     // The durable render ledger may omit display-only MCQ choices/keys. Hydrate those
     // fields from the exact evaluated question record so checked-copy badges show the key.
     canonicalRecords = runPkg.evaluationRecords.map((record: CanonicalEvaluationRecord) => {
-      const evaluatedQuestion = evaluationQuestionsById.get(String(record.questionId || '').toUpperCase());
+      const evaluatedQuestion = evaluationQuestionsById.get(normalizeRenderQuestionId(record.questionId));
       return {
         ...record,
         studentSelectedOption: record.studentSelectedOption || evaluatedQuestion?.candidateSelectedOption || evaluatedQuestion?.studentSelectedOption,
