@@ -99,231 +99,23 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   provision?: string;
 }> {
   const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
-  if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') {
-    return result;
-  }
+  if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
 
-  // Prefer bounded Division A / Multiple Choice Question blocks.
   const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Descriptive\s*Questions\b|$))/gi;
-  const blockMatches: string[] = [];
+  const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
-  while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) {
-    blockMatches.push(blockMatch[0]);
-  }
-  const searchTexts = blockMatches.length > 0 ? blockMatches : [suggestedAnswersText];
+  while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
+  const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
 
-  // Some ICAI answer keys group multiple MCQs under one question:
-  //   1. (i) (a)
-  //      (ii) (d)
-  //      (iii) (c)
-  //      (iv) (c)
-  //   2. (i) (a) ...
-  //   4. (b)
-  // In this layout, the answer-sheet's MCQ 4 is Q1(iv), not the standalone
-  // Question 4 at the end. Flatten every Division A answer in document order.
+  // ICAI answer keys sometimes group four MCQs inside each numbered question:
+  // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
+  // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
   type ParsedAnswer = { key: string; explanation: string; sourceLabel: string };
-  const roman = '(?:xii|xi|ix|viii|vii|vi|iv|v|iii|ii|i|x)';
-  const parentNested = new RegExp(
-    `^\\s*(?:QUESTION\\s*)?(\\d{1,2})(?:\\s*[.):-]\\s*|\\s+)\\(\\s*${roman}\\s*\\)\\s*\\(\\s*([a-d])\\s*\\)(.*)/**
- * Authoritative Paper Structure Service
- *
- * Mandate:
- * 1. The evaluator MUST obtain the official paper structure from the verified Question Paper
- *    and Cross-Checked Marking Scheme.
- * 2. Normalizes an authoritative hierarchy: Paper -> Section/Division -> Question -> Sub-question -> Max Marks.
- * 3. Q5 MUST NEVER be represented as a single 15-mark question when the official structure
- *    dictates Q5(a) = 10 marks and Q5(b) = 5 marks.
- * 4. Maximum marks are NEVER inferred or invented by AI models.
- */
-
-import {
-  toCanonicalQuestionId,
-  parseCanonicalQuestionIdentity,
-  deduplicateQuestionList,
-} from './canonicalQuestionService.js';
-
-export interface PaperStructureSubQuestion {
-  fullQuestionCode: string; // e.g. 'Q5(a)', 'Q5(b)', 'Q6(a)', 'MCQ1'
-  questionNumber: string;   // '5', '6', '1'
-  subQuestionNumber?: string; // 'a', 'b', 'c'
-  maximumMarks: number;
-  compulsory: boolean;
-  isMcq: boolean;
-  officialKey?: string;     // For MCQs: 'A', 'B', 'C', 'D'
-  officialExplanation?: string;
-  provision?: string;
-  topic?: string;
-  section: 'A' | 'B' | 'GENERAL';
-  division?: 'A' | 'B';     // 'A' = MCQs, 'B' = Descriptive
-}
-
-export interface PaperStructureQuestion {
-  questionNumber: string;
-  section: 'A' | 'B' | 'GENERAL';
-  division: 'A' | 'B';
-  compulsory: boolean;
-  maximumMarks: number;
-  choiceRule?: string;
-  subQuestions: PaperStructureSubQuestion[];
-}
-
-export interface AuthoritativePaperStructure {
-  paperTitle: string;
-  totalPaperMaxMarks: number; // 100 for CA exams
-  questions: PaperStructureQuestion[];
-  subQuestions: PaperStructureSubQuestion[];
-  mcqs: PaperStructureSubQuestion[];
-}
-
-/**
- * Extracts and normalizes the immutable authoritative paper structure.
- * Pre-configured for known CA papers with verified marking schemes, and includes
- * generic algorithmic parsing for dynamically uploaded papers.
- */
-export function getAuthoritativePaperStructure(options: {
-  markingSchemeText?: string;
-  questionPaperText?: string;
-  suggestedAnswersText?: string;
-  subjectName?: string;
-  paper?: string;
-  level?: string;
-  officialPaperMaxMarks?: number;
-}): AuthoritativePaperStructure {
-  const {
-    markingSchemeText = '',
-    questionPaperText = '',
-    suggestedAnswersText = '',
-    subjectName = '',
-    paper = '',
-    officialPaperMaxMarks = 100,
-  } = options;
-
-  const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
-  const isTaxationPaper =
-    subjectName.toLowerCase().includes('tax') ||
-    paper.toLowerCase().includes('tax') ||
-    textCombined.includes('income tax law') ||
-    textCombined.includes('goods and services tax') ||
-    textCombined.includes('rudra') ||
-    textCombined.includes('dharani');
-
-  if (isTaxationPaper) {
-    return buildTaxationPaperStructure(options);
-  }
-
-  // Generic algorithmic parser for other CA papers
-  return buildGenericPaperStructure(options);
-}
-
-/**
- * Extracts verified MCQ answer keys, explanations, and statutory provisions
- * directly from the authoritative Suggested Answers text stored on the server.
- */
-,
-    'i'
-  );
-  const childNested = new RegExp(
-    `^\\s*\\(\\s*${roman}\\s*\\)\\s*\\(\\s*([a-d])\\s*\\)(.*)/**
- * Authoritative Paper Structure Service
- *
- * Mandate:
- * 1. The evaluator MUST obtain the official paper structure from the verified Question Paper
- *    and Cross-Checked Marking Scheme.
- * 2. Normalizes an authoritative hierarchy: Paper -> Section/Division -> Question -> Sub-question -> Max Marks.
- * 3. Q5 MUST NEVER be represented as a single 15-mark question when the official structure
- *    dictates Q5(a) = 10 marks and Q5(b) = 5 marks.
- * 4. Maximum marks are NEVER inferred or invented by AI models.
- */
-
-import {
-  toCanonicalQuestionId,
-  parseCanonicalQuestionIdentity,
-  deduplicateQuestionList,
-} from './canonicalQuestionService.js';
-
-export interface PaperStructureSubQuestion {
-  fullQuestionCode: string; // e.g. 'Q5(a)', 'Q5(b)', 'Q6(a)', 'MCQ1'
-  questionNumber: string;   // '5', '6', '1'
-  subQuestionNumber?: string; // 'a', 'b', 'c'
-  maximumMarks: number;
-  compulsory: boolean;
-  isMcq: boolean;
-  officialKey?: string;     // For MCQs: 'A', 'B', 'C', 'D'
-  officialExplanation?: string;
-  provision?: string;
-  topic?: string;
-  section: 'A' | 'B' | 'GENERAL';
-  division?: 'A' | 'B';     // 'A' = MCQs, 'B' = Descriptive
-}
-
-export interface PaperStructureQuestion {
-  questionNumber: string;
-  section: 'A' | 'B' | 'GENERAL';
-  division: 'A' | 'B';
-  compulsory: boolean;
-  maximumMarks: number;
-  choiceRule?: string;
-  subQuestions: PaperStructureSubQuestion[];
-}
-
-export interface AuthoritativePaperStructure {
-  paperTitle: string;
-  totalPaperMaxMarks: number; // 100 for CA exams
-  questions: PaperStructureQuestion[];
-  subQuestions: PaperStructureSubQuestion[];
-  mcqs: PaperStructureSubQuestion[];
-}
-
-/**
- * Extracts and normalizes the immutable authoritative paper structure.
- * Pre-configured for known CA papers with verified marking schemes, and includes
- * generic algorithmic parsing for dynamically uploaded papers.
- */
-export function getAuthoritativePaperStructure(options: {
-  markingSchemeText?: string;
-  questionPaperText?: string;
-  suggestedAnswersText?: string;
-  subjectName?: string;
-  paper?: string;
-  level?: string;
-  officialPaperMaxMarks?: number;
-}): AuthoritativePaperStructure {
-  const {
-    markingSchemeText = '',
-    questionPaperText = '',
-    suggestedAnswersText = '',
-    subjectName = '',
-    paper = '',
-    officialPaperMaxMarks = 100,
-  } = options;
-
-  const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
-  const isTaxationPaper =
-    subjectName.toLowerCase().includes('tax') ||
-    paper.toLowerCase().includes('tax') ||
-    textCombined.includes('income tax law') ||
-    textCombined.includes('goods and services tax') ||
-    textCombined.includes('rudra') ||
-    textCombined.includes('dharani');
-
-  if (isTaxationPaper) {
-    return buildTaxationPaperStructure(options);
-  }
-
-  // Generic algorithmic parser for other CA papers
-  return buildGenericPaperStructure(options);
-}
-
-/**
- * Extracts verified MCQ answer keys, explanations, and statutory provisions
- * directly from the authoritative Suggested Answers text stored on the server.
- */
-,
-    'i'
-  );
+  const parentNested = /^\s*(?:QUESTION\s*)?(\d{1,2})(?:\s*[.):-]\s*|\s+)\(\s*(xii|xi|ix|viii|vii|vi|iv|v|iii|ii|i|x)\s*\)\s*\(\s*([a-d])\s*\)(.*)$/i;
+  const childNested = /^\s*\(\s*(xii|xi|ix|viii|vii|vi|iv|v|iii|ii|i|x)\s*\)\s*\(\s*([a-d])\s*\)(.*)$/i;
   const standalone = /^\s*(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?)(\d{1,2})(?:\s*[.:)\-]\s*|\s+)\(([a-d])\)(.*)$/i;
 
-  const parseSequentialBlock = (block: string): { entries: ParsedAnswer[]; hasNestedGroups: boolean } => {
+  const parseBlock = (block: string): { entries: ParsedAnswer[]; hasNestedGroups: boolean } => {
     const entries: ParsedAnswer[] = [];
     let activeParent = '';
     let hasNestedGroups = false;
@@ -331,25 +123,24 @@ export function getAuthoritativePaperStructure(options: {
       let match = line.match(parentNested);
       if (match) {
         const parent = match[1];
-        const romanPart = (line.match(new RegExp(`^\\s*(?:QUESTION\\s*)?${parent}\\s*[.):-]?\\s*\\(\\s*(${roman})\\s*\\)`, 'i'))?.[1] || '').toLowerCase();
+        const romanPart = match[2].toLowerCase();
         activeParent = parent;
         hasNestedGroups = true;
         entries.push({
-          key: match[2].toUpperCase(),
-          explanation: String(match[3] || '').trim(),
-          sourceLabel: `Question ${parent}(${romanPart})`,
+          key: match[3].toUpperCase(),
+          explanation: String(match[4] || '').trim(),
+          sourceLabel: 'Question ' + parent + '(' + romanPart + ')',
         });
         continue;
       }
 
       match = line.match(childNested);
       if (match && activeParent) {
-        const romanPart = (line.match(new RegExp(`^\\s*\\(\\s*(${roman})\\s*\\)`, 'i'))?.[1] || '').toLowerCase();
-        hasNestedGroups = true;
+        const romanPart = match[1].toLowerCase();
         entries.push({
-          key: match[1].toUpperCase(),
-          explanation: String(match[2] || '').trim(),
-          sourceLabel: `Question ${activeParent}(${romanPart})`,
+          key: match[2].toUpperCase(),
+          explanation: String(match[3] || '').trim(),
+          sourceLabel: 'Question ' + activeParent + '(' + romanPart + ')',
         });
         continue;
       }
@@ -360,46 +151,45 @@ export function getAuthoritativePaperStructure(options: {
         entries.push({
           key: match[2].toUpperCase(),
           explanation: String(match[3] || '').trim(),
-          sourceLabel: `Question ${match[1]}`,
+          sourceLabel: 'Question ' + match[1],
         });
       }
     }
     return { entries, hasNestedGroups };
   };
 
-  const sequentialBlocks = searchTexts.map(parseSequentialBlock);
-  if (sequentialBlocks.some((block) => block.hasNestedGroups)) {
-    const flattened = sequentialBlocks.flatMap((block) => block.entries);
+  const parsedBlocks = searchTexts.map(parseBlock);
+  if (parsedBlocks.some((block) => block.hasNestedGroups)) {
+    const flattened = parsedBlocks.flatMap((block) => block.entries);
     flattened.forEach((entry, index) => {
       const qNum = String(index + 1);
-      const rawExplanation = entry.explanation || `Suggested answer for ${entry.sourceLabel}: option (${entry.key}).`;
-      const provMatch = rawExplanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
+      const explanation = entry.explanation || ('Suggested answer for ' + entry.sourceLabel + ': option (' + entry.key + ').');
+      const provisionMatch = explanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
       result.set(qNum, {
         officialKey: entry.key,
-        explanation: rawExplanation,
-        provision: provMatch?.[0],
+        explanation,
+        provision: provisionMatch?.[0],
       });
     });
     return result;
   }
 
-  // Backward-compatible parser for already-flat answer keys such as "1. (c)".
+  // Backward-compatible flat parser: "1. (c)", "2. (d)", and "MCQ 3. (a)".
   for (const block of searchTexts) {
-    const mcqRegex = /(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?(\b\d{1,2}\b)\s*[\.\:\-\)]\s*(?:\(([a-dA-D])\)|([a-dA-D])\b)([\s\S]*?)(?=(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?\b\d{1,2}\b\s*[\.\:\-\)]\s*(?:\([a-dA-D]\)|[a-dA-D]\b))|$)/gi;
+    const mcqRegex = /(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?(\b\d{1,2}\b)\s*[\.:\-)]\s*(?:\(([a-dA-D])\)|([a-dA-D])\b)([\s\S]*?)(?=(?:(?:MCQ\s*(?:No\.?)?\s*|Question\s*(?:No\.?)?\s*)?\b\d{1,2}\b\s*[\.:\-)]\s*(?:\([a-dA-D]\)|[a-dA-D]\b))|$)/gi;
     let match: RegExpExecArray | null;
     while ((match = mcqRegex.exec(block)) !== null) {
       const qNum = match[1];
       const rawKey = (match[2] || match[3] || '').toUpperCase();
       const rawExplanation = (match[4] || '').trim();
       const num = parseInt(qNum, 10);
-      if (num >= 1 && num <= 30 && ['A', 'B', 'C', 'D'].includes(rawKey)) {
-        const provMatch = rawExplanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
-        result.set(qNum, {
-          officialKey: rawKey,
-          explanation: rawExplanation,
-          provision: provMatch?.[0],
-        });
-      }
+      if (num < 1 || num > 30 || !['A', 'B', 'C', 'D'].includes(rawKey)) continue;
+      const provisionMatch = rawExplanation.match(/\b(?:section\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|rule\s+[0-9]+[A-Z]*(?:\([0-9a-z]+\))*|schedule\s+[I|V|X]+(?:\s+para\s+[0-9]+(?:\([a-z]+\))*)?|article\s+[0-9]+)\b/i);
+      result.set(qNum, {
+        officialKey: rawKey,
+        explanation: rawExplanation,
+        provision: provisionMatch?.[0],
+      });
     }
   }
   return result;
