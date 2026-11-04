@@ -17,9 +17,9 @@ type StoredText = { name: string; type: 'text/plain'; size: number; base64: stri
 
 function detectFacultyReferenceSections(rawText: string) {
   const aliases = {
-    questionPaper: new Set(['QUESTION PAPER', 'QUESTION PAPER TEXT', 'QUESTIONS', 'QP', 'QP TEXT']),
-    suggestedAnswers: new Set(['SUGGESTED ANSWER', 'SUGGESTED ANSWERS', 'SUGGESTED ANSWER TEXT', 'SUGGESTED ANSWERS TEXT', 'MODEL ANSWER', 'MODEL ANSWERS', 'ANSWERS']),
-    markingScheme: new Set(['MARKING SCHEME', 'MARKING SCHEME TEXT', 'MARKING GUIDELINES', 'MARKING GUIDE', 'MARKING RUBRIC', 'MARK ALLOCATION', 'MARK ALLOCATIONS']),
+    questionPaper: new Set(['QUESTION PAPER', 'QUESTION PAPER TEXT']),
+    suggestedAnswers: new Set(['SUGGESTED ANSWER', 'SUGGESTED ANSWERS', 'SUGGESTED ANSWER TEXT', 'SUGGESTED ANSWERS TEXT']),
+    markingScheme: new Set(['MARKING SCHEME', 'MARKING SCHEME TEXT']),
   };
   const headings = rawText.split(/\r?\n/).map((line) => line.trim()
     .replace(/^#{1,6}\s*/, '')
@@ -354,7 +354,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
             {renderPdfInput('Downloadable Question Paper PDF', questionPaper)}
             {renderReferenceInput()}
           </div>
-          <p className="text-[10px] leading-5 text-slate-500">The original Question Paper PDF is stored byte-for-byte for student download only. It is never extracted or sent to AI. All evaluation text comes from the private TXT, which must contain these exact section headings: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME]. Keep the question text, model solutions and step-wise mark allocation under their respective headings.</p>
+          <p className="text-[10px] leading-5 text-slate-500">The original Question Paper PDF is stored byte-for-byte for student download only. It is never extracted or sent to AI. All evaluation text comes from the private TXT. Use exactly these headings, each on its own line: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME]. Put the complete question paper, model solutions and step-wise mark allocation under their respective headings.</p>
           <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || !questionPaper || !evaluationReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
             {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             {savingTest ? 'Publishing mock…' : readingFile ? `Reading ${readingFile.replace('_', ' ').toLowerCase()}…` : 'Publish Faculty Mock'}
