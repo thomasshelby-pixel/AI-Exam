@@ -49,7 +49,6 @@ assert.equal(extracted.get('13')?.officialKey, 'B');
 const paper = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
   subjectName: 'Advanced Accounting',
-  subjectKey: 'inter_advanced_accounting',
   paper: 'Paper 1',
   suggestedAnswersText: suggestedAnswers,
   officialPaperMaxMarks: 100,
