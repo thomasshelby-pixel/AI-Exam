@@ -9,6 +9,7 @@ import {
   parseCanonicalQuestionIdentity,
 } from './canonicalQuestionService.js';
 import { loadEvaluationRunPackage } from '../db.js';
+import { isEvaluationPendingReview } from './evaluationReviewState.js';
 import {
   CanonicalEvaluationRecord,
   RenderManifest,
@@ -28,6 +29,7 @@ export interface EvaluationData {
   checkingMode?: string;
   totalMarks?: number;
   maximumMarks?: number;
+  officialPaperMaxMarks?: number;
   percentage?: number;
   grade?: string;
   createdAt?: string;
@@ -356,11 +358,25 @@ export function buildStructuredAnnotations(
   const safeTotalPages = Math.max(1, totalPages);
 
   // 1. Single Canonical Render Source: Resolve authoritative EvaluationRunPackage or scoreLedger
+  const evaluationQuestionsById = new Map<string, any>();
+  for (const question of (Array.isArray(resultJson?.questions) ? resultJson.questions : [])) {
+    const questionId = String(question.canonicalId || question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestion) || '').trim();
+    if (questionId) evaluationQuestionsById.set(questionId.toUpperCase(), question);
+  }
   let canonicalRecords: CanonicalEvaluationRecord[] = [];
   const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
 
   if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
-    canonicalRecords = runPkg.evaluationRecords;
+    // The durable render ledger may omit display-only MCQ choices/keys. Hydrate those
+    // fields from the exact evaluated question record so checked-copy badges show the key.
+    canonicalRecords = runPkg.evaluationRecords.map((record: CanonicalEvaluationRecord) => {
+      const evaluatedQuestion = evaluationQuestionsById.get(String(record.questionId || '').toUpperCase());
+      return {
+        ...record,
+        studentSelectedOption: record.studentSelectedOption || evaluatedQuestion?.candidateSelectedOption || evaluatedQuestion?.studentSelectedOption,
+        officialAnswer: record.officialAnswer || evaluatedQuestion?.officialCorrectOption || evaluatedQuestion?.officialAnswer,
+      } as CanonicalEvaluationRecord;
+    });
   } else if (resultJson?.canonicalLedger && Array.isArray(resultJson.canonicalLedger.records) && resultJson.canonicalLedger.records.length > 0) {
     canonicalRecords = resultJson.canonicalLedger.records;
   } else {
@@ -417,16 +433,18 @@ export function buildStructuredAnnotations(
         ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.awardedMarks) || 0), 0)
         : 0);
 
-  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
-    ?? resultJson?.canonicalLedger?.totalMaxMarks
+  const maxMarks = runPkg?.questionInventory?.totalPaperMaxMarks
+    ?? runPkg?.scoreLedger?.officialPaperMaxMarks
+    ?? resultJson?.canonicalLedger?.officialPaperMaxMarks
+    ?? evalData.officialPaperMaxMarks
+    ?? resultJson?.officialPaperMaxMarks
     ?? evalData.maximumMarks
     ?? resultJson?.maximumMarks
-    ?? (canonicalRecords.length > 0
-        ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.maxMarks) || 0), 0)
-        : 100);
+    ?? 100;
 
   const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
-  const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
+  const isReviewPending = isEvaluationPendingReview(evalData, resultJson);
+  const resultStatus = isReviewPending ? 'NEEDS REVIEW' : percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
 
   // Section 8: PRE-RENDER VALIDATION GATE
   const preGate = validatePreRenderGate({
@@ -500,6 +518,15 @@ export function buildStructuredAnnotations(
           comment: isCorrect ? 'Option verified with official answer' : 'Option does not match official key',
         },
       ];
+    } else if (!Number.isFinite(Number(rec.maxMarks)) || Number(rec.maxMarks) <= 0) {
+      steps = [{
+        componentType: 'REVIEW',
+        stepName: 'Authoritative question mapping / maximum marks pending review',
+        marksAwarded: 0,
+        maxMarks: 0,
+        status: 'UNCLEAR',
+        comment: 'No academic deduction has been applied; an examiner must verify the question identity and mark allocation.',
+      }];
     } else {
       steps = [
         {
@@ -533,7 +560,7 @@ export function buildStructuredAnnotations(
         const cType = s.componentType || (s.stepName && s.stepName.startsWith('[') ? '' : 'STEP');
         const prefix = cType ? `[${cType}] ` : '';
         const name = s.expectedRequirement || s.step || s.stepName || 'Step';
-        const sMax = Number(s.marksAvailable || s.maximumMarks || s.maxMarks || 1);
+        const sMax = Number(s.marksAvailable ?? s.maximumMarks ?? s.maxMarks ?? 0);
         const sAward = Number(s.marksAwarded ?? 0);
         const sStatus = s.assessment || s.status || (sAward >= sMax ? 'CORRECT' : sAward > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT');
         const sDeduction = s.deductionReason ? `Deduction: ${s.deductionReason}` : (s.remarks || s.comment || s.studentEvidence || '');
@@ -621,13 +648,17 @@ export async function generateCheckedCopyPdf(
     ?? resultJson?.totalMarksAwarded
     ?? resultJson?.totalMarks
     ?? 0;
-  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
-    ?? resultJson?.canonicalLedger?.totalMaxMarks
+  const maxMarks = runPkg?.questionInventory?.totalPaperMaxMarks
+    ?? runPkg?.scoreLedger?.officialPaperMaxMarks
+    ?? resultJson?.canonicalLedger?.officialPaperMaxMarks
+    ?? evalData.officialPaperMaxMarks
+    ?? resultJson?.officialPaperMaxMarks
     ?? evalData.maximumMarks
     ?? resultJson?.maximumMarks
     ?? 100;
   const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
-  const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
+  const isReviewPending = isEvaluationPendingReview(evalData, resultJson);
+  const resultStatus = isReviewPending ? 'NEEDS REVIEW' : percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
 
   let pdfDoc: PDFDocument;
 
