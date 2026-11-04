@@ -1087,7 +1087,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let resolvedSponsoringEnrollmentId: string | null = null;
     let resolvedSponsoringBatchId: string | null = null;
     let resolvedInstituteName: string | null = null;
-    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
+    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' | 'FACULTY_MOCK_FREE' | 'FACULTY_MOCK_PAID' =
       isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
     let personalEntitlement: any = null;
     let preloadedMat: any = null;
