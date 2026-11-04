@@ -620,9 +620,11 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
   const referenceSourceType =
     params.materialType === 'FACULTY_MOCK_TEST' || params.evaluationSource === 'FACULTY_MOCK'
       ? 'FACULTY_MOCK' as const
-      : params.evaluationSource === 'INSTITUTE'
-        ? 'INSTITUTE' as const
-        : 'GLOBAL' as const;
+      : params.materialType === 'MODEL_TEST_PAPER'
+        ? 'MODEL_TEST' as const
+        : params.evaluationSource === 'INSTITUTE'
+          ? 'INSTITUTE' as const
+          : 'GLOBAL' as const;
   const questionReferenceMetadata = {
     qpMaterialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
     saMaterialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
