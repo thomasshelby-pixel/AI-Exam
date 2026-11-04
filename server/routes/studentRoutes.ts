@@ -2238,6 +2238,17 @@ router.get(
         }
       }
 
+      const adminReviewPending = ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(
+        String(record.admin_review_status || '').trim().toUpperCase()
+      );
+      if (adminReviewPending) {
+        return res.status(409).json({
+          error: 'This evaluation is held for examiner review. No final result or report is available until the review is finalized.',
+          code: 'EVALUATION_NEEDS_REVIEW',
+          status: 'NEEDS_REVIEW',
+        });
+      }
+
       if (record.status !== 'COMPLETED' && record.certification_status !== 'CERTIFIED') {
         return res.status(409).json({
           error: 'Evaluation is still in progress. Please wait for evaluation to complete.',
@@ -2363,6 +2374,7 @@ router.get(
           grade: record.grade,
           createdAt: record.created_at,
           evaluationStatus: record.status,
+          adminReviewStatus: record.admin_review_status,
           certificationStatus: record.certification_status,
           validationStatus: resultJson?.validationStatus,
           isTechnicalReviewState: resultJson?.isTechnicalReviewState,
