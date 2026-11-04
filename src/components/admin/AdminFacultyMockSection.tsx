@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../../api/client.js';
-import { CA_CURRICULUM, CASubjectInfo } from '../../data/caCurriculum.js';
+import { CA_CURRICULUM } from '../../data/caCurriculum.js';
 import { CALevel } from '../../types/index.js';
-import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 
 type Faculty = { id: string; name: string; description?: string | null; status: 'ACTIVE' | 'INACTIVE' };
 type MockTest = {
