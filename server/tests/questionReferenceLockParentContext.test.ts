@@ -58,23 +58,23 @@ assert.equal(falseQ6d.snippet, '');
 const q1Parent = extractLockedQuestionSlice(suggestedAnswers, '1', undefined, 'SA');
 assert.equal(q1Parent.found, true, 'Top-level Q1 must lock to Division B, not the MCQ key');
 assert.match(q1Parent.snippet, /AS 13/i);
-assert.doesNotMatch(q1Parent.snippet, /\\(i\\)\\s*\\(a\\)/i);
+assert.doesNotMatch(q1Parent.snippet, /\(i\)\s*\(a\)/i);
 
 const q2Parent = extractLockedQuestionSlice(suggestedAnswers, '2', undefined, 'SA');
 assert.equal(q2Parent.found, true, 'Top-level Q2 must lock to Division B');
 assert.match(q2Parent.snippet, /Delta Limited/i);
 assert.match(q2Parent.snippet, /Balance Sheet/i);
-assert.doesNotMatch(q2Parent.snippet, /\\(i\\)\\s*\\(a\\)/i);
+assert.doesNotMatch(q2Parent.snippet, /\(i\)\s*\(a\)/i);
 
 const q4Parent = extractLockedQuestionSlice(suggestedAnswers, '4', undefined, 'SA');
 assert.equal(q4Parent.found, true, 'Top-level Q4 must lock to the business-purchase answer');
 assert.match(q4Parent.snippet, /In the Books of Hari Ltd/i);
-assert.doesNotMatch(q4Parent.snippet, /^4\\.\\s*\\(b\\)/m);
+assert.doesNotMatch(q4Parent.snippet, /^4\.\s*\(b\)/m);
 
 const q5Parent = extractLockedQuestionSlice(suggestedAnswers, '5', undefined, 'SA');
 assert.equal(q5Parent.found, true, 'Advanced Accounting Q5 must not be treated as Taxation Section B');
 assert.match(q5Parent.snippet, /Consolidated Balance Sheet/i);
-assert.doesNotMatch(q5Parent.snippet, /^5\\.\\s*\\(b\\)/m);
+assert.doesNotMatch(q5Parent.snippet, /^5\.\s*\(b\)/m);
 
 // Parent-level continuation is retained even when the paper inventory only has child leaves.
 // It stays non-scorable until an authoritative child/mark allocation is found.
