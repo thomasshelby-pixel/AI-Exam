@@ -490,7 +490,7 @@ export function lockQuestionReference(
   const msSlice = extractLockedQuestionSlice(markingSchemeText, qNum, subQ, 'MS');
 
   const isFullyLocked = saSlice.found || (isMcq && saSlice.found);
-  const needsReview = !isFullyLocked && !isMcq;
+  const needsReview = !isFullyLocked;
 
   let reviewReason: string | undefined = undefined;
   if (!saSlice.found) {
