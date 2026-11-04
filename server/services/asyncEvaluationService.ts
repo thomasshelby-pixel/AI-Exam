@@ -61,12 +61,12 @@ export interface EvaluationJobData {
   questionMaterialId?: string;
   suggestedAnswerMaterialId?: string;
   markingSchemeMaterialId?: string;
-  entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+  entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED';
   resolvedSponsoringInstituteId?: string | null;
   resolvedSponsoringEnrollmentId?: string | null;
   resolvedSponsoringBatchId?: string | null;
   resolvedInstituteName?: string | null;
-  requestedEvalSource: 'PUBLIC' | 'INSTITUTE';
+  requestedEvalSource: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK';
   personalEntitlement?: any;
   creditAlreadyConsumed?: boolean;
   /** Retry of an existing evaluation: do not consume or refund its original entitlement again. */
