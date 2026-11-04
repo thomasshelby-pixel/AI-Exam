@@ -4,6 +4,7 @@ import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
 import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 
 initDatabase();
 
@@ -139,6 +140,36 @@ try {
   assert.equal(lockedFacultyReference.referenceTrace.suggestedAnswerMaterialId, 'reference-file', 'Question-level trace points at the private TXT');
   assert.equal(lockedFacultyReference.referenceTrace.markingSchemeMaterialId, 'reference-file', 'Question-level trace points at the same private TXT for marking');
   assert.equal(lockedFacultyReference.referenceTrace.facultyMockTestId, testId, 'Question-level trace retains the exact selected mock ID');
+
+  const facultyMcq = evaluateAllAuthoritativeMcqs(
+    [{
+      fullQuestionCode: 'MCQ1',
+      questionNumber: '1',
+      questionText: 'Which option is correct?',
+      maximumMarks: 2,
+      officialKey: 'B',
+      officialExplanation: 'The selected source TXT states option B.',
+      section: 'A',
+    }],
+    { '1': 'B' },
+    {
+      caLevel: 'INTERMEDIATE',
+      paper: 'Paper 1',
+      subjectKey: 'inter_advanced_accounting',
+      sourceMaterialId: 'reference-file',
+      sourceMaterialVersion: '1.0',
+      sourceMaterialTitle: 'Test Faculty Mock 01',
+      sourceType: 'FACULTY_MOCK',
+      materialType: 'FACULTY_MOCK_TEST',
+      facultyMockTestId: testId,
+      questionPaperMaterialId: 'reference-file',
+      markingSchemeMaterialId: 'reference-file',
+    },
+  );
+  assert.equal(facultyMcq[0].referenceTrace?.source, 'FACULTY_MOCK', 'Deterministic Faculty MCQs identify the Faculty Mock source');
+  assert.equal(facultyMcq[0].referenceTrace?.facultyMockTestId, testId, 'Deterministic Faculty MCQ trace retains the exact selected mock ID');
+  assert.equal(facultyMcq[0].referenceTrace?.suggestedAnswerMaterialId, 'reference-file', 'Deterministic Faculty MCQ trace points to the selected private TXT');
+
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
 
   // Model Test Paper uses this same question-level reference lock while
