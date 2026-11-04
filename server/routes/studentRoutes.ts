@@ -1705,7 +1705,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     if (facultyMockFreeCopyClaimed) {
       try {
         db.prepare('DELETE FROM faculty_mock_free_uses WHERE student_id = ? AND faculty_mock_test_id = ? AND evaluation_id = ?')
-          .run(studentId, String(facultyMockTestId || ''), evaluationId);
+          .run(studentId, String(req.body?.facultyMockTestId || ''), evaluationId);
       } catch (releaseError) {
         console.warn('[FacultyMocks] Could not release an unaccepted free-copy claim:', releaseError);
       }
