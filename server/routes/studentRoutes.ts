@@ -1093,8 +1093,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let preloadedMat: any = null;
     let facultyMockRecord: any = null;
 
-    // 3. Determine evaluation funding source. Faculty mocks are platform-sponsored
-    // and deliberately bypass institute allocations, free trial credits and paid credits.
+    // 3. Resolve authoritative faculty mock materials. Their separate per-student/per-mock
+    // free and paid copy entitlement is claimed only after document and subject validation.
     if (isFacultyMockMode) {
       const selectedTestId = typeof facultyMockTestId === 'string' ? facultyMockTestId.trim() : '';
       if (!selectedTestId) {
