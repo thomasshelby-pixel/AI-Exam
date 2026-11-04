@@ -626,6 +626,29 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Select an active faculty before uploading a mock.' });
     }
 
+    // App Hosting can route this request to a different instance whose SQLite
+    // cache has not hydrated the faculty row yet. Mirror the authoritative
+    // Firestore record locally before inserting a row with the faculty FK.
+    db.prepare(`
+      INSERT INTO faculty_mock_faculties (id, name, description, status, sort_order, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        status = excluded.status,
+        sort_order = excluded.sort_order,
+        updated_at = excluded.updated_at
+    `).run(
+      facultyId,
+      String(faculty.name || ''),
+      faculty.description || null,
+      String(faculty.status || 'ACTIVE'),
+      Number(faculty.sort_order || 0),
+      faculty.created_by || null,
+      faculty.created_at || new Date().toISOString(),
+      faculty.updated_at || new Date().toISOString()
+    );
+
     const qpFile = body.questionPaperFile;
     const saFile = body.suggestedAnswerFile;
     const msFile = body.markingSchemeFile || null;
