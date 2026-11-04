@@ -124,7 +124,7 @@ try {
     suggestedAnswersText,
     markingSchemeText,
     {
-      qpMaterialId: 'qp-file',
+      qpMaterialId: 'reference-file',
       saMaterialId: 'reference-file',
       msMaterialId: 'reference-file',
       materialVersions: '1.0',
