@@ -12,6 +12,7 @@ import {
   Rocket,
   Smartphone,
   Upload,
+  Trash2,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
 
@@ -76,6 +77,7 @@ export default function AppUpdatesSection() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [cleaningArchivedApks, setCleaningArchivedApks] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -168,6 +170,29 @@ export default function AppUpdatesSection() {
 
   const currentApk = data?.currentApk || null;
   const currentOta = data?.currentOta || null;
+  const archivedApks = (data?.releases || []).filter((release) => release.kind === 'APK' && release.status === 'ARCHIVED');
+  const archivedApkBytes = archivedApks.reduce((total, release) => total + Math.max(0, Number(release.sizeBytes) || 0), 0);
+
+  const cleanupArchivedApks = async () => {
+    if (!archivedApks.length || cleaningArchivedApks) return;
+    const impact = 'This permanently deletes ' + archivedApks.length + ' archived APK file(s) (' + formatBytes(archivedApkBytes) + ') from Cloud Storage and their Firestore release/storage metadata. The current live APK, OTA bundles, and student/evaluation data are not touched. Older release downloads and rollback files will no longer be available.';
+    if (!window.confirm(impact + '\\n\\nContinue?')) return;
+    setCleaningArchivedApks(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await apiRequest<{ deletedCount: number; freedBytes: number }>('/api/admin/app-updates/cleanup-archived-apks', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      });
+      setSuccess('Deleted ' + result.deletedCount + ' archived APK release(s). Removed ' + formatBytes(result.freedBytes) + ' from Cloud Storage.');
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Archived APK cleanup failed. Retry after checking release storage.');
+    } finally {
+      setCleaningArchivedApks(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -185,10 +210,17 @@ export default function AppUpdatesSection() {
         <button type="button" onClick={() => void refresh()} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh releases
         </button>
+        <button type="button" onClick={() => void cleanupArchivedApks()} disabled={loading || cleaningArchivedApks || archivedApks.length === 0} className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-700 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">
+          {cleaningArchivedApks ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          {cleaningArchivedApks ? 'Deleting previous APKs…' : 'Delete previous APKs (' + archivedApks.length + ')'}
+        </button>
       </div>
 
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}
       {success && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><span>{success}</span></div>}
+      <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
+        <strong>Storage cleanup:</strong> {archivedApks.length} archived APK release(s) are stored ({formatBytes(archivedApkBytes)}). Cleanup permanently removes only these previous APK binaries and their release records; the current published APK remains live.
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
