@@ -142,6 +142,7 @@ function computeSha256(content: string): string {
  */
 export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedReferencePackage {
   const isInstituteMode = request.evaluationSource === 'INSTITUTE';
+  const isFacultyMockMode = request.evaluationSource === 'FACULTY_MOCK';
   const normLevel = (request.level || 'INTERMEDIATE').toUpperCase();
   const subjectKey = String(request.subjectKey || '').trim();
   const isMtp = request.materialType === 'MTP';
@@ -164,6 +165,23 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
 
   let rawMaterial: any = request.preloadedMaterial || null;
   let materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+
+  // Faculty Mock evaluations must be bound to the exact published mock record
+  // resolved by the student route. Never search global ICAI material as a fallback.
+  if (isFacultyMockMode) {
+    if (!rawMaterial) {
+      throw new Error('FACULTY_MOCK_REFERENCE_LOCK_REQUIRED: The selected published Faculty Mock reference could not be loaded.');
+    }
+    const exactMockMatches =
+      String(rawMaterial.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+      String(rawMaterial.level || '').toUpperCase() === normLevel &&
+      String(rawMaterial.subject_key || '').trim() === subjectKey &&
+      String(rawMaterial.attempt || '').trim() === String(request.attempt || '').trim() &&
+      String(rawMaterial.paper || 'Paper 1').trim() === String(request.paper || 'Paper 1').trim();
+    if (!exactMockMatches) {
+      throw new Error('FACULTY_MOCK_REFERENCE_LOCK_MISMATCH: The supplied reference does not belong to the selected Faculty Mock.');
+    }
+  }
 
   if (isInstituteMode && !rawMaterial) {
     if (request.instituteMaterialId) {
@@ -202,7 +220,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
       instQuery += ' ORDER BY created_at DESC LIMIT 1';
       rawMaterial = db.prepare(instQuery).get(...instParams);
     }
-  } else if (!rawMaterial) {
+  } else if (!rawMaterial && !isFacultyMockMode) {
     // Official Global Admin-Approved Materials
     let query = `
       SELECT id, question_paper_title, level, subject_key, subject_name, paper,
