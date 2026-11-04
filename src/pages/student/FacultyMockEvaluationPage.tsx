@@ -15,6 +15,22 @@ type FacultyMockTest = {
   question_paper_file_name: string;
 };
 
+interface FacultyMockRazorpayResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+interface FacultyMockRazorpayInstance {
+  open: () => void;
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => FacultyMockRazorpayInstance;
+  }
+}
+
 function normaliseCourse(value: unknown): CALevel | null {
   const normal = String(value || '').trim().toUpperCase();
   return normal === 'FOUNDATION' || normal === 'INTERMEDIATE' || normal === 'FINAL' ? normal : null;
