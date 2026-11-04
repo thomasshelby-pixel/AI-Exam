@@ -39,7 +39,7 @@ export interface MaterialSourceManifest {
   questionMaterialId?: string;
   suggestedAnswerMaterialId?: string;
   markingSchemeMaterialId?: string;
-  materialSource: 'GLOBAL' | 'INSTITUTE';
+  materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
   officialPaperMaxMarks: number;
   materialVerificationStatus: 'VERIFIED' | 'UNVERIFIED';
   retrievedAt: string;
@@ -164,7 +164,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   }
 
   let rawMaterial: any = request.preloadedMaterial || null;
-  let materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+  let materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK' = isFacultyMockMode ? 'FACULTY_MOCK' : isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
   // Faculty Mock evaluations must be bound to the exact published mock record
   // resolved by the student route. Never search global ICAI material as a fallback.
