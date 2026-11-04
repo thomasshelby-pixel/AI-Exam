@@ -1713,7 +1713,7 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
       // those transient reasons after a fresh check; explicit reused-device
       // and reused-IP blocks remain intact.
       if (freeTrialSignalDecision.eligible) {
-        repairTransientFreeTrialBlockAfterVerifiedSignals(user.id);
+        repairTransientFreeTrialBlockAfterVerifiedSignals(user.id, freeTrialSignalDecision.eligible);
       }
     }
 
