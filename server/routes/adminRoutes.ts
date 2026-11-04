@@ -2968,6 +2968,7 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
 
 // Manual review and restore for legacy free-trial blocks whose original reason was not recorded.
 router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Response) => {
+  let transactionOpen = false;
   try {
     const studentId = String(req.params.id || '').trim();
     const reviewReason = typeof req.body?.reviewReason === 'string' ? req.body.reviewReason.trim() : '';
@@ -2978,7 +2979,9 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
     }
 
     const currentMonth = getCurrentServerMonth();
-    const decision = db.transaction(() => {
+    db.exec('BEGIN IMMEDIATE');
+    transactionOpen = true;
+    const decision = (() => {
       const account = db.prepare(`
         SELECT u.email, u.email_verified, u.status AS account_status, u.role AS account_role,
                p.icai_registration_number, p.free_trial_blocked, p.free_trial_block_reason,
@@ -3093,8 +3096,12 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
     })();
 
     if (!decision.ok) {
+      db.exec('ROLLBACK');
+      transactionOpen = false;
       return res.status(decision.status).json({ success: false, code: decision.code, error: decision.error });
     }
+    db.exec('COMMIT');
+    transactionOpen = false;
 
     // Persist the updated monthly free quota and profile state. This does not
     // touch paid-credit lots, purchased_credits, or permanent-free entitlements.
@@ -3110,6 +3117,10 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
       resetMonth: currentMonth,
     });
   } catch (error: unknown) {
+    if (transactionOpen) {
+      try { db.exec('ROLLBACK'); } catch {}
+      transactionOpen = false;
+    }
     console.error('Manual free-trial review error:', error);
     return res.status(500).json({ success: false, error: 'Failed to review and restore the student free-trial allowance.' });
   }
