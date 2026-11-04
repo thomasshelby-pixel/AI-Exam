@@ -32,7 +32,7 @@ function detectFacultyReferenceSections(rawText: string) {
     .replace(/\s+/g, ' ')
     .trim()
     .toUpperCase());
-  const locate = (set: Set<string>) => headings.findIndex((heading) => set.has(heading));
+  const locate = (set: Set<string>) => { const matches = headings.flatMap((heading, index) => set.has(heading) ? [index] : []); return matches.length === 1 ? matches[0] : -1; };
   const markers = [
     { key: 'questionPaper', line: locate(aliases.questionPaper) },
     { key: 'suggestedAnswers', line: locate(aliases.suggestedAnswers) },
