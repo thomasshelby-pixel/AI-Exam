@@ -261,6 +261,36 @@ export function enrichMarkingComponentsWithExaminerReasoning(
 }
 
 /**
+ * Review status is a certification/workflow state, not an academic grade.
+ * Never print PASS/FAIL as final while question mapping or consistency remains pending.
+ */
+export function isEvaluationPendingReview(evalData: Partial<EvaluationData>, resultJson: any): boolean {
+  const statuses = [
+    evalData.evaluationStatus,
+    evalData.validationStatus,
+    evalData.certificationStatus,
+    resultJson?.status,
+    resultJson?.validationStatus,
+    resultJson?.reviewStatus,
+    resultJson?.certificationStatus,
+    resultJson?.grade,
+  ].map((value) => String(value || '').trim().toUpperCase());
+
+  const reviewStatuses = new Set([
+    'NEEDS_REVIEW',
+    'REVIEW_REQUIRED',
+    'VERIFICATION_REQUIRED',
+    'VALIDATION_FAILED',
+  ]);
+
+  return statuses.some((status) => reviewStatuses.has(status)) ||
+    evalData.isTechnicalReviewState === true ||
+    resultJson?.isTechnicalReviewState === true ||
+    resultJson?.integrityAudit?.hardCompletionGatePassed === false ||
+    resultJson?.completionGateReport?.isPassed === false;
+}
+
+/**
  * Generates the Detailed Evaluation & Step-Marking Report PDF.
  */
 export async function generateDetailedReportPdf(
@@ -305,9 +335,10 @@ export async function generateDetailedReportPdf(
 
   const totalAwarded = ledger?.totalAwardedMarks ?? (evalData.totalMarks ?? resultJson?.totalMarksAwarded ?? resultJson?.totalMarks ?? 0);
   const percentage = officialPaperMaximum > 0 ? (totalAwarded / officialPaperMaximum) * 100 : 0;
-  const isPass = percentage >= 40;
-  const isExemption = percentage >= 60;
-  const resultStatus = isExemption ? 'EXEMPTION' : isPass ? 'PASS' : 'FAIL';
+  const isReviewPending = isEvaluationPendingReview(evalData, resultJson);
+  const isPass = !isReviewPending && percentage >= 40;
+  const isExemption = !isReviewPending && percentage >= 60;
+  const resultStatus = isReviewPending ? 'NEEDS REVIEW' : isExemption ? 'EXEMPTION' : isPass ? 'PASS' : 'FAIL';
 
   let questions: any[] = [];
   if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
@@ -520,7 +551,7 @@ export async function generateDetailedReportPdf(
     borderColor: brandBlue,
     borderWidth: 1,
   });
-  safeDrawText(p1, 'OFFICIAL FINAL SCORE', {
+  safeDrawText(p1, isReviewPending ? 'PROVISIONAL SCORE - NOT FINAL' : 'OFFICIAL FINAL SCORE', {
     x: 46,
     y: y - 16,
     size: 8,
@@ -534,7 +565,9 @@ export async function generateDetailedReportPdf(
     font: helveticaBold,
     color: brandBlue,
   });
-  safeDrawText(p1, `Official Score: ${(Math.round(percentage * 100) / 100).toFixed(2).replace(/\.00$/, '')}%`, {
+  safeDrawText(p1, isReviewPending
+    ? 'Pending question-mapping / consistency review; no final result issued.'
+    : `Official Score: ${(Math.round(percentage * 100) / 100).toFixed(2).replace(/\.00$/, '')}%`, {
     x: 46,
     y: y - 54,
     size: 7.5,
@@ -550,13 +583,13 @@ export async function generateDetailedReportPdf(
   });
 
   // Box 2: Result Status
-  const statusColor = isPass ? passGreen : failRed;
+  const statusColor = isReviewPending ? accentGold : isPass ? passGreen : failRed;
   p1.drawRectangle({
     x: 36 + boxWidth + 10,
     y: y - 72,
     width: boxWidth,
     height: 72,
-    color: isPass ? rgb(0.95, 0.99, 0.96) : rgb(0.99, 0.95, 0.95),
+    color: isReviewPending ? rgb(1, 0.98, 0.91) : isPass ? rgb(0.95, 0.99, 0.96) : rgb(0.99, 0.95, 0.95),
     borderColor: statusColor,
     borderWidth: 1,
   });
@@ -574,7 +607,7 @@ export async function generateDetailedReportPdf(
     font: helveticaBold,
     color: statusColor,
   });
-  safeDrawText(p1, isExemption ? 'Eligible for Subject Exemption (>=60)' : isPass ? 'Meets Passing Benchmark (>=40)' : 'Requires Targeted Revision (<40)', {
+  safeDrawText(p1, isReviewPending ? 'Awaiting examiner verification; pass/fail is withheld.' : isExemption ? 'Eligible for Subject Exemption (>=60)' : isPass ? 'Meets Passing Benchmark (>=40)' : 'Requires Targeted Revision (<40)', {
     x: 46 + boxWidth + 10,
     y: y - 62,
     size: 7.5,
@@ -599,14 +632,14 @@ export async function generateDetailedReportPdf(
     font: helveticaBold,
     color: mutedSlate,
   });
-  safeDrawText(p1, evalData.grade || (percentage >= 70 ? 'A+' : percentage >= 60 ? 'A' : percentage >= 50 ? 'B' : percentage >= 40 ? 'C' : 'D'), {
+  safeDrawText(p1, isReviewPending ? 'NEEDS REVIEW' : evalData.grade || (percentage >= 70 ? 'A+' : percentage >= 60 ? 'A' : percentage >= 50 ? 'B' : percentage >= 40 ? 'C' : 'D'), {
     x: 46 + (boxWidth + 10) * 2,
     y: y - 46,
     size: 20,
     font: helveticaBold,
     color: accentGold,
   });
-  safeDrawText(p1, 'Step-Wise CA Rubric Evaluated', {
+  safeDrawText(p1, isReviewPending ? 'Certification pending' : 'Step-Wise CA Rubric Evaluated', {
     x: 46 + (boxWidth + 10) * 2,
     y: y - 62,
     size: 7.5,
