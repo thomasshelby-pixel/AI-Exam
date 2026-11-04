@@ -176,7 +176,7 @@ export default function AppUpdatesSection() {
   const cleanupArchivedApks = async () => {
     if (!archivedApks.length || cleaningArchivedApks) return;
     const impact = 'This permanently deletes ' + archivedApks.length + ' archived APK file(s) (' + formatBytes(archivedApkBytes) + ') from Cloud Storage and their Firestore release/storage metadata. The current live APK, OTA bundles, and student/evaluation data are not touched. Older release downloads and rollback files will no longer be available.';
-    if (!window.confirm(impact + '\\n\\nContinue?')) return;
+    if (!window.confirm(impact + '\n\nContinue?')) return;
     setCleaningArchivedApks(true);
     setError('');
     setSuccess('');
