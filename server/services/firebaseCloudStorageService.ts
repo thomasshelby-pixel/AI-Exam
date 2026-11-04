@@ -830,3 +830,18 @@ export async function auditStorageConsistency(allMaterials: any[]): Promise<Stor
   };
 }
 
+
+
+/**
+ * Permanently deletes a known app-release object from Cloud Storage.
+ * This low-level helper intentionally leaves Firestore metadata untouched so
+ * callers can remove metadata only after the object deletion succeeds.
+ */
+export async function deleteCloudStorageObject(storagePath: string, bucketName?: string): Promise<void> {
+  const safePath = String(storagePath || '').trim().replace(/^\/+/, '');
+  if (!safePath || !safePath.startsWith('app_releases/android/')) {
+    throw new Error('Refusing to delete a storage object outside the Android app-release directory.');
+  }
+  const bucket = getStorageBucket(bucketName || configuredBucket);
+  await bucket.file(safePath).delete({ ignoreNotFound: true });
+}

@@ -117,6 +117,7 @@ import {
   listAppUpdateReleases,
   uploadAppUpdateRelease,
   publishAppUpdateRelease,
+  deletePreviousApkReleases,
   type AppReleaseKind,
 } from '../services/appUpdateService.js';
 
@@ -369,6 +370,23 @@ router.post('/app-updates/upload', authenticateToken, requireRole('SUPER_ADMIN')
         : 400;
     console.error('[AdminRoutes] App release upload failed:', error);
     return res.status(status).json({ success: false, error: message });
+  }
+});
+
+router.delete('/app-updates/previous-apks', authenticateToken, requireRole('SUPER_ADMIN'), async (_req: AuthRequest, res: Response) => {
+  try {
+    const result = await deletePreviousApkReleases();
+    return res.json({
+      success: true,
+      ...result,
+      message: `Deleted ${result.deletedCount} archived APK release(s). Freed ${result.freedBytes} bytes.`,
+    });
+  } catch (error: any) {
+    console.error('[AdminRoutes] Archived APK cleanup failed:', error);
+    return res.status(503).json({
+      success: false,
+      error: error?.message || 'Could not delete archived APK releases.',
+    });
   }
 });
 

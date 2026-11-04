@@ -115,8 +115,49 @@ try {
   `).run('fmock_duplicate_' + suffix, facultyId, questionPaperText, suggestedAnswersText), /UNIQUE constraint failed/i,
   'Same faculty + attempt + subject + paper cannot publish a duplicate Mock Number');
 
+  // One free accepted copy per student + exact faculty mock; another test or
+  // another faculty receives an independent first-copy allowance.
+  const studentId = `fmock_test_student_${suffix}`;
+  const freeEvaluationId = `eval_fmock_free_${suffix}`;
+  const repeatEvaluationId = `eval_fmock_repeat_${suffix}`;
+  const firstClaim = db.prepare(`
+    INSERT OR IGNORE INTO faculty_mock_free_uses (student_id, faculty_mock_test_id, evaluation_id)
+    VALUES (?, ?, ?)
+  `).run(studentId, testId, freeEvaluationId);
+  const duplicateFreeClaim = db.prepare(`
+    INSERT OR IGNORE INTO faculty_mock_free_uses (student_id, faculty_mock_test_id, evaluation_id)
+    VALUES (?, ?, ?)
+  `).run(studentId, testId, repeatEvaluationId);
+  assert.equal(Number(firstClaim.changes), 1, 'First accepted copy claims the free-copy slot');
+  assert.equal(Number(duplicateFreeClaim.changes), 0, 'A second copy cannot claim another free slot for the same mock');
+  assert.equal(
+    (db.prepare('SELECT evaluation_id FROM faculty_mock_free_uses WHERE student_id = ? AND faculty_mock_test_id = ?').get(studentId, testId) as any).evaluation_id,
+    freeEvaluationId,
+    'The original free-copy claim remains bound to the first evaluation',
+  );
+
+  const paidOrderId = `ord_fmock_paid_${suffix}`;
+  db.prepare(`
+    INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status)
+    VALUES (?, ?, ?, 'AVAILABLE')
+  `).run(paidOrderId, studentId, testId);
+  const paidCopyConsume = db.prepare(`
+    UPDATE faculty_mock_copy_purchases
+    SET status = 'CONSUMED', evaluation_id = ?, consumed_at = CURRENT_TIMESTAMP
+    WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
+  `).run(repeatEvaluationId, paidOrderId, studentId, testId);
+  const reusedPaidCopy = db.prepare(`
+    UPDATE faculty_mock_copy_purchases
+    SET status = 'CONSUMED', evaluation_id = ?
+    WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
+  `).run(`eval_fmock_reuse_${suffix}`, paidOrderId, studentId, testId);
+  assert.equal(Number(paidCopyConsume.changes), 1, 'A verified paid order grants one repeat evaluation');
+  assert.equal(Number(reusedPaidCopy.changes), 0, 'One paid order cannot be consumed twice');
+
   console.log('PASS: Faculty mock numbering, selected reference binding, AI hard gate and duplicate-number protection verified.');
 } finally {
+  db.prepare('DELETE FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?').run(testId);
+  db.prepare('DELETE FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?').run(testId);
   db.prepare('DELETE FROM faculty_mock_tests WHERE faculty_id = ?').run(facultyId);
   db.prepare('DELETE FROM faculty_mock_faculties WHERE id = ?').run(facultyId);
 }

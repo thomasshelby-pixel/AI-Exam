@@ -5,6 +5,7 @@ import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
 import { Download, UploadCloud, CheckCircle2, AlertCircle, RefreshCw, GraduationCap, BookOpen, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CALevel } from '../../types/index.js';
+import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 
 type Faculty = { id: string; name: string; description?: string | null; attempts: string[] };
 type FacultyMockTest = {
@@ -13,6 +14,12 @@ type FacultyMockTest = {
   mock_number: number; title: string; maximum_marks: number; syllabus_version: string;
   question_paper_file_name: string;
 };
+
+interface FacultyMockRazorpayResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
 
 function normaliseCourse(value: unknown): CALevel | null {
   const normal = String(value || '').trim().toUpperCase();
@@ -127,7 +134,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     }
   };
 
-  const submitAnswerSheet = async () => {
+  const submitAnswerSheet = async (facultyMockPaymentOrderId?: string) => {
     if (!selectedTest || !answerFile || !fileBase64 || !user?.id) {
       setError('Select a mock test and upload your handwritten answer sheet first.');
       return;
@@ -158,6 +165,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           filename: answerFile.name,
           evaluationSource: 'FACULTY_MOCK',
           facultyMockTestId: selectedTest.id,
+          ...(facultyMockPaymentOrderId ? { facultyMockPaymentOrderId } : {}),
         }),
       });
       await refreshUser();
@@ -165,8 +173,89 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       if (!reportId) throw new Error('Evaluation was accepted but no report ID was returned. Check My Evaluations.');
       navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
+      const apiError = err as Error & { code?: string; data?: any };
+      if (!facultyMockPaymentOrderId && apiError?.code === 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED') {
+        setError('First copy already used. Complete the one-copy payment to evaluate this mock again.');
+        await startRepeatCopyPayment();
+      } else {
+        setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
+      }
     } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startRepeatCopyPayment = async () => {
+    if (!selectedTest || !user) return;
+    try {
+      const response = await apiRequest<{
+        success: boolean;
+        isConfigured: boolean;
+        keyId: string;
+        order: {
+          orderId: string;
+          razorpayOrderId: string;
+          amountPaise: number;
+          amountINR: number;
+          currency: string;
+          keyId: string;
+          description: string;
+        };
+      }>('/api/payments/create-order', {
+        method: 'POST',
+        body: JSON.stringify({ purchaseType: 'FACULTY_MOCK_COPY', facultyMockTestId: selectedTest.id }),
+      });
+
+      if (!response.isConfigured) {
+        setError('Razorpay is not configured for live payments. Please contact the administrator.');
+        return;
+      }
+      if (!window.Razorpay) {
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) {
+          setError('Razorpay checkout could not be loaded. Check your internet connection and retry.');
+          return;
+        }
+      }
+
+      const order = response.order;
+      const checkout = new window.Razorpay({
+        key: order.keyId,
+        amount: order.amountPaise,
+        currency: order.currency,
+        name: 'CA Exam Checker AI',
+        description: order.description || 'Faculty Mock Repeat Copy',
+        order_id: order.razorpayOrderId,
+        prefill: {
+          name: user.fullName || '',
+          email: user.email || '',
+          contact: (profile as any)?.phone || '',
+        },
+        theme: { color: '#2563eb' },
+        modal: {
+          ondismiss: () => setSubmitting(false),
+        },
+        handler: async (payment: FacultyMockRazorpayResponse) => {
+          try {
+            await apiRequest('/api/payments/verify', {
+              method: 'POST',
+              body: JSON.stringify({
+                razorpayOrderId: payment.razorpay_order_id,
+                razorpayPaymentId: payment.razorpay_payment_id,
+                razorpaySignature: payment.razorpay_signature,
+              }),
+            });
+            setSuccess('Payment verified. Starting your repeat-copy evaluation…');
+            await submitAnswerSheet(order.orderId);
+          } catch (paymentError) {
+            setError(paymentError instanceof Error ? paymentError.message : 'Payment verification or evaluation submission failed.');
+            setSubmitting(false);
+          }
+        },
+      });
+      checkout.open();
+    } catch (paymentError) {
+      setError(paymentError instanceof Error ? paymentError.message : 'Could not start Faculty Mock repeat-copy payment.');
       setSubmitting(false);
     }
   };
@@ -200,8 +289,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         <h1 className="mt-2 text-xl font-black sm:text-2xl">Practice faculty mock papers</h1>
         <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-300">Choose a faculty, attempt, subject and numbered mock. Download the Question Paper, write your answers by hand, then submit the scanned answer sheet for AI evaluation against the faculty's uploaded Suggested Answer and marking reference.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">Free for students</span>
-          <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-2.5 py-1 text-[10px] font-bold text-blue-100">No personal credit deduction</span>
+          <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">First copy of each mock is free</span>
+          <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-2.5 py-1 text-[10px] font-bold text-blue-100">Repeat copy: ₹35</span>
         </div>
       </div>
 
@@ -272,7 +361,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               {loadingFile && <p className="mt-2 text-xs text-blue-600">Reading your answer sheet…</p>}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />Faculty mock submissions do not use your personal or purchased evaluation credits.</div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />One free copy per student for this exact faculty mock. Further copies cost ₹35 each and do not use your general evaluation credits.</div>
                 <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer} onClick={() => void handleSubmitClick()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {submitting || checkingDisclaimer ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                   {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : 'Submit for AI Evaluation'}

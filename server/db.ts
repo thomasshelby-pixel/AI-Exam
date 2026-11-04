@@ -1148,12 +1148,34 @@ function runMigrations() {
       ON faculty_mock_faculties(status, sort_order, name);
     CREATE INDEX IF NOT EXISTS idx_faculty_mock_tests_student_catalogue
       ON faculty_mock_tests(status, course_level, faculty_id, attempt, subject_key, mock_number);
+
+    CREATE TABLE IF NOT EXISTS faculty_mock_free_uses (
+      student_id TEXT NOT NULL,
+      faculty_mock_test_id TEXT NOT NULL,
+      evaluation_id TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (student_id, faculty_mock_test_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS faculty_mock_copy_purchases (
+      order_id TEXT PRIMARY KEY,
+      student_id TEXT NOT NULL,
+      faculty_mock_test_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'AVAILABLE',
+      evaluation_id TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      consumed_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_faculty_mock_copy_purchases_available
+      ON faculty_mock_copy_purchases(student_id, faculty_mock_test_id, status);
   `);
 
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_id', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'faculty_mock_payment_order_id', 'TEXT');
 
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
@@ -1514,6 +1536,8 @@ function runMigrations() {
   addColumnIfNotExists('users', 'suspicious_activity_at', 'TEXT');
   addColumnIfNotExists('institutes', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('payment_orders', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
+  addColumnIfNotExists('payment_orders', 'purchase_type', "TEXT NOT NULL DEFAULT 'CUSTOM'");
+  addColumnIfNotExists('payment_orders', 'faculty_mock_test_id', 'TEXT');
   addColumnIfNotExists('payment_transactions', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('evaluations', 'account_classification', "TEXT NOT NULL DEFAULT 'NORMAL'");
   addColumnIfNotExists('users', 'mfa_reset_required', 'INTEGER NOT NULL DEFAULT 0');

@@ -12,6 +12,7 @@ import {
   Rocket,
   Smartphone,
   Upload,
+  Trash2,
 } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
 
@@ -76,6 +77,7 @@ export default function AppUpdatesSection() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [cleaningApks, setCleaningApks] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -166,6 +168,35 @@ export default function AppUpdatesSection() {
     }
   };
 
+  const cleanupPreviousApks = async () => {
+    const archived = (data?.releases || []).filter((release) => release.kind === 'APK' && release.status === 'ARCHIVED');
+    if (!archived.length) {
+      setError('There are no archived APK releases to delete.');
+      return;
+    }
+    const totalBytes = archived.reduce((sum, release) => sum + (Number(release.sizeBytes) || 0), 0);
+    const sizeLabel = formatBytes(totalBytes);
+    if (!window.confirm(
+      `Permanently delete ${archived.length} archived APK release(s) (${sizeLabel}) from Firebase Cloud Storage and Firestore?\n\nThe current live APK will NOT be deleted. Older archived versions will no longer be downloadable from the app update service. This cannot be undone.`
+    )) return;
+
+    setCleaningApks(true);
+    setError('');
+    setSuccess('');
+    try {
+      const response = await apiRequest<{ deletedCount: number; freedBytes: number; skippedCount: number; message: string }>(
+        '/api/admin/app-updates/previous-apks',
+        { method: 'DELETE' },
+      );
+      setSuccess(`${response.message}${response.skippedCount ? ` ${response.skippedCount} release(s) were kept because storage cleanup could not be verified.` : ''}`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Archived APK cleanup failed.');
+    } finally {
+      setCleaningApks(false);
+    }
+  };
+
   const currentApk = data?.currentApk || null;
   const currentOta = data?.currentOta || null;
 
@@ -182,9 +213,17 @@ export default function AppUpdatesSection() {
             Upload a version, validate it, then publish. APK releases handle native changes; OTA bundles handle compatible web-layer changes.
           </p>
         </div>
-        <button type="button" onClick={() => void refresh()} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh releases
-        </button>
+        <div className="flex flex-wrap gap-2">
+          {(data?.releases || []).some((release) => release.kind === 'APK' && release.status === 'ARCHIVED') && (
+            <button type="button" onClick={() => void cleanupPreviousApks()} disabled={cleaningApks || loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-bold text-rose-700 shadow-sm hover:bg-rose-50 disabled:opacity-60">
+              {cleaningApks ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {cleaningApks ? 'Deleting old APKs…' : 'Delete archived APKs'}
+            </button>
+          )}
+          <button type="button" onClick={() => void refresh()} disabled={loading || cleaningApks} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh releases
+          </button>
+        </div>
       </div>
 
       {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}

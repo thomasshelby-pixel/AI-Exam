@@ -87,6 +87,40 @@ function isTerminalEvaluationStatus(status: unknown): boolean {
   return TERMINAL_EVALUATION_STATUSES.has(String(status || '').toUpperCase());
 }
 
+
+/**
+ * Returns Faculty Mock copy access when asynchronous AI evaluation fails.
+ * Successful / NEEDS_REVIEW evaluations keep the copy consumed.
+ */
+function releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId: string): void {
+  try {
+    const evaluation = db.prepare(`
+      SELECT student_id, faculty_mock_test_id, faculty_mock_payment_order_id
+      FROM evaluations WHERE id = ?
+    `).get(evaluationId) as {
+      student_id?: string;
+      faculty_mock_test_id?: string | null;
+      faculty_mock_payment_order_id?: string | null;
+    } | undefined;
+    if (!evaluation?.faculty_mock_test_id || !evaluation.student_id) return;
+
+    if (evaluation.faculty_mock_payment_order_id) {
+      db.prepare(`
+        UPDATE faculty_mock_copy_purchases
+        SET status = 'AVAILABLE', evaluation_id = NULL, consumed_at = NULL
+        WHERE order_id = ? AND evaluation_id = ? AND status = 'CONSUMED'
+      `).run(evaluation.faculty_mock_payment_order_id, evaluationId);
+    } else {
+      db.prepare(`
+        DELETE FROM faculty_mock_free_uses
+        WHERE student_id = ? AND faculty_mock_test_id = ? AND evaluation_id = ?
+      `).run(evaluation.student_id, evaluation.faculty_mock_test_id, evaluationId);
+    }
+  } catch (error) {
+    console.warn(`[AsyncEval] Could not restore Faculty Mock copy access for ${evaluationId}:`, error);
+  }
+}
+
 function getEvaluationStatus(evaluationId: string): string {
   const row = db.prepare('SELECT status FROM evaluations WHERE id = ?').get(evaluationId) as { status?: string } | undefined;
   return String(row?.status || '').toUpperCase();
@@ -529,6 +563,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         // A concurrent terminal decision wins. Only refund if this worker actually
         // claimed the FAILED transition.
         if (failureClaim.changes === 1) {
+          releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
@@ -589,6 +624,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         `).run(mismatchErr, mismatchErr, evaluationId);
 
         if (failureClaim.changes === 1) {
+          releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
@@ -1018,6 +1054,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.error(`[AsyncEval] Could not claim failure status for ${evaluationId}; status is now ${latestStatus || 'UNKNOWN'}.`);
       return;
     }
+
+    releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
 
     // Refund only after successfully recording this job's FAILED transition.
     if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
