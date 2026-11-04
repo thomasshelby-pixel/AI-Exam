@@ -265,8 +265,15 @@ export function enrichMarkingComponentsWithExaminerReasoning(
  * Never print PASS/FAIL as final while question mapping or consistency remains pending.
  */
 export function isEvaluationPendingReview(evalData: Partial<EvaluationData>, resultJson: any): boolean {
+  const adminDecision = String(evalData.adminReviewStatus || '').trim().toUpperCase();
+  // A completed, recorded examiner decision supersedes stale V1 validation flags.
+  if (['AFFIRMED', 'AMENDED', 'APPROVED', 'CERTIFIED'].includes(adminDecision)) {
+    return false;
+  }
+
   const statuses = [
     evalData.evaluationStatus,
+    evalData.adminReviewStatus,
     evalData.validationStatus,
     evalData.certificationStatus,
     resultJson?.status,
