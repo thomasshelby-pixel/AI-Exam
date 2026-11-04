@@ -38,4 +38,22 @@ assert.equal(
   'A completed certified evaluation must retain ordinary pass/fail classification',
 );
 
+assert.equal(
+  isEvaluationPendingReview({ evaluationStatus: 'COMPLETED', adminReviewStatus: 'AFFIRMED' }, {
+    validationStatus: 'NEEDS_REVIEW',
+    isTechnicalReviewState: true,
+    completionGateReport: { isPassed: false },
+  }),
+  false,
+  'A final affirmative examiner decision must supersede stale V1 review flags',
+);
+
+assert.equal(
+  isEvaluationPendingReview({ evaluationStatus: 'COMPLETED', adminReviewStatus: 'NEEDS_REVIEW' }, {
+    validationStatus: 'VERIFIED',
+  }),
+  true,
+  'A pending admin review status must override a completed workflow status',
+);
+
 console.log('✅ Pending-review PDF classification regression passed.');
