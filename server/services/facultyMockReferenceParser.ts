@@ -10,27 +10,16 @@ const SECTION_ALIASES: Record<FacultyMockReferenceSectionKey, Set<string>> = {
   questionPaperText: new Set([
     'QUESTION PAPER',
     'QUESTION PAPER TEXT',
-    'QUESTIONS',
-    'QP',
-    'QP TEXT',
   ]),
   suggestedAnswersText: new Set([
     'SUGGESTED ANSWER',
     'SUGGESTED ANSWERS',
     'SUGGESTED ANSWER TEXT',
     'SUGGESTED ANSWERS TEXT',
-    'MODEL ANSWER',
-    'MODEL ANSWERS',
-    'ANSWERS',
   ]),
   markingSchemeText: new Set([
     'MARKING SCHEME',
     'MARKING SCHEME TEXT',
-    'MARKING GUIDELINES',
-    'MARKING GUIDE',
-    'MARKING RUBRIC',
-    'MARK ALLOCATION',
-    'MARK ALLOCATIONS',
   ]),
 };
 
