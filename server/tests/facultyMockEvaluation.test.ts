@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
 import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
+import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 
 initDatabase();
 
@@ -96,6 +97,10 @@ try {
       version: '1.0',
       status: 'ACTIVE',
       admin_approved: 1,
+      file_id: stored.question_paper_file_id,
+      question_material_id: stored.question_paper_file_id,
+      suggested_answer_material_id: stored.suggested_answer_file_id,
+      marking_scheme_material_id: stored.suggested_answer_file_id,
       official_max_marks: stored.maximum_marks,
       question_paper_text: stored.question_paper_text,
       suggested_answers_text: stored.suggested_answers_text,
@@ -108,7 +113,32 @@ try {
   assert.equal(verified.suggestedAnswersText, suggestedAnswersText, 'AI reference package receives only the selected mock Suggested Answer');
   assert.equal(verified.markingSchemeText, markingSchemeText, 'AI evaluation receives the Marking Scheme section parsed from the same TXT reference');
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
-  assert.equal(verified.manifest.materialSource, 'GLOBAL', 'Faculty mock does not masquerade as institute-sourced material');
+  assert.equal(verified.questionMaterialId, 'qp-file', 'The original downloadable QP PDF file ID is retained as the question source');
+  assert.equal(verified.suggestedAnswerMaterialId, 'reference-file', 'The private TXT file ID is retained as the suggested-answer source');
+  assert.equal(verified.markingSchemeMaterialId, 'reference-file', 'The same private TXT file ID anchors the marking-scheme source');
+  assert.equal(verified.manifest.materialSource, 'FACULTY_MOCK', 'Faculty mock remains identifiable as its own source type');
+
+  const lockedFacultyReference = extractRelevantReferenceSnippets(
+    'Q1',
+    questionPaperText,
+    suggestedAnswersText,
+    markingSchemeText,
+    {
+      qpMaterialId: 'qp-file',
+      saMaterialId: 'reference-file',
+      msMaterialId: 'reference-file',
+      materialVersions: '1.0',
+      sourceType: 'FACULTY_MOCK',
+      materialType: 'FACULTY_MOCK_TEST',
+      facultyMockTestId: testId,
+      materialTitle: 'Test Faculty Mock 01',
+    },
+  );
+  assert.equal(lockedFacultyReference.referenceTrace.sourceType, 'FACULTY_MOCK', 'Question-level audit trace identifies the exact Faculty Mock source');
+  assert.equal(lockedFacultyReference.referenceTrace.questionPaperMaterialId, 'qp-file', 'Question-level trace points at the QP file');
+  assert.equal(lockedFacultyReference.referenceTrace.suggestedAnswerMaterialId, 'reference-file', 'Question-level trace points at the private TXT');
+  assert.equal(lockedFacultyReference.referenceTrace.markingSchemeMaterialId, 'reference-file', 'Question-level trace points at the same private TXT for marking');
+  assert.equal(lockedFacultyReference.referenceTrace.facultyMockTestId, testId, 'Question-level trace retains the exact selected mock ID');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
 
   assert.throws(() => enforceMaterialHardGate({
