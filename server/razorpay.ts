@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
 import { recordCreditPurchase } from './services/studentCreditService.js';
+import { grantFacultyMockPaidCopy } from './services/facultyMockAccessService.js';
 import { safeTimingCompare } from './utils/cryptoSecurity.js';
 
 function getCleanEnv(name: string): string {
@@ -48,7 +49,7 @@ export const COMBO_PLANS = {
   },
 } as const;
 
-export type PurchaseType = 'CUSTOM' | 'COMBO_1' | 'COMBO_2';
+export type PurchaseType = 'CUSTOM' | 'COMBO_1' | 'COMBO_2' | 'FACULTY_MOCK';
 export type CourseLevel = 'FOUNDATION' | 'INTERMEDIATE';
 
 export interface CreateOrderParams {
@@ -56,6 +57,9 @@ export interface CreateOrderParams {
   purchaseType?: PurchaseType;
   courseLevel?: CourseLevel;
   quantity?: number; // Number of credits (for CUSTOM)
+  facultyMockTestId?: string;
+  facultyMockFacultyId?: string;
+  facultyMockPriceINR?: number;
   receiptNote?: string;
 }
 
@@ -91,6 +95,17 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
     finalQuantity = plan.evaluations;
     finalAmountINR = plan.priceINR;
     purposeDescription = `CA Exam Checker AI - ${purchaseType === 'COMBO_1' ? 'Combo 1' : 'Combo 2'} (${courseLevel === 'FOUNDATION' ? 'Foundation' : 'Intermediate'} - ${finalQuantity} Evaluations @ ₹${finalAmountINR})`;
+  } else if (purchaseType === 'FACULTY_MOCK') {
+    if (!params.facultyMockTestId || !params.facultyMockFacultyId) {
+      throw new Error('Faculty mock purchase must be linked to a valid published mock and faculty.');
+    }
+    const price = params.facultyMockPriceINR;
+    if (!Number.isSafeInteger(price) || Number(price) < 1 || Number(price) > 10000) {
+      throw new Error('Faculty mock repeat-copy price has not been configured by the administrator.');
+    }
+    finalQuantity = 1;
+    finalAmountINR = Number(price);
+    purposeDescription = `CA Exam Checker AI - Faculty Mock Repeat Copy (${params.facultyMockTestId})`;
   } else {
     // Custom evaluation purchase
     const qty = params.quantity;
@@ -132,6 +147,7 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
           creditsQuantity: String(finalQuantity),
           amountINR: String(finalAmountINR),
           purpose: purposeDescription,
+          facultyMockTestId: params.facultyMockTestId || '',
         },
       }),
     });
@@ -166,9 +182,12 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
 
   // Persist order in DB
   db.prepare(`
-    INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status)
-    VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING')
-  `).run(internalOrderId, studentId, razorpayOrderId, finalQuantity, amountPaise);
+    INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status, purchase_type, faculty_mock_test_id, faculty_mock_faculty_id)
+    VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING', ?, ?, ?)
+  `).run(
+    internalOrderId, studentId, razorpayOrderId, finalQuantity, amountPaise,
+    purchaseType, params.facultyMockTestId || null, params.facultyMockFacultyId || null
+  );
 
   return {
     orderId: internalOrderId,
@@ -272,7 +291,7 @@ export interface FulfillPaymentResult {
  * Authoritative single point for credit granting, transactional recording,
  * and ledger updates across both Checkout verification and Webhook delivery.
  */
-export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymentResult {
+export async function fulfillPaymentOrder(params: FulfillPaymentParams): Promise<FulfillPaymentResult> {
   const {
     razorpayOrderId,
     razorpayPaymentId,
@@ -289,7 +308,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
 
   // 1. Fetch internal order by razorpay_order_id
   const order = db.prepare(`
-    SELECT id, student_id, quantity, amount_paise, currency, status
+    SELECT id, student_id, quantity, amount_paise, currency, status, purchase_type, faculty_mock_test_id, faculty_mock_faculty_id
     FROM payment_orders
     WHERE razorpay_order_id = ?
   `).get(razorpayOrderId) as {
@@ -299,6 +318,9 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
     amount_paise: number;
     currency: string;
     status: string;
+    purchase_type?: string;
+    faculty_mock_test_id?: string | null;
+    faculty_mock_faculty_id?: string | null;
   } | undefined;
 
   if (!order) {
@@ -343,6 +365,23 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
       orderId: order.id,
       studentId: authoritativeStudentId,
     };
+  }
+
+  // Faculty mock repeat payments grant a dedicated copy entitlement, never
+  // general evaluation credits. Firestore records an order receipt idempotently.
+  const isFacultyMockPurchase = String(order.purchase_type || 'CUSTOM').toUpperCase() === 'FACULTY_MOCK';
+  if (isFacultyMockPurchase) {
+    if (!order.faculty_mock_test_id || !order.faculty_mock_faculty_id) {
+      throw new Error('Faculty mock payment order is missing its mock/faculty binding.');
+    }
+    await grantFacultyMockPaidCopy({
+      studentId: authoritativeStudentId,
+      facultyId: String(order.faculty_mock_faculty_id),
+      testId: String(order.faculty_mock_test_id),
+      orderId: order.id,
+      paymentId: razorpayPaymentId,
+      amountPaise: order.amount_paise,
+    });
   }
 
   // 5. Atomic fulfillment transaction
@@ -392,6 +431,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
     // Update order status to SUCCESS
     db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE id = ?").run(order.id);
 
+    if (!isFacultyMockPurchase) {
     // Record credit purchase with exact 3-month validity lot in student_credit_purchases
     const lotResult = recordCreditPurchase({
       userId: authoritativeStudentId,
@@ -422,6 +462,24 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
       razorpayPaymentId,
       `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId}) [${source}]. Valid for 3 months until ${expiryFormatted}.`
     );
+
+    } else {
+      // Separate faculty-mock receipt: do not touch main evaluation-credit balance.
+      const mockNotifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Faculty Mock Copy Purchased', 'Payment successful. One additional evaluation copy is now available for your selected faculty mock.', 'CREDIT')
+      `).run(mockNotifId, authoritativeStudentId);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'FACULTY_MOCK_COPY_PURCHASED', 'FACULTY_MOCK', ?, ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        authoritativeStudentId,
+        String(order.faculty_mock_test_id),
+        `Purchased one repeat copy for faculty mock ${order.faculty_mock_test_id}. Razorpay Payment ID: ${razorpayPaymentId}`
+      );
+    }
 
     // In-app notification
     const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
@@ -472,12 +530,12 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
  * Verifies Razorpay HMAC SHA256 Checkout signature and applies credits idempotently.
  * Preserves the exact signature and interface used by /api/payments/verify.
  */
-export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success: boolean; creditsAdded: number } {
+export async function verifyAndFulfillPayment(params: VerifyPaymentParams): Promise<{ success: boolean; creditsAdded: number }> {
   const { studentId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
 
   // 1. Fetch internal order
   const order = db.prepare(`
-    SELECT id, student_id, quantity, amount_paise, status
+    SELECT id, student_id, quantity, amount_paise, status, purchase_type
     FROM payment_orders
     WHERE razorpay_order_id = ? AND student_id = ?
   `).get(razorpayOrderId, studentId) as {
@@ -508,7 +566,7 @@ export function verifyAndFulfillPayment(params: VerifyPaymentParams): { success:
   }
 
   // 3. Shared idempotent fulfillment
-  const fulfillment = fulfillPaymentOrder({
+  const fulfillment = await fulfillPaymentOrder({
     razorpayOrderId,
     razorpayPaymentId,
     studentId,
@@ -573,7 +631,7 @@ export async function processRazorpayWebhook(
     }
 
     // Call shared idempotent fulfillment directly
-    const result = fulfillPaymentOrder({
+    const result = await fulfillPaymentOrder({
       razorpayOrderId: orderId,
       razorpayPaymentId: paymentId,
       studentId: studentId || undefined,
