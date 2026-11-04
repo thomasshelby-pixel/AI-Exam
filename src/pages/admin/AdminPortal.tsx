@@ -1406,7 +1406,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'mcq-arena', label: 'MCQ Admin Portal', icon: Target },
     { id: 'reviews', label: 'Student Reviews', icon: Star, badge: pendingReviewsCount },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
-    { id: 'faculty-mocks', label: 'Faculty Mock Evaluation', icon: ClipboardList },
+    { id: 'faculty-mocks', label: 'Faculty Mock Evaluation', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
     { id: 'ai-models', label: 'AI Models & Fallbacks', icon: Brain },
     { id: 'users', label: 'Users', icon: Users },
