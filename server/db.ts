@@ -1150,6 +1150,10 @@ function runMigrations() {
       ON faculty_mock_tests(status, course_level, faculty_id, attempt, subject_key, mock_number);
   `);
 
+  addColumnIfNotExists('payment_orders', 'purchase_type', "TEXT NOT NULL DEFAULT 'CUSTOM'");
+  addColumnIfNotExists('payment_orders', 'faculty_mock_test_id', 'TEXT');
+  addColumnIfNotExists('payment_orders', 'faculty_mock_faculty_id', 'TEXT');
+
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_id', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
