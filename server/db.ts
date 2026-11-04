@@ -1096,6 +1096,65 @@ function runMigrations() {
     }
   }
 
+  // Faculty-wise free mock evaluation catalogue.
+  // The question paper is exposed to students; suggested answers remain server-only
+  // and are sent to the AI evaluator only after a student submits an answer sheet.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS faculty_mock_faculties (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS faculty_mock_tests (
+      id TEXT PRIMARY KEY,
+      faculty_id TEXT NOT NULL,
+      course_level TEXT NOT NULL,
+      attempt TEXT NOT NULL,
+      model_group TEXT,
+      subject_key TEXT NOT NULL,
+      subject_name TEXT NOT NULL,
+      paper TEXT NOT NULL DEFAULT 'Paper 1',
+      mock_number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      maximum_marks REAL NOT NULL DEFAULT 100,
+      syllabus_version TEXT NOT NULL DEFAULT 'New Scheme 2024',
+      question_paper_text TEXT NOT NULL,
+      suggested_answers_text TEXT NOT NULL,
+      marking_scheme_text TEXT,
+      question_paper_file_id TEXT NOT NULL,
+      question_paper_file_name TEXT,
+      question_paper_file_size INTEGER,
+      suggested_answer_file_id TEXT NOT NULL,
+      suggested_answer_file_name TEXT,
+      suggested_answer_file_size INTEGER,
+      marking_scheme_file_id TEXT,
+      marking_scheme_file_name TEXT,
+      marking_scheme_file_size INTEGER,
+      status TEXT NOT NULL DEFAULT 'PUBLISHED',
+      created_by TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (faculty_id) REFERENCES faculty_mock_faculties(id) ON DELETE RESTRICT,
+      UNIQUE (faculty_id, course_level, attempt, subject_key, paper, mock_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_faculty_mock_faculties_status
+      ON faculty_mock_faculties(status, sort_order, name);
+    CREATE INDEX IF NOT EXISTS idx_faculty_mock_tests_student_catalogue
+      ON faculty_mock_tests(status, course_level, faculty_id, attempt, subject_key, mock_number);
+  `);
+
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_id', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
+  addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
+
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
   addColumnIfNotExists('evaluation_materials', 'institute_id', "TEXT");

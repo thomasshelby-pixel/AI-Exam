@@ -478,6 +478,307 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
 });
 router.use(requireRole('SUPER_ADMIN'));
 
+// Faculty-wise free mock evaluation catalogue. Only Super Admin can manage these records.
+router.get('/faculty-mocks/faculties', async (_req: AuthRequest, res: Response) => {
+  try {
+    let faculties: any[] = [];
+    try {
+      faculties = await getAllFirestoreDocs<any>('faculty_mock_faculties', { failOnError: true });
+      for (const faculty of faculties) {
+        db.prepare(`
+          INSERT INTO faculty_mock_faculties (id, name, description, status, sort_order, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name, description=excluded.description, status=excluded.status,
+            sort_order=excluded.sort_order, updated_at=excluded.updated_at
+        `).run(
+          faculty.id, faculty.name, faculty.description || null, faculty.status || 'ACTIVE',
+          Number(faculty.sort_order || 0), faculty.created_by || null,
+          faculty.created_at || new Date().toISOString(), faculty.updated_at || new Date().toISOString()
+        );
+      }
+    } catch {
+      faculties = db.prepare('SELECT * FROM faculty_mock_faculties ORDER BY sort_order ASC, name COLLATE NOCASE ASC').all() as any[];
+    }
+    return res.json({ faculties: faculties.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.name).localeCompare(String(b.name))) });
+  } catch (error) {
+    console.error('[FacultyMocks] List faculties error:', error);
+    return res.status(500).json({ error: 'Failed to load faculty list.' });
+  }
+});
+
+router.post('/faculty-mocks/faculties', async (req: AuthRequest, res: Response) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 100) : '';
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim().slice(0, 500) : '';
+    if (name.length < 2) return res.status(400).json({ error: 'Enter a faculty name (at least 2 characters).' });
+
+    const existing = (await getAllFirestoreDocs<any>('faculty_mock_faculties').catch(() => []))
+      .find((item) => String(item.name || '').trim().toLowerCase() === name.toLowerCase() && String(item.status || 'ACTIVE') === 'ACTIVE');
+    if (existing) return res.status(409).json({ error: 'A faculty with this name is already active.', facultyId: existing.id });
+
+    const now = new Date().toISOString();
+    const faculty = {
+      id: `fmock_fac_${crypto.randomBytes(8).toString('hex')}`,
+      name,
+      description: description || null,
+      status: 'ACTIVE',
+      sort_order: 0,
+      created_by: req.user!.id,
+      created_at: now,
+      updated_at: now,
+    };
+    const persisted = await setFirestoreDoc('faculty_mock_faculties', faculty.id, faculty);
+    if (!persisted) return res.status(502).json({ error: 'Faculty could not be saved to the shared database. Please retry.' });
+    db.prepare(`
+      INSERT INTO faculty_mock_faculties (id, name, description, status, sort_order, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(faculty.id, faculty.name, faculty.description, faculty.status, faculty.sort_order, faculty.created_by, now, now);
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'FACULTY_MOCK_FACULTY_CREATED', 'FACULTY_MOCK_FACULTY', ?, ?)
+    `).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, faculty.id, `Created faculty mock catalogue: ${name}`);
+    return res.status(201).json({ success: true, faculty });
+  } catch (error) {
+    console.error('[FacultyMocks] Create faculty error:', error);
+    return res.status(500).json({ error: 'Failed to create faculty.' });
+  }
+});
+
+router.put('/faculty-mocks/faculties/:id/status', async (req: AuthRequest, res: Response) => {
+  try {
+    const facultyId = String(req.params.id || '').trim();
+    const status = String(req.body?.status || '').toUpperCase();
+    if (!['ACTIVE', 'INACTIVE'].includes(status)) return res.status(400).json({ error: 'Status must be ACTIVE or INACTIVE.' });
+    const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', facultyId)
+      || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(facultyId) as any;
+    if (!faculty) return res.status(404).json({ error: 'Faculty not found.' });
+    const updated = { ...faculty, status, updated_at: new Date().toISOString() };
+    const persisted = await setFirestoreDoc('faculty_mock_faculties', facultyId, updated);
+    if (!persisted) return res.status(502).json({ error: 'Faculty status could not be saved to the shared database.' });
+    db.prepare('UPDATE faculty_mock_faculties SET status = ?, updated_at = ? WHERE id = ?').run(status, updated.updated_at, facultyId);
+    return res.json({ success: true, faculty: updated });
+  } catch (error) {
+    console.error('[FacultyMocks] Faculty status update error:', error);
+    return res.status(500).json({ error: 'Failed to update faculty status.' });
+  }
+});
+
+router.get('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
+  try {
+    const docs = await getAllFirestoreDocs<any>('faculty_mock_tests', { failOnError: true }).catch(() =>
+      db.prepare('SELECT * FROM faculty_mock_tests ORDER BY course_level, attempt, subject_name, faculty_id, mock_number').all() as any[]
+    );
+    const faculties = await getAllFirestoreDocs<any>('faculty_mock_faculties').catch(() =>
+      db.prepare('SELECT * FROM faculty_mock_faculties').all() as any[]
+    );
+    const facultyById = new Map(faculties.map((f) => [f.id, f]));
+    const filtered = docs.filter((t: any) =>
+      (!req.query.facultyId || t.faculty_id === req.query.facultyId) &&
+      (!req.query.level || req.query.level === 'ALL' || t.course_level === req.query.level) &&
+      (!req.query.attempt || t.attempt === req.query.attempt)
+    ).map((t: any) => ({
+      ...t,
+      faculty_name: facultyById.get(t.faculty_id)?.name || t.faculty_name || 'Unknown Faculty',
+      question_paper_text: undefined,
+      suggested_answers_text: undefined,
+      marking_scheme_text: undefined,
+    })).sort((a: any, b: any) =>
+      String(a.course_level).localeCompare(String(b.course_level)) ||
+      String(a.attempt).localeCompare(String(b.attempt)) ||
+      String(a.subject_name).localeCompare(String(b.subject_name)) ||
+      Number(a.mock_number) - Number(b.mock_number)
+    );
+    return res.json({ tests: filtered });
+  } catch (error) {
+    console.error('[FacultyMocks] List tests error:', error);
+    return res.status(500).json({ error: 'Failed to load faculty mock tests.' });
+  }
+});
+
+router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
+  const uploadedFileIds: string[] = [];
+  try {
+    const body = req.body || {};
+    const facultyId = String(body.facultyId || '').trim();
+    const courseLevel = String(body.courseLevel || '').trim().toUpperCase();
+    const attempt = String(body.attempt || '').trim().slice(0, 40);
+    const modelGroup = String(body.modelGroup || '').trim().toUpperCase();
+    const subjectKey = String(body.subjectKey || '').trim();
+    const subjectName = String(body.subjectName || '').trim().slice(0, 100);
+    const paper = String(body.paper || 'Paper 1').trim().slice(0, 40);
+    const title = String(body.title || '').trim().slice(0, 160);
+    const maximumMarks = Number(body.maximumMarks || 100);
+    const requestedMockNumber = body.mockNumber === '' || body.mockNumber === undefined || body.mockNumber === null
+      ? undefined
+      : Number(body.mockNumber);
+
+    if (!facultyId || !['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(courseLevel) ||
+        !attempt || !subjectKey || !subjectName || !paper || !Number.isFinite(maximumMarks) || maximumMarks <= 0 || maximumMarks > 500) {
+      return res.status(400).json({ error: 'Select faculty, CA level, attempt, subject, paper and valid maximum marks.' });
+    }
+    if (modelGroup && !['GROUP_1', 'GROUP_2', 'BOTH', 'OTHER'].includes(modelGroup)) {
+      return res.status(400).json({ error: 'Select a valid CA group.' });
+    }
+    const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', facultyId)
+      || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(facultyId) as any;
+    if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+      return res.status(404).json({ error: 'Select an active faculty before uploading a mock.' });
+    }
+
+    const qpFile = body.questionPaperFile;
+    const saFile = body.suggestedAnswerFile;
+    const msFile = body.markingSchemeFile || null;
+    const validateFile = (file: any, label: string, required: boolean) => {
+      if (!file && !required) return null;
+      if (!file || typeof file.base64 !== 'string' || !file.base64.trim()) throw new Error(`${label} PDF is required.`);
+      const buffer = Buffer.from(file.base64.includes(',') ? file.base64.split(',')[1] : file.base64, 'base64');
+      if (!buffer.length || buffer.length > 20 * 1024 * 1024) throw new Error(`${label} PDF must be between 1 byte and 20 MB.`);
+      const mime = String(file.type || 'application/pdf').toLowerCase();
+      if (mime !== 'application/pdf' || buffer.subarray(0, 4).toString() !== '%PDF') throw new Error(`${label} must be a valid PDF file.`);
+      return { buffer, mime, filename: String(file.name || `${label}.pdf`).slice(0, 180) };
+    };
+    const qp = validateFile(qpFile, 'Question Paper', true)!;
+    const sa = validateFile(saFile, 'Suggested Answer', true)!;
+    const ms = validateFile(msFile, 'Marking Scheme', false);
+
+    const [qpExtracted, saExtracted, msExtracted] = await Promise.all([
+      extractMaterialFromPDF(qp.buffer.toString('base64'), qp.mime, 'QUESTION_PAPER'),
+      extractMaterialFromPDF(sa.buffer.toString('base64'), sa.mime, 'SUGGESTED_ANSWERS'),
+      ms ? extractMaterialFromPDF(ms.buffer.toString('base64'), ms.mime, 'MARKING_SCHEME') : Promise.resolve(null),
+    ]);
+    const questionPaperText = String(qpExtracted.questionPaperText || '').trim();
+    const suggestedAnswersText = String(saExtracted.suggestedAnswersText || '').trim();
+    const markingSchemeText = String(msExtracted?.markingSchemeText || '').trim();
+    if (questionPaperText.length < 50) return res.status(422).json({ error: 'The Question Paper could not be extracted sufficiently. Upload a clearer PDF.' });
+    if (suggestedAnswersText.length < 50) return res.status(422).json({ error: 'The Suggested Answer could not be extracted sufficiently. Upload a clearer PDF.' });
+
+    const currentTests = await getAllFirestoreDocs<any>('faculty_mock_tests').catch(() =>
+      db.prepare('SELECT * FROM faculty_mock_tests').all() as any[]
+    );
+    const matching = currentTests.filter((t: any) =>
+      t.faculty_id === facultyId &&
+      t.course_level === courseLevel &&
+      t.attempt === attempt &&
+      t.subject_key === subjectKey &&
+      String(t.paper || 'Paper 1') === paper
+    );
+    const mockNumber = requestedMockNumber ?? (Math.max(0, ...matching.map((t: any) => Number(t.mock_number) || 0)) + 1);
+    if (!Number.isInteger(mockNumber) || mockNumber < 1 || mockNumber > 99) {
+      return res.status(400).json({ error: 'Mock number must be between 1 and 99.' });
+    }
+    if (currentTests.some((t: any) =>
+      t.faculty_id === facultyId && t.course_level === courseLevel && t.attempt === attempt &&
+      t.subject_key === subjectKey && String(t.paper || 'Paper 1') === paper &&
+      Number(t.mock_number) === mockNumber
+    )) {
+      return res.status(409).json({ error: `Mock ${String(mockNumber).padStart(2, '0')} already exists for this faculty, attempt and subject.` });
+    }
+
+    const id = `fmock_test_${crypto.randomBytes(8).toString('hex')}`;
+    const now = new Date().toISOString();
+    const saveFile = async (file: any, fileId: string, category: any) => {
+      const saved = await savePersistentFile(fileId, file.filename, file.mime, file.buffer, category, {
+        ownerUserId: req.user!.id,
+        materialId: id,
+      });
+      if (!saved) throw new Error('A mock PDF could not be stored. No test has been published.');
+      uploadedFileIds.push(fileId);
+      if (!saved.storagePath || saved.status !== 'ACTIVE') {
+        throw new Error('A mock PDF could not be durably stored in Cloud Storage. No test has been published.');
+      }
+      return saved;
+    };
+
+    const qpSaved = await saveFile(qp, `${id}_question_paper`, 'MATERIAL_QUESTION_PAPER');
+    const saSaved = await saveFile(sa, `${id}_suggested_answer`, 'MATERIAL_MODEL_ANSWER');
+    const msSaved = ms ? await saveFile(ms, `${id}_marking_scheme`, 'MATERIAL_MARKING_SCHEME') : null;
+    const test = {
+      id,
+      faculty_id: facultyId,
+      faculty_name: faculty.name,
+      course_level: courseLevel,
+      attempt,
+      model_group: modelGroup || null,
+      subject_key: subjectKey,
+      subject_name: subjectName,
+      paper,
+      mock_number: mockNumber,
+      title: title || `${faculty.name} — ${subjectName} Mock ${String(mockNumber).padStart(2, '0')}`,
+      maximum_marks: maximumMarks,
+      syllabus_version: String(body.syllabusVersion || 'New Scheme 2024').slice(0, 80),
+      question_paper_text: questionPaperText,
+      suggested_answers_text: suggestedAnswersText,
+      marking_scheme_text: markingSchemeText || null,
+      question_paper_file_id: qpSaved.fileId,
+      question_paper_file_name: qpSaved.originalFilename || qp.filename,
+      question_paper_file_size: qpSaved.size,
+      suggested_answer_file_id: saSaved.fileId,
+      suggested_answer_file_name: saSaved.originalFilename || sa.filename,
+      suggested_answer_file_size: saSaved.size,
+      marking_scheme_file_id: msSaved?.fileId || null,
+      marking_scheme_file_name: msSaved?.originalFilename || ms?.filename || null,
+      marking_scheme_file_size: msSaved?.size || null,
+      status: 'PUBLISHED',
+      created_by: req.user!.id,
+      created_at: now,
+      updated_at: now,
+    };
+    db.prepare(`
+      INSERT INTO faculty_mock_tests (
+        id, faculty_id, course_level, attempt, model_group, subject_key, subject_name, paper, mock_number, title,
+        maximum_marks, syllabus_version, question_paper_text, suggested_answers_text, marking_scheme_text,
+        question_paper_file_id, question_paper_file_name, question_paper_file_size,
+        suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
+        marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size,
+        status, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, facultyId, courseLevel, attempt, modelGroup || null, subjectKey, subjectName, paper, mockNumber, test.title,
+      maximumMarks, test.syllabus_version, questionPaperText, suggestedAnswersText, markingSchemeText || null,
+      qpSaved.fileId, qpSaved.originalFilename || qp.filename, qpSaved.size,
+      saSaved.fileId, saSaved.originalFilename || sa.filename, saSaved.size,
+      msSaved?.fileId || null, msSaved?.originalFilename || ms?.filename || null, msSaved?.size || null,
+      test.status, test.created_by, now, now
+    );
+    const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
+    if (!persisted) {
+      db.prepare('DELETE FROM faculty_mock_tests WHERE id = ?').run(id);
+      throw new Error('Mock metadata could not be saved to the shared database. Please retry.');
+    }
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'FACULTY_MOCK_TEST_PUBLISHED', 'FACULTY_MOCK_TEST', ?, ?)
+    `).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, id,
+      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')}.`);
+    return res.status(201).json({ success: true, test: { ...test, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined } });
+  } catch (error) {
+    for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
+    console.error('[FacultyMocks] Create test error:', error);
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to upload faculty mock test.' });
+  }
+});
+
+router.put('/faculty-mocks/tests/:id/status', async (req: AuthRequest, res: Response) => {
+  try {
+    const testId = String(req.params.id || '').trim();
+    const status = String(req.body?.status || '').toUpperCase();
+    if (!['PUBLISHED', 'UNPUBLISHED'].includes(status)) return res.status(400).json({ error: 'Status must be PUBLISHED or UNPUBLISHED.' });
+    const test = await getFirestoreDoc<any>('faculty_mock_tests', testId)
+      || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    if (!test) return res.status(404).json({ error: 'Faculty mock test not found.' });
+    const updated = { ...test, status, updated_at: new Date().toISOString() };
+    if (!await setFirestoreDoc('faculty_mock_tests', testId, updated)) {
+      return res.status(502).json({ error: 'Mock test status could not be saved to the shared database.' });
+    }
+    db.prepare('UPDATE faculty_mock_tests SET status = ?, updated_at = ? WHERE id = ?').run(status, updated.updated_at, testId);
+    return res.json({ success: true, test: { ...updated, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined } });
+  } catch (error) {
+    console.error('[FacultyMocks] Update test status error:', error);
+    return res.status(500).json({ error: 'Failed to update faculty mock test.' });
+  }
+});
+
 // 1. Admin Dashboard Overview
 router.get('/dashboard', async (req: AuthRequest, res: Response) => {
   try {

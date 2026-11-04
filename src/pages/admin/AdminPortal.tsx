@@ -5,6 +5,7 @@ import { logMfaDiagnostic, getFirebaseEnrolledTotpFactors } from '../../lib/fire
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST, formatDateTimeIST, formatTimeIST } from '../../utils/timezone.js';
 import { MaterialManagement } from '../../components/admin/MaterialManagement.js';
+import { AdminFacultyMockSection } from '../../components/admin/AdminFacultyMockSection.js';
 import { EvaluationControls } from '../../components/admin/EvaluationControls.js';
 import { ModelManagement } from '../../components/admin/ModelManagement.js';
 import { AdminPromoCodesSection } from './AdminPromoCodesSection.js';
@@ -392,6 +393,7 @@ export const AdminPortal: React.FC = () => {
       switch (activeSection) {
         case 'reviews':
         case 'materials':
+        case 'faculty-mocks':
         case 'rules':
         case 'promo-codes':
         case 'referrals': {
@@ -1404,6 +1406,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'mcq-arena', label: 'MCQ Admin Portal', icon: Target },
     { id: 'reviews', label: 'Student Reviews', icon: Star, badge: pendingReviewsCount },
     { id: 'materials', label: 'Material Management', icon: FileCheck2 },
+    { id: 'faculty-mocks', label: 'Faculty Mock Evaluation', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
     { id: 'ai-models', label: 'AI Models & Fallbacks', icon: Brain },
     { id: 'users', label: 'Users', icon: Users },
@@ -1854,6 +1857,16 @@ export const AdminPortal: React.FC = () => {
               {/* MATERIAL MANAGEMENT */}
               {activeSection === 'materials' && (
                 <MaterialManagement
+                  onNotify={(msg, type) => {
+                    if (type === 'success') setSuccessMsg(msg);
+                    else setErrorMsg(msg);
+                  }}
+                />
+              )}
+
+              {/* FACULTY-WISE FREE MOCK EVALUATION */}
+              {activeSection === 'faculty-mocks' && (
+                <AdminFacultyMockSection
                   onNotify={(msg, type) => {
                     if (type === 'success') setSuccessMsg(msg);
                     else setErrorMsg(msg);

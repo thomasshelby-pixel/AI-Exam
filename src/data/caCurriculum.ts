@@ -217,6 +217,10 @@ export const MATERIAL_TYPE_CONFIG: Record<MaterialType, {
   label: string;
   description: string;
 }> = {
+  FACULTY_MOCK_TEST: {
+    label: 'Faculty Mock Test',
+    description: 'Faculty-curated mock paper evaluated against its uploaded Question Paper, Suggested Answer and marking reference.',
+  },
   MODEL_TEST_PAPER: {
     label: 'Model Test Paper',
     description: 'Comprehensive full-syllabus question paper with official suggested solutions and step marking.',

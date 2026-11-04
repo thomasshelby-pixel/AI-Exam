@@ -126,7 +126,7 @@ export interface MaterialGateRequest {
   mtpSeries?: 1 | 2 | string | number;
   modelTestNumber?: number;
   sourceFormat?: 'SEPARATE' | 'COMBINED' | 'LEGACY' | string;
-  evaluationSource?: 'PUBLIC' | 'INSTITUTE';
+  evaluationSource?: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK';
   instituteId?: string;
   instituteMaterialId?: string;
   preloadedMaterial?: any;
