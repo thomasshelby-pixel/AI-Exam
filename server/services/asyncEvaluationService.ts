@@ -101,6 +101,12 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
     throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Evaluation record not found.');
   }
 
+  const isModelTest = job.materialType === 'MODEL_TEST_PAPER';
+  const isFacultyMock = job.requestedEvalSource === 'FACULTY_MOCK' || job.materialType === 'FACULTY_MOCK_TEST';
+  // Do not impose this extra Model/Faculty source binding on legacy PYQ/MTP
+  // or institute-specific jobs; they retain their existing validated flow.
+  if (!isModelTest && !isFacultyMock) return;
+
   const sameText = (left: unknown, right: unknown): boolean => {
     const leftHash = crypto.createHash('sha256').update(String(left || '').trim(), 'utf8').digest('hex');
     const rightHash = crypto.createHash('sha256').update(String(right || '').trim(), 'utf8').digest('hex');
