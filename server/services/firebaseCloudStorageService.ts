@@ -838,7 +838,7 @@ export async function auditStorageConsistency(allMaterials: any[]): Promise<Stor
  * callers can remove metadata only after the object deletion succeeds.
  */
 export async function deleteCloudStorageObject(storagePath: string, bucketName?: string): Promise<void> {
-  const safePath = String(storagePath || '').trim().replace(/^\\/+/, '');
+  const safePath = String(storagePath || '').trim().replace(/^\/+/, '');
   if (!safePath || !safePath.startsWith('app_releases/android/')) {
     throw new Error('Refusing to delete a storage object outside the Android app-release directory.');
   }
