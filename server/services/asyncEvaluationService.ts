@@ -18,6 +18,7 @@ import {
 } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
+import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
@@ -92,7 +93,7 @@ function isTerminalEvaluationStatus(status: unknown): boolean {
  * Returns Faculty Mock copy access when asynchronous AI evaluation fails.
  * Successful / NEEDS_REVIEW evaluations keep the copy consumed.
  */
-function releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId: string): void {
+async function releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId: string): Promise<void> {
   try {
     const evaluation = db.prepare(`
       SELECT student_id, faculty_mock_test_id, faculty_mock_payment_order_id
@@ -105,12 +106,19 @@ function releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId: string): 
     if (!evaluation?.faculty_mock_test_id || !evaluation.student_id) return;
 
     if (evaluation.faculty_mock_payment_order_id) {
+      await releaseFacultyMockPaidCopy(
+        evaluation.faculty_mock_payment_order_id,
+        evaluation.student_id,
+        evaluation.faculty_mock_test_id,
+        evaluationId,
+      );
       db.prepare(`
         UPDATE faculty_mock_copy_purchases
         SET status = 'AVAILABLE', evaluation_id = NULL, consumed_at = NULL
         WHERE order_id = ? AND evaluation_id = ? AND status = 'CONSUMED'
       `).run(evaluation.faculty_mock_payment_order_id, evaluationId);
     } else {
+      await releaseFacultyMockFreeCopy(evaluation.student_id, evaluation.faculty_mock_test_id, evaluationId);
       db.prepare(`
         DELETE FROM faculty_mock_free_uses
         WHERE student_id = ? AND faculty_mock_test_id = ? AND evaluation_id = ?
@@ -563,7 +571,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         // A concurrent terminal decision wins. Only refund if this worker actually
         // claimed the FAILED transition.
         if (failureClaim.changes === 1) {
-          releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
+          await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
@@ -624,7 +632,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         `).run(mismatchErr, mismatchErr, evaluationId);
 
         if (failureClaim.changes === 1) {
-          releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
+          await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
@@ -1055,7 +1063,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       return;
     }
 
-    releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
+    await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
 
     // Refund only after successfully recording this job's FAILED transition.
     if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
