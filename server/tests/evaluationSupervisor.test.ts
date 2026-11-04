@@ -191,7 +191,7 @@ function makeReferenceSnippet(found: boolean) {
       exactReferenceSections: 'QP: Q1(a) | SA: Q1(a) | MS: Q1(a)',
       retrievedCharacterCount: 40,
       sourceType: 'GLOBAL' as const,
-      verificationStatus: 'VERIFIED',
+      verificationStatus: 'VERIFIED' as const,
     },
   };
 }
