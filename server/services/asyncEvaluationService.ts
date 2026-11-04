@@ -29,6 +29,7 @@ import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
   detectMtpSeriesFromText,
+  normalizeAndSplitCombinedPyq,
 } from './materialHardGateService.js';
 
 export interface EvaluationJobData {
@@ -133,17 +134,35 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
     }
 
     const material = db.prepare(
-      "SELECT id, level, subject_key, subject_name, paper, model_test_number, question_paper_text, suggested_answers_text, marking_scheme_text FROM evaluation_materials WHERE id = ? AND material_type = 'MODEL_TEST_PAPER' AND status = 'ACTIVE' AND source_type = 'ADMIN' AND admin_approved = 1 LIMIT 1"
+      "SELECT id, level, subject_key, subject_name, paper, model_test_number, source_format, question_paper_text, suggested_answers_text, marking_scheme_text FROM evaluation_materials WHERE id = ? AND material_type = 'MODEL_TEST_PAPER' AND status = 'ACTIVE' AND source_type = 'ADMIN' AND admin_approved = 1 LIMIT 1"
     ).get(job.referenceMaterialId) as any;
+
+    let authoritativeQuestionPaper = String(material?.question_paper_text || '').trim();
+    let authoritativeSuggestedAnswers = String(material?.suggested_answers_text || '').trim();
+    const authoritativeMarkingScheme = String(material?.marking_scheme_text || '').trim();
+    if (material?.source_format === 'COMBINED' &&
+        (!authoritativeQuestionPaper || !authoritativeSuggestedAnswers ||
+          authoritativeQuestionPaper === authoritativeSuggestedAnswers ||
+          authoritativeQuestionPaper.length < 50 || authoritativeSuggestedAnswers.length < 50)) {
+      const sourceForSplit = authoritativeQuestionPaper.length >= 50
+        ? authoritativeQuestionPaper
+        : authoritativeSuggestedAnswers;
+      if (sourceForSplit.length >= 50) {
+        const normalized = normalizeAndSplitCombinedPyq(sourceForSplit);
+        authoritativeQuestionPaper = normalized.questionPaperText;
+        authoritativeSuggestedAnswers = normalized.suggestedAnswersText;
+      }
+    }
+
     if (!material ||
         Number(material.model_test_number) !== expectedNumber ||
         !same(material.level, job.level) ||
         !same(material.subject_key, job.subjectKey) ||
         !same(material.subject_name, job.subjectName) ||
         !same(material.paper, job.paper || 'Paper 1') ||
-        !sameText(material.question_paper_text, job.referenceQuestionPaperText) ||
-        !sameText(material.suggested_answers_text, job.referenceSuggestedAnswersText) ||
-        !sameText(material.marking_scheme_text, job.markingSchemeText)) {
+        !sameText(authoritativeQuestionPaper, job.referenceQuestionPaperText) ||
+        !sameText(authoritativeSuggestedAnswers, job.referenceSuggestedAnswersText) ||
+        !sameText(authoritativeMarkingScheme, job.markingSchemeText)) {
       throw new Error('MODEL_TEST_SOURCE_BINDING_FAILED: The selected Model Test Question Paper, Suggested Answer or Marking Scheme changed or belongs to another test.');
     }
   }
