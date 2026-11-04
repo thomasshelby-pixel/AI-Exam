@@ -1569,6 +1569,13 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           evaluationId,
         });
         entitlementSource = accessResult.source === 'FREE_FIRST_COPY' ? 'FACULTY_MOCK_FREE' : 'FACULTY_MOCK_PAID';
+        db.prepare('UPDATE evaluations SET entitlement_source = ? WHERE id = ?').run(entitlementSource, evaluationId);
+        try {
+          const updatedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId);
+          if (updatedEvaluation) syncRecordToFirestore('evaluations', evaluationId, updatedEvaluation as any);
+        } catch (syncError) {
+          console.warn('[StudentRoutes] Could not sync faculty mock copy entitlement source:', syncError);
+        }
       } catch (accessError: any) {
         db.prepare(`
           UPDATE evaluations
