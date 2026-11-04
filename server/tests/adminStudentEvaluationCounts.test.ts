@@ -90,8 +90,6 @@ async function run() {
     `);
     seedManualReviewUser.run(manualReviewStudent, manualReviewEmail);
     seedManualReviewProfile.run(manualReviewStudent, 'ST-MREV', 'NRO0123456', currentMonth);
-    seedManualReviewUser.run(duplicateReviewStudent, duplicateReviewEmail);
-    seedManualReviewProfile.run(duplicateReviewStudent, 'ST-DUPR', 'SRO0123456', currentMonth);
     db.prepare(`
       INSERT INTO users (id, email, password_hash, full_name, role, status, account_classification, email_verified, created_at, updated_at)
       VALUES (?, ?, 'hash', 'Unverified Review Student', 'STUDENT', 'ACTIVE', 'NORMAL', 0, datetime('now'), datetime('now'))
@@ -136,6 +134,12 @@ async function run() {
       `).get(manualReviewStudent) as any;
       assert.equal(reviewAudit?.action, 'ADMIN_FREE_TRIAL_MANUAL_REVIEW_APPROVED', 'Manual approval is written to the admin audit log');
       assert.match(String(reviewAudit?.details || ''), /Super Admin manually reviewed the account/, 'Audit log preserves the admin review note');
+
+      // Create the duplicate identity only after approving the first account.
+      // This makes the primary approval test a genuinely unique SRN, then verifies
+      // a second account using the same numeric SRN is rejected.
+      seedManualReviewUser.run(duplicateReviewStudent, duplicateReviewEmail);
+      seedManualReviewProfile.run(duplicateReviewStudent, 'ST-DUPR', 'SRO0123456', currentMonth);
 
       const duplicate = await fetch(`${baseUrl}/api/admin/students/${duplicateReviewStudent}/review-free-trial`, {
         method: 'POST',
