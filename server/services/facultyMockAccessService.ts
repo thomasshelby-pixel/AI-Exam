@@ -11,7 +11,7 @@ const ACCESS_COLLECTION = 'faculty_mock_access';
 const PAYMENT_GRANTS_COLLECTION = 'faculty_mock_payment_grants';
 const EVALUATION_CLAIMS_COLLECTION = 'faculty_mock_evaluation_claims';
 
-function hasLegacyFacultyMockCopy(studentId: string, testId: string): boolean {
+function hasLegacyFacultyMockCopy(studentId: string, testId: string, excludeEvaluationId?: string): boolean {
   // Before per-mock entitlements existed, accepted faculty mock evaluations were
   // marked FACULTY_MOCK_SPONSORED. Migrate those students to "free copy used"
   // rather than accidentally giving a second free copy after this rollout.
@@ -24,9 +24,10 @@ function hasLegacyFacultyMockCopy(studentId: string, testId: string): boolean {
         AND evaluation_source = 'FACULTY_MOCK'
         AND COALESCE(entitlement_source, 'FACULTY_MOCK_SPONSORED') = 'FACULTY_MOCK_SPONSORED'
         AND UPPER(COALESCE(status, '')) NOT IN ('FAILED', 'CANCELLED', 'REJECTED')
+        AND (? IS NULL OR id <> ?)
       ORDER BY created_at ASC
       LIMIT 1
-    `).get(studentId, testId) as { id?: string } | undefined;
+    `).get(studentId, testId, excludeEvaluationId || null, excludeEvaluationId || null) as { id?: string } | undefined;
     return Boolean(prior?.id);
   } catch (error) {
     console.error('[FacultyMockAccess] Legacy mock-copy lookup failed:', error);
@@ -158,7 +159,7 @@ export async function consumeFacultyMockCopy(input: {
 }): Promise<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const claimId = stableId(`${input.studentId}:${input.testId}:${input.evaluationId}`);
-  const legacyFreeCopyUsed = hasLegacyFacultyMockCopy(input.studentId, input.testId);
+  const legacyFreeCopyUsed = hasLegacyFacultyMockCopy(input.studentId, input.testId, input.evaluationId);
   const result = await runFirestoreTransaction<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }>(async (transaction) => {
     const claim = await transaction.get(EVALUATION_CLAIMS_COLLECTION, claimId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
