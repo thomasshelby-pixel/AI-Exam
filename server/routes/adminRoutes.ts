@@ -711,13 +711,14 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       suggested_answers_text: suggestedAnswersText,
       marking_scheme_text: markingSchemeText || null,
       question_paper_file_id: qpSaved.fileId,
-      question_paper_file_name: qpSaved.filename,
+      question_paper_file_name: qpSaved.originalFilename || qp.filename,
       question_paper_file_size: qpSaved.size,
       suggested_answer_file_id: saSaved.fileId,
-      suggested_answer_file_name: saSaved.filename,
+      suggested_answer_file_name: saSaved.originalFilename || sa.filename,
       suggested_answer_file_size: saSaved.size,
       marking_scheme_file_id: msSaved?.fileId || null,
-      marking_scheme_file_name: msSaved?.filename || null,
+      marking_scheme_file_name: msSaved?.originalFilename || ms?.filename || null,
+      marking_scheme_file_size: msSaved?.size || null,
       status: 'PUBLISHED',
       created_by: req.user!.id,
       created_at: now,
@@ -731,13 +732,15 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         maximum_marks, syllabus_version, question_paper_text, suggested_answers_text, marking_scheme_text,
         question_paper_file_id, question_paper_file_name, question_paper_file_size,
         suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
+        marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size,
         status, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, facultyId, courseLevel, attempt, modelGroup || null, subjectKey, subjectName, paper, mockNumber, test.title,
       maximumMarks, test.syllabus_version, questionPaperText, suggestedAnswersText, markingSchemeText || null,
-      qpSaved.fileId, qpSaved.filename, qpSaved.size,
-      saSaved.fileId, saSaved.filename, saSaved.size,
+      qpSaved.fileId, qpSaved.originalFilename || qp.filename, qpSaved.size,
+      saSaved.fileId, saSaved.originalFilename || sa.filename, saSaved.size,
+      msSaved?.fileId || null, msSaved?.originalFilename || ms?.filename || null, msSaved?.size || null,
       test.status, test.created_by, now, now
     );
     db.prepare(`
