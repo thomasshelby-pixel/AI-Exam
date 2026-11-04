@@ -968,7 +968,7 @@ export async function generateDetailedReportPdf(
         y: stepY - 15,
         size: 8.5,
         font: helveticaBold,
-        color: qMarks >= qMax ? passGreen : darkSlate,
+        color: qMax > 0 && qMarks >= qMax ? passGreen : darkSlate,
       });
 
       stepY -= 26;
@@ -1062,10 +1062,10 @@ export async function generateDetailedReportPdf(
           const prefix = cType ? `[${cType}] ` : '';
           const name = `${prefix}${c.expectedRequirement || c.step || c.stepName || 'Requirement'}`;
           const sAward = Number(c.marksAwarded ?? 0);
-          const sMax = Number(c.marksAvailable || c.maximumMarks || c.maxMarks || 1);
+          const sMax = Number(c.marksAvailable ?? c.maximumMarks ?? c.maxMarks ?? 0);
           const sDeducted = Number(c.marksDeducted ?? Math.max(0, sMax - sAward));
-          const isCorrect = c.assessment === 'CORRECT' || sAward >= sMax;
-          const isPartial = c.assessment === 'PARTIALLY_CORRECT' || (sAward > 0 && sAward < sMax);
+          const isCorrect = sMax > 0 && (c.assessment === 'CORRECT' || sAward >= sMax);
+          const isPartial = sMax > 0 && (c.assessment === 'PARTIALLY_CORRECT' || (sAward > 0 && sAward < sMax));
 
           const titleLines = wrapText(name, 68);
           const deductionLines = c.deductionReason ? wrapText(`Deduction: ${String(c.deductionReason)}`, 82) : [];
