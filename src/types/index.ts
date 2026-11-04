@@ -204,6 +204,12 @@ export interface ReferenceTrace {
   materialVersion?: string;
   source?: string;
   paperId?: string;
+  questionPaperMaterialId?: string;
+  suggestedAnswerMaterialId?: string;
+  markingSchemeMaterialId?: string;
+  materialType?: string;
+  modelTestNumber?: number;
+  facultyMockTestId?: string;
   modelAnswerAvailable?: boolean;
   contentHash?: string;
   retrievedCharacterCount?: number;
@@ -544,8 +550,8 @@ export interface EvaluationResult {
   percentage: number;
   grade: string;
   confidenceScore: number;
-  evaluationSource?: 'PUBLIC' | 'INSTITUTE';
-  materialSource?: 'GLOBAL' | 'INSTITUTE';
+  evaluationSource?: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK';
+  materialSource?: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
   instituteId?: string;
   instituteName?: string;
   sponsoringInstituteId?: string;
