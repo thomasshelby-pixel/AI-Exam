@@ -677,8 +677,8 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         !referenceBuffer.length || referenceBuffer.length > 10 * 1024 * 1024) {
       throw new Error('AI Evaluation Reference must be a plain .txt file up to 10 MB.');
     }
-    const evaluationReferenceText = referenceBuffer.toString('utf8').replace(/^\\uFEFF/, '').trim();
-    if (evaluationReferenceText.length < 50 || evaluationReferenceText.includes('\\u0000')) {
+    const evaluationReferenceText = referenceBuffer.toString('utf8').replace(/^\uFEFF/, '').trim();
+    if (evaluationReferenceText.length < 50 || referenceBuffer.includes(0)) {
       throw new Error('AI Evaluation Reference TXT must contain at least 50 characters of readable text.');
     }
     const reference = {
