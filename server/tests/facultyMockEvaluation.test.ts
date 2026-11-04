@@ -41,8 +41,8 @@ try {
       status, created_by, created_at, updated_at
     ) VALUES (?, ?, 'INTERMEDIATE', 'May 2027', 'GROUP_1', 'inter_advanced_accounting',
       'Advanced Accounting', 'Paper 1', 1, 'Test Faculty Mock 01', 100, 'New Scheme 2024',
-      ?, ?, 'Step-wise marking notes: award marks for correct principle, calculation and presentation.',
-      'qp-file', 'question-paper.pdf', 1000, 'sa-file', 'suggested-answer.pdf', 1200,
+      ?, ?, NULL,
+      'qp-file', 'question-paper.pdf', 1000, 'sa-file', 'evaluation-reference.txt', 1200,
       'PUBLISHED', 'test-admin', ?, ?)
   `).run(testId, facultyId, questionPaperText, suggestedAnswersText, now, now);
 
@@ -84,10 +84,21 @@ try {
   assert.equal(verified.id, testId, 'Hard gate uses the exact selected faculty mock record');
   assert.equal(verified.questionPaperText, questionPaperText, 'AI reference package receives the selected Question Paper');
   assert.equal(verified.suggestedAnswersText, suggestedAnswersText, 'AI reference package receives only the selected mock Suggested Answer');
-  assert.equal(verified.markingSchemeText, stored.marking_scheme_text, 'Optional marking scheme is included in the reference package');
+  assert.equal(verified.markingSchemeText, '', 'Faculty Mock uses the single uploaded TXT reference without a separate marking-scheme PDF');
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
   assert.equal(verified.manifest.materialSource, 'GLOBAL', 'Faculty mock does not masquerade as institute-sourced material');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
+
+  assert.throws(() => enforceMaterialHardGate({
+    evaluationId: 'eval_unlocked_' + suffix,
+    level: 'INTERMEDIATE',
+    subjectKey: 'inter_advanced_accounting',
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    attempt: 'May 2027',
+    materialType: 'FACULTY_MOCK_TEST',
+    evaluationSource: 'FACULTY_MOCK',
+  }), /FACULTY_MOCK_REFERENCE_LOCK_REQUIRED/, 'Faculty Mock evaluation cannot fall back to global reference material when its exact mock record is missing');
 
   assert.throws(() => enforceMaterialHardGate({
     evaluationId: 'eval_missing_' + suffix,
@@ -100,6 +111,9 @@ try {
       id: testId,
       level: 'INTERMEDIATE',
       subject_key: 'inter_advanced_accounting',
+      paper: 'Paper 1',
+      attempt: 'May 2027',
+      material_type: 'FACULTY_MOCK_TEST',
       question_paper_text: questionPaperText,
       suggested_answers_text: '',
       marking_scheme_text: stored.marking_scheme_text,
