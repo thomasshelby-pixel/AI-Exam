@@ -917,6 +917,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       evaluationSource,
       instituteId,
       instituteMaterialId,
+      facultyMockTestId,
     } = req.body;
 
     // Reject unsupported CS / CMA evaluation attempts safely
@@ -1039,7 +1040,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }>;
 
     // 2. Determine Evaluation Mode & Material Source
-    const requestedEvalSource = (evaluationSource === 'INSTITUTE') ? 'INSTITUTE' : 'PUBLIC';
+    const requestedEvalSource: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK' =
+      evaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
+    const isFacultyMockMode = requestedEvalSource === 'FACULTY_MOCK';
     const isInstituteMode = requestedEvalSource === 'INSTITUTE';
     const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
@@ -1047,11 +1050,79 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let resolvedSponsoringEnrollmentId: string | null = null;
     let resolvedSponsoringBatchId: string | null = null;
     let resolvedInstituteName: string | null = null;
-    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' = 'PERSONAL_FREE';
+    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
+      isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
     let personalEntitlement: any = null;
+    let preloadedMat: any = null;
+    let facultyMockRecord: any = null;
 
-    // 3. Determine Payment/Quota Source
-    if (activeInstitutes.length > 0) {
+    // 3. Determine evaluation funding source. Faculty mocks are platform-sponsored
+    // and deliberately bypass institute allocations, free trial credits and paid credits.
+    if (isFacultyMockMode) {
+      const selectedTestId = typeof facultyMockTestId === 'string' ? facultyMockTestId.trim() : '';
+      if (!selectedTestId) {
+        return res.status(400).json({ error: 'Select a faculty mock test before uploading your answer sheet.', code: 'FACULTY_MOCK_TEST_REQUIRED' });
+      }
+
+      facultyMockRecord = await getFirestoreDoc<any>('faculty_mock_tests', selectedTestId)
+        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedTestId) as any;
+      if (!facultyMockRecord || String(facultyMockRecord.status || '').toUpperCase() !== 'PUBLISHED') {
+        return res.status(404).json({ error: 'This faculty mock is no longer available. Refresh the mock list and try again.', code: 'FACULTY_MOCK_NOT_PUBLISHED' });
+      }
+
+      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(facultyMockRecord.faculty_id))
+        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(facultyMockRecord.faculty_id) as any;
+      if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+        return res.status(404).json({ error: 'This faculty is not currently active.', code: 'FACULTY_MOCK_FACULTY_INACTIVE' });
+      }
+
+      const storedLevel = String(facultyMockRecord.course_level || '').trim().toUpperCase();
+      const storedSubjectKey = String(facultyMockRecord.subject_key || '').trim();
+      const storedAttempt = String(facultyMockRecord.attempt || '').trim();
+      const storedPaper = String(facultyMockRecord.paper || 'Paper 1').trim();
+      const sameRequest =
+        rawLevel === storedLevel &&
+        String(subjectKey || '').trim() === storedSubjectKey &&
+        String(attempt || '').trim() === storedAttempt &&
+        String(req.body.paper || 'Paper 1').trim() === storedPaper &&
+        String(materialType || '').toUpperCase() === 'FACULTY_MOCK_TEST';
+      if (!sameRequest) {
+        return res.status(403).json({ error: 'Selected faculty mock details do not match the published paper. Please refresh and select the mock again.', code: 'FACULTY_MOCK_SELECTION_MISMATCH' });
+      }
+      if (storedLevel !== String(savedCourse?.ca_level || '').trim().toUpperCase()) {
+        return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
+      }
+
+      if (!facultyMockRecord.question_paper_text || !facultyMockRecord.suggested_answers_text) {
+        return res.status(400).json({ error: 'The faculty mock reference material is incomplete. Please contact the administrator.', code: 'FACULTY_MOCK_REFERENCE_INCOMPLETE' });
+      }
+
+      // The server loads the authoritative QP + Suggested Answer. The student never
+      // submits or receives the answer-key text.
+      preloadedMat = {
+        id: facultyMockRecord.id,
+        question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
+        level: storedLevel,
+        subject_key: storedSubjectKey,
+        subject_name: facultyMockRecord.subject_name,
+        paper: storedPaper,
+        attempt: storedAttempt,
+        syllabus_version: facultyMockRecord.syllabus_version || 'New Scheme 2024',
+        material_type: 'FACULTY_MOCK_TEST',
+        source_format: 'SEPARATE',
+        version: '1.0',
+        status: 'ACTIVE',
+        admin_approved: 1,
+        model_test_number: null,
+        model_group: facultyMockRecord.model_group || null,
+        official_max_marks: Number(facultyMockRecord.maximum_marks || 100),
+        question_paper_text: facultyMockRecord.question_paper_text,
+        suggested_answers_text: facultyMockRecord.suggested_answers_text,
+        marking_scheme_text: facultyMockRecord.marking_scheme_text || '',
+        reference_guidance_text: null,
+        amendments_provisions_text: null,
+      };
+    } else if (activeInstitutes.length > 0) {
       // CORE BUSINESS RULE: Student with active institute enrollment is ALWAYS sponsored!
       const targetInstId = (instituteId || req.body.sponsoringInstituteId || req.body.sponsoring_institute_id);
       let chosenInst: typeof activeInstitutes[0] | undefined;
@@ -1188,8 +1259,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
 
     // 4. Authoritative Reference Material Hard-Gate
-    let preloadedMat: any = null;
-    if (requestedEvalSource !== 'INSTITUTE') {
+    if (requestedEvalSource === 'PUBLIC') {
       try {
         preloadedMat = await findAuthoritativeMaterialWithFallback({
           level,
@@ -1324,15 +1394,15 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     db.prepare(`
       INSERT INTO evaluations (
         id, display_id, evaluation_sequence, student_id, evaluation_source, material_source, sponsoring_institute_id,
-        institute_id, institute_enrollment_id, batch_id,
+        institute_id, institute_enrollment_id, batch_id, faculty_mock_test_id,
         level, material_type, mtp_series, model_test_number, pyq_source_format, model_group, subject_key, subject_name,
         paper, attempt, syllabus_version, material_id, material_version, model_used,
         checking_mode, original_filename, status, document_validation_status,
         entitlement_source, consumed_from_institute_allocation, consumed_from_personal_credits
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, 
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, 'PROCESSING', 'VALID',
         ?, 0, 0
@@ -1348,6 +1418,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       resolvedSponsoringInstituteId,
       resolvedSponsoringEnrollmentId,
       resolvedSponsoringBatchId,
+      isFacultyMockMode ? facultyMockRecord.id : null,
       level,
       materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP'),
       parsedMtpSeries || null,
