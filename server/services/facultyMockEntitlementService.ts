@@ -48,7 +48,7 @@ export async function claimFacultyMockFreeCopy(
 ): Promise<boolean> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
   const now = new Date().toISOString();
-  return runFirestoreTransaction(async (transaction) => {
+  const result = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(FREE_COPY_COLLECTION, id);
     const existing = snapshot.data() as FacultyMockFreeCopyClaim | undefined;
     if (snapshot.exists) {
@@ -63,6 +63,10 @@ export async function claimFacultyMockFreeCopy(
     });
     return true;
   });
+  if (typeof result !== 'boolean') {
+    throw new Error('Firestore did not confirm the Faculty Mock free-copy reservation.');
+  }
+  return result;
 }
 
 export async function releaseFacultyMockFreeCopy(
@@ -71,13 +75,15 @@ export async function releaseFacultyMockFreeCopy(
   evaluationId: string,
 ): Promise<void> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
-  await runFirestoreTransaction(async (transaction) => {
+  const released = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(FREE_COPY_COLLECTION, id);
     const existing = snapshot.data() as FacultyMockFreeCopyClaim | undefined;
     if (snapshot.exists && String(existing?.evaluationId || '') === evaluationId) {
       transaction.delete(FREE_COPY_COLLECTION, id);
     }
+    return true;
   });
+  if (released !== true) throw new Error('Firestore did not confirm the Faculty Mock free-copy release.');
 }
 
 interface PaidCopyEntry {
@@ -107,7 +113,7 @@ export async function grantFacultyMockPaidCopy(
 ): Promise<void> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
   const now = new Date().toISOString();
-  await runFirestoreTransaction(async (transaction) => {
+  const saved = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(PAID_COPY_COLLECTION, id);
     const existing = snapshot.data() as PaidCopyLedger | undefined;
     if (snapshot.exists && (
@@ -134,7 +140,9 @@ export async function grantFacultyMockPaidCopy(
       copies,
       updatedAt: now,
     });
+    return true;
   });
+  if (saved !== true) throw new Error('Firestore did not confirm the paid Faculty Mock copy grant.');
 }
 
 /**
@@ -171,7 +179,7 @@ export async function consumeFacultyMockPaidCopy(
 ): Promise<boolean> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
   const now = new Date().toISOString();
-  return runFirestoreTransaction(async (transaction) => {
+  const consumed = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(PAID_COPY_COLLECTION, id);
     const ledger = snapshot.data() as PaidCopyLedger | undefined;
     if (!snapshot.exists || ledger?.studentId !== studentId || ledger?.facultyMockTestId !== facultyMockTestId) {
@@ -192,6 +200,10 @@ export async function consumeFacultyMockPaidCopy(
     transaction.set(PAID_COPY_COLLECTION, id, { ...ledger, copies, updatedAt: now });
     return true;
   });
+  if (typeof consumed !== 'boolean') {
+    throw new Error('Firestore did not confirm the paid Faculty Mock copy consumption.');
+  }
+  return consumed;
 }
 
 export async function releaseFacultyMockPaidCopy(
@@ -202,7 +214,7 @@ export async function releaseFacultyMockPaidCopy(
 ): Promise<void> {
   const id = studentMockLedgerId(studentId, facultyMockTestId);
   const now = new Date().toISOString();
-  await runFirestoreTransaction(async (transaction) => {
+  const released = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(PAID_COPY_COLLECTION, id);
     const ledger = snapshot.data() as PaidCopyLedger | undefined;
     if (!snapshot.exists || ledger?.studentId !== studentId || ledger?.facultyMockTestId !== facultyMockTestId) return;
@@ -217,5 +229,7 @@ export async function releaseFacultyMockPaidCopy(
       consumedAt: null,
     };
     transaction.set(PAID_COPY_COLLECTION, id, { ...ledger, copies, updatedAt: now });
+    return true;
   });
+  if (released !== true) throw new Error('Firestore did not confirm the paid Faculty Mock copy release.');
 }
