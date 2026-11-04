@@ -987,9 +987,9 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       preflightAudit: {
         documentLegibility,
         pageCount,
-        questionPaperTitle: referenceMaterial.question_paper_title || `${level} ${subjectName}`,
-        syllabusVersion: referenceMaterial.syllabus_version || 'New Scheme 2024',
-        attemptVerified: referenceMaterial.attempt || attempt || 'May 2026',
+        questionPaperTitle: referenceMaterial.questionPaperTitle || `${level} ${subjectName}`,
+        syllabusVersion: referenceMaterial.syllabusVersion || 'New Scheme 2024',
+        attemptVerified: referenceMaterial.manifest.attempt || attempt || 'May 2026',
         materialSource: isFacultyMockPreflight
           ? 'FACULTY_MOCK_EXACT_PRIVATE_REFERENCE'
           : 'VERIFIED_ICAI_ADMIN_APPROVED',
