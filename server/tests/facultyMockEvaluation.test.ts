@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
+import { decideFacultyMockCopy } from '../services/facultyMockAccessService.js';
 
 initDatabase();
 
@@ -23,6 +24,15 @@ const suggestedAnswersText = [
 ].join('\n\n');
 
 try {
+  assert.equal(decideFacultyMockCopy({ freeCopyUsed: false, paidCopiesRemaining: 0 }), 'FREE_FIRST_COPY',
+    'Each student gets one free copy for each exact faculty mock.');
+  assert.equal(decideFacultyMockCopy({ freeCopyUsed: true, paidCopiesRemaining: 0 }), 'PAYMENT_REQUIRED',
+    'A second copy of the same faculty mock requires payment.');
+  assert.equal(decideFacultyMockCopy({ freeCopyUsed: true, paidCopiesRemaining: 1 }), 'PAID_REPEAT_COPY',
+    'A verified separately purchased mock copy permits one repeat evaluation.');
+  assert.equal(decideFacultyMockCopy({ freeCopyUsed: true, paidCopiesRemaining: 3 }), 'PAID_REPEAT_COPY',
+    'A paid repeat entitlement is not confused with the normal evaluation-credit balance.');
+
   db.prepare('DELETE FROM faculty_mock_tests WHERE id = ?').run(testId);
   db.prepare('DELETE FROM faculty_mock_faculties WHERE id = ?').run(facultyId);
 
@@ -115,7 +125,7 @@ try {
   `).run('fmock_duplicate_' + suffix, facultyId, questionPaperText, suggestedAnswersText), /UNIQUE constraint failed/i,
   'Same faculty + attempt + subject + paper cannot publish a duplicate Mock Number');
 
-  console.log('PASS: Faculty mock numbering, selected reference binding, AI hard gate and duplicate-number protection verified.');
+  console.log('PASS: Faculty mock numbering, exact reference binding, ICAI hard gate, first-free/paid-repeat rules and duplicate-number protection verified.');
 } finally {
   db.prepare('DELETE FROM faculty_mock_tests WHERE faculty_id = ?').run(facultyId);
   db.prepare('DELETE FROM faculty_mock_faculties WHERE id = ?').run(facultyId);
