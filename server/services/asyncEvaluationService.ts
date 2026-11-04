@@ -18,6 +18,7 @@ import {
 } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
+import { getFirestoreDoc } from './firestoreDbService.js';
 import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
@@ -95,7 +96,7 @@ function isTerminalEvaluationStatus(status: unknown): boolean {
  * remains identical to MTP/PYQ; this guard only binds Model and Faculty jobs
  * to the exact material that the student selected and that was accepted.
  */
-function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
+async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promise<void> {
   const evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(job.evaluationId) as any;
   if (!evaluation) {
     throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Evaluation record not found.');
@@ -158,7 +159,8 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
       throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: Selected Faculty Mock ID does not match the accepted evaluation.');
     }
 
-    const mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    const mock = await getFirestoreDoc<any>('faculty_mock_tests', mockId)
+      || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
     if (!mock ||
         !same(mock.course_level, job.level) ||
         !same(mock.subject_key, job.subjectKey) ||
@@ -357,7 +359,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
     // Do not start model calls unless a Model / Faculty job is still bound
     // to the exact Question Paper and reference material selected at submission.
-    assertExactEvaluationSourceBinding(job);
+    await assertExactEvaluationSourceBinding(job);
 
     try {
       enforceEvaluationEvidencePackageMtpGate(evidencePackage);
