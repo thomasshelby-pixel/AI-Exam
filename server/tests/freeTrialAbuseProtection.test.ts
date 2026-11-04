@@ -212,20 +212,20 @@ try {
       ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1, ?)
     `).run(userId, srn, nowMonth, reason);
     const result = ensureMonthlyFreeEvaluationsReset(userId);
-    const passedSignalCheck = reason === 'REUSED_DEVICE' ? reusedDeviceDecision.eligible : reusedIpDecision.eligible;
-    const transientRepair = repairTransientFreeTrialBlockAfterVerifiedSignals(userId, passedSignalCheck);
     const saved = db.prepare('SELECT free_trial_blocked, monthly_free_evaluations_limit FROM student_profiles WHERE user_id = ?').get(userId) as any;
-    assert(result.monthlyFreeEvaluationsLimit === 0 && result.freeEvaluationsRemaining === 0, reason + ' legacy block remains until a verified login rechecks eligibility');
 
     if (reason === 'REUSED_DEVICE') {
-      assert(!transientRepair && saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0,
+      assert(result.monthlyFreeEvaluationsLimit === 0 && result.freeEvaluationsRemaining === 0,
         'A genuinely reused device remains blocked from duplicate free-trial claims');
+      assert(saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0,
+        'A reused-device block remains persisted after credit refresh');
+      const deviceRepair = repairTransientFreeTrialBlockAfterVerifiedSignals(userId, reusedDeviceDecision.eligible);
+      assert(!deviceRepair, 'A device-reuse block cannot be cleared by the transient recovery path');
     } else {
-      assert(transientRepair && saved.free_trial_blocked === 0 && saved.monthly_free_evaluations_limit === 2,
-        'A legacy REUSED_IP block is repaired after a fresh check and unique verified ICAI identity');
-      const recoveredQuota = ensureMonthlyFreeEvaluationsReset(userId);
-      assert(recoveredQuota.monthlyFreeEvaluationsLimit === 2 && recoveredQuota.freeEvaluationsRemaining === 2,
-        'A genuine student previously blocked only by shared IP receives exactly 2 unused free evaluations');
+      assert(result.monthlyFreeEvaluationsLimit === 2 && result.freeEvaluationsRemaining === 2,
+        'A legacy REUSED_IP block is automatically repaired during credit refresh after verified unique ICAI identity checks');
+      assert(saved.free_trial_blocked === 0 && saved.monthly_free_evaluations_limit === 2,
+        'The legacy shared-IP false block is persisted as recovered without requiring logout/login');
     }
   }
 
