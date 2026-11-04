@@ -190,7 +190,7 @@ function makeReferenceSnippet(found: boolean) {
       contentHashes: 'qp:sa:ms',
       exactReferenceSections: 'QP: Q1(a) | SA: Q1(a) | MS: Q1(a)',
       retrievedCharacterCount: 40,
-      sourceType: 'GLOBAL',
+      sourceType: 'GLOBAL' as const,
       verificationStatus: 'VERIFIED',
     },
   };
