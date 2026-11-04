@@ -1602,8 +1602,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         db.prepare('UPDATE evaluations SET faculty_mock_payment_order_id = ? WHERE id = ?').run(paidOrderId, evaluationId);
         // Keep the local cache populated for diagnostics and older admin tooling.
         db.prepare(`
-          INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status)
-          VALUES (?, ?, ?, 'CONSUMED')
+          INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status, evaluation_id, consumed_at)
+          VALUES (?, ?, ?, 'CONSUMED', ?, CURRENT_TIMESTAMP)
           ON CONFLICT(order_id) DO UPDATE SET status = 'CONSUMED', evaluation_id = excluded.evaluation_id,
             consumed_at = CURRENT_TIMESTAMP
         `).run(paidOrderId, studentId, selectedMockId, evaluationId);
