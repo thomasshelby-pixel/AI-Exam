@@ -93,6 +93,25 @@ function summarizeEvaluationRejectionReason(value: unknown): string {
   return summary.length > 135 ? `${summary.slice(0, 132).trimEnd()}…` : summary;
 }
 
+function describeFreeTrialBlockReason(value: unknown): { code: string; description: string } {
+  const code = String(value || '').trim().toUpperCase() || 'UNKNOWN_LEGACY_BLOCK';
+  const normalized = code.replace(/^PROFILE_COMPLETION_/, '');
+  const descriptions: Record<string, string> = {
+    REUSED_DEVICE: 'This device identifier has already been used by another account to claim the standard free-trial allowance. Device reuse remains the active duplicate-account protection.',
+    REUSED_IP: 'Legacy decision: this public IP address had previously been treated as a duplicate signal. Shared IP addresses alone are no longer grounds to deny free-trial eligibility.',
+    REUSED_SRN: 'The ICAI registration identity appears to be associated with another student account. Manual identity review may be required.',
+    NO_RELIABLE_SIGNALS: 'The registration request did not provide a reliable device or IP signal, so the eligibility check could not be completed.',
+    SIGNAL_STORE_UNAVAILABLE: 'The anti-abuse signal store could not be reached or updated when the eligibility decision was made.',
+    REQUIRED: 'The student profile or ICAI registration details must be completed before the standard free-trial eligibility can be assessed.',
+    UNKNOWN_LEGACY_BLOCK: 'This account has a legacy free-trial block without a stored reason code. Manual review is required.',
+    LEGACY_FALSE_BLOCK_REVIEWED: 'This account was restored after an administrator or migration review identified a previous false-positive block.',
+  };
+  return {
+    code,
+    description: descriptions[code] || descriptions[normalized] || 'The backend recorded this exact reason code, but no explanation is registered for it yet.',
+  };
+}
+
 export const AdminPortal: React.FC = () => {
   const { user, isAuthenticated, isLoading, logout, triggerMfaEnrollment, triggerMfaChallenge, syncMfaFactor, refreshUser } = useAuth();
   const navigate = useNavigate();
@@ -2149,13 +2168,14 @@ export const AdminPortal: React.FC = () => {
                           <th className="py-2.5 px-3 font-bold">Level</th>
                           <th className="py-2.5 px-3 font-bold">Evaluations</th>
                           <th className="py-2.5 px-3 font-bold">Available Evaluations</th>
+                          <th className="py-2.5 px-3 font-bold">Free Trial Decision</th>
                           <th className="py-2.5 px-3 font-bold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {studentsList.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="py-8 text-center text-slate-400">
+                            <td colSpan={9} className="py-8 text-center text-slate-400">
                               No students found matching current search or filters.
                             </td>
                           </tr>
@@ -2300,6 +2320,45 @@ export const AdminPortal: React.FC = () => {
                                         <span className="font-mono font-semibold text-blue-600">{st.purchased_credits || 0}</span>
                                       </div>
                                     </div>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 align-top">
+                                {st.free_trial_status === 'NOT_REQUIRED_PERMANENT_ACCESS' ? (
+                                  <div className="max-w-[210px]">
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                      Not Required
+                                    </span>
+                                    <p className="mt-1 text-[10px] text-slate-500">Permanent free access is active.</p>
+                                  </div>
+                                ) : st.free_trial_status === 'NOT_GRANTED' ? (
+                                  (() => {
+                                    const reason = describeFreeTrialBlockReason(st.free_trial_block_reason);
+                                    return (
+                                      <div className="max-w-[230px] space-y-1">
+                                        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                          Not Granted
+                                        </span>
+                                        <p className="font-mono text-[10px] font-bold text-rose-800 break-all">{reason.code}</p>
+                                        <p className="text-[10px] leading-relaxed text-slate-600">{reason.description}</p>
+                                      </div>
+                                    );
+                                  })()
+                                ) : st.free_trial_status === 'GRANTED' ? (
+                                  <div className="max-w-[210px]">
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      Granted
+                                    </span>
+                                    <p className="mt-1 text-[10px] text-slate-500">
+                                      {st.monthly_free_evaluations_limit ?? 2} per month • {st.monthly_free_evaluations_used ?? 0} used
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="max-w-[210px]">
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                      Pending
+                                    </span>
+                                    <p className="mt-1 text-[10px] text-slate-500">No final eligibility decision is stored.</p>
                                   </div>
                                 )}
                               </td>
@@ -4357,6 +4416,54 @@ export const AdminPortal: React.FC = () => {
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Exact free-trial eligibility decision */}
+            <div className={`p-4 rounded-xl border mb-4 ${
+              viewStudentModal.student.free_trial_status === 'NOT_GRANTED'
+                ? 'bg-rose-50/70 border-rose-200'
+                : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-slate-600" />
+                  <h4 className="text-xs font-bold text-slate-900">Free Trial Eligibility Decision</h4>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  viewStudentModal.student.free_trial_status === 'NOT_GRANTED'
+                    ? 'bg-rose-100 text-rose-800 border-rose-200'
+                    : viewStudentModal.student.free_trial_status === 'GRANTED'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}>
+                  {viewStudentModal.student.free_trial_status === 'NOT_GRANTED'
+                    ? 'NOT GRANTED'
+                    : viewStudentModal.student.free_trial_status === 'GRANTED'
+                    ? 'GRANTED'
+                    : viewStudentModal.student.free_trial_status === 'NOT_REQUIRED_PERMANENT_ACCESS'
+                    ? 'NOT REQUIRED'
+                    : 'PENDING'}
+                </span>
+              </div>
+              {viewStudentModal.student.free_trial_status === 'NOT_GRANTED' ? (() => {
+                const reason = describeFreeTrialBlockReason(viewStudentModal.student.free_trial_block_reason);
+                return (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-slate-500">Exact backend reason code</p>
+                    <p className="font-mono text-xs font-bold text-rose-800 break-all">{reason.code}</p>
+                    <p className="text-xs leading-relaxed text-slate-700">{reason.description}</p>
+                    <p className="text-[10px] text-slate-500">No raw device identifier or IP address is exposed in this view.</p>
+                  </div>
+                );
+              })() : viewStudentModal.student.free_trial_status === 'GRANTED' ? (
+                <p className="text-xs text-slate-700">
+                  The standard free-trial allowance is active: {viewStudentModal.student.monthly_free_evaluations_limit ?? 2} evaluations per month, with {viewStudentModal.student.monthly_free_evaluations_remaining ?? 0} currently remaining.
+                </p>
+              ) : viewStudentModal.student.free_trial_status === 'NOT_REQUIRED_PERMANENT_ACCESS' ? (
+                <p className="text-xs text-slate-700">Standard free-trial eligibility is not required because this account has permanent free access.</p>
+              ) : (
+                <p className="text-xs text-slate-700">No completed free-trial eligibility decision is currently stored for this account.</p>
+              )}
             </div>
 
             {/* Extra details (Affiliation, Joined, Phone) */}

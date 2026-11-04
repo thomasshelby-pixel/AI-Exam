@@ -560,6 +560,7 @@ router.get('/users', (req: AuthRequest, res: Response) => {
     let query = `
       SELECT u.id, u.email, u.full_name, u.phone, u.role, u.status, u.created_at,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
+             p.free_trial_blocked, p.free_trial_block_reason,
              pfe.is_active as permanent_free_active
       FROM users u
       LEFT JOIN student_profiles p ON p.user_id = u.id
@@ -2702,6 +2703,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
              p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
              p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
+             p.free_trial_blocked, p.free_trial_block_reason,
              p.city,
              i.name as institute_name,
              pfe.is_active as permanent_free_active,
@@ -2766,6 +2768,12 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     const students = rawStudents.map((st) => {
       const entitlement = getStudentEntitlement(st.id, 'PUBLIC');
       const monthlyStatus = ensureMonthlyFreeEvaluationsReset(st.id);
+      // Read again after quota reconciliation so an automatically repaired
+      // legacy shared-IP block is not displayed as a current denial.
+      const freeTrialState = db.prepare(`
+        SELECT COALESCE(free_trial_blocked, 0) AS free_trial_blocked, free_trial_block_reason
+        FROM student_profiles WHERE user_id = ?
+      `).get(st.id) as { free_trial_blocked: number; free_trial_block_reason?: string | null } | undefined;
       const creditStatus = getStudentCreditStatus(st.id);
       const isPermanentFree = Boolean(st.permanent_free_active || entitlement.hasPermanentFreeAccess);
       const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
@@ -2794,6 +2802,15 @@ router.get('/students', (req: AuthRequest, res: Response) => {
         paid_credits: validPaidCredits,
         total_available_evaluations: totalAvailableEvaluations,
         entitlement_tier: entitlement.tier,
+        free_trial_blocked: Number(freeTrialState?.free_trial_blocked || 0),
+        free_trial_block_reason: freeTrialState?.free_trial_block_reason || null,
+        free_trial_status: isPermanentFree
+          ? 'NOT_REQUIRED_PERMANENT_ACCESS'
+          : Number(freeTrialState?.free_trial_blocked || 0) === 1
+            ? 'NOT_GRANTED'
+            : Number(monthlyStatus.monthlyFreeEvaluationsLimit || 0) > 0
+              ? 'GRANTED'
+              : 'PENDING',
       };
     });
 
@@ -2813,6 +2830,7 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
              p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
              p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
+             p.free_trial_blocked, p.free_trial_block_reason,
              p.city, p.preferred_subjects,
              i.id as institute_id, i.name as institute_name,
              b.id as batch_id, b.name as batch_name,
@@ -2893,6 +2911,12 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
     // Authoritative enrichment using existing student evaluation entitlement and credit status systems
     const entitlement = getStudentEntitlement(studentId, 'PUBLIC');
     const monthlyStatus = ensureMonthlyFreeEvaluationsReset(studentId);
+    // Use the post-reconciliation record so the detail modal reflects any
+    // current automated recovery of a legacy false-positive IP block.
+    const freeTrialState = db.prepare(`
+      SELECT COALESCE(free_trial_blocked, 0) AS free_trial_blocked, free_trial_block_reason
+      FROM student_profiles WHERE user_id = ?
+    `).get(studentId) as { free_trial_blocked: number; free_trial_block_reason?: string | null } | undefined;
     const creditStatus = getStudentCreditStatus(studentId);
     const isPermanentFree = Boolean(studentRaw.permanent_free_active || entitlement.hasPermanentFreeAccess);
     const monthlyFreeRemaining = monthlyStatus.freeEvaluationsRemaining ?? 0;
@@ -2918,6 +2942,15 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       paid_credits: validPaidCredits,
       total_available_evaluations: totalAvailableEvaluations,
       entitlement_tier: entitlement.tier,
+      free_trial_blocked: Number(freeTrialState?.free_trial_blocked || 0),
+      free_trial_block_reason: freeTrialState?.free_trial_block_reason || null,
+      free_trial_status: isPermanentFree
+        ? 'NOT_REQUIRED_PERMANENT_ACCESS'
+        : Number(freeTrialState?.free_trial_blocked || 0) === 1
+          ? 'NOT_GRANTED'
+          : Number(monthlyStatus.monthlyFreeEvaluationsLimit || 0) > 0
+            ? 'GRANTED'
+            : 'PENDING',
     };
 
     return res.json({

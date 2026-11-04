@@ -50,8 +50,12 @@ async function run() {
     `).run(studentA, emailA);
 
     db.prepare(`
-      INSERT INTO student_profiles (user_id, student_code, icai_registration_number, ca_level, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month, purchased_credits)
-      VALUES (?, 'ST-ALPH', 'WRO111111', 'INTERMEDIATE', 0, 2, '2026-10', 0)
+      INSERT INTO student_profiles (
+        user_id, student_code, icai_registration_number, ca_level,
+        monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+        purchased_credits, free_trial_blocked, free_trial_block_reason
+      )
+      VALUES (?, 'ST-ALPH', 'WRO111111', 'INTERMEDIATE', 0, 0, '2026-10', 0, 1, 'REUSED_DEVICE')
     `).run(studentA);
 
     // Seed Student B (Unrelated student)
@@ -85,8 +89,15 @@ async function run() {
       assert.equal(studentData.completed_evaluations_count, 0, 'Completed count should be 0');
       assert.equal(studentData.pending_review_count, 2, 'Needs Review count should be 2');
       assert.equal(studentData.average_percentage, null, 'Average percentage should be null when 0 completed');
+      assert.equal(studentData.free_trial_status, 'NOT_GRANTED', 'Admin student list exposes a blocked free-trial status');
+      assert.equal(studentData.free_trial_blocked, 1, 'Admin student list exposes the persisted block flag');
+      assert.equal(studentData.free_trial_block_reason, 'REUSED_DEVICE', 'Admin student list exposes the exact free-trial rejection code');
 
-      console.log('[PASS] TEST 1: Student with two NEEDS_REVIEW evaluations correctly reports Total=2, Completed=0, Needs Review=2, and null average score.');
+      const detailResponse = await fetch(`${baseUrl}/api/admin/students/${studentA}`, { headers: authHeaders }).then((r) => r.json());
+      assert.equal(detailResponse.student?.free_trial_status, 'NOT_GRANTED', 'Admin student detail exposes the free-trial decision status');
+      assert.equal(detailResponse.student?.free_trial_block_reason, 'REUSED_DEVICE', 'Admin student detail exposes the exact rejection code');
+
+      console.log('[PASS] TEST 1: Student evaluation aggregation and exact free-trial rejection reason are exposed to admin list/detail views.');
     }
 
     // ------------------------------------------------------------------------------------------------
