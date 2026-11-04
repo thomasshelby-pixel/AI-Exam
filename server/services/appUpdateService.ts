@@ -3,10 +3,12 @@ import {
   getAllFirestoreDocs,
   getFirestoreDoc,
   setFirestoreDoc,
+  deleteFirestoreDoc,
 } from './firestoreDbService.js';
 import {
   downloadFileFromCloudStorage,
   uploadFileToCloudStorage,
+  getStorageBucket,
   type CloudFileMetadata,
 } from './firebaseCloudStorageService.js';
 
@@ -251,6 +253,58 @@ export async function downloadAppUpdateRelease(release: AppUpdateRelease): Promi
     throw new Error('OTA bundle size verification failed. Download has been blocked.');
   }
   return file.buffer;
+}
+
+
+/**
+ * Permanently removes archived APK release objects and their Firestore records.
+ * The active channel and currently published APK are never eligible for cleanup.
+ * OTA bundles are intentionally not touched by this APK-only cost control.
+ */
+export async function purgeArchivedApkReleases(actorId: string): Promise<{
+  deletedCount: number;
+  freedBytes: number;
+  deletedReleaseIds: string[];
+}> {
+  const currentApk = await getPublishedAppRelease('APK');
+  const releases = await getAllFirestoreDocs<AppUpdateRelease>(RELEASES_COLLECTION, { failOnError: true });
+  const targets = releases.filter((release) =>
+    release.kind === 'APK' &&
+    release.status === 'ARCHIVED' &&
+    (!currentApk || release.id !== currentApk.id)
+  );
+
+  let freedBytes = 0;
+  const deletedReleaseIds: string[] = [];
+  for (const release of targets) {
+    if (!release.storagePath || !release.storageBucket || !release.fileId) {
+      throw new Error(`Release ${release.id} is missing its Cloud Storage reference. No database records were removed for this release.`);
+    }
+
+    // Remove the billable Cloud Storage object first. Do not delete metadata if
+    // GCS rejects the operation, so the Admin can retry without losing its pointer.
+    try {
+      await getStorageBucket(release.storageBucket).file(release.storagePath).delete({ ignoreNotFound: true });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not delete APK object for ${release.id}: ${reason}`);
+    }
+
+    const metadataDeleted = await deleteFirestoreDoc('file_storage_metadata', release.fileId);
+    if (!metadataDeleted) {
+      throw new Error(`APK object for ${release.id} was removed, but its storage metadata could not be deleted. Retry cleanup to finish.`);
+    }
+    const releaseDeleted = await deleteFirestoreDoc(RELEASES_COLLECTION, release.id);
+    if (!releaseDeleted) {
+      throw new Error(`APK object for ${release.id} was removed, but its release record could not be deleted. Retry cleanup to finish.`);
+    }
+
+    freedBytes += Math.max(0, Number(release.sizeBytes) || 0);
+    deletedReleaseIds.push(release.id);
+    console.info(`[AppUpdates] Super Admin ${actorId} purged archived APK ${release.id} (${release.sizeBytes} bytes).`);
+  }
+
+  return { deletedCount: deletedReleaseIds.length, freedBytes, deletedReleaseIds };
 }
 
 export function shouldServeOtaUpdate(
