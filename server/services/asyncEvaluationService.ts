@@ -624,6 +624,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         `).run(mismatchErr, mismatchErr, evaluationId);
 
         if (failureClaim.changes === 1) {
+          releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
             (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
