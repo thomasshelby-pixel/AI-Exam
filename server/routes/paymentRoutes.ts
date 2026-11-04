@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import { paymentOrderRateLimiter } from '../utils/rateLimiter.js';
 import { db } from '../db.js';
+import { getFirestoreDoc } from '../services/firestoreDbService.js';
 import { checkComboPurchaseCourseAccess } from '../services/studentCourseAccessService.js';
 import {
   createRazorpayOrder,
@@ -20,7 +21,34 @@ router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (
     const { purchaseType, courseLevel } = req.body;
 
     let orderResult;
-    if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
+    if (purchaseType === 'FACULTY_MOCK_COPY') {
+      if (req.user!.role !== 'STUDENT') {
+        return res.status(403).json({ error: 'Faculty Mock repeat copies are available to student accounts only.', code: 'STUDENT_ACCOUNT_REQUIRED' });
+      }
+      const facultyMockTestId = String(req.body?.facultyMockTestId || '').trim();
+      if (!facultyMockTestId) {
+        return res.status(400).json({ error: 'Select the faculty mock before purchasing a repeat copy.', code: 'FACULTY_MOCK_TEST_REQUIRED' });
+      }
+      const test = await getFirestoreDoc<any>('faculty_mock_tests', facultyMockTestId)
+        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(facultyMockTestId) as any;
+      const savedProfile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(studentId) as { ca_level?: string } | undefined;
+      if (!test || String(test.status || '').toUpperCase() !== 'PUBLISHED') {
+        return res.status(404).json({ error: 'This faculty mock is no longer published.', code: 'FACULTY_MOCK_NOT_PUBLISHED' });
+      }
+      if (String(test.course_level || '').toUpperCase() !== String(savedProfile?.ca_level || '').toUpperCase()) {
+        return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
+      }
+      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(test.faculty_id))
+        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(test.faculty_id) as any;
+      if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
+        return res.status(404).json({ error: 'This faculty is currently inactive.', code: 'FACULTY_MOCK_FACULTY_INACTIVE' });
+      }
+      orderResult = await createRazorpayOrder({
+        studentId,
+        purchaseType: 'FACULTY_MOCK_COPY',
+        facultyMockTestId,
+      });
+    } else if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
       if (req.user!.role !== 'STUDENT') {
         return res.status(403).json({
           error: 'Course-specific student combo plans are available to student accounts only.',
