@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { db } from '../db.js';
 import {
   getFirestoreDoc,
   runFirestoreTransaction,
@@ -9,6 +10,29 @@ const SETTINGS_COLLECTION = 'faculty_mock_settings';
 const ACCESS_COLLECTION = 'faculty_mock_access';
 const PAYMENT_GRANTS_COLLECTION = 'faculty_mock_payment_grants';
 const EVALUATION_CLAIMS_COLLECTION = 'faculty_mock_evaluation_claims';
+
+function hasLegacyFacultyMockCopy(studentId: string, testId: string): boolean {
+  // Before per-mock entitlements existed, accepted faculty mock evaluations were
+  // marked FACULTY_MOCK_SPONSORED. Migrate those students to "free copy used"
+  // rather than accidentally giving a second free copy after this rollout.
+  try {
+    const prior = db.prepare(`
+      SELECT id
+      FROM evaluations
+      WHERE student_id = ?
+        AND faculty_mock_test_id = ?
+        AND evaluation_source = 'FACULTY_MOCK'
+        AND COALESCE(entitlement_source, 'FACULTY_MOCK_SPONSORED') = 'FACULTY_MOCK_SPONSORED'
+        AND UPPER(COALESCE(status, '')) NOT IN ('FAILED', 'CANCELLED', 'REJECTED')
+      ORDER BY created_at ASC
+      LIMIT 1
+    `).get(studentId, testId) as { id?: string } | undefined;
+    return Boolean(prior?.id);
+  } catch (error) {
+    console.error('[FacultyMockAccess] Legacy mock-copy lookup failed:', error);
+    throw new Error('Could not verify previous submissions for this faculty mock. Please retry; no evaluation copy was consumed.');
+  }
+}
 
 function stableId(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -61,8 +85,11 @@ export async function getFacultyMockAccessState(
     getFirestoreDoc<Record<string, unknown>>(ACCESS_COLLECTION, key),
     getFacultyMockRepeatPrice(),
   ]);
+  const legacyFreeCopyUsed = access?.free_copy_used !== true
+    ? hasLegacyFacultyMockCopy(studentId, testId)
+    : false;
   return {
-    freeCopyAvailable: access?.free_copy_used !== true,
+    freeCopyAvailable: access?.free_copy_used !== true && !legacyFreeCopyUsed,
     paidCopiesRemaining: Math.max(0, Math.floor(Number(access?.paid_copies_remaining) || 0)),
     repeatPriceINR,
   };
@@ -131,6 +158,7 @@ export async function consumeFacultyMockCopy(input: {
 }): Promise<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const claimId = stableId(`${input.studentId}:${input.testId}:${input.evaluationId}`);
+  const legacyFreeCopyUsed = hasLegacyFacultyMockCopy(input.studentId, input.testId);
   const result = await runFirestoreTransaction<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }>(async (transaction) => {
     const claim = await transaction.get(EVALUATION_CLAIMS_COLLECTION, claimId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
@@ -142,7 +170,7 @@ export async function consumeFacultyMockCopy(input: {
     }
 
     const decision = decideFacultyMockCopy({
-      freeCopyUsed: access.free_copy_used === true,
+      freeCopyUsed: access.free_copy_used === true || legacyFreeCopyUsed,
       paidCopiesRemaining: paidBalance,
     });
     if (decision === 'PAYMENT_REQUIRED') {
@@ -160,6 +188,7 @@ export async function consumeFacultyMockCopy(input: {
       faculty_mock_test_id: input.testId,
       free_copy_used: true,
       free_copy_evaluation_id: source === 'FREE_FIRST_COPY' ? input.evaluationId : (access.free_copy_evaluation_id || null),
+      legacy_free_copy_migrated: legacyFreeCopyUsed || access.legacy_free_copy_migrated === true,
       paid_copies_remaining: nextBalance,
       updated_at: new Date().toISOString(),
     });
