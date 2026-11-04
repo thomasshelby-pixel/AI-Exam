@@ -661,8 +661,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       t.course_level === courseLevel &&
       t.attempt === attempt &&
       t.subject_key === subjectKey &&
-      String(t.paper || 'Paper 1') === paper &&
-      String(t.status || 'PUBLISHED') === 'PUBLISHED'
+      String(t.paper || 'Paper 1') === paper
     );
     const mockNumber = requestedMockNumber ?? (Math.max(0, ...matching.map((t: any) => Number(t.mock_number) || 0)) + 1);
     if (!Number.isInteger(mockNumber) || mockNumber < 1 || mockNumber > 99) {
@@ -671,7 +670,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     if (currentTests.some((t: any) =>
       t.faculty_id === facultyId && t.course_level === courseLevel && t.attempt === attempt &&
       t.subject_key === subjectKey && String(t.paper || 'Paper 1') === paper &&
-      Number(t.mock_number) === mockNumber && String(t.status || 'PUBLISHED') === 'PUBLISHED'
+      Number(t.mock_number) === mockNumber
     )) {
       return res.status(409).json({ error: `Mock ${String(mockNumber).padStart(2, '0')} already exists for this faculty, attempt and subject.` });
     }
