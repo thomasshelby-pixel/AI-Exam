@@ -682,10 +682,11 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         ownerUserId: req.user!.id,
         materialId: id,
       });
-      if (!saved || !saved.storagePath || saved.status !== 'ACTIVE') {
-        throw new Error('A mock PDF could not be stored in Cloud Storage. No test has been published.');
-      }
+      if (!saved) throw new Error('A mock PDF could not be stored. No test has been published.');
       uploadedFileIds.push(fileId);
+      if (!saved.storagePath || saved.status !== 'ACTIVE') {
+        throw new Error('A mock PDF could not be durably stored in Cloud Storage. No test has been published.');
+      }
       return saved;
     };
 
@@ -723,8 +724,6 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       created_at: now,
       updated_at: now,
     };
-    const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
-    if (!persisted) throw new Error('Mock metadata could not be saved to the shared database. Please retry.');
     db.prepare(`
       INSERT INTO faculty_mock_tests (
         id, faculty_id, course_level, attempt, model_group, subject_key, subject_name, paper, mock_number, title,
@@ -742,6 +741,11 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       msSaved?.fileId || null, msSaved?.originalFilename || ms?.filename || null, msSaved?.size || null,
       test.status, test.created_by, now, now
     );
+    const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
+    if (!persisted) {
+      db.prepare('DELETE FROM faculty_mock_tests WHERE id = ?').run(id);
+      throw new Error('Mock metadata could not be saved to the shared database. Please retry.');
+    }
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'FACULTY_MOCK_TEST_PUBLISHED', 'FACULTY_MOCK_TEST', ?, ?)
