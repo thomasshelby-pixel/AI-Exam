@@ -3,14 +3,14 @@ import { extractRelevantReferenceSnippets } from '../services/questionChunkEvalu
 
 const questionPaper = [
   'QUESTION 1',
-  '1(a) Explain the accounting treatment and relevant standard for the transaction. (5 Marks)',
-  '1(b) Explain the alternative treatment. (5 Marks)',
+  'Question 1(a) Explain the accounting treatment and relevant standard for the transaction. (5 Marks)',
+  'Question 1(b) Explain the alternative treatment. (5 Marks)',
 ].join('\n');
 
 const suggestedAnswers = [
   'ANSWER 1',
-  '1(a) As per Accounting Standard 1, the relevant accounting policy must be disclosed consistently. The transaction is recognized using the prescribed accounting treatment and supported by the relevant facts.',
-  '1(b) The alternative treatment is not applicable to the stated facts.',
+  'Question 1(a) As per Accounting Standard 1, the relevant accounting policy must be disclosed consistently. The transaction is recognized using the prescribed accounting treatment and supported by the relevant facts.',
+  'Question 1(b) The alternative treatment is not applicable to the stated facts.',
 ].join('\n');
 
 const markingScheme = [
@@ -66,7 +66,7 @@ const modelTestReference = extractRelevantReferenceSnippets(
 );
 
 assert.equal(modelTestReference.referenceNeedsReview, false);
-assert.equal(modelTestReference.referenceTrace.sourceType, 'GLOBAL');
+assert.equal(modelTestReference.referenceTrace.sourceType, 'MODEL_TEST');
 assert.equal(modelTestReference.referenceTrace.materialType, 'MODEL_TEST_PAPER');
 assert.equal(modelTestReference.referenceTrace.modelTestNumber, 3);
 assert.equal(modelTestReference.referenceTrace.suggestedAnswerMaterialId, 'model-3-sa');
