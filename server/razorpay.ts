@@ -48,7 +48,7 @@ export const COMBO_PLANS = {
   },
 } as const;
 
-export type PurchaseType = 'CUSTOM' | 'COMBO_1' | 'COMBO_2';
+export type PurchaseType = 'CUSTOM' | 'COMBO_1' | 'COMBO_2' | 'FACULTY_MOCK_COPY';
 export type CourseLevel = 'FOUNDATION' | 'INTERMEDIATE';
 
 export interface CreateOrderParams {
@@ -57,6 +57,7 @@ export interface CreateOrderParams {
   courseLevel?: CourseLevel;
   quantity?: number; // Number of credits (for CUSTOM)
   receiptNote?: string;
+  facultyMockTestId?: string;
 }
 
 export interface RazorpayOrderResult {
@@ -85,7 +86,15 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
   let finalAmountINR = 0;
   let purposeDescription = '';
 
-  if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
+  if (purchaseType === 'FACULTY_MOCK_COPY') {
+    const facultyMockTestId = String(params.facultyMockTestId || '').trim();
+    if (!facultyMockTestId || facultyMockTestId.length > 160) {
+      throw new Error('A valid Faculty Mock Test is required for this purchase.');
+    }
+    finalQuantity = 1;
+    finalAmountINR = CUSTOM_PRICE_PER_EVALUATION_INR;
+    purposeDescription = `CA Exam Checker AI - Faculty Mock Repeat Copy (₹${finalAmountINR})`;
+  } else if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
     courseLevel = params.courseLevel === 'FOUNDATION' ? 'FOUNDATION' : 'INTERMEDIATE';
     const plan = COMBO_PLANS[purchaseType][courseLevel];
     finalQuantity = plan.evaluations;
@@ -132,6 +141,7 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
           creditsQuantity: String(finalQuantity),
           amountINR: String(finalAmountINR),
           purpose: purposeDescription,
+          facultyMockTestId: params.facultyMockTestId || '',
         },
       }),
     });
@@ -166,9 +176,9 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
 
   // Persist order in DB
   db.prepare(`
-    INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status)
-    VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING')
-  `).run(internalOrderId, studentId, razorpayOrderId, finalQuantity, amountPaise);
+    INSERT INTO payment_orders (id, student_id, razorpay_order_id, quantity, amount_paise, currency, status, purchase_type, faculty_mock_test_id)
+    VALUES (?, ?, ?, ?, ?, 'INR', 'PENDING', ?, ?)
+  `).run(internalOrderId, studentId, razorpayOrderId, finalQuantity, amountPaise, purchaseType, params.facultyMockTestId || null);
 
   return {
     orderId: internalOrderId,
@@ -289,7 +299,7 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
 
   // 1. Fetch internal order by razorpay_order_id
   const order = db.prepare(`
-    SELECT id, student_id, quantity, amount_paise, currency, status
+    SELECT id, student_id, quantity, amount_paise, currency, status, purchase_type, faculty_mock_test_id
     FROM payment_orders
     WHERE razorpay_order_id = ?
   `).get(razorpayOrderId) as {
@@ -299,6 +309,8 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
     amount_paise: number;
     currency: string;
     status: string;
+    purchase_type?: string;
+    faculty_mock_test_id?: string | null;
   } | undefined;
 
   if (!order) {
@@ -391,6 +403,47 @@ export function fulfillPaymentOrder(params: FulfillPaymentParams): FulfillPaymen
 
     // Update order status to SUCCESS
     db.prepare("UPDATE payment_orders SET status = 'SUCCESS' WHERE id = ?").run(order.id);
+
+    // Faculty Mock repeat copies are a separate product: they grant one evaluation
+    // for one exact faculty mock and must never enter the student's general credit lot.
+    if (String(order.purchase_type || 'CUSTOM').toUpperCase() === 'FACULTY_MOCK_COPY') {
+      const mockTestId = String(order.faculty_mock_test_id || '').trim();
+      if (!mockTestId) throw new Error('Faculty Mock payment order is missing its test reference.');
+      db.prepare(`
+        INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status)
+        VALUES (?, ?, ?, 'AVAILABLE')
+      `).run(order.id, authoritativeStudentId, mockTestId);
+
+      const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, ?, ?, 'SYSTEM')
+      `).run(
+        notifId,
+        authoritativeStudentId,
+        'Faculty Mock Copy Payment Successful',
+        'Your payment was verified. One additional evaluation copy is now available for the selected faculty mock.',
+      );
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'FACULTY_MOCK_COPY_PAID', 'FACULTY_MOCK_COPY', ?, ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        authoritativeStudentId,
+        order.id,
+        `Purchased one repeat copy for faculty mock ${mockTestId} via Razorpay (${razorpayPaymentId}) [${source}].`,
+      );
+
+      db.exec('COMMIT');
+      inTx = false;
+      return {
+        success: true,
+        creditsAdded: 0,
+        alreadyFulfilled: false,
+        orderId: order.id,
+        studentId: authoritativeStudentId,
+      };
+    }
 
     // Record credit purchase with exact 3-month validity lot in student_credit_purchases
     const lotResult = recordCreditPurchase({
