@@ -1130,12 +1130,19 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
       }
 
-      if (!facultyMockRecord.question_paper_text || !facultyMockRecord.suggested_answers_text) {
-        return res.status(400).json({ error: 'The faculty mock reference material is incomplete. Please contact the administrator.', code: 'FACULTY_MOCK_REFERENCE_INCOMPLETE' });
+      if (
+        String(facultyMockRecord.question_paper_text || '').trim().length < 50 ||
+        String(facultyMockRecord.suggested_answers_text || '').trim().length < 50 ||
+        String(facultyMockRecord.marking_scheme_text || '').trim().length < 10
+      ) {
+        return res.status(400).json({
+          error: 'The selected mock must have a complete Question Paper, Suggested Answers and Marking Scheme TXT reference. Please contact the administrator.',
+          code: 'FACULTY_MOCK_REFERENCE_INCOMPLETE',
+        });
       }
 
-      // The server loads the authoritative QP + Suggested Answer. The student never
-      // submits or receives the answer-key text.
+      // All three private evaluation sections are loaded server-side from the
+      // exact selected mock. The student never submits or receives the TXT.
       preloadedMat = {
         id: facultyMockRecord.id,
         question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
