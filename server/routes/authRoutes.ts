@@ -35,7 +35,7 @@ import {
   verifyAndConsumeRegistrationOtp,
   maskEmail,
 } from '../services/studentRegistrationOtpService.js';
-import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth, repairTransientFreeTrialBlockAfterVerifiedSignals } from '../services/studentCreditService.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
@@ -1702,11 +1702,19 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
     // was deployed. This does not change the current account's entitlement; it only
     // prevents a later account on the same device/browser or IP from receiving a trial.
     if (user.role === 'STUDENT') {
-      await claimFreeTrialEligibility({
+      const freeTrialSignalDecision = await claimFreeTrialEligibility({
         userId: user.id,
         deviceIds: [deviceId],
-        ipAddresses: [req.ip || undefined],
+        ipAddresses: [req.ip || req.socket.remoteAddress || undefined],
       });
+
+      // A prior no-signal / temporary signal-store failure may have withheld
+      // the trial before the app had a persistent device ID. Re-evaluate only
+      // those transient reasons after a fresh check; explicit reused-device
+      // and reused-IP blocks remain intact.
+      if (freeTrialSignalDecision.eligible) {
+        repairTransientFreeTrialBlockAfterVerifiedSignals(user.id);
+      }
     }
 
     const effectiveRole: UserRole = (normalizedEmail === 'priyatca15@gmail.com' || user.id === 'usr_mcq_admin_priyatca15')
