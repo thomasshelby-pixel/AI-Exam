@@ -117,8 +117,10 @@ import {
   listAppUpdateReleases,
   uploadAppUpdateRelease,
   publishAppUpdateRelease,
+  purgeArchivedApkReleases,
   type AppReleaseKind,
 } from '../services/appUpdateService.js';
+import { getFacultyMockRepeatPrice, setFacultyMockRepeatPrice } from '../services/facultyMockAccessService.js';
 
 const router = Router();
 
@@ -372,6 +374,24 @@ router.post('/app-updates/upload', authenticateToken, requireRole('SUPER_ADMIN')
   }
 });
 
+// Permanently delete only archived APK releases from Cloud Storage and Firestore.
+// The currently published APK, OTA bundles, and all student/evaluation data are excluded.
+router.post('/app-updates/cleanup-archived-apks', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({ success: false, error: 'Explicit confirmation is required before deleting archived APK releases.' });
+    }
+    const result = await purgeArchivedApkReleases(String(req.user?.id || 'SUPER_ADMIN'));
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[AdminRoutes] Archived APK cleanup failed:', error);
+    return res.status(503).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Archived APK cleanup failed. Please retry.',
+    });
+  }
+});
+
 router.post('/app-updates/:releaseId/publish', authenticateToken, requireRole('SUPER_ADMIN'), async (req: AuthRequest, res: Response) => {
   try {
     const releaseId = String(req.params.releaseId || '').trim();
@@ -477,6 +497,31 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
   next();
 });
 router.use(requireRole('SUPER_ADMIN'));
+
+// Faculty mock repeat-copy pricing is configured by Super Admin and kept in shared Firestore.
+router.get('/faculty-mocks/settings', async (_req: AuthRequest, res: Response) => {
+  try {
+    const repeatPriceINR = await getFacultyMockRepeatPrice();
+    return res.json({ success: true, repeatPriceINR });
+  } catch (error) {
+    console.error('[FacultyMocks] Pricing settings read failed:', error);
+    return res.status(503).json({ error: 'Could not load faculty mock pricing settings.' });
+  }
+});
+
+router.put('/faculty-mocks/settings', async (req: AuthRequest, res: Response) => {
+  try {
+    const price = Number(req.body?.repeatPriceINR);
+    if (!Number.isSafeInteger(price) || price < 1 || price > 10000) {
+      return res.status(400).json({ error: 'Set a whole-number repeat-copy price between ₹1 and ₹10,000.' });
+    }
+    const repeatPriceINR = await setFacultyMockRepeatPrice(price, String(req.user?.id || 'SUPER_ADMIN'));
+    return res.json({ success: true, repeatPriceINR });
+  } catch (error) {
+    console.error('[FacultyMocks] Pricing settings save failed:', error);
+    return res.status(503).json({ error: error instanceof Error ? error.message : 'Could not save faculty mock pricing.' });
+  }
+});
 
 // Faculty-wise free mock evaluation catalogue. Only Super Admin can manage these records.
 router.get('/faculty-mocks/faculties', async (_req: AuthRequest, res: Response) => {
