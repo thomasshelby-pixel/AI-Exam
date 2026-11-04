@@ -113,7 +113,7 @@ try {
   assert.equal(verified.suggestedAnswersText, suggestedAnswersText, 'AI reference package receives only the selected mock Suggested Answer');
   assert.equal(verified.markingSchemeText, markingSchemeText, 'AI evaluation receives the Marking Scheme section parsed from the same TXT reference');
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
-  assert.equal(verified.questionMaterialId, 'qp-file', 'The original downloadable QP PDF file ID is retained as the question source');
+  assert.equal(verified.questionMaterialId, 'reference-file', 'AI question text is sourced from the private TXT, not the download-only QP PDF');
   assert.equal(verified.suggestedAnswerMaterialId, 'reference-file', 'The private TXT file ID is retained as the suggested-answer source');
   assert.equal(verified.markingSchemeMaterialId, 'reference-file', 'The same private TXT file ID anchors the marking-scheme source');
   assert.equal(verified.manifest.materialSource, 'FACULTY_MOCK', 'Faculty mock remains identifiable as its own source type');
@@ -135,7 +135,7 @@ try {
     },
   );
   assert.equal(lockedFacultyReference.referenceTrace.sourceType, 'FACULTY_MOCK', 'Question-level audit trace identifies the exact Faculty Mock source');
-  assert.equal(lockedFacultyReference.referenceTrace.questionPaperMaterialId, 'qp-file', 'Question-level trace points at the QP file');
+  assert.equal(lockedFacultyReference.referenceTrace.questionPaperMaterialId, 'reference-file', 'Question-level trace points at the TXT that supplied the question text');
   assert.equal(lockedFacultyReference.referenceTrace.suggestedAnswerMaterialId, 'reference-file', 'Question-level trace points at the private TXT');
   assert.equal(lockedFacultyReference.referenceTrace.markingSchemeMaterialId, 'reference-file', 'Question-level trace points at the same private TXT for marking');
   assert.equal(lockedFacultyReference.referenceTrace.facultyMockTestId, testId, 'Question-level trace retains the exact selected mock ID');
