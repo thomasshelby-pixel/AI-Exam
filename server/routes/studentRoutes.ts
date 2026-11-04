@@ -40,6 +40,14 @@ import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../serv
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
 import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
+import {
+  claimFacultyMockFreeCopy,
+  consumeFacultyMockPaidCopy,
+  findAvailableFacultyMockPaidCopy,
+  getFacultyMockFreeCopyClaim,
+  releaseFacultyMockFreeCopy,
+  releaseFacultyMockPaidCopy,
+} from '../services/facultyMockEntitlementService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
@@ -1104,28 +1112,14 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
-      const existingFreeCopy = db.prepare(`
-        SELECT evaluation_id FROM faculty_mock_free_uses
-        WHERE student_id = ? AND faculty_mock_test_id = ?
-      `).get(studentId, selectedTestId) as { evaluation_id: string } | undefined;
-      if (existingFreeCopy && existingFreeCopy.evaluation_id !== evaluationId) {
-        let suppliedPaidOrderId = resolvedFacultyMockPaymentOrderId;
+      const existingFreeCopy = await getFacultyMockFreeCopyClaim(studentId, selectedTestId);
+      if (existingFreeCopy && existingFreeCopy.evaluationId !== evaluationId) {
+        const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
+          studentId,
+          selectedTestId,
+          resolvedFacultyMockPaymentOrderId || undefined,
+        );
         if (!suppliedPaidOrderId) {
-          const reusablePaidCopy = db.prepare(`
-            SELECT order_id FROM faculty_mock_copy_purchases
-            WHERE student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
-            ORDER BY created_at DESC LIMIT 1
-          `).get(studentId, selectedTestId) as { order_id: string } | undefined;
-          suppliedPaidOrderId = reusablePaidCopy?.order_id || '';
-          resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
-        }
-        const availablePaidCopy = suppliedPaidOrderId
-          ? db.prepare(`
-              SELECT order_id FROM faculty_mock_copy_purchases
-              WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
-            `).get(suppliedPaidOrderId, studentId, selectedTestId)
-          : null;
-        if (!availablePaidCopy) {
           return res.status(402).json({
             error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
             code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
@@ -1133,6 +1127,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
             facultyMockTestId: selectedTestId,
           });
         }
+        resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
       }
 
       if (!facultyMockRecord.question_paper_text || !facultyMockRecord.suggested_answers_text) {
@@ -1567,28 +1562,20 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // verified single-copy Razorpay purchase; these purchases are not general credits.
     if (isFacultyMockMode) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
-      const existingFreeCopy = db.prepare(`
-        SELECT evaluation_id FROM faculty_mock_free_uses
-        WHERE student_id = ? AND faculty_mock_test_id = ?
-      `).get(studentId, selectedMockId) as { evaluation_id: string } | undefined;
-
-      if (!existingFreeCopy) {
-        db.prepare(`
-          INSERT OR IGNORE INTO faculty_mock_free_uses (student_id, faculty_mock_test_id, evaluation_id)
-          VALUES (?, ?, ?)
-        `).run(studentId, selectedMockId, evaluationId);
-        const claimed = db.prepare(`
-          SELECT evaluation_id FROM faculty_mock_free_uses
-          WHERE student_id = ? AND faculty_mock_test_id = ?
-        `).get(studentId, selectedMockId) as { evaluation_id: string } | undefined;
-        facultyMockFreeCopyClaimed = claimed?.evaluation_id === evaluationId;
-      } else {
-        facultyMockFreeCopyClaimed = existingFreeCopy.evaluation_id === evaluationId;
-      }
+      facultyMockFreeCopyClaimed = await claimFacultyMockFreeCopy(studentId, selectedMockId, evaluationId);
 
       if (!facultyMockFreeCopyClaimed) {
-        const paidOrderId = String(resolvedFacultyMockPaymentOrderId || '').trim();
+        const paidOrderId = await findAvailableFacultyMockPaidCopy(
+          studentId,
+          selectedMockId,
+          resolvedFacultyMockPaymentOrderId || undefined,
+        );
         if (!paidOrderId) {
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('The free Faculty Mock copy was already used and no verified paid copy was available.', evaluationId);
           return res.status(402).json({
             error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
             code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
@@ -1597,12 +1584,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           });
         }
 
-        const consumed = db.prepare(`
-          UPDATE faculty_mock_copy_purchases
-          SET status = 'CONSUMED', evaluation_id = ?, consumed_at = CURRENT_TIMESTAMP
-          WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
-        `).run(evaluationId, paidOrderId, studentId, selectedMockId);
-        if (Number(consumed.changes || 0) !== 1) {
+        const consumed = await consumeFacultyMockPaidCopy(paidOrderId, studentId, selectedMockId, evaluationId);
+        if (!consumed) {
           db.prepare(`
             UPDATE evaluations
             SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
@@ -1614,8 +1597,22 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
             amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
           });
         }
+
         facultyMockPaidCopyOrderId = paidOrderId;
         db.prepare('UPDATE evaluations SET faculty_mock_payment_order_id = ? WHERE id = ?').run(paidOrderId, evaluationId);
+        // Keep the local cache populated for diagnostics and older admin tooling.
+        db.prepare(`
+          INSERT INTO faculty_mock_copy_purchases (order_id, student_id, faculty_mock_test_id, status, evaluation_id, consumed_at)
+          VALUES (?, ?, ?, 'CONSUMED', ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(order_id) DO UPDATE SET status = 'CONSUMED', evaluation_id = excluded.evaluation_id,
+            consumed_at = CURRENT_TIMESTAMP
+        `).run(paidOrderId, studentId, selectedMockId, evaluationId);
+      } else {
+        // Local cache only. The Firestore transaction above is the authoritative reservation.
+        db.prepare(`
+          INSERT OR IGNORE INTO faculty_mock_free_uses (student_id, faculty_mock_test_id, evaluation_id)
+          VALUES (?, ?, ?)
+        `).run(studentId, selectedMockId, evaluationId);
       }
     }
 
@@ -1709,6 +1706,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // release the free-copy claim or paid copy so a genuine retry is possible.
     if (facultyMockFreeCopyClaimed) {
       try {
+        await releaseFacultyMockFreeCopy(studentId, String(req.body?.facultyMockTestId || ''), evaluationId);
         db.prepare('DELETE FROM faculty_mock_free_uses WHERE student_id = ? AND faculty_mock_test_id = ? AND evaluation_id = ?')
           .run(studentId, String(req.body?.facultyMockTestId || ''), evaluationId);
       } catch (releaseError) {
@@ -1717,6 +1715,12 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
     if (facultyMockPaidCopyOrderId) {
       try {
+        await releaseFacultyMockPaidCopy(
+          facultyMockPaidCopyOrderId,
+          studentId,
+          String(req.body?.facultyMockTestId || ''),
+          evaluationId,
+        );
         db.prepare(`
           UPDATE faculty_mock_copy_purchases
           SET status = 'AVAILABLE', evaluation_id = NULL, consumed_at = NULL
