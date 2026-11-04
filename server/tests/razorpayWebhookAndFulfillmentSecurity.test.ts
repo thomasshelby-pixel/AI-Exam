@@ -310,7 +310,7 @@ async function runTestSuite() {
     // Fire Checkout and Webhook simultaneously
     const [resCheckout, resWebhook] = await Promise.all([
       Promise.resolve().then(() =>
-        await verifyAndFulfillPayment({
+        verifyAndFulfillPayment({
           studentId,
           razorpayOrderId: order10.razorpayOrderId,
           razorpayPaymentId: paymentId10,
