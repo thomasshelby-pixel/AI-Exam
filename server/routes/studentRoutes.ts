@@ -2493,8 +2493,20 @@ router.get(
       const evalDisplayId = record.display_id || record.id;
       const studentCode = getOrAssignStudentCode(record.student_id);
 
+      const adminReviewPending =
+        ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(String(record.admin_review_status || '').trim().toUpperCase()) ||
+        String(record.status || '').trim().toUpperCase() === 'NEEDS_REVIEW' ||
+        String(record.certification_status || '').trim().toUpperCase() === 'REVIEW_REQUIRED';
+      if (adminReviewPending && !['SUPER_ADMIN', 'ADMIN'].includes(roleStr)) {
+        return res.status(409).json({
+          error: 'This evaluation is held for examiner review. No final result or report is available until the review is finalized.',
+          code: 'EVALUATION_NEEDS_REVIEW',
+          status: 'NEEDS_REVIEW',
+        });
+      }
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
-      const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
+      const isAlreadyCertified = !adminReviewPending && (record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1);
 
       if (!isAlreadyCertified && (record.status === 'VALIDATION_FAILED' || record.status === 'NEEDS_REVIEW')) {
         const verifyRes = await verifyEvaluationConsistency(realEvaluationId);
@@ -2604,6 +2616,7 @@ router.get(
           grade: record.grade,
           createdAt: record.created_at,
           evaluationStatus: record.status,
+          adminReviewStatus: record.admin_review_status,
           certificationStatus: record.certification_status,
           validationStatus: resultJson?.validationStatus,
           isTechnicalReviewState: resultJson?.isTechnicalReviewState,
