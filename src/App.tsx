@@ -55,6 +55,7 @@ import { InstituteAuthPage } from './pages/auth/InstituteAuthPage.js';
 import { StudentDashboard } from './pages/student/StudentDashboard.js';
 import { StudyPlannerPage } from './pages/student/StudyPlannerPage.js';
 import { UploadEvaluation } from './pages/student/UploadEvaluation.js';
+import { FacultyMockEvaluationPage } from './pages/student/FacultyMockEvaluationPage.js';
 import { MyEvaluations } from './pages/student/MyEvaluations.js';
 import { StudentProfilePage } from './pages/student/StudentProfilePage.js';
 import { StudentEnrollmentsPage } from './pages/student/StudentEnrollmentsPage.js';
@@ -1386,6 +1387,17 @@ const AppRoutes: React.FC = () => {
                   }
                   onNavigateDashboard={() => navigate('/student/dashboard')}
                 />
+              </PublicAndStudentLayout>
+            </ProtectedStudentRoute>
+          }
+        />
+
+        <Route
+          path="/student/faculty-mock-evaluation"
+          element={
+            <ProtectedStudentRoute>
+              <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
+                <FacultyMockEvaluationPage />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
           }
