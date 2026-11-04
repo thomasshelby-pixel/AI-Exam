@@ -21,16 +21,6 @@ interface FacultyMockRazorpayResponse {
   razorpay_signature: string;
 }
 
-interface FacultyMockRazorpayInstance {
-  open: () => void;
-}
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => FacultyMockRazorpayInstance;
-  }
-}
-
 function normaliseCourse(value: unknown): CALevel | null {
   const normal = String(value || '').trim().toUpperCase();
   return normal === 'FOUNDATION' || normal === 'INTERMEDIATE' || normal === 'FINAL' ? normal : null;
