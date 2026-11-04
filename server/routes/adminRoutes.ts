@@ -25,7 +25,8 @@ import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } fr
 import { extractMaterialFromPDF } from '../gemini.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
-import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic } from '../services/studentCreditService.js';
+import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { validateSrn } from '../utils/srnValidator.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -2826,7 +2827,7 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     const studentRaw = db.prepare(`
-      SELECT u.id, u.email, u.full_name, u.phone, u.status, u.account_classification, u.created_at, u.updated_at,
+      SELECT u.id, u.email, u.full_name, u.phone, u.status, u.email_verified, u.account_classification, u.created_at, u.updated_at,
              p.student_code,
              p.icai_registration_number, p.ca_level, p.free_evaluations_used, p.purchased_credits,
              p.monthly_free_evaluations_used, p.monthly_free_evaluations_limit,
@@ -2962,6 +2963,155 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get student details error:', error);
     return res.status(500).json({ error: 'Failed to retrieve student details' });
+  }
+});
+
+// Manual review and restore for legacy free-trial blocks whose original reason was not recorded.
+router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = String(req.params.id || '').trim();
+    const reviewReason = typeof req.body?.reviewReason === 'string' ? req.body.reviewReason.trim() : '';
+
+    if (!studentId) return res.status(400).json({ error: 'Student ID is required.' });
+    if (reviewReason.length < 10 || reviewReason.length > 500) {
+      return res.status(400).json({ error: 'Enter a review note between 10 and 500 characters.' });
+    }
+
+    const currentMonth = getCurrentServerMonth();
+    const decision = db.transaction(() => {
+      const account = db.prepare(`
+        SELECT u.email, u.email_verified, u.status AS account_status, u.role AS account_role,
+               p.icai_registration_number, p.free_trial_blocked, p.free_trial_block_reason,
+               EXISTS(
+                 SELECT 1 FROM permanent_free_entitlements pfe
+                 WHERE lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
+               ) AS permanent_free_active
+        FROM users u
+        JOIN student_profiles p ON p.user_id = u.id
+        WHERE u.id = ?
+      `).get(studentId) as any;
+
+      if (!account || account.account_role !== 'STUDENT') {
+        return { ok: false as const, status: 404, code: 'STUDENT_NOT_FOUND', error: 'Student account was not found.' };
+      }
+      if (account.account_status !== 'ACTIVE') {
+        return { ok: false as const, status: 409, code: 'ACCOUNT_NOT_ACTIVE', error: 'Only active student accounts can be reviewed for a free-trial restore.' };
+      }
+      if (Number(account.email_verified) !== 1) {
+        return { ok: false as const, status: 409, code: 'EMAIL_NOT_VERIFIED', error: 'The student email must be verified before the free-trial restore can be approved.' };
+      }
+      if (Number(account.permanent_free_active) === 1) {
+        return { ok: false as const, status: 409, code: 'PERMANENT_FREE_ALREADY_ACTIVE', error: 'This student already has permanent free access; a monthly trial restore is not required.' };
+      }
+      if (Number(account.free_trial_blocked) !== 1) {
+        return { ok: false as const, status: 409, code: 'FREE_TRIAL_NOT_BLOCKED', error: 'This student does not have an active free-trial block.' };
+      }
+
+      const existingReason = String(account.free_trial_block_reason || '').trim().toUpperCase();
+      if (existingReason && existingReason !== 'UNKNOWN_LEGACY_BLOCK') {
+        return {
+          ok: false as const,
+          status: 409,
+          code: 'MANUAL_REVIEW_NOT_ALLOWED_FOR_REASON',
+          error: 'Manual restore is limited to UNKNOWN_LEGACY_BLOCK records. Known anti-abuse blocks must retain their existing protection.',
+        };
+      }
+
+      const srnValidation = validateSrn(String(account.icai_registration_number || ''));
+      if (!srnValidation.isValid) {
+        return { ok: false as const, status: 400, code: 'INVALID_ICAI_REGISTRATION', error: 'Enter a structurally valid ICAI registration number before reviewing this free-trial block.' };
+      }
+
+      // Match the existing anti-abuse identity rule: identical seven-digit SRNs
+      // are considered duplicates even when a different regional prefix is used.
+      const duplicateIdentity = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM student_profiles
+        WHERE user_id != ?
+          AND LENGTH(TRIM(icai_registration_number)) = 10
+          AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = ?
+      `).get(studentId, srnValidation.digits) as { count: number };
+      if (Number(duplicateIdentity.count) > 0) {
+        return { ok: false as const, status: 409, code: 'DUPLICATE_ICAI_REGISTRATION', error: 'This ICAI registration number is already linked to another student account.' };
+      }
+
+      // Rebuild usage from the authoritative current-month ledger. Never create
+      // extra allowance over the standard two-evaluation monthly cap.
+      const monthStart = `${currentMonth}-01 00:00:00`;
+      const ledgerRows = db.prepare(`
+        SELECT evaluation_id, source, amount
+        FROM credit_ledger
+        WHERE student_id = ?
+          AND evaluation_id IS NOT NULL
+          AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
+          AND datetime(created_at) >= datetime(?)
+        ORDER BY rowid ASC
+      `).all(studentId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
+      const latestByEvaluation = new Map<string, { source: string; amount: number }>();
+      for (const row of ledgerRows) latestByEvaluation.set(row.evaluation_id, row);
+      const ledgerUsed = [...latestByEvaluation.values()].filter((row) =>
+        row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
+      ).length;
+      if (ledgerUsed > 2) {
+        return { ok: false as const, status: 409, code: 'MONTHLY_FREE_LIMIT_ALREADY_EXCEEDED', error: 'The current-month free-evaluation ledger exceeds the standard allowance. Please reconcile the ledger before approving.' };
+      }
+
+      const updated = db.prepare(`
+        UPDATE student_profiles
+        SET free_trial_blocked = 0,
+            free_trial_block_reason = NULL,
+            monthly_free_evaluations_used = ?,
+            monthly_free_evaluations_limit = 2,
+            free_evaluation_reset_month = ?,
+            free_evaluations_used = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+          AND COALESCE(free_trial_blocked, 0) = 1
+          AND (
+            free_trial_block_reason IS NULL
+            OR TRIM(free_trial_block_reason) = ''
+            OR UPPER(TRIM(free_trial_block_reason)) = 'UNKNOWN_LEGACY_BLOCK'
+          )
+      `).run(ledgerUsed, currentMonth, ledgerUsed, studentId);
+
+      if (Number(updated.changes) !== 1) {
+        return { ok: false as const, status: 409, code: 'FREE_TRIAL_STATE_CHANGED', error: 'The free-trial status changed while this review was being processed. Refresh the student record and try again.' };
+      }
+
+      const remaining = Math.max(0, 2 - ledgerUsed);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'ADMIN_FREE_TRIAL_MANUAL_REVIEW_APPROVED', 'STUDENT_PROFILE', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        req.user!.id,
+        studentId,
+        `Admin manually approved a legacy unknown free-trial block after verified email, active account, valid ICAI SRN format, unique in-app SRN identity, and current-month ledger checks. Current-month quota: 2; used: ${ledgerUsed}; remaining: ${remaining}. Admin review note: ${reviewReason}`
+      );
+
+      return { ok: true as const, used: ledgerUsed, remaining };
+    })();
+
+    if (!decision.ok) {
+      return res.status(decision.status).json({ success: false, code: decision.code, error: decision.error });
+    }
+
+    // Persist the updated monthly free quota and profile state. This does not
+    // touch paid-credit lots, purchased_credits, or permanent-free entitlements.
+    await syncStudentCreditsToFirestore(studentId);
+
+    return res.json({
+      success: true,
+      message: 'Manual review approved. The student now has the standard two-evaluation monthly free allowance.',
+      monthlyFreeEvaluationsLimit: 2,
+      monthlyFreeEvaluationsUsed: decision.used,
+      freeEvaluationsRemaining: decision.remaining,
+      freeEvaluationsGranted: decision.remaining,
+      resetMonth: currentMonth,
+    });
+  } catch (error: unknown) {
+    console.error('Manual free-trial review error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to review and restore the student free-trial allowance.' });
   }
 });
 
