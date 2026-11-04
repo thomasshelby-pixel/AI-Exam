@@ -320,6 +320,106 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
 }
 
 /**
+ * Recover a transient false-negative free-trial block only after a fresh,
+ * authoritative device/IP check has already passed. Explicit REUSED_DEVICE
+ * and REUSED_IP decisions are deliberately never recoverable here.
+ *
+ * The account must also be active, email-verified, and have a unique valid
+ * ICAI registration identity. Existing consumption is reconstructed from the
+ * ledger so this can never add more than the unused portion of the 2/month quota.
+ */
+export function repairTransientFreeTrialBlockAfterVerifiedSignals(userId: string): boolean {
+  const profile = db.prepare(`
+    SELECT p.user_id, p.icai_registration_number, p.free_trial_blocked,
+           p.free_trial_block_reason, u.email_verified, u.status AS account_status,
+           u.role AS account_role
+    FROM student_profiles p
+    JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = ?
+  `).get(userId) as any;
+
+  if (!profile || Number(profile.free_trial_blocked || 0) !== 1) return false;
+  if (Number(profile.email_verified || 0) !== 1 || profile.account_status !== 'ACTIVE' || profile.account_role !== 'STUDENT') {
+    return false;
+  }
+
+  const blockReason = String(profile.free_trial_block_reason || '').trim().toUpperCase();
+  const recoverableReasons = new Set([
+    'NO_RELIABLE_SIGNALS',
+    'SIGNAL_STORE_UNAVAILABLE',
+    'PROFILE_COMPLETION_NO_RELIABLE_SIGNALS',
+    'PROFILE_COMPLETION_SIGNAL_STORE_UNAVAILABLE',
+  ]);
+  if (!recoverableReasons.has(blockReason)) return false;
+
+  const srn = String(profile.icai_registration_number || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}[0-9]{7}$/.test(srn)) return false;
+
+  const srnDigits = srn.slice(3);
+  const duplicateIdentity = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM student_profiles
+    WHERE user_id != ?
+      AND LENGTH(TRIM(icai_registration_number)) = 10
+      AND SUBSTR(UPPER(TRIM(icai_registration_number)), 4) = ?
+  `).get(userId, srnDigits) as { count: number };
+  if (Number(duplicateIdentity?.count || 0) > 0) return false;
+
+  const currentMonth = getCurrentServerMonth();
+  const monthStart = `${currentMonth}-01 00:00:00`;
+  const rows = db.prepare(`
+    SELECT evaluation_id, source, amount
+    FROM credit_ledger
+    WHERE student_id = ?
+      AND evaluation_id IS NOT NULL
+      AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
+      AND datetime(created_at) >= datetime(?)
+    ORDER BY rowid ASC
+  `).all(userId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
+
+  const latestByEvaluation = new Map<string, { source: string; amount: number }>();
+  for (const row of rows) latestByEvaluation.set(row.evaluation_id, row);
+  const ledgerUsed = [...latestByEvaluation.values()].filter((row) =>
+    row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
+  ).length;
+  if (ledgerUsed > 2) return false;
+
+  const update = db.prepare(`
+    UPDATE student_profiles
+    SET free_trial_blocked = 0,
+        free_trial_block_reason = NULL,
+        monthly_free_evaluations_used = ?,
+        monthly_free_evaluations_limit = 2,
+        free_evaluation_reset_month = ?,
+        free_evaluations_used = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?
+      AND free_trial_blocked = 1
+      AND UPPER(TRIM(COALESCE(free_trial_block_reason, ''))) = ?
+  `).run(ledgerUsed, currentMonth, ledgerUsed, userId, blockReason);
+
+  if (Number(update.changes || 0) < 1) return false;
+
+  try {
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, 'FREE_TRIAL_TRANSIENT_BLOCK_REPAIRED', 'STUDENT_PROFILE', ?, ?)
+    `).run(
+      'aud_' + crypto.randomBytes(8).toString('hex'),
+      userId,
+      userId,
+      `Restored the unused monthly free quota after a fresh unique device/IP eligibility check passed. Previous block reason: ${blockReason}.`
+    );
+  } catch (auditError) {
+    console.warn('[StudentCreditService] Could not write transient free-trial repair audit log:', auditError);
+  }
+
+  syncStudentCreditsToFirestore(userId).catch(() => {});
+  console.info('[StudentCreditService] Repaired transient free-trial block after fresh eligibility check:', userId);
+  return true;
+}
+
+/**
  * Returns detailed separate balances for Free Evaluations and Paid Credits.
  * Never combines them into a single indistinguishable balance.
  */
