@@ -58,7 +58,7 @@ const modelTestReference = extractRelevantReferenceSnippets(
     saMaterialId: 'model-3-sa',
     msMaterialId: 'model-3-ms',
     materialVersions: '2.0',
-    sourceType: 'GLOBAL',
+    sourceType: 'MODEL_TEST',
     materialType: 'MODEL_TEST_PAPER',
     modelTestNumber: 3,
     materialTitle: 'CA Intermediate Model Test Paper 3',
