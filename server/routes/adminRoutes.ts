@@ -4844,6 +4844,10 @@ router.get('/evaluations/:id/artifacts/report', async (req: AuthRequest, res: Re
           percentage: evalRecord.percentage,
           grade: evalRecord.grade,
           createdAt: evalRecord.created_at,
+          evaluationStatus: evalRecord.status,
+          certificationStatus: evalRecord.certification_status,
+          validationStatus: rJson?.validationStatus,
+          isTechnicalReviewState: rJson?.isTechnicalReviewState,
           version: evalRecord.evaluation_version || 'v1',
         }, rJson);
 
