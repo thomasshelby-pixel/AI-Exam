@@ -23,6 +23,7 @@ import {
 } from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
+import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
@@ -647,10 +648,10 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     const qpFile = body.questionPaperFile;
     const evaluationReferenceFile = body.evaluationReferenceFile;
 
-    // Keep the student's downloadable PDF byte-for-byte. Text extraction below
-    // creates evaluation context only; it never rewrites or replaces the PDF.
+    // The PDF is stored byte-for-byte only for student download. It is never
+    // sent to an AI extractor or used as evaluation reference material.
     if (!qpFile || typeof qpFile.base64 !== 'string' || !qpFile.base64.trim()) {
-      throw new Error('The original Question Paper PDF is required.');
+      throw new Error('The original downloadable Question Paper PDF is required.');
     }
     const qpBuffer = Buffer.from(qpFile.base64.includes(',') ? qpFile.base64.split(',')[1] : qpFile.base64, 'base64');
     const qpMime = String(qpFile.type || 'application/pdf').toLowerCase();
@@ -678,8 +679,8 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       throw new Error('AI Evaluation Reference must be a plain .txt file up to 10 MB.');
     }
     const evaluationReferenceText = referenceBuffer.toString('utf8').replace(/^\uFEFF/, '').trim();
-    if (evaluationReferenceText.length < 50 || referenceBuffer.includes(0)) {
-      throw new Error('AI Evaluation Reference TXT must contain at least 50 characters of readable text.');
+    if (evaluationReferenceText.length < 100 || referenceBuffer.includes(0)) {
+      throw new Error('AI Evaluation Reference TXT must contain the Question Paper, Suggested Answers and Marking Scheme sections.');
     }
     const reference = {
       buffer: referenceBuffer,
@@ -688,12 +689,18 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       text: evaluationReferenceText,
     };
 
-    const qpExtracted = await extractMaterialFromPDF(qp.buffer.toString('base64'), qp.mime, 'QUESTION_PAPER');
-    const questionPaperText = String(qpExtracted.questionPaperText || '').trim();
-    const suggestedAnswersText = reference.text;
-    const markingSchemeText = '';
-    if (questionPaperText.length < 50) return res.status(422).json({ error: 'The original Question Paper PDF could not be read sufficiently for question matching. Upload a clearer PDF; the stored PDF itself will remain unchanged.' });
-    if (suggestedAnswersText.length < 50) return res.status(422).json({ error: 'The AI Evaluation Reference TXT does not contain enough answer/reference text.' });
+    let parsedReference;
+    try {
+      parsedReference = parseFacultyMockEvaluationReference(reference.text);
+    } catch (parseError) {
+      return res.status(422).json({
+        error: parseError instanceof Error ? parseError.message : 'The evaluation TXT sections are incomplete or incorrectly formatted.',
+        code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID',
+      });
+    }
+    const questionPaperText = parsedReference.questionPaperText;
+    const suggestedAnswersText = parsedReference.suggestedAnswersText;
+    const markingSchemeText = parsedReference.markingSchemeText;
 
     const currentTests = await getAllFirestoreDocs<any>('faculty_mock_tests').catch(() =>
       db.prepare('SELECT * FROM faculty_mock_tests').all() as any[]
@@ -733,7 +740,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     };
 
     const qpSaved = await saveFile(qp, `${id}_question_paper`, 'MATERIAL_QUESTION_PAPER');
-    const referenceSaved = await saveFile(reference, `${id}_suggested_answer`, 'MATERIAL_MODEL_ANSWER');
+    const referenceSaved = await saveFile(reference, `${id}_evaluation_reference`, 'MATERIAL_MODEL_ANSWER');
     const test = {
       id,
       faculty_id: facultyId,
@@ -750,7 +757,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       syllabus_version: String(body.syllabusVersion || 'New Scheme 2024').slice(0, 80),
       question_paper_text: questionPaperText,
       suggested_answers_text: suggestedAnswersText,
-      marking_scheme_text: markingSchemeText || null,
+      marking_scheme_text: markingSchemeText,
       question_paper_file_id: qpSaved.fileId,
       question_paper_file_name: qpSaved.originalFilename || qp.filename,
       question_paper_file_size: qpSaved.size,
@@ -791,7 +798,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'FACULTY_MOCK_TEST_PUBLISHED', 'FACULTY_MOCK_TEST', ?, ?)
     `).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, id,
-      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')} with unchanged downloadable QP PDF and a private locked TXT evaluation reference.`);
+      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')} with an unchanged download-only QP PDF and a private TXT containing the Question Paper, Suggested Answers and Marking Scheme.`);
     return res.status(201).json({ success: true, test: { ...test, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined } });
   } catch (error) {
     for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
