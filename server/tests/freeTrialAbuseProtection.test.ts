@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
-import { ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth, repairTransientFreeTrialBlockAfterVerifiedSignals } from '../services/studentCreditService.js';
 import { decideFreeTrialEligibility, isSignalOwnedByAnotherUser } from '../services/freeTrialAbuseService.js';
 
 initDatabase();
@@ -24,6 +24,7 @@ const blockedUserId = 'usr_trial_blocked_' + suffix;
 const normalUserId = 'usr_trial_normal_' + suffix;
 const staleCounterUserId = 'usr_trial_stale_counter_' + suffix;
 const repairableUserId = 'usr_trial_repairable_' + suffix;
+const transientSignalBlockedUserId = 'usr_trial_transient_signal_block_' + suffix;
 const reusedDeviceBlockedId = 'usr_trial_device_reused_' + suffix;
 const reusedIpBlockedId = 'usr_trial_ip_reused_' + suffix;
 const unknownLegacyBlockedId = 'usr_trial_unknown_legacy_blocked_' + suffix;
@@ -145,6 +146,33 @@ try {
   assert(restoredProfile.free_trial_blocked === 0 && restoredProfile.monthly_free_evaluations_limit === 2, 'False-block repair is persisted in the student profile');
   assert(restoredProfile.purchased_credits === 3 && restoredProfile.paid_credits === 3, 'Repair leaves paid credits unchanged');
 
+  // Transient no-signal / unavailable-store blocks may be recovered only
+  // after a fresh anti-abuse check passes and the account identity is verified.
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status, email_verified)
+    VALUES (?, ?, 'test-hash', 'Transiently Blocked Trial Student', 'STUDENT', 'ACTIVE', 1)
+  `).run(transientSignalBlockedUserId, 'trial_transient_signal_' + suffix + '@example.test');
+  const transientSrn = 'TRN' + String(Number(repairSrnDigits) + 8).slice(-7).padStart(7, '0');
+  db.prepare(`
+    INSERT INTO student_profiles (
+      user_id, icai_registration_number, ca_level, free_evaluations_used,
+      monthly_free_evaluations_used, monthly_free_evaluations_limit,
+      free_evaluation_reset_month, purchased_credits, paid_credits,
+      free_trial_blocked, free_trial_block_reason
+    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 4, 4, 1, 'PROFILE_COMPLETION_SIGNAL_STORE_UNAVAILABLE')
+  `).run(transientSignalBlockedUserId, transientSrn, nowMonth);
+
+  const recoveryWithoutSignalProof = repairTransientFreeTrialBlockAfterVerifiedSignals(transientSignalBlockedUserId, false);
+  assert(!recoveryWithoutSignalProof, 'A transient block cannot be restored without a fresh eligible device/IP decision');
+
+  const recoveredTransientBlock = repairTransientFreeTrialBlockAfterVerifiedSignals(transientSignalBlockedUserId, normalDecision.eligible);
+  const transientQuota = ensureMonthlyFreeEvaluationsReset(transientSignalBlockedUserId);
+  const transientProfile = db.prepare('SELECT free_trial_blocked, free_trial_block_reason, monthly_free_evaluations_limit, purchased_credits, paid_credits FROM student_profiles WHERE user_id = ?').get(transientSignalBlockedUserId) as any;
+  assert(recoveredTransientBlock, 'A transient no-signal block is repaired after a fresh unique device/IP check passes');
+  assert(transientQuota.monthlyFreeEvaluationsLimit === 2 && transientQuota.freeEvaluationsRemaining === 2, 'Recovered account receives exactly 2 unused free evaluations');
+  assert(transientProfile.free_trial_blocked === 0 && transientProfile.monthly_free_evaluations_limit === 2 && transientProfile.free_trial_block_reason === null, 'Transient recovery is persisted and clears the old block reason');
+  assert(transientProfile.purchased_credits === 4 && transientProfile.paid_credits === 4, 'Transient recovery never changes paid credits');
+
   // Unknown legacy blocks must fail closed: without an audited reason they may
   // represent older device/IP abuse decisions from before reason codes existed.
   db.prepare(`
@@ -179,12 +207,14 @@ try {
       ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 0, ?, 0, 0, 1, ?)
     `).run(userId, srn, nowMonth, reason);
     const result = ensureMonthlyFreeEvaluationsReset(userId);
+    const passedSignalCheck = reason === 'REUSED_DEVICE' ? reusedDeviceDecision.eligible : reusedIpDecision.eligible;
+    const transientRepair = repairTransientFreeTrialBlockAfterVerifiedSignals(userId, passedSignalCheck);
     const saved = db.prepare('SELECT free_trial_blocked, monthly_free_evaluations_limit FROM student_profiles WHERE user_id = ?').get(userId) as any;
     assert(result.monthlyFreeEvaluationsLimit === 0 && result.freeEvaluationsRemaining === 0, reason + ' account is not auto-unblocked by monthly quota repair');
-    assert(saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0, reason + ' block remains persisted');
+    assert(!transientRepair && saved.free_trial_blocked === 1 && saved.monthly_free_evaluations_limit === 0, reason + ' block remains protected from transient recovery');
   }
 
   console.log('\nFree-trial anti-abuse regression tests: ' + passed + '/' + total + ' passed.');
 } finally {
-  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
+  db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?, ?, ?, ?)').run(blockedUserId, normalUserId, staleCounterUserId, repairableUserId, transientSignalBlockedUserId, reusedDeviceBlockedId, reusedIpBlockedId, unknownLegacyBlockedId);
 }
