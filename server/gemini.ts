@@ -515,6 +515,9 @@ export interface EvaluateAnswerSheetParams {
   level: CALevel;
   materialType: MaterialType;
   mtpSeries?: 1 | 2;
+  modelTestNumber?: number;
+  facultyMockTestId?: string;
+  evaluationSource?: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK';
   subjectKey: string;
   subjectName: string;
   paper?: string;
@@ -612,6 +615,25 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
 
     enforceEvaluationEvidencePackageMtpGate(evidencePackage);
   }
+
+  // Preserve the exact source identity through the shared MTP/PYQ evaluator.
+  const referenceSourceType =
+    params.materialType === 'FACULTY_MOCK_TEST' || params.evaluationSource === 'FACULTY_MOCK'
+      ? 'FACULTY_MOCK' as const
+      : params.evaluationSource === 'INSTITUTE'
+        ? 'INSTITUTE' as const
+        : 'GLOBAL' as const;
+  const questionReferenceMetadata = {
+    qpMaterialId: params.questionMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+    saMaterialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+    msMaterialId: params.markingSchemeMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId,
+    materialVersions: params.referenceMaterialVersion || '1.0',
+    sourceType: referenceSourceType,
+    materialType: params.materialType,
+    modelTestNumber: params.modelTestNumber,
+    facultyMockTestId: params.facultyMockTestId,
+    materialTitle: params.referenceMaterialTitle,
+  };
 
   // Canonicalize subject name using full official ICAI title
   const canonicalSubjectName = getCanonicalPaperName(params.level, params.subjectName, params.subjectKey);
@@ -1129,7 +1151,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               subjectKey: params.subjectKey,
               sourceMaterialTitle: params.referenceMaterialTitle || 'Authoritative Suggested Answers',
               sourceMaterialVersion: params.referenceMaterialVersion || 'UNSPECIFIED',
-              sourceMaterialId: params.referenceMaterialId || 'UNSPECIFIED',
+              sourceMaterialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId || 'UNSPECIFIED',
               mcqPageNumbers: Object.fromEntries(
                 coverageMap.attemptedQuestions
                   .filter((attempt) => attempt.isMcq && attempt.pages.length > 0)
@@ -1205,6 +1227,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                       checkingMode: (params.checkingMode as any) || 'standard',
                       level: params.level,
                       subjectName: params.subjectName,
+                      referenceMetadata: questionReferenceMetadata,
                     });
                     break;
                   } catch (chunkErr: any) {
@@ -1262,6 +1285,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     checkingMode: (params.checkingMode as any) || 'standard',
                     level: params.level,
                     subjectName: params.subjectName,
+                    referenceMetadata: questionReferenceMetadata,
                   });
                   descriptiveQuestions.push(recoveredQ);
                   evaluatedCanonSet.add(canonId);
@@ -1385,6 +1409,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             attemptedPercentage,
             grade,
             confidenceScore: dynamicConfidence.compositeScore,
+            evaluationSource: params.evaluationSource || (params.materialType === 'FACULTY_MOCK_TEST' ? 'FACULTY_MOCK' : 'PUBLIC'),
+            materialSource: referenceSourceType,
             overallSummary: `Authoritative evaluation completed in ${activeSummary.displayName} mode: ${activeQuestions.length} sub-questions evaluated (${mcqQuestions.length} MCQs, ${descriptiveQuestions.length} descriptive sub-questions) across ${coverageMap.totalPages} pages with verified step marking. Evaluated: ${calculatedTotal} / ${attemptedMax} attempted marks.`,
             strengths: ['Addressed required questions methodically', 'Demonstrated understanding of core statutory provisions and formats'],
             weaknesses: ['Ensure all intermediate calculation workings and statutory references are fully disclosed'],
