@@ -1103,6 +1103,28 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
+      const existingFreeCopy = db.prepare(`
+        SELECT evaluation_id FROM faculty_mock_free_uses
+        WHERE student_id = ? AND faculty_mock_test_id = ?
+      `).get(studentId, selectedTestId) as { evaluation_id: string } | undefined;
+      if (existingFreeCopy && existingFreeCopy.evaluation_id !== evaluationId) {
+        const suppliedPaidOrderId = String(facultyMockPaymentOrderId || '').trim();
+        const availablePaidCopy = suppliedPaidOrderId
+          ? db.prepare(`
+              SELECT order_id FROM faculty_mock_copy_purchases
+              WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
+            `).get(suppliedPaidOrderId, studentId, selectedTestId)
+          : null;
+        if (!availablePaidCopy) {
+          return res.status(402).json({
+            error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
+            code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+            amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+            facultyMockTestId: selectedTestId,
+          });
+        }
+      }
+
       if (!facultyMockRecord.question_paper_text || !facultyMockRecord.suggested_answers_text) {
         return res.status(400).json({ error: 'The faculty mock reference material is incomplete. Please contact the administrator.', code: 'FACULTY_MOCK_REFERENCE_INCOMPLETE' });
       }
