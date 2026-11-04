@@ -108,7 +108,7 @@ try {
   assert.equal(verified.suggestedAnswersText, suggestedAnswersText, 'AI reference package receives only the selected mock Suggested Answer');
   assert.equal(verified.markingSchemeText, markingSchemeText, 'AI evaluation receives the Marking Scheme section parsed from the same TXT reference');
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
-  assert.equal(verified.manifest.materialSource, 'GLOBAL', 'Faculty mock does not masquerade as institute-sourced material');
+  assert.equal(verified.manifest.materialSource, 'FACULTY_MOCK', 'Faculty mock remains explicitly distinct from institute and global material');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
 
   assert.throws(() => enforceMaterialHardGate({
