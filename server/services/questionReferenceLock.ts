@@ -20,7 +20,7 @@ export interface LockedReferenceSlice {
   checksum: string;
 }
 
-export type ReferenceSourceType = 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
+export type ReferenceSourceType = 'GLOBAL' | 'INSTITUTE' | 'MODEL_TEST' | 'FACULTY_MOCK';
 
 export interface QuestionReferenceLockMetadata {
   qpMaterialId?: string;
