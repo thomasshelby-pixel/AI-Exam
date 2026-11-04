@@ -1600,6 +1600,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           });
         }
         facultyMockPaidCopyOrderId = paidOrderId;
+        db.prepare('UPDATE evaluations SET faculty_mock_payment_order_id = ? WHERE id = ?').run(paidOrderId, evaluationId);
       }
     }
 
