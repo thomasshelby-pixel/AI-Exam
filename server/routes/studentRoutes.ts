@@ -39,6 +39,7 @@ import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../se
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js';
+import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
@@ -904,6 +905,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     req.body?.evaluationId && typeof req.body.evaluationId === 'string' && req.body.evaluationId.startsWith('eval_')
       ? req.body.evaluationId
       : `eval_${crypto.randomBytes(8).toString('hex')}`;
+  let facultyMockFreeCopyClaimed = false;
+  let facultyMockPaidCopyOrderId: string | null = null;
 
   try {
     const {
@@ -924,6 +927,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       instituteId,
       instituteMaterialId,
       facultyMockTestId,
+      facultyMockPaymentOrderId,
     } = req.body;
 
     // Reject unsupported CS / CMA evaluation attempts safely
@@ -1526,6 +1530,57 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Free-trial abuse is handled only by new-account device/IP eligibility; identical
     // practice PDFs must continue through academic validation and evaluation.
 
+    // Faculty Mock copy policy: one accepted answer-sheet copy is free for each
+    // student + exact faculty mock test. Every subsequent copy requires its own
+    // verified single-copy Razorpay purchase; these purchases are not general credits.
+    if (isFacultyMockMode) {
+      const selectedMockId = String(facultyMockRecord?.id || '').trim();
+      const existingFreeCopy = db.prepare(`
+        SELECT evaluation_id FROM faculty_mock_free_uses
+        WHERE student_id = ? AND faculty_mock_test_id = ?
+      `).get(studentId, selectedMockId) as { evaluation_id: string } | undefined;
+
+      if (!existingFreeCopy) {
+        db.prepare(`
+          INSERT OR IGNORE INTO faculty_mock_free_uses (student_id, faculty_mock_test_id, evaluation_id)
+          VALUES (?, ?, ?)
+        `).run(studentId, selectedMockId, evaluationId);
+        const claimed = db.prepare(`
+          SELECT evaluation_id FROM faculty_mock_free_uses
+          WHERE student_id = ? AND faculty_mock_test_id = ?
+        `).get(studentId, selectedMockId) as { evaluation_id: string } | undefined;
+        facultyMockFreeCopyClaimed = claimed?.evaluation_id === evaluationId;
+      } else {
+        facultyMockFreeCopyClaimed = existingFreeCopy.evaluation_id === evaluationId;
+      }
+
+      if (!facultyMockFreeCopyClaimed) {
+        const paidOrderId = String(facultyMockPaymentOrderId || '').trim();
+        if (!paidOrderId) {
+          return res.status(402).json({
+            error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
+            code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+            amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+            facultyMockTestId: selectedMockId,
+          });
+        }
+
+        const consumed = db.prepare(`
+          UPDATE faculty_mock_copy_purchases
+          SET status = 'CONSUMED', evaluation_id = ?, consumed_at = CURRENT_TIMESTAMP
+          WHERE order_id = ? AND student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
+        `).run(evaluationId, paidOrderId, studentId, selectedMockId);
+        if (Number(consumed.changes || 0) !== 1) {
+          return res.status(402).json({
+            error: 'The repeat-copy payment is not available for this student and selected mock. Complete a fresh payment and try again.',
+            code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
+            amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+          });
+        }
+        facultyMockPaidCopyOrderId = paidOrderId;
+      }
+    }
+
     // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
     let creditAlreadyConsumed = false;
     if (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
@@ -1611,6 +1666,28 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(errMsg.slice(0, 500), evaluationId);
+
+    // If this request failed before it was accepted by the async evaluator,
+    // release the free-copy claim or paid copy so a genuine retry is possible.
+    if (facultyMockFreeCopyClaimed) {
+      try {
+        db.prepare('DELETE FROM faculty_mock_free_uses WHERE student_id = ? AND faculty_mock_test_id = ? AND evaluation_id = ?')
+          .run(studentId, String(facultyMockTestId || ''), evaluationId);
+      } catch (releaseError) {
+        console.warn('[FacultyMocks] Could not release an unaccepted free-copy claim:', releaseError);
+      }
+    }
+    if (facultyMockPaidCopyOrderId) {
+      try {
+        db.prepare(`
+          UPDATE faculty_mock_copy_purchases
+          SET status = 'AVAILABLE', evaluation_id = NULL, consumed_at = NULL
+          WHERE order_id = ? AND evaluation_id = ? AND status = 'CONSUMED'
+        `).run(facultyMockPaidCopyOrderId, evaluationId);
+      } catch (releaseError) {
+        console.warn('[FacultyMocks] Could not restore an unaccepted paid mock copy:', releaseError);
+      }
+    }
 
     const isPrepayment =
       errMsg.includes('prepayment credits') ||
