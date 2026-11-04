@@ -22,6 +22,7 @@ import {
   refundEvaluationCreditAtomic,
   syncStudentCreditsToFirestore,
   getCurrentServerMonth,
+  repairTransientFreeTrialBlockAfterVerifiedSignals,
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
