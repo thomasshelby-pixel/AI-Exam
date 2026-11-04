@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { CA_CURRICULUM } from '../../data/caCurriculum.js';
 import { CALevel } from '../../types/index.js';
-import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle, CreditCard } from 'lucide-react';
 
 type Faculty = { id: string; name: string; description?: string | null; status: 'ACTIVE' | 'INACTIVE' };
 type MockTest = {
@@ -28,6 +28,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [loading, setLoading] = useState(true);
   const [savingFaculty, setSavingFaculty] = useState(false);
   const [savingTest, setSavingTest] = useState(false);
+  const [repeatPriceInput, setRepeatPriceInput] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
   const [facultyName, setFacultyName] = useState('');
   const [facultyDescription, setFacultyDescription] = useState('');
   const [facultyId, setFacultyId] = useState('');
@@ -53,12 +55,14 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     setLoading(true);
     setError('');
     try {
-      const [facultyRes, testRes] = await Promise.all([
+      const [facultyRes, testRes, pricingRes] = await Promise.all([
         apiRequest<{ faculties: Faculty[] }>('/api/admin/faculty-mocks/faculties'),
         apiRequest<{ tests: MockTest[] }>('/api/admin/faculty-mocks/tests'),
+        apiRequest<{ repeatPriceINR: number | null }>('/api/admin/faculty-mocks/settings'),
       ]);
       setFaculties(facultyRes.faculties || []);
       setTests(testRes.tests || []);
+      setRepeatPriceInput(pricingRes.repeatPriceINR ? String(pricingRes.repeatPriceINR) : '');
       if (!facultyId && facultyRes.faculties?.length) setFacultyId(facultyRes.faculties.find((f) => f.status === 'ACTIVE')?.id || '');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not load faculty mock data.';
@@ -93,6 +97,29 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     (filterLevel === 'ALL' || test.course_level === filterLevel)
   ), [tests, filterFaculty, filterLevel]);
 
+  const saveRepeatPrice = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const price = Number(repeatPriceInput);
+    if (!Number.isSafeInteger(price) || price < 1 || price > 10000) {
+      setError('Set a whole-number repeat-copy price between ₹1 and ₹10,000.');
+      return;
+    }
+    setSavingPrice(true);
+    setError('');
+    try {
+      await apiRequest('/api/admin/faculty-mocks/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ repeatPriceINR: price }),
+      });
+      onNotify?.('Faculty mock repeat-copy price saved at ₹' + price + '.', 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not save repeat-copy price.';
+      setError(message);
+      onNotify?.(message, 'error');
+    } finally {
+      setSavingPrice(false);
+    }
+  };
   const addFaculty = async (event: React.FormEvent) => {
     event.preventDefault();
     setSavingFaculty(true);
@@ -233,6 +260,17 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"><AlertCircle className="mr-1 inline h-4 w-4" />{error}</div>}
 
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2"><CreditCard className="h-4 w-4 text-emerald-600" /><h3 className="text-sm font-bold">Repeat Mock Copy Pricing</h3></div>
+        <p className="mb-3 text-xs leading-relaxed text-slate-500">Each student gets one free evaluated copy per individual faculty mock. Every additional copy of that same mock uses this price. A different mock or faculty gets its own first free copy. This price is separate from standard evaluation credits.</p>
+        <form onSubmit={saveRepeatPrice} className="flex flex-wrap items-end gap-3">
+          <label className="min-w-[180px] flex-1 text-[11px] font-semibold text-slate-600">Price per additional copy (INR)
+            <input type="number" min="1" max="10000" step="1" value={repeatPriceInput} onChange={(e) => setRepeatPriceInput(e.target.value)} placeholder="Set price in ₹" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" required />
+          </label>
+          <button disabled={savingPrice} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{savingPrice ? 'Saving…' : 'Save Repeat Price'}</button>
+        </form>
+        {!repeatPriceInput && <p className="mt-2 text-[10px] font-semibold text-amber-700">Repeat mock evaluation stays blocked until a price is configured.</p>}
+      </section>
       <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2"><Users className="h-4 w-4 text-blue-600" /><h3 className="text-sm font-bold">1. Faculty Directory</h3></div>
         <form onSubmit={addFaculty} className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_auto]">
