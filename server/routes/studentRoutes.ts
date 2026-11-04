@@ -12,7 +12,6 @@ import {
   generateOriginalSubmissionPdf,
   buildStructuredAnnotations,
 } from '../services/pdfCheckedCopyService.js';
-import { isEvaluationPendingReview } from '../services/detailedReportPdfService.js';
 import { PDFDocument } from 'pdf-lib';
 import {
   consumeCreditFEFO,
@@ -2592,6 +2591,10 @@ router.get(
           percentage: record.percentage,
           grade: record.grade,
           createdAt: record.created_at,
+          evaluationStatus: record.status,
+          certificationStatus: record.certification_status,
+          validationStatus: resultJson?.validationStatus,
+          isTechnicalReviewState: resultJson?.isTechnicalReviewState,
           evaluationSource: record.evaluation_source || (record.institute_id ? 'INSTITUTE' : 'PUBLIC'),
           instituteName: reportInstName,
           batchName: reportBName,
