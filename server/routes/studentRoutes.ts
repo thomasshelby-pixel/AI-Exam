@@ -1171,7 +1171,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       evaluationSource === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : evaluationSource === 'INSTITUTE' ? 'INSTITUTE' : 'PUBLIC';
     const isFacultyMockMode = requestedEvalSource === 'FACULTY_MOCK';
     const isInstituteMode = requestedEvalSource === 'INSTITUTE';
-    const materialSource: 'GLOBAL' | 'INSTITUTE' = isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
+    const materialSource: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK' = isFacultyMockMode ? 'FACULTY_MOCK' : isInstituteMode ? 'INSTITUTE' : 'GLOBAL';
 
     let resolvedSponsoringInstituteId: string | null = null;
     let resolvedSponsoringEnrollmentId: string | null = null;
@@ -2078,7 +2078,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
         resultJson = JSON.parse(record.result_json);
         if (resultJson) {
           resultJson.evaluationSource = (record.evaluation_source as any) || (record.institute_id ? 'INSTITUTE' : 'PUBLIC');
-          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
+          resultJson.materialSource = (record.material_source as any) || (record.evaluation_source === 'FACULTY_MOCK' ? 'FACULTY_MOCK' : record.evaluation_source === 'INSTITUTE' ? 'INSTITUTE' : 'GLOBAL');
           resultJson.sponsoringInstituteName = sponsoringInstituteName || instituteName || undefined;
           resultJson.entitlementSource = (record.entitlement_source as any) || undefined;
           resultJson.instituteName = instituteName || undefined;
