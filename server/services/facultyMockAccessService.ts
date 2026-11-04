@@ -131,7 +131,7 @@ export async function consumeFacultyMockCopy(input: {
 }): Promise<{ source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY'; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const claimId = stableId(`${input.studentId}:${input.testId}:${input.evaluationId}`);
-  return runFirestoreTransaction(async (transaction) => {
+  const result = await runFirestoreTransaction(async (transaction) => {
     const claim = await transaction.get(EVALUATION_CLAIMS_COLLECTION, claimId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
     const access = accessSnapshot.exists ? (accessSnapshot.data() || {}) : {};
