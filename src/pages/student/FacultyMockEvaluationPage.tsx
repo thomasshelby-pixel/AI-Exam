@@ -362,6 +362,15 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                   <span className="rounded-lg bg-indigo-600 px-3 py-2 font-mono text-sm font-black text-white">MOCK {String(selectedTest.mock_number).padStart(2, '0')}</span>
                 </div>
                 <button type="button" onClick={() => void downloadQuestionPaper()} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50"><Download className="h-4 w-4" />Download Question Paper</button>
+                {accessLoading ? (
+                  <p className="mt-3 rounded-lg bg-white/80 p-3 text-xs text-slate-500">Checking your free and paid copy status…</p>
+                ) : accessState?.freeCopyAvailable ? (
+                  <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800"><strong>Your first copy is free.</strong> Every faculty mock has its own separate free-copy allowance.</p>
+                ) : accessState && accessState.paidCopiesRemaining > 0 ? (
+                  <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800"><strong>{accessState.paidCopiesRemaining} paid repeat copy available.</strong> This copy is already paid; no new payment is needed.</p>
+                ) : accessState ? (
+                  <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><strong>First free copy already used.</strong> Another copy of this same mock costs {accessState.repeatPriceINR ? '₹' + accessState.repeatPriceINR : 'a price not yet configured by Admin'}.</p>
+                ) : null}
               </div>
             )}
           </section>
