@@ -3,10 +3,12 @@ import {
   getAllFirestoreDocs,
   getFirestoreDoc,
   setFirestoreDoc,
+  deleteFirestoreDoc,
 } from './firestoreDbService.js';
 import {
   downloadFileFromCloudStorage,
   uploadFileToCloudStorage,
+  deleteCloudStorageObject,
   type CloudFileMetadata,
 } from './firebaseCloudStorageService.js';
 
@@ -264,4 +266,54 @@ export function shouldServeOtaUpdate(
   if (!current || current === 'builtin') return true;
   if (!SEMVER_RE.test(current)) return true;
   return compareSemver(release.versionName, current) > 0;
+}
+
+
+/**
+ * Permanently removes archived APK releases from both Cloud Storage and Firestore.
+ * The live APK channel is checked independently and can never be removed here.
+ * Metadata is retained whenever physical deletion fails, preventing orphaned-file
+ * paths from being lost during a permissions or transient storage failure.
+ */
+export async function deletePreviousApkReleases(): Promise<{ deletedCount: number; freedBytes: number; skippedCount: number }> {
+  const [currentApk, releases] = await Promise.all([
+    getPublishedAppRelease('APK'),
+    getAllFirestoreDocs<AppUpdateRelease>(RELEASES_COLLECTION, { failOnError: true }),
+  ]);
+  const candidates = releases.filter((release) =>
+    release.kind === 'APK' &&
+    release.status === 'ARCHIVED' &&
+    release.id !== currentApk?.id
+  );
+
+  let deletedCount = 0;
+  let freedBytes = 0;
+  let skippedCount = 0;
+
+  for (const release of candidates) {
+    try {
+      if (!release.storagePath || !release.storagePath.startsWith('app_releases/android/')) {
+        throw new Error('Release storage path is missing or outside the Android release directory.');
+      }
+
+      // Delete the binary first. If this fails, leave all metadata intact.
+      await deleteCloudStorageObject(release.storagePath, release.storageBucket);
+      const metadataDeleted = await deleteFirestoreDoc('file_storage_metadata', release.fileId);
+      if (!metadataDeleted) {
+        throw new Error('Cloud file metadata could not be removed after the binary was deleted.');
+      }
+      const releaseDeleted = await deleteFirestoreDoc(RELEASES_COLLECTION, release.id);
+      if (!releaseDeleted) {
+        throw new Error('Release history metadata could not be removed.');
+      }
+
+      deletedCount += 1;
+      freedBytes += Math.max(0, Number(release.sizeBytes) || 0);
+    } catch (error) {
+      skippedCount += 1;
+      console.warn(`[AppUpdates] Could not fully delete archived APK release ${release.id}:`, error);
+    }
+  }
+
+  return { deletedCount, freedBytes, skippedCount };
 }
