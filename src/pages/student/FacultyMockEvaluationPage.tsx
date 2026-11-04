@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
-import { Download, UploadCloud, FileText, CheckCircle2, AlertCircle, RefreshCw, GraduationCap, BookOpen, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Download, UploadCloud, CheckCircle2, AlertCircle, RefreshCw, GraduationCap, BookOpen, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CALevel } from '../../types/index.js';
 
 type Faculty = { id: string; name: string; description?: string | null; attempts: string[] };
@@ -104,8 +104,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         reader.onerror = () => reject(new Error('Could not read your answer sheet.'));
         reader.readAsDataURL(file);
       });
-      setAnswerFile(file);
+        setAnswerFile(file);
       setFileBase64(base64);
+      setSuccess('Answer sheet is ready to submit.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read the selected file.');
     } finally {
