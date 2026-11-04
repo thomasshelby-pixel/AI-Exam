@@ -689,7 +689,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       text: evaluationReferenceText,
     };
 
-    let parsedReference;
+    let parsedReference: ReturnType<typeof parseFacultyMockEvaluationReference>;
     try {
       parsedReference = parseFacultyMockEvaluationReference(reference.text);
     } catch (parseError) {
