@@ -221,6 +221,7 @@ export const AdminPortal: React.FC = () => {
   const [isDeletingStudent, setIsDeletingStudent] = useState<boolean>(false);
   const [deleteStudentError, setDeleteStudentError] = useState<string | null>(null);
   const [viewStudentModal, setViewStudentModal] = useState<{ student: any; details?: any; loading: boolean } | null>(null);
+  const [freeTrialReviewModal, setFreeTrialReviewModal] = useState<{ student: any; reviewReason: string; identityConfirmed: boolean; error: string; loading: boolean } | null>(null);
   const [isUpdatingClassification, setIsUpdatingClassification] = useState<boolean>(false);
 
   // Institutes
@@ -684,6 +685,43 @@ export const AdminPortal: React.FC = () => {
       });
     } catch {
       setViewStudentModal({ student, loading: false });
+    }
+  };
+
+  // Admin-only manual review for legacy unknown free-trial blocks.
+  const handleManualFreeTrialReview = async () => {
+    if (!freeTrialReviewModal) return;
+    const reviewReason = freeTrialReviewModal.reviewReason.trim();
+    if (!freeTrialReviewModal.identityConfirmed) {
+      setFreeTrialReviewModal((prev) => prev ? { ...prev, error: 'Confirm that you reviewed the student identity before approval.' } : null);
+      return;
+    }
+    if (reviewReason.length < 10 || reviewReason.length > 500) {
+      setFreeTrialReviewModal((prev) => prev ? { ...prev, error: 'Enter a review note between 10 and 500 characters.' } : null);
+      return;
+    }
+
+    setFreeTrialReviewModal((prev) => prev ? { ...prev, loading: true, error: '' } : null);
+    try {
+      const student = freeTrialReviewModal.student;
+      const response = await apiRequest<{
+        success: boolean;
+        message: string;
+        monthlyFreeEvaluationsLimit: number;
+        monthlyFreeEvaluationsUsed: number;
+        freeEvaluationsRemaining: number;
+      }>(`/api/admin/students/${student.id}/review-free-trial`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewReason }),
+      });
+
+      setSuccessMsg(`Free-trial review approved for ${student.full_name}. ${response.freeEvaluationsRemaining} free evaluations are available this month.`);
+      setFreeTrialReviewModal(null);
+      await handleOpenViewStudent(student);
+      await loadActiveSectionData();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to approve the free-trial review.';
+      setFreeTrialReviewModal((prev) => prev ? { ...prev, loading: false, error: message } : null);
     }
   };
 
@@ -4453,6 +4491,26 @@ export const AdminPortal: React.FC = () => {
                     <p className="font-mono text-xs font-bold text-rose-800 break-all">{reason.code}</p>
                     <p className="text-xs leading-relaxed text-slate-700">{reason.description}</p>
                     <p className="text-[10px] text-slate-500">No raw device identifier or IP address is exposed in this view.</p>
+                    {reason.code === 'UNKNOWN_LEGACY_BLOCK' && viewStudentModal.student.free_trial_blocked === 1 && viewStudentModal.student.status === 'ACTIVE' && (
+                      <div className="pt-2 mt-2 border-t border-rose-200 space-y-2">
+                        <p className="text-[10px] leading-relaxed text-slate-600">
+                          A Super Admin can manually review this legacy record. The restore checks verified email, ICAI SRN format, duplicate in-app identity and current-month usage.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setFreeTrialReviewModal({
+                            student: viewStudentModal.student,
+                            reviewReason: '',
+                            identityConfirmed: false,
+                            error: '',
+                            loading: false,
+                          })}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition"
+                        >
+                          Review & Restore 2 Free Evaluations
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })() : viewStudentModal.student.free_trial_status === 'GRANTED' ? (
@@ -4640,6 +4698,77 @@ export const AdminPortal: React.FC = () => {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Free Trial Review Modal (Super Admin only) */}
+      {freeTrialReviewModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white border border-emerald-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-800">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Review & Restore Free Trial</h3>
+                <p className="text-xs text-slate-500 mt-1">{freeTrialReviewModal.student.full_name} • {freeTrialReviewModal.student.email}</p>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">SUPER ADMIN REVIEW</span>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 mb-4 text-xs text-amber-900 space-y-1">
+              <p className="font-bold">Before approving, review the student's identity.</p>
+              <p>This tool checks that the email is verified, the ICAI SRN format is valid, the same SRN digits are not linked to another app account, and the monthly usage ledger does not exceed the standard limit.</p>
+              <p className="font-semibold">Format validation is not live verification against ICAI SSP. Confirm the student's identity from their submitted details before approving.</p>
+            </div>
+
+            <label className="flex items-start gap-2 text-xs text-slate-700 mb-4">
+              <input
+                type="checkbox"
+                checked={freeTrialReviewModal.identityConfirmed}
+                onChange={(e) => setFreeTrialReviewModal((prev) => prev ? { ...prev, identityConfirmed: e.target.checked, error: '' } : null)}
+                disabled={freeTrialReviewModal.loading}
+                className="mt-0.5"
+              />
+              <span>I have reviewed the student's details and confirm this is a genuine student account eligible for manual review.</span>
+            </label>
+
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5" htmlFor="free-trial-review-reason">
+              Admin review note <span className="text-rose-600">*</span>
+            </label>
+            <textarea
+              id="free-trial-review-reason"
+              value={freeTrialReviewModal.reviewReason}
+              onChange={(e) => setFreeTrialReviewModal((prev) => prev ? { ...prev, reviewReason: e.target.value, error: '' } : null)}
+              disabled={freeTrialReviewModal.loading}
+              rows={3}
+              maxLength={500}
+              placeholder="Example: Student contacted support; identity and ICAI registration details reviewed."
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-50"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">Required, 10–500 characters. Saved in the admin audit log.</p>
+
+            {freeTrialReviewModal.error && (
+              <p className="mt-3 p-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">{freeTrialReviewModal.error}</p>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setFreeTrialReviewModal(null)}
+                disabled={freeTrialReviewModal.loading}
+                className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleManualFreeTrialReview}
+                disabled={freeTrialReviewModal.loading || !freeTrialReviewModal.identityConfirmed || freeTrialReviewModal.reviewReason.trim().length < 10}
+                className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {freeTrialReviewModal.loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                Approve & Restore
+              </button>
             </div>
           </div>
         </div>

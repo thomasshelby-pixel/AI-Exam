@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { db, initDatabase } from '../db.js';
 import { generateToken } from '../auth.js';
+import { getCurrentServerMonth } from '../services/studentCreditService.js';
 import adminRoutes from '../routes/adminRoutes.js';
 
 console.log('========================================================================');
@@ -34,19 +35,25 @@ async function run() {
   const ts = Date.now();
   const studentA = `usr_test_eval_count_a_${ts}`;
   const studentB = `usr_test_eval_count_b_${ts}`;
+  const manualReviewStudent = `usr_test_manual_trial_review_${ts}`;
+  const duplicateReviewStudent = `usr_test_duplicate_trial_review_${ts}`;
+  const unverifiedReviewStudent = `usr_test_unverified_trial_review_${ts}`;
   const emailA = `eval_count_a_${ts}@example.com`;
   const emailB = `eval_count_b_${ts}@example.com`;
+  const manualReviewEmail = `manual_trial_review_${ts}@example.com`;
+  const duplicateReviewEmail = `duplicate_trial_review_${ts}@example.com`;
+  const unverifiedReviewEmail = `unverified_trial_review_${ts}@example.com`;
 
   try {
     // Clean up test collisions
-    db.prepare('DELETE FROM evaluations WHERE student_id IN (?, ?)').run(studentA, studentB);
-    db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?)').run(studentA, studentB);
-    db.prepare('DELETE FROM users WHERE id IN (?, ?)').run(studentA, studentB);
+    db.prepare('DELETE FROM evaluations WHERE student_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
 
     // Seed Student A
     db.prepare(`
-      INSERT INTO users (id, email, password_hash, full_name, role, status, account_classification, created_at, updated_at)
-      VALUES (?, ?, 'hash', 'Student Alpha', 'STUDENT', 'ACTIVE', 'NORMAL', datetime('now'), datetime('now'))
+      INSERT INTO users (id, email, password_hash, full_name, role, status, account_classification, email_verified, created_at, updated_at)
+      VALUES (?, ?, 'hash', 'Student Alpha', 'STUDENT', 'ACTIVE', 'NORMAL', 1, datetime('now'), datetime('now'))
     `).run(studentA, emailA);
 
     db.prepare(`
@@ -68,6 +75,102 @@ async function run() {
       INSERT INTO student_profiles (user_id, student_code, icai_registration_number, ca_level, monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month, purchased_credits)
       VALUES (?, 'ST-BETA', 'WRO222222', 'FINAL', 0, 2, '2026-10', 0)
     `).run(studentB);
+
+    const currentMonth = getCurrentServerMonth();
+    const seedManualReviewUser = db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, role, status, account_classification, email_verified, created_at, updated_at)
+      VALUES (?, ?, 'hash', 'Manual Review Student', 'STUDENT', 'ACTIVE', 'NORMAL', 1, datetime('now'), datetime('now'))
+    `);
+    const seedManualReviewProfile = db.prepare(`
+      INSERT INTO student_profiles (
+        user_id, student_code, icai_registration_number, ca_level,
+        monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
+        purchased_credits, paid_credits, free_trial_blocked, free_trial_block_reason
+      ) VALUES (?, ?, ?, 'INTERMEDIATE', 0, 0, ?, 7, 7, 1, NULL)
+    `);
+    seedManualReviewUser.run(manualReviewStudent, manualReviewEmail);
+    seedManualReviewProfile.run(manualReviewStudent, 'ST-MREV', 'NRO0123456', currentMonth);
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, role, status, account_classification, email_verified, created_at, updated_at)
+      VALUES (?, ?, 'hash', 'Unverified Review Student', 'STUDENT', 'ACTIVE', 'NORMAL', 0, datetime('now'), datetime('now'))
+    `).run(unverifiedReviewStudent, unverifiedReviewEmail);
+    seedManualReviewProfile.run(unverifiedReviewStudent, 'ST-UNVR', 'WRO0123457', currentMonth);
+
+    // ------------------------------------------------------------------------------------------------
+    // TEST 0: Manual review safely restores only verified, unique UNKNOWN_LEGACY_BLOCK accounts.
+    // ------------------------------------------------------------------------------------------------
+    {
+      const approved = await fetch(`${baseUrl}/api/admin/students/${manualReviewStudent}/review-free-trial`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewReason: 'Student submitted identity details; Super Admin manually reviewed the account.',
+        }),
+      });
+      const approvedBody = await approved.json();
+      assert.equal(approved.status, 200, 'A verified active student with a valid unique SRN can be manually approved');
+      assert.equal(approvedBody.success, true, 'Manual review returns success');
+      assert.equal(approvedBody.monthlyFreeEvaluationsLimit, 2, 'Manual review restores the standard monthly allowance of exactly two');
+      assert.equal(approvedBody.freeEvaluationsRemaining, 2, 'A student with no current-month usage receives two remaining free evaluations');
+
+      const restoredProfile = db.prepare(`
+        SELECT free_trial_blocked, free_trial_block_reason, monthly_free_evaluations_used,
+               monthly_free_evaluations_limit, free_evaluation_reset_month, purchased_credits, paid_credits
+        FROM student_profiles WHERE user_id = ?
+      `).get(manualReviewStudent) as any;
+      assert.equal(restoredProfile.free_trial_blocked, 0, 'Manual approval clears the legacy unknown block');
+      assert.equal(restoredProfile.free_trial_block_reason, null, 'Manual approval clears the obsolete block reason');
+      assert.equal(restoredProfile.monthly_free_evaluations_used, 0, 'Manual approval preserves current-month usage');
+      assert.equal(restoredProfile.monthly_free_evaluations_limit, 2, 'Manual approval sets the standard monthly quota to two');
+      assert.equal(restoredProfile.free_evaluation_reset_month, currentMonth, 'Manual approval anchors quota to the current server month');
+      assert.equal(restoredProfile.purchased_credits, 7, 'Manual approval does not change purchased credits');
+      assert.equal(restoredProfile.paid_credits, 7, 'Manual approval does not change paid credits');
+
+      const reviewAudit = db.prepare(`
+        SELECT action, user_id, details FROM audit_logs
+        WHERE entity_type = 'STUDENT_PROFILE' AND entity_id = ?
+          AND action = 'ADMIN_FREE_TRIAL_MANUAL_REVIEW_APPROVED'
+        ORDER BY rowid DESC LIMIT 1
+      `).get(manualReviewStudent) as any;
+      assert.equal(reviewAudit?.action, 'ADMIN_FREE_TRIAL_MANUAL_REVIEW_APPROVED', 'Manual approval is written to the admin audit log');
+      assert.match(String(reviewAudit?.details || ''), /Super Admin manually reviewed the account/, 'Audit log preserves the admin review note');
+
+      // Create the duplicate identity only after approving the first account.
+      // This makes the primary approval test a genuinely unique SRN, then verifies
+      // a second account using the same numeric SRN is rejected.
+      seedManualReviewUser.run(duplicateReviewStudent, duplicateReviewEmail);
+      seedManualReviewProfile.run(duplicateReviewStudent, 'ST-DUPR', 'SRO0123456', currentMonth);
+
+      const duplicate = await fetch(`${baseUrl}/api/admin/students/${duplicateReviewStudent}/review-free-trial`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewReason: 'Student submitted identity details for duplicate SRN review.' }),
+      });
+      const duplicateBody = await duplicate.json();
+      assert.equal(duplicate.status, 409, 'A second account using the same SRN digits cannot be manually approved');
+      assert.equal(duplicateBody.code, 'DUPLICATE_ICAI_REGISTRATION', 'Duplicate SRN is reported with an explicit rejection code');
+      const duplicateProfile = db.prepare('SELECT free_trial_blocked, monthly_free_evaluations_limit FROM student_profiles WHERE user_id = ?').get(duplicateReviewStudent) as any;
+      assert.equal(duplicateProfile.free_trial_blocked, 1, 'Duplicate SRN rejection leaves the free-trial block intact');
+      assert.equal(duplicateProfile.monthly_free_evaluations_limit, 0, 'Duplicate SRN rejection does not grant free evaluations');
+
+      const unverified = await fetch(`${baseUrl}/api/admin/students/${unverifiedReviewStudent}/review-free-trial`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewReason: 'Student contacted support for a manual eligibility review.' }),
+      });
+      const unverifiedBody = await unverified.json();
+      assert.equal(unverified.status, 409, 'An unverified email cannot be manually approved');
+      assert.equal(unverifiedBody.code, 'EMAIL_NOT_VERIFIED', 'Unverified email has an explicit rejection code');
+
+      const knownAbuse = await fetch(`${baseUrl}/api/admin/students/${studentA}/review-free-trial`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewReason: 'Attempted manual review for a known reused-device block.' }),
+      });
+      const knownAbuseBody = await knownAbuse.json();
+      assert.equal(knownAbuse.status, 409, 'Known anti-abuse reasons cannot use the unknown-legacy manual restore');
+      assert.equal(knownAbuseBody.code, 'MANUAL_REVIEW_NOT_ALLOWED_FOR_REASON', 'Known reused-device block remains protected');
+    }
 
     // ------------------------------------------------------------------------------------------------
     // TEST 1: Student with two NEEDS_REVIEW records shows Total = 2, Completed = 0, and Needs Review = 2
@@ -254,10 +357,11 @@ async function run() {
   } finally {
     // Clean up test data
     server.close();
-    db.prepare('DELETE FROM referral_redemptions WHERE user_id IN (?, ?)').run(studentA, studentB);
-    db.prepare('DELETE FROM evaluations WHERE student_id IN (?, ?)').run(studentA, studentB);
-    db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?)').run(studentA, studentB);
-    db.prepare('DELETE FROM users WHERE id IN (?, ?)').run(studentA, studentB);
+    db.prepare('DELETE FROM referral_redemptions WHERE user_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM audit_logs WHERE entity_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM evaluations WHERE student_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
+    db.prepare('DELETE FROM users WHERE id IN (?, ?, ?, ?, ?)').run(studentA, studentB, manualReviewStudent, duplicateReviewStudent, unverifiedReviewStudent);
   }
 }
 
