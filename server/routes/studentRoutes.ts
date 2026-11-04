@@ -2220,6 +2220,18 @@ router.get(
       const evalDisplayId = record.display_id || record.id;
       const studentCode = getOrAssignStudentCode(record.student_id);
 
+      const adminReviewPending =
+        ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(String(record.admin_review_status || '').trim().toUpperCase()) ||
+        String(record.status || '').trim().toUpperCase() === 'NEEDS_REVIEW' ||
+        String(record.certification_status || '').trim().toUpperCase() === 'REVIEW_REQUIRED';
+      if (adminReviewPending) {
+        return res.status(409).json({
+          error: 'This evaluation is held for examiner review. No final checked copy is available until the review is finalized.',
+          code: 'EVALUATION_NEEDS_REVIEW',
+          status: 'NEEDS_REVIEW',
+        });
+      }
+
       // Automatic consistency verification & auto-certification if not already COMPLETED/CERTIFIED
       const isAlreadyCertified = record.status === 'COMPLETED' || record.certification_status === 'CERTIFIED' || record.downloads_unlocked === 1;
 
@@ -2236,17 +2248,6 @@ router.get(
             academicScore: record.total_marks,
           });
         }
-      }
-
-      const adminReviewPending = ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(
-        String(record.admin_review_status || '').trim().toUpperCase()
-      );
-      if (adminReviewPending) {
-        return res.status(409).json({
-          error: 'This evaluation is held for examiner review. No final result or report is available until the review is finalized.',
-          code: 'EVALUATION_NEEDS_REVIEW',
-          status: 'NEEDS_REVIEW',
-        });
       }
 
       if (record.status !== 'COMPLETED' && record.certification_status !== 'CERTIFIED') {
