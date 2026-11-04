@@ -3,6 +3,8 @@ import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopySer
 import { deduplicateQuestionList } from './canonicalQuestionService.js';
 import { loadEvaluationRunPackage } from '../db.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
+import { isEvaluationPendingReview } from './evaluationReviewState.js';
+export { isEvaluationPendingReview } from './evaluationReviewState.js';
 
 function wrapText(text: string, maxChars: number = 80): string[] {
   if (!text) return [];
@@ -46,6 +48,9 @@ export function enrichMarkingComponentsWithExaminerReasoning(
   reasonForDeduction?: string
 ): any[] {
   const normId = String(qId).toUpperCase().replace(/\s+/g, '');
+
+  // Never invent one-mark placeholder components when authoritative marks are unavailable.
+  if (!Number.isFinite(rawMax) || rawMax <= 0) return [];
 
   if (normId.includes('6(A)') || normId === 'Q6(A)') {
     const isFullCredit = rawAwarded >= 3;
@@ -258,43 +263,6 @@ export function enrichMarkingComponentsWithExaminerReasoning(
       idealAnswer: `Step-wise computations, schedules, and verified conclusion as per ICAI suggested solution.`,
     },
   ];
-}
-
-/**
- * Review status is a certification/workflow state, not an academic grade.
- * Never print PASS/FAIL as final while question mapping or consistency remains pending.
- */
-export function isEvaluationPendingReview(evalData: Partial<EvaluationData>, resultJson: any): boolean {
-  const adminDecision = String(evalData.adminReviewStatus || '').trim().toUpperCase();
-  // A completed, recorded examiner decision supersedes stale V1 validation flags.
-  if (['AFFIRMED', 'AMENDED', 'APPROVED', 'CERTIFIED'].includes(adminDecision)) {
-    return false;
-  }
-
-  const statuses = [
-    evalData.evaluationStatus,
-    evalData.adminReviewStatus,
-    evalData.validationStatus,
-    evalData.certificationStatus,
-    resultJson?.status,
-    resultJson?.validationStatus,
-    resultJson?.reviewStatus,
-    resultJson?.certificationStatus,
-    resultJson?.grade,
-  ].map((value) => String(value || '').trim().toUpperCase());
-
-  const reviewStatuses = new Set([
-    'NEEDS_REVIEW',
-    'REVIEW_REQUIRED',
-    'VERIFICATION_REQUIRED',
-    'VALIDATION_FAILED',
-  ]);
-
-  return statuses.some((status) => reviewStatuses.has(status)) ||
-    evalData.isTechnicalReviewState === true ||
-    resultJson?.isTechnicalReviewState === true ||
-    resultJson?.integrityAudit?.hardCompletionGatePassed === false ||
-    resultJson?.completionGateReport?.isPassed === false;
 }
 
 /**
@@ -1077,7 +1045,10 @@ export async function generateDetailedReportPdf(
           borderWidth: 0.5,
         });
 
-        safeDrawText(currentStepPage, `Remarks: ${q.examinerRemarks || 'Candidate solution evaluated according to standard CA step-marking rubric.'}`, {
+        const unresolvedRemark = qMax <= 0
+          ? 'NOT SCORED: authoritative question mapping or maximum marks are unavailable. Examiner review is required; no academic deduction has been applied.'
+          : (q.examinerRemarks || 'Candidate solution evaluated according to standard CA step-marking rubric.');
+        safeDrawText(currentStepPage, `Remarks: ${unresolvedRemark}`, {
           x: 52,
           y: stepY - 14,
           size: 7.5,
