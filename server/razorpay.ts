@@ -463,23 +463,7 @@ export async function fulfillPaymentOrder(params: FulfillPaymentParams): Promise
       `Purchased ${order.quantity} evaluation credits via Razorpay (${razorpayPaymentId}) [${source}]. Valid for 3 months until ${expiryFormatted}.`
     );
 
-    } else {
-      // Separate faculty-mock receipt: do not touch main evaluation-credit balance.
-      const mockNotifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
-      db.prepare(`
-        INSERT INTO notifications (id, user_id, title, message, type)
-        VALUES (?, ?, 'Faculty Mock Copy Purchased', 'Payment successful. One additional evaluation copy is now available for your selected faculty mock.', 'CREDIT')
-      `).run(mockNotifId, authoritativeStudentId);
-      db.prepare(`
-        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-        VALUES (?, ?, 'FACULTY_MOCK_COPY_PURCHASED', 'FACULTY_MOCK', ?, ?)
-      `).run(
-        `log_${crypto.randomBytes(8).toString('hex')}`,
-        authoritativeStudentId,
-        String(order.faculty_mock_test_id),
-        `Purchased one repeat copy for faculty mock ${order.faculty_mock_test_id}. Razorpay Payment ID: ${razorpayPaymentId}`
-      );
-    }
+
 
     // In-app notification
     const notifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
@@ -504,12 +488,30 @@ export async function fulfillPaymentOrder(params: FulfillPaymentParams): Promise
       `Added ${order.quantity} credits via ${source}. Razorpay Payment ID: ${razorpayPaymentId}`
     );
 
+    } else {
+      // Separate faculty-mock receipt: do not touch main evaluation-credit balance.
+      const mockNotifId = `notif_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, title, message, type)
+        VALUES (?, ?, 'Faculty Mock Copy Purchased', 'Payment successful. One additional evaluation copy is now available for your selected faculty mock.', 'CREDIT')
+      `).run(mockNotifId, authoritativeStudentId);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'FACULTY_MOCK_COPY_PURCHASED', 'FACULTY_MOCK', ?, ?)
+      `).run(
+        `log_${crypto.randomBytes(8).toString('hex')}`,
+        authoritativeStudentId,
+        String(order.faculty_mock_test_id),
+        `Purchased one repeat copy for faculty mock ${order.faculty_mock_test_id}. Razorpay Payment ID: ${razorpayPaymentId}`
+      );
+    }
+
     db.exec('COMMIT');
     inTx = false;
 
     return {
       success: true,
-      creditsAdded: order.quantity,
+      creditsAdded: isFacultyMockPurchase ? 0 : order.quantity,
       alreadyFulfilled: false,
       orderId: order.id,
       studentId: authoritativeStudentId,
