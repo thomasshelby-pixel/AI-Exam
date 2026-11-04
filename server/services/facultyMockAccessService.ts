@@ -83,7 +83,7 @@ export async function grantFacultyMockPaidCopy(input: {
 }): Promise<{ alreadyGranted: boolean; paidCopiesRemaining: number }> {
   const accessId = stableId(`${input.studentId}:${input.facultyId}:${input.testId}`);
   const receiptId = stableId(input.orderId);
-  return runFirestoreTransaction(async (transaction) => {
+  const result = await runFirestoreTransaction(async (transaction) => {
     const receipt = await transaction.get(PAYMENT_GRANTS_COLLECTION, receiptId);
     const accessSnapshot = await transaction.get(ACCESS_COLLECTION, accessId);
     const access = accessSnapshot.exists ? (accessSnapshot.data() || {}) : {};
@@ -112,6 +112,10 @@ export async function grantFacultyMockPaidCopy(input: {
     });
     return { alreadyGranted: false, paidCopiesRemaining: nextBalance };
   });
+  if (!result || typeof result.paidCopiesRemaining !== 'number') {
+    throw new Error('Could not confirm faculty mock payment credit in the shared database.');
+  }
+  return result;
 }
 
 /**
@@ -170,4 +174,8 @@ export async function consumeFacultyMockCopy(input: {
     });
     return { source, paidCopiesRemaining: nextBalance };
   });
+  if (!result || (result.source !== 'FREE_FIRST_COPY' && result.source !== 'PAID_REPEAT_COPY')) {
+    throw new Error('Could not confirm faculty mock copy entitlement in the shared database.');
+  }
+  return result;
 }
