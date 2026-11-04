@@ -252,7 +252,7 @@ router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response
     // The shared student fulfillment engine is transactional and idempotent. A
     // retried browser callback cannot grant a second credit lot.
     if (role === 'STUDENT') {
-      const fulfillment = fulfillPaymentOrder({
+      const fulfillment = await fulfillPaymentOrder({
         razorpayOrderId: String(razorpayOrderId),
         razorpayPaymentId: String(razorpayPaymentId),
         studentId: userId,

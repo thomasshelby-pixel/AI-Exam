@@ -228,7 +228,7 @@ async function runTestSuite() {
     const balBefore8 = getValidStudentCreditBalance(studentId);
 
     // 1. Checkout verify called
-    const checkoutResult8 = verifyAndFulfillPayment({
+    const checkoutResult8 = await verifyAndFulfillPayment({
       studentId,
       razorpayOrderId: order8.razorpayOrderId,
       razorpayPaymentId: paymentId8,
@@ -442,7 +442,7 @@ async function runTestSuite() {
       .digest('hex');
 
     const balBefore15 = getValidStudentCreditBalance(studentId);
-    const resVerify15 = verifyAndFulfillPayment({
+    const resVerify15 = await verifyAndFulfillPayment({
       studentId,
       razorpayOrderId: order15.razorpayOrderId,
       razorpayPaymentId: paymentId15,
