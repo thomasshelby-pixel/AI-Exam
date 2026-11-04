@@ -1412,7 +1412,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             grade,
             confidenceScore: dynamicConfidence.compositeScore,
             evaluationSource: params.evaluationSource || (params.materialType === 'FACULTY_MOCK_TEST' ? 'FACULTY_MOCK' : 'PUBLIC'),
-            materialSource: referenceSourceType,
+            materialSource: referenceSourceType === 'MODEL_TEST' ? 'GLOBAL' : referenceSourceType,
             overallSummary: `Authoritative evaluation completed in ${activeSummary.displayName} mode: ${activeQuestions.length} sub-questions evaluated (${mcqQuestions.length} MCQs, ${descriptiveQuestions.length} descriptive sub-questions) across ${coverageMap.totalPages} pages with verified step marking. Evaluated: ${calculatedTotal} / ${attemptedMax} attempted marks.`,
             strengths: ['Addressed required questions methodically', 'Demonstrated understanding of core statutory provisions and formats'],
             weaknesses: ['Ensure all intermediate calculation workings and statutory references are fully disclosed'],
