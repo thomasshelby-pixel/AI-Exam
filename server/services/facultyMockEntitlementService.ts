@@ -217,11 +217,11 @@ export async function releaseFacultyMockPaidCopy(
   const released = await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(PAID_COPY_COLLECTION, id);
     const ledger = snapshot.data() as PaidCopyLedger | undefined;
-    if (!snapshot.exists || ledger?.studentId !== studentId || ledger?.facultyMockTestId !== facultyMockTestId) return;
+    if (!snapshot.exists || ledger?.studentId !== studentId || ledger?.facultyMockTestId !== facultyMockTestId) return true;
 
     const copies = { ...(ledger.copies || {}) };
     const copy = copies[orderId];
-    if (!copy || copy.status !== 'CONSUMED' || copy.evaluationId !== evaluationId) return;
+    if (!copy || copy.status !== 'CONSUMED' || copy.evaluationId !== evaluationId) return true;
     copies[orderId] = {
       ...copy,
       status: 'AVAILABLE',
