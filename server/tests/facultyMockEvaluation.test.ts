@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
+import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 
 initDatabase();
 
@@ -21,6 +22,27 @@ const suggestedAnswersText = [
   'Working Note 1: Compute the amount using the applicable accounting principle and disclose all assumptions.',
   'Question 2. The calculation and reasoning are set out step by step below.',
 ].join('\n\n');
+const markingSchemeText = [
+  'Question 1: 5 marks for correct treatment, supporting standard and journal entries.',
+  'Question 2: 5 marks for correct formula, workings, calculation and conclusion.',
+].join('\n\n');
+const combinedReferenceTxt = [
+  '[QUESTION PAPER]',
+  questionPaperText,
+  '[SUGGESTED ANSWERS]',
+  suggestedAnswersText,
+  '[MARKING SCHEME]',
+  markingSchemeText,
+].join('\n\n');
+const parsedReference = parseFacultyMockEvaluationReference(combinedReferenceTxt);
+assert.equal(parsedReference.questionPaperText, questionPaperText, 'Parser separates the Question Paper section from the single TXT');
+assert.equal(parsedReference.suggestedAnswersText, suggestedAnswersText, 'Parser separates Suggested Answers from the single TXT');
+assert.equal(parsedReference.markingSchemeText, markingSchemeText, 'Parser separates Marking Scheme from the single TXT');
+assert.throws(
+  () => parseFacultyMockEvaluationReference('[QUESTION PAPER]\n' + questionPaperText + '\n[SUGGESTED ANSWERS]\n' + suggestedAnswersText),
+  /MARKING SCHEME/,
+  'Parser rejects evaluation TXT files that omit the required Marking Scheme section',
+);
 
 try {
   db.prepare('DELETE FROM faculty_mock_tests WHERE id = ?').run(testId);
@@ -41,10 +63,10 @@ try {
       status, created_by, created_at, updated_at
     ) VALUES (?, ?, 'INTERMEDIATE', 'May 2027', 'GROUP_1', 'inter_advanced_accounting',
       'Advanced Accounting', 'Paper 1', 1, 'Test Faculty Mock 01', 100, 'New Scheme 2024',
-      ?, ?, NULL,
-      'qp-file', 'question-paper.pdf', 1000, 'sa-file', 'evaluation-reference.txt', 1200,
+      ?, ?, ?,
+      'qp-file', 'question-paper.pdf', 1000, 'reference-file', 'faculty-mock-reference.txt', 1600,
       'PUBLISHED', 'test-admin', ?, ?)
-  `).run(testId, facultyId, questionPaperText, suggestedAnswersText, now, now);
+  `).run(testId, facultyId, questionPaperText, suggestedAnswersText, markingSchemeText, now, now);
 
   const stored = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
   assert.equal(stored.mock_number, 1, 'Faculty mock stores its sequence number');
@@ -84,7 +106,7 @@ try {
   assert.equal(verified.id, testId, 'Hard gate uses the exact selected faculty mock record');
   assert.equal(verified.questionPaperText, questionPaperText, 'AI reference package receives the selected Question Paper');
   assert.equal(verified.suggestedAnswersText, suggestedAnswersText, 'AI reference package receives only the selected mock Suggested Answer');
-  assert.equal(verified.markingSchemeText, '', 'Faculty Mock uses the single uploaded TXT reference without a separate marking-scheme PDF');
+  assert.equal(verified.markingSchemeText, markingSchemeText, 'AI evaluation receives the Marking Scheme section parsed from the same TXT reference');
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
   assert.equal(verified.manifest.materialSource, 'GLOBAL', 'Faculty mock does not masquerade as institute-sourced material');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
@@ -118,7 +140,7 @@ try {
       suggested_answers_text: '',
       marking_scheme_text: stored.marking_scheme_text,
     },
-  }), /not available|material/i, 'Hard gate rejects a faculty mock with missing Suggested Answer text');
+  }), /not available|material|MARKING_SCHEME_MISSING/i, 'Hard gate rejects a faculty mock with missing required TXT reference content');
 
   assert.throws(() => db.prepare(`
     INSERT INTO faculty_mock_tests (

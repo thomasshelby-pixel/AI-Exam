@@ -341,6 +341,10 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     throw new Error('MODEL_TEST_MARKING_SCHEME_MISSING: A complete marking scheme is required for the selected Model Test Paper.');
   }
 
+  if (isFacultyMockMode && msText.length < 10) {
+    throw new Error('FACULTY_MOCK_MARKING_SCHEME_MISSING: The selected mock TXT must include its Marking Scheme section.');
+  }
+
   if (qpText.length < 50 || saText.length < 50) {
     throw new Error(
       `Evaluation material is not available for this paper yet. Please try again once the required material has been added.`

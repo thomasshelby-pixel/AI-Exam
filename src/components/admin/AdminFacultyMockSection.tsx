@@ -11,8 +11,43 @@ type MockTest = {
   mock_number: number; title: string; maximum_marks: number; status: string;
   question_paper_file_name?: string;
 };
-type StoredPdf = { name: string; type: string; size: number; base64: string; extractedText: string };
+type StoredPdf = { name: string; type: string; size: number; base64: string };
 type StoredText = { name: string; type: 'text/plain'; size: number; base64: string; text: string };
+
+
+function detectFacultyReferenceSections(rawText: string) {
+  const aliases = {
+    questionPaper: new Set(['QUESTION PAPER', 'QUESTION PAPER TEXT']),
+    suggestedAnswers: new Set(['SUGGESTED ANSWER', 'SUGGESTED ANSWERS', 'SUGGESTED ANSWER TEXT', 'SUGGESTED ANSWERS TEXT']),
+    markingScheme: new Set(['MARKING SCHEME', 'MARKING SCHEME TEXT']),
+  };
+  const headings = rawText.split(/\r?\n/).map((line) => line.trim()
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^[=\-_*]{2,}\s*/, '')
+    .replace(/\s*[=\-_*]{2,}\s*$/, '')
+    .replace(/^\d+[.)\-]\s*/, '')
+    .replace(/^\[(.*)\]$/, '$1')
+    .replace(/^SECTION\s*:\s*/i, '')
+    .replace(/[:：]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase());
+  const locate = (set: Set<string>) => { const matches = headings.flatMap((heading, index) => set.has(heading) ? [index] : []); return matches.length === 1 ? matches[0] : -1; };
+  const markers = [
+    { key: 'questionPaper', line: locate(aliases.questionPaper) },
+    { key: 'suggestedAnswers', line: locate(aliases.suggestedAnswers) },
+    { key: 'markingScheme', line: locate(aliases.markingScheme) },
+  ];
+  const lines = rawText.replace(/\r\n?/g, '\n').split('\n');
+  const sections: Record<string, string> = {};
+  for (const marker of markers) {
+    if (marker.line < 0) { sections[marker.key] = ''; continue; }
+    const nextLines = markers.filter((item) => item.line > marker.line).map((item) => item.line);
+    const nextLine = nextLines.length ? Math.min(...nextLines) : lines.length;
+    sections[marker.key] = lines.slice(marker.line + 1, nextLine).join('\n').trim();
+  }
+  return sections as { questionPaper: string; suggestedAnswers: string; markingScheme: string };
+}
 
 async function fileToBase64(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
@@ -41,7 +76,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [maximumMarks, setMaximumMarks] = useState('100');
   const [questionPaper, setQuestionPaper] = useState<StoredPdf | null>(null);
   const [evaluationReference, setEvaluationReference] = useState<StoredText | null>(null);
-  const [extracting, setExtracting] = useState<string | null>(null);
+  const [readingFile, setReadingFile] = useState<string | null>(null);
   const [filterFaculty, setFilterFaculty] = useState('ALL');
   const [filterLevel, setFilterLevel] = useState('ALL');
   const [error, setError] = useState('');
@@ -127,27 +162,20 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       setError('Question Paper PDF must be 20 MB or smaller.');
       return;
     }
-    setExtracting('QUESTION_PAPER');
+    setReadingFile('QUESTION_PAPER');
     try {
-      const base64 = await fileToBase64(file);
-      // Extract text only for question matching. The original PDF bytes remain
-      // unchanged and are stored separately for the student download.
-      const extracted = await apiRequest<{ extracted: any }>('/api/admin/materials/extract-pdf', {
-        method: 'POST',
-        body: JSON.stringify({ fileBase64: `data:application/pdf;base64,${base64}`, mimeType: 'application/pdf', documentRole: 'QUESTION_PAPER' }),
-      });
-      const result = extracted.extracted || {};
-      const extractedText = String(result.questionPaperText || '').trim();
-      if (extractedText.length < 50) throw new Error('Could not extract enough question text for evaluation matching. Upload a clearer original PDF.');
-      setQuestionPaper({ name: file.name, type: 'application/pdf', size: file.size, base64, extractedText });
-      if (result.extractedTitle && !title) setTitle(String(result.extractedTitle).slice(0, 160));
-      onNotify?.(`${file.name} stored as the original Question Paper PDF. Its file is not converted or modified.`, 'success');
+      const [base64, signature] = await Promise.all([fileToBase64(file), file.slice(0, 4).text()]);
+      if (signature !== '%PDF') throw new Error('The selected file does not contain a valid PDF header.');
+      // The PDF is only stored unchanged for student download. Evaluation text
+      // comes entirely from the separately uploaded TXT reference.
+      setQuestionPaper({ name: file.name, type: 'application/pdf', size: file.size, base64 });
+      onNotify?.(`${file.name} selected for student download. No PDF extraction or AI call was made.`, 'success');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Question Paper reading failed.';
+      const message = err instanceof Error ? err.message : 'Could not read the Question Paper PDF.';
       setError(message);
       onNotify?.(message, 'error');
     } finally {
-      setExtracting(null);
+      setReadingFile(null);
     }
   };
 
@@ -162,19 +190,25 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       setError('AI Evaluation Reference TXT must be 10 MB or smaller.');
       return;
     }
-    setExtracting('EVALUATION_REFERENCE');
+    setReadingFile('EVALUATION_REFERENCE');
     try {
       const [rawText, base64] = await Promise.all([file.text(), fileToBase64(file)]);
       const text = rawText.replace(/^\uFEFF/, '').trim();
-      if (text.length < 50) throw new Error('The TXT reference must contain at least 50 characters of suggested answers / marking guidance.');
+      const sections = detectFacultyReferenceSections(text);
+      if (!sections.questionPaper || !sections.suggestedAnswers || !sections.markingScheme) {
+        throw new Error('The TXT must contain all three headings: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME].');
+      }
+      if (sections.questionPaper.length < 50 || sections.suggestedAnswers.length < 50 || sections.markingScheme.length < 10) {
+        throw new Error('Add enough content under each TXT heading: Question Paper (50+ chars), Suggested Answers (50+ chars), Marking Scheme (10+ chars).');
+      }
       setEvaluationReference({ name: file.name, type: 'text/plain', size: file.size, base64, text });
-      onNotify?.(`${file.name} loaded as the private AI evaluation reference.`, 'success');
+      onNotify?.(`${file.name} loaded. All three evaluation sections are present; no AI extraction is used.`, 'success');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not read the AI Evaluation Reference TXT.';
       setError(message);
       onNotify?.(message, 'error');
     } finally {
-      setExtracting(null);
+      setReadingFile(null);
     }
   };
 
@@ -233,16 +267,16 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     <label className="block rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition">
       <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-blue-600" />{label} *</span>
       <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : 'Choose original PDF (max 20 MB). It will be stored without conversion.'}</span>
-      {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Question text read for evaluation matching · original PDF unchanged</span>}
+      {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Stored unchanged for student download only · not sent for AI extraction</span>}
       <input className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { void choosePdf(event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
   );
 
   const renderReferenceInput = () => (
     <label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50/60 p-3 cursor-pointer hover:border-violet-500 hover:bg-violet-50 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />AI Evaluation Reference TXT *</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{evaluationReference ? evaluationReference.name : 'Choose .txt file (max 10 MB). Include suggested answers and marking guidance.'}</span>
-      {evaluationReference && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{evaluationReference.text.length.toLocaleString()} characters · private reference locked to this mock</span>}
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />Evaluation Reference TXT (QP + Answers + Marking Scheme) *</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{evaluationReference ? evaluationReference.name : 'Choose one .txt file (max 10 MB) containing all 3 sections.'}</span>
+      {evaluationReference && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{evaluationReference.text.length.toLocaleString()} characters · QP ✓ · Answers ✓ · Marking Scheme ✓ · private</span>}
       <input className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseEvaluationReference(event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
   );
@@ -252,7 +286,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900">Faculty Mock Evaluation</h2>
-          <p className="text-xs text-slate-500">Upload the original student-downloadable Question Paper PDF plus a separate private TXT reference used only for AI evaluation.</p>
+          <p className="text-xs text-slate-500">Upload one original Question Paper PDF for student download and one private TXT containing all evaluation references.</p>
           <p className="mt-1 text-[11px] font-semibold text-indigo-700">Student access: first copy of each faculty mock is free; repeat copies are ₹35 each (same as the current custom evaluation rate).</p>
         </div>
         <button type="button" onClick={() => void loadData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50">
@@ -320,10 +354,10 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
             {renderPdfInput('Downloadable Question Paper PDF', questionPaper)}
             {renderReferenceInput()}
           </div>
-          <p className="text-[10px] leading-5 text-slate-500">The original Question Paper PDF is stored byte-for-byte for student downloads; it is not annotated, compressed, converted or overwritten. Its extracted reading text is used only to match questions. The TXT remains private and is the only suggested-answer reference used for this mock. Put answer steps and any marking guidance together in that TXT.</p>
-          <button disabled={savingTest || !!extracting || !facultyId || !attempt.trim() || !questionPaper || !evaluationReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+          <p className="text-[10px] leading-5 text-slate-500">The original Question Paper PDF is stored byte-for-byte for student download only. It is never extracted or sent to AI. All evaluation text comes from the private TXT. Use exactly these headings, each on its own line: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME]. Put the complete question paper, model solutions and step-wise mark allocation under their respective headings.</p>
+          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || !questionPaper || !evaluationReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
             {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            {savingTest ? 'Publishing mock…' : extracting ? `Extracting ${extracting.replace('_', ' ').toLowerCase()}…` : 'Publish Faculty Mock'}
+            {savingTest ? 'Publishing mock…' : readingFile ? `Reading ${readingFile.replace('_', ' ').toLowerCase()}…` : 'Publish Faculty Mock'}
           </button>
         </form>
       </section>
