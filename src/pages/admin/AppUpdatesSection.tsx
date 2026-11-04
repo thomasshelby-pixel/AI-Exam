@@ -177,7 +177,7 @@ export default function AppUpdatesSection() {
     const totalBytes = archived.reduce((sum, release) => sum + (Number(release.sizeBytes) || 0), 0);
     const sizeLabel = formatBytes(totalBytes);
     if (!window.confirm(
-      `Permanently delete ${archived.length} archived APK release(s) (${sizeLabel}) from Firebase Cloud Storage and Firestore?\\n\\nThe current live APK will NOT be deleted. Older archived versions will no longer be downloadable from the app update service. This cannot be undone.`
+      `Permanently delete ${archived.length} archived APK release(s) (${sizeLabel}) from Firebase Cloud Storage and Firestore?\n\nThe current live APK will NOT be deleted. Older archived versions will no longer be downloadable from the app update service. This cannot be undone.`
     )) return;
 
     setCleaningApks(true);
