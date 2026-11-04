@@ -182,6 +182,17 @@ function makeReferenceSnippet(found: boolean) {
     suggestedAnswerFound: found,
     markingSchemeFound: found,
     referenceNeedsReview: !found,
+    referenceTrace: {
+      questionPaperMaterialId: 'test-qp-material',
+      suggestedAnswerMaterialId: 'test-sa-material',
+      markingSchemeMaterialId: 'test-ms-material',
+      materialVersions: '1.0',
+      contentHashes: 'qp:sa:ms',
+      exactReferenceSections: 'QP: Q1(a) | SA: Q1(a) | MS: Q1(a)',
+      retrievedCharacterCount: 40,
+      sourceType: 'GLOBAL',
+      verificationStatus: 'VERIFIED',
+    },
   };
 }
 
