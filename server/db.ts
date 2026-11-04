@@ -1175,6 +1175,7 @@ function runMigrations() {
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'faculty_mock_payment_order_id', 'TEXT');
 
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
