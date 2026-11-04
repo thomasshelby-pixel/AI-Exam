@@ -1133,6 +1133,9 @@ function runMigrations() {
       suggested_answer_file_id TEXT NOT NULL,
       suggested_answer_file_name TEXT,
       suggested_answer_file_size INTEGER,
+      marking_scheme_file_id TEXT,
+      marking_scheme_file_name TEXT,
+      marking_scheme_file_size INTEGER,
       status TEXT NOT NULL DEFAULT 'PUBLISHED',
       created_by TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -1147,6 +1150,9 @@ function runMigrations() {
       ON faculty_mock_tests(status, course_level, faculty_id, attempt, subject_key, mock_number);
   `);
 
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_id', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
 
   // Ensure evaluation_materials has all enhanced columns
