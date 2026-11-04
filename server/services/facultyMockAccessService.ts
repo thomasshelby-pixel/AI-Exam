@@ -14,6 +14,17 @@ function stableId(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+export type FacultyMockCopyDecision = 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY' | 'PAYMENT_REQUIRED';
+
+export function decideFacultyMockCopy(input: {
+  freeCopyUsed: boolean;
+  paidCopiesRemaining: number;
+}): FacultyMockCopyDecision {
+  if (!input.freeCopyUsed) return 'FREE_FIRST_COPY';
+  if (Number.isFinite(input.paidCopiesRemaining) && input.paidCopiesRemaining >= 1) return 'PAID_REPEAT_COPY';
+  return 'PAYMENT_REQUIRED';
+}
+
 export interface FacultyMockAccessState {
   freeCopyAvailable: boolean;
   paidCopiesRemaining: number;
@@ -126,19 +137,17 @@ export async function consumeFacultyMockCopy(input: {
       return { source, paidCopiesRemaining: paidBalance };
     }
 
-    let source: 'FREE_FIRST_COPY' | 'PAID_REPEAT_COPY';
-    let nextBalance = paidBalance;
-    if (access.free_copy_used !== true) {
-      source = 'FREE_FIRST_COPY';
-    } else {
-      if (paidBalance < 1) {
-        const error = new Error('This mock’s free copy has already been used. Purchase one repeat copy to evaluate another answer sheet.');
-        (error as Error & { code?: string }).code = 'FACULTY_MOCK_PAYMENT_REQUIRED';
-        throw error;
-      }
-      source = 'PAID_REPEAT_COPY';
-      nextBalance -= 1;
+    const decision = decideFacultyMockCopy({
+      freeCopyUsed: access.free_copy_used === true,
+      paidCopiesRemaining: paidBalance,
+    });
+    if (decision === 'PAYMENT_REQUIRED') {
+      const error = new Error('This mock’s free copy has already been used. Purchase one repeat copy to evaluate another answer sheet.');
+      (error as Error & { code?: string }).code = 'FACULTY_MOCK_PAYMENT_REQUIRED';
+      throw error;
     }
+    const source = decision;
+    const nextBalance = source === 'PAID_REPEAT_COPY' ? paidBalance - 1 : paidBalance;
 
     transaction.set(ACCESS_COLLECTION, accessId, {
       ...access,
