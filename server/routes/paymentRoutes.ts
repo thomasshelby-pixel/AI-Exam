@@ -120,6 +120,9 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Missing required payment verification parameters.' });
     }
 
+    const order = db.prepare(
+      'SELECT purchase_type FROM payment_orders WHERE razorpay_order_id = ? AND student_id = ?'
+    ).get(razorpayOrderId, studentId) as { purchase_type?: string } | undefined;
     const result = verifyAndFulfillPayment({
       studentId,
       razorpayOrderId,
@@ -127,10 +130,13 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
       razorpaySignature,
     });
 
+    const isFacultyMockCopy = String(order?.purchase_type || '').toUpperCase() === 'FACULTY_MOCK_COPY';
     return res.json({
       success: true,
       creditsAdded: result.creditsAdded,
-      message: 'Payment verified successfully and evaluation credits have been added.',
+      message: isFacultyMockCopy
+        ? 'Payment verified successfully. One additional Faculty Mock evaluation copy is now available.'
+        : 'Payment verified successfully and evaluation credits have been added.',
     });
   } catch (error: unknown) {
     console.error('Verify payment error:', error);
