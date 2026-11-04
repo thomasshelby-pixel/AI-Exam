@@ -759,8 +759,8 @@ Zero negative marking applies for this paper.`;
 
   const isFacultyMockReference = params.materialType === 'FACULTY_MOCK_TEST';
   const referenceBasisLabel = isFacultyMockReference
-    ? 'the exact selected Faculty Mock Question Paper and its uploaded TXT evaluation reference'
-    : 'the verified official ICAI Question Paper, Suggested Answers and Marking Scheme';
+    ? 'selected Faculty Mock Question Paper and uploaded TXT evaluation reference'
+    : 'verified official ICAI Question Paper, Suggested Answers and Marking Scheme';
   const referenceBasisInstruction = isFacultyMockReference
     ? 'the exact selected Faculty Mock Question Paper and the private TXT reference attached to that mock. Do not substitute or supplement it with global ICAI PYQ/MTP keys, another faculty mock, or another mock number.'
     : 'the verified official ICAI reference materials supplied in this evaluation.';
