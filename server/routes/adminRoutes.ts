@@ -645,31 +645,55 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     }
 
     const qpFile = body.questionPaperFile;
-    const saFile = body.suggestedAnswerFile;
-    const msFile = body.markingSchemeFile || null;
-    const validateFile = (file: any, label: string, required: boolean) => {
-      if (!file && !required) return null;
-      if (!file || typeof file.base64 !== 'string' || !file.base64.trim()) throw new Error(`${label} PDF is required.`);
-      const buffer = Buffer.from(file.base64.includes(',') ? file.base64.split(',')[1] : file.base64, 'base64');
-      if (!buffer.length || buffer.length > 20 * 1024 * 1024) throw new Error(`${label} PDF must be between 1 byte and 20 MB.`);
-      const mime = String(file.type || 'application/pdf').toLowerCase();
-      if (mime !== 'application/pdf' || buffer.subarray(0, 4).toString() !== '%PDF') throw new Error(`${label} must be a valid PDF file.`);
-      return { buffer, mime, filename: String(file.name || `${label}.pdf`).slice(0, 180) };
-    };
-    const qp = validateFile(qpFile, 'Question Paper', true)!;
-    const sa = validateFile(saFile, 'Suggested Answer', true)!;
-    const ms = validateFile(msFile, 'Marking Scheme', false);
+    const evaluationReferenceFile = body.evaluationReferenceFile;
 
-    const [qpExtracted, saExtracted, msExtracted] = await Promise.all([
-      extractMaterialFromPDF(qp.buffer.toString('base64'), qp.mime, 'QUESTION_PAPER'),
-      extractMaterialFromPDF(sa.buffer.toString('base64'), sa.mime, 'SUGGESTED_ANSWERS'),
-      ms ? extractMaterialFromPDF(ms.buffer.toString('base64'), ms.mime, 'MARKING_SCHEME') : Promise.resolve(null),
-    ]);
+    // Keep the student's downloadable PDF byte-for-byte. Text extraction below
+    // creates evaluation context only; it never rewrites or replaces the PDF.
+    if (!qpFile || typeof qpFile.base64 !== 'string' || !qpFile.base64.trim()) {
+      throw new Error('The original Question Paper PDF is required.');
+    }
+    const qpBuffer = Buffer.from(qpFile.base64.includes(',') ? qpFile.base64.split(',')[1] : qpFile.base64, 'base64');
+    const qpMime = String(qpFile.type || 'application/pdf').toLowerCase();
+    const qpFilename = String(qpFile.name || 'Question_Paper.pdf').slice(0, 180);
+    if (!qpBuffer.length || qpBuffer.length > 20 * 1024 * 1024 || qpMime !== 'application/pdf' ||
+        !qpFilename.toLowerCase().endsWith('.pdf') || qpBuffer.subarray(0, 4).toString() !== '%PDF') {
+      throw new Error('Question Paper must be a valid original PDF between 1 byte and 20 MB.');
+    }
+    const qp = { buffer: qpBuffer, mime: 'application/pdf', filename: qpFilename };
+
+    if (!evaluationReferenceFile || typeof evaluationReferenceFile.base64 !== 'string' || !evaluationReferenceFile.base64.trim()) {
+      throw new Error('The private AI Evaluation Reference TXT is required.');
+    }
+    const referenceBuffer = Buffer.from(
+      evaluationReferenceFile.base64.includes(',')
+        ? evaluationReferenceFile.base64.split(',')[1]
+        : evaluationReferenceFile.base64,
+      'base64'
+    );
+    const referenceFilename = String(evaluationReferenceFile.name || 'AI_Evaluation_Reference.txt').slice(0, 180);
+    const referenceMime = String(evaluationReferenceFile.type || 'text/plain').toLowerCase();
+    if (!referenceFilename.toLowerCase().endsWith('.txt') ||
+        !['text/plain', 'application/octet-stream'].includes(referenceMime) ||
+        !referenceBuffer.length || referenceBuffer.length > 10 * 1024 * 1024) {
+      throw new Error('AI Evaluation Reference must be a plain .txt file up to 10 MB.');
+    }
+    const evaluationReferenceText = referenceBuffer.toString('utf8').replace(/^\\uFEFF/, '').trim();
+    if (evaluationReferenceText.length < 50 || evaluationReferenceText.includes('\\u0000')) {
+      throw new Error('AI Evaluation Reference TXT must contain at least 50 characters of readable text.');
+    }
+    const reference = {
+      buffer: referenceBuffer,
+      mime: 'text/plain',
+      filename: referenceFilename,
+      text: evaluationReferenceText,
+    };
+
+    const qpExtracted = await extractMaterialFromPDF(qp.buffer.toString('base64'), qp.mime, 'QUESTION_PAPER');
     const questionPaperText = String(qpExtracted.questionPaperText || '').trim();
-    const suggestedAnswersText = String(saExtracted.suggestedAnswersText || '').trim();
-    const markingSchemeText = String(msExtracted?.markingSchemeText || '').trim();
-    if (questionPaperText.length < 50) return res.status(422).json({ error: 'The Question Paper could not be extracted sufficiently. Upload a clearer PDF.' });
-    if (suggestedAnswersText.length < 50) return res.status(422).json({ error: 'The Suggested Answer could not be extracted sufficiently. Upload a clearer PDF.' });
+    const suggestedAnswersText = reference.text;
+    const markingSchemeText = '';
+    if (questionPaperText.length < 50) return res.status(422).json({ error: 'The original Question Paper PDF could not be read sufficiently for question matching. Upload a clearer PDF; the stored PDF itself will remain unchanged.' });
+    if (suggestedAnswersText.length < 50) return res.status(422).json({ error: 'The AI Evaluation Reference TXT does not contain enough answer/reference text.' });
 
     const currentTests = await getAllFirestoreDocs<any>('faculty_mock_tests').catch(() =>
       db.prepare('SELECT * FROM faculty_mock_tests').all() as any[]
@@ -700,17 +724,16 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         ownerUserId: req.user!.id,
         materialId: id,
       });
-      if (!saved) throw new Error('A mock PDF could not be stored. No test has been published.');
+      if (!saved) throw new Error('A Faculty Mock file could not be stored. No test has been published.');
       uploadedFileIds.push(fileId);
       if (!saved.storagePath || saved.status !== 'ACTIVE') {
-        throw new Error('A mock PDF could not be durably stored in Cloud Storage. No test has been published.');
+        throw new Error('A Faculty Mock file could not be durably stored in Cloud Storage. No test has been published.');
       }
       return saved;
     };
 
     const qpSaved = await saveFile(qp, `${id}_question_paper`, 'MATERIAL_QUESTION_PAPER');
-    const saSaved = await saveFile(sa, `${id}_suggested_answer`, 'MATERIAL_MODEL_ANSWER');
-    const msSaved = ms ? await saveFile(ms, `${id}_marking_scheme`, 'MATERIAL_MARKING_SCHEME') : null;
+    const referenceSaved = await saveFile(reference, `${id}_suggested_answer`, 'MATERIAL_MODEL_ANSWER');
     const test = {
       id,
       faculty_id: facultyId,
@@ -731,12 +754,12 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       question_paper_file_id: qpSaved.fileId,
       question_paper_file_name: qpSaved.originalFilename || qp.filename,
       question_paper_file_size: qpSaved.size,
-      suggested_answer_file_id: saSaved.fileId,
-      suggested_answer_file_name: saSaved.originalFilename || sa.filename,
-      suggested_answer_file_size: saSaved.size,
-      marking_scheme_file_id: msSaved?.fileId || null,
-      marking_scheme_file_name: msSaved?.originalFilename || ms?.filename || null,
-      marking_scheme_file_size: msSaved?.size || null,
+      suggested_answer_file_id: referenceSaved.fileId,
+      suggested_answer_file_name: referenceSaved.originalFilename || reference.filename,
+      suggested_answer_file_size: referenceSaved.size,
+      marking_scheme_file_id: null,
+      marking_scheme_file_name: null,
+      marking_scheme_file_size: null,
       status: 'PUBLISHED',
       created_by: req.user!.id,
       created_at: now,
@@ -755,8 +778,8 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       id, facultyId, courseLevel, attempt, modelGroup || null, subjectKey, subjectName, paper, mockNumber, test.title,
       maximumMarks, test.syllabus_version, questionPaperText, suggestedAnswersText, markingSchemeText || null,
       qpSaved.fileId, qpSaved.originalFilename || qp.filename, qpSaved.size,
-      saSaved.fileId, saSaved.originalFilename || sa.filename, saSaved.size,
-      msSaved?.fileId || null, msSaved?.originalFilename || ms?.filename || null, msSaved?.size || null,
+      referenceSaved.fileId, referenceSaved.originalFilename || reference.filename, referenceSaved.size,
+      null, null, null,
       test.status, test.created_by, now, now
     );
     const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
@@ -768,7 +791,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'FACULTY_MOCK_TEST_PUBLISHED', 'FACULTY_MOCK_TEST', ?, ?)
     `).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, id,
-      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')}.`);
+      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')} with unchanged downloadable QP PDF and a private locked TXT evaluation reference.`);
     return res.status(201).json({ success: true, test: { ...test, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined } });
   } catch (error) {
     for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
