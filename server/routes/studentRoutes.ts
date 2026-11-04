@@ -929,6 +929,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       facultyMockTestId,
       facultyMockPaymentOrderId,
     } = req.body;
+    let resolvedFacultyMockPaymentOrderId = String(facultyMockPaymentOrderId || '').trim();
 
     // Reject unsupported CS / CMA evaluation attempts safely
     const requestedExamType = (req.body.examType || req.body.exam_type || req.body.course || '').toString().trim().toUpperCase();
@@ -1108,7 +1109,16 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         WHERE student_id = ? AND faculty_mock_test_id = ?
       `).get(studentId, selectedTestId) as { evaluation_id: string } | undefined;
       if (existingFreeCopy && existingFreeCopy.evaluation_id !== evaluationId) {
-        const suppliedPaidOrderId = String(facultyMockPaymentOrderId || '').trim();
+        let suppliedPaidOrderId = resolvedFacultyMockPaymentOrderId;
+        if (!suppliedPaidOrderId) {
+          const reusablePaidCopy = db.prepare(`
+            SELECT order_id FROM faculty_mock_copy_purchases
+            WHERE student_id = ? AND faculty_mock_test_id = ? AND status = 'AVAILABLE'
+            ORDER BY created_at DESC LIMIT 1
+          `).get(studentId, selectedTestId) as { order_id: string } | undefined;
+          suppliedPaidOrderId = reusablePaidCopy?.order_id || '';
+          resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
+        }
         const availablePaidCopy = suppliedPaidOrderId
           ? db.prepare(`
               SELECT order_id FROM faculty_mock_copy_purchases
@@ -1577,7 +1587,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
 
       if (!facultyMockFreeCopyClaimed) {
-        const paidOrderId = String(facultyMockPaymentOrderId || '').trim();
+        const paidOrderId = String(resolvedFacultyMockPaymentOrderId || '').trim();
         if (!paidOrderId) {
           return res.status(402).json({
             error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
