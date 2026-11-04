@@ -111,7 +111,7 @@ router.post('/create-order', authenticateToken, paymentOrderRateLimiter, async (
 });
 
 // Verify Payment and Fulfill Credits Idempotently
-router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/verify', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
@@ -123,7 +123,7 @@ router.post('/verify', authenticateToken, (req: AuthRequest, res: Response) => {
     const order = db.prepare(
       'SELECT purchase_type FROM payment_orders WHERE razorpay_order_id = ? AND student_id = ?'
     ).get(razorpayOrderId, studentId) as { purchase_type?: string } | undefined;
-    const result = verifyAndFulfillPayment({
+    const result = await verifyAndFulfillPayment({
       studentId,
       razorpayOrderId,
       razorpayPaymentId,
