@@ -803,7 +803,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         });
       }
     } else {
-      referenceMaterial = await findAuthoritativeMaterialWithFallback({
+      const rawPreflightMaterial = await findAuthoritativeMaterialWithFallback({
         level,
         subjectKey,
         attempt: materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt,
@@ -814,6 +814,37 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         minTextLength: 20,
         isAdminApprovedRequired: true,
       });
+
+      if (rawPreflightMaterial && evaluationSource !== 'INSTITUTE') {
+        try {
+          // Apply the same MTP / PYQ / Model Test material hard-gate used by the
+          // actual submission path, including exact selected Model Test number.
+          referenceMaterial = enforceMaterialHardGate({
+            evaluationId: `preflight_${crypto.randomBytes(6).toString('hex')}`,
+            level,
+            subjectKey,
+            subjectName,
+            paper,
+            attempt: evaluationMaterialAttempt,
+            materialType,
+            mtpSeries: parsedMtpSeries,
+            modelTestNumber: parsedModelTestNumber,
+            sourceFormat: req.body.sourceFormat || req.body.source_format,
+            evaluationSource: 'PUBLIC',
+            preloadedMaterial: rawPreflightMaterial,
+          });
+        } catch (gateError: any) {
+          return res.status(422).json({
+            success: false,
+            code: 'REFERENCE_MATERIAL_GATE_FAILED',
+            error: gateError?.message || 'The selected evaluation material failed verification.',
+          });
+        }
+      } else if (rawPreflightMaterial) {
+        // Preserve the existing institute preflight lookup behavior; its actual
+        // submit route applies the institute enrollment and material hard-gates.
+        referenceMaterial = rawPreflightMaterial as any;
+      }
     }
 
     if (!referenceMaterial) {
@@ -965,8 +996,8 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       preflightAudit: {
         documentLegibility,
         pageCount,
-        questionPaperTitle: referenceMaterial.question_paper_title || `${level} ${subjectName}`,
-        syllabusVersion: referenceMaterial.syllabus_version || 'New Scheme 2024',
+        questionPaperTitle: referenceMaterial.questionPaperTitle || referenceMaterial.question_paper_title || `${level} ${subjectName}`,
+        syllabusVersion: referenceMaterial.syllabusVersion || referenceMaterial.syllabus_version || 'New Scheme 2024',
         attemptVerified: referenceMaterial.attempt || attempt || 'May 2026',
         materialSource: isFacultyMockPreflight ? 'FACULTY_MOCK_EXACT_PRIVATE_REFERENCE' : 'VERIFIED_ICAI_ADMIN_APPROVED',
       },
