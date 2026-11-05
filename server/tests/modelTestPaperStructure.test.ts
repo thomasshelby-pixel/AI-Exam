@@ -24,23 +24,40 @@ Question 3(b) - 5 Marks`,
   officialPaperMaxMarks: 50,
 };
 
-const modelTest = getAuthoritativePaperStructure({ ...shared, materialType: 'MODEL_TEST_PAPER' });
-assert.deepEqual(
-  modelTest.subQuestions.map((question) => question.fullQuestionCode),
-  ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)'],
-  'Model Test mapping must follow the selected source and remove parent totals when marked child parts exist.',
-);
-assert.deepEqual(
-  modelTest.subQuestions.map((question) => question.maximumMarks),
-  [8, 12, 10, 5, 5],
-  'Model Test maximum marks must come from its own Marking Scheme.',
-);
-assert.equal(modelTest.totalPaperMaxMarks, 50);
-assert.ok(modelTest.subQuestions.every((question) => question.section === 'GENERAL'));
-assert.equal(modelTest.subQuestions.some((question) => question.fullQuestionCode === 'Q5(a)'), false,
-  'Model Test must not inherit the static Taxation Q5(a) template.');
-assert.equal(modelTest.subQuestions.some((question) => question.compulsory), false,
-  'Model Test must not assume Q1 or Q5 is compulsory without an explicit source rule.');
+for (const subjectName of [
+  'Advanced Accounting',
+  'Costing',
+  'Corporate and Other Laws',
+  'Taxation',
+  'Audit',
+  'Financial Management and Strategic Management',
+]) {
+  const modelTest = getAuthoritativePaperStructure({
+    ...shared,
+    subjectName,
+    paper: subjectName,
+    materialType: 'MODEL_TEST_PAPER',
+  });
+  assert.deepEqual(
+    modelTest.subQuestions.map((question) => question.fullQuestionCode),
+    ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)'],
+    `\u0024{subjectName}: Model Test mapping must follow the selected source and remove parent totals when marked child parts exist.`,
+  );
+  assert.deepEqual(
+    modelTest.subQuestions.map((question) => question.maximumMarks),
+    [8, 12, 10, 5, 5],
+    `\u0024{subjectName}: Model Test maximum marks must come from its own Marking Scheme.`,
+  );
+  assert.equal(modelTest.totalPaperMaxMarks, 50);
+  assert.ok(modelTest.subQuestions.every((question) => question.section === 'GENERAL'));
+  assert.equal(modelTest.subQuestions.some((question) => question.compulsory), false,
+    `\u0024{subjectName}: Model Test must not assume Q1 or Q5 is compulsory without an explicit source rule.`);
+}
+
+// The old Taxation Q1–Q8 special case must not leak into Model Test routing.
+const taxationModelTest = getAuthoritativePaperStructure({ ...shared, materialType: 'MODEL_TEST_PAPER' });
+assert.equal(taxationModelTest.subQuestions.some((question) => question.fullQuestionCode === 'Q5(a)'), false,
+  'Taxation Model Test must not inherit the fixed ICAI Taxation template.');
 
 const unparseableModelTest = getAuthoritativePaperStructure({
   ...shared,
