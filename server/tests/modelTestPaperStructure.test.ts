@@ -1121,6 +1121,49 @@ const uploadedGate = validatePreEvaluationGate({
 });
 assert.equal(uploadedGate.passed,true,'Uploaded Advanced Accounting source inventory must reconcile before evaluation.');
 
+const withinChoiceLimitGate = validatePreEvaluationGate({
+  paperStructure: uploadedAdvancedAccountingModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answers content is present and verified.',
+  markingSchemeText: 'Derived evaluation scheme is present and verified.',
+  coverageMap: {
+    attemptedQuestions: [
+      { fullQuestionCode: 'Q2', questionNumber: '2' },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3' },
+      { fullQuestionCode: 'Q4', questionNumber: '4' },
+      { fullQuestionCode: 'Q5', questionNumber: '5' },
+    ],
+    unclearPages: [],
+    unmappedPages: [],
+  } as any,
+});
+assert.equal(withinChoiceLimitGate.passed,true,
+  'Four distinct optional parent questions must satisfy the source attempt limit.');
+
+const overChoiceLimitGate = validatePreEvaluationGate({
+  paperStructure: uploadedAdvancedAccountingModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answers content is present and verified.',
+  markingSchemeText: 'Derived evaluation scheme is present and verified.',
+  coverageMap: {
+    attemptedQuestions: [
+      { fullQuestionCode: 'Q2', questionNumber: '2' },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3' },
+      { fullQuestionCode: 'Q4', questionNumber: '4' },
+      { fullQuestionCode: 'Q5', questionNumber: '5' },
+      { fullQuestionCode: 'Q6(a)', questionNumber: '6' },
+    ],
+    unclearPages: [],
+    unmappedPages: [],
+  } as any,
+});
+assert.equal(overChoiceLimitGate.passed,false,
+  'Attempting all five optional parent questions must require manual selection rather than silently score all five.');
+assert.ok(overChoiceLimitGate.failedInvariants.some(message =>
+  message.includes('MODEL_TEST_OPTIONAL_ATTEMPT_LIMIT_EXCEEDED')
+));
+
+
 
  // Objective numbering does not always start at 1. Preserve the exact printed
  // identities when a PDF extracts a standalone MCQ sequence beginning at 9.
