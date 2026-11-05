@@ -464,7 +464,16 @@ export function extractLockedQuestionSlice(
       isStop = true;
     }
 
-    if (isStop && capturedLines.length >= 2) {
+    // A new numbered question heading is an authoritative section boundary,
+    // even when the current answer contains only one captured line. Waiting for
+    // a second line here can bleed the following question (and later answers)
+    // into a short sub-question reference such as Q2(d).
+    const explicitNextMainQuestionHeader = new RegExp(
+      `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${nextQ}\\s*(?:[.):]?\\s*)(?:\\([a-z0-9]+\\)|[A-Z][a-z])`,
+      'i'
+    ).test(trimmed);
+
+    if (isStop && (capturedLines.length >= 2 || explicitNextMainQuestionHeader)) {
       break;
     }
 
