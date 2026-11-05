@@ -1076,6 +1076,21 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   return allocations;
 }
 
+function extractModelTestMcqMarkValue(
+  questionPaperText?: string,
+  markingSchemeText?: string,
+): number | undefined {
+  const paperText = String(questionPaperText || '');
+  const schemeText = String(markingSchemeText || '');
+  const partTotalMatch = paperText.match(/PART\s+I\b[^\n]{0,120}?\(\s*(\d+(?:\.\d+)?)\s*MARKS?\s*\)/i);
+  const totalMarks = partTotalMatch ? Number(partTotalMatch[1]) : undefined;
+  const eachMatch = schemeText.match(/\bMCQs?\s+(?:ARE\s+)?MARKED\s+AT\s+(\d+(?:\.\d+)?)\s+MARKS?\s+EACH\b/i)
+    || paperText.match(/\b\d+\s+MCQs?\s+OF\s+(\d+(?:\.\d+)?)\s+MARKS?\s+EACH\b/i);
+  const eachMarks = eachMatch ? Number(eachMatch[1]) : undefined;
+  if (!totalMarks || !eachMarks || totalMarks <= 0 || eachMarks <= 0) return undefined;
+  return eachMarks;
+}
+
 function buildModelTestPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -1083,10 +1098,36 @@ function buildModelTestPaperStructure(options: {
   officialPaperMaxMarks?: number;
   level?: string;
 }): AuthoritativePaperStructure {
-  const qpCandidates = extractModelTestQuestionPaperInventory(options.questionPaperText);
-  const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(options.suggestedAnswersText);
+  const questionPaperDescriptiveText = extractModelTestDescriptiveSectionText(options.questionPaperText, 'question-paper');
+  const suggestedAnswersDescriptiveText = extractModelTestDescriptiveSectionText(options.suggestedAnswersText, 'suggested-answers');
+  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText);
+  const qpMcqCandidates = extractModelTestObjectiveQuestionPaperInventory(options.questionPaperText);
+  const qpCandidates = [...qpMcqCandidates, ...qpDescriptiveCandidates];
+  const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(suggestedAnswersDescriptiveText);
   const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
   const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqMarkValue = extractModelTestMcqMarkValue(options.questionPaperText, options.markingSchemeText);
+
+  // The selected Marking Scheme explicitly states the per-MCQ mark value.
+  // Combine it with the Question Paper's Part I total and the QP-parsed
+  // objective count; do not assign a mark when those source values disagree.
+  const partOneTotalMatch = String(options.questionPaperText || '').match(/PART\s+I\b[^\n]{0,120}?\(\s*(\d+(?:\.\d+)?)\s*MARKS?\s*\)/i);
+  const partOneTotal = partOneTotalMatch ? Number(partOneTotalMatch[1]) : undefined;
+  const objectiveMarksReconcile = Boolean(
+    mcqMarkValue &&
+    partOneTotal &&
+    qpMcqCandidates.length > 0 &&
+    Math.abs(qpMcqCandidates.length * mcqMarkValue - partOneTotal) < 0.01
+  );
+  if (objectiveMarksReconcile) {
+    for (const candidate of qpMcqCandidates) {
+      const key = candidate.fullQuestionCode.toLowerCase();
+      if (!markAllocations.has(key)) {
+        markAllocations.set(key, { ...candidate, maximumMarks: mcqMarkValue! });
+      }
+    }
+  }
+
   const qpMcqNumbers = new Set(qpCandidates.filter((candidate) => candidate.isMcq).map((candidate) => candidate.questionNumber));
   const qpDescriptiveNumbers = new Set(qpCandidates.filter((candidate) => !candidate.isMcq).map((candidate) => candidate.questionNumber));
 
@@ -1159,9 +1200,8 @@ function buildModelTestPaperStructure(options: {
 
   const markingSchemeLeafAllocations = Array.from(markAllocations.values()).filter((item) => {
     if (item.isMcq || item.subQuestionNumber) return true;
-    // A parent-level total in the Marking Scheme is not an orphan when the QP
-    // has the same parent with child parts. It cannot be split among children,
-    // so those leaves remain explicitly missing marks and block evaluation.
+    // Parent totals are reconciled against QP child maxima below. The parent
+    // is not an extra scorable leaf when the Question Paper defines subparts.
     if ((qpChildrenByParent.get(item.questionNumber) || []).length > 0) return false;
     return !Array.from(markAllocations.values()).some((candidate) =>
       candidate.questionNumber === item.questionNumber && Boolean(candidate.subQuestionNumber)
@@ -1177,9 +1217,32 @@ function buildModelTestPaperStructure(options: {
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
+  // QP printed maxima are authoritative for descriptive leaves. The uploaded
+  // Derived Evaluation Scheme says these maxima are taken from the QP where
+  // printed; the MS parent totals are used to reconcile their sum, not to
+  // invent a split among child parts.
+  const hasAuthoritativeMaximum = (candidate: ModelTestQuestionCandidate) =>
+    (Number(candidate.maximumMarks) > 0) ||
+    (Number(markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks) > 0);
+
   const missingMarkQuestionIds = candidateIds
-    .filter((item) => !markAllocations.has(item.fullQuestionCode.toLowerCase()))
+    .filter((item) => !hasAuthoritativeMaximum(item))
     .map((item) => item.fullQuestionCode);
+
+  const markingSchemeParentTotalMismatchQuestionIds: string[] = [];
+  const parentNumbers = new Set(candidateIds.filter((item) => !item.isMcq).map((item) => item.questionNumber));
+  for (const questionNumber of parentNumbers) {
+    const parentAllocation = markAllocations.get(('q' + questionNumber).toLowerCase());
+    if (!parentAllocation) continue;
+    const children = candidateIds.filter((item) => !item.isMcq && item.questionNumber === questionNumber);
+    if (children.length === 0) continue;
+    const allChildMarksPresent = children.every(hasAuthoritativeMaximum);
+    const childTotal = children.reduce((sum, item) =>
+      sum + Number(item.maximumMarks || markAllocations.get(item.fullQuestionCode.toLowerCase())?.maximumMarks || 0), 0);
+    if (!allChildMarksPresent || Math.abs(childTotal - parentAllocation.maximumMarks) > 0.01) {
+      markingSchemeParentTotalMismatchQuestionIds.push('Q' + questionNumber);
+    }
+  }
 
   const subQuestions: PaperStructureSubQuestion[] = candidateIds
     .filter((candidate) => !candidate.isMcq)
@@ -1187,7 +1250,7 @@ function buildModelTestPaperStructure(options: {
       fullQuestionCode: candidate.fullQuestionCode,
       questionNumber: candidate.questionNumber,
       subQuestionNumber: candidate.subQuestionNumber,
-      maximumMarks: markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0,
+      maximumMarks: Number(candidate.maximumMarks || markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0),
       compulsory: false,
       isMcq: false,
       section: 'GENERAL',
@@ -1219,7 +1282,7 @@ function buildModelTestPaperStructure(options: {
       fullQuestionCode: 'MCQ' + candidate.questionNumber,
       questionNumber: candidate.questionNumber,
       subQuestionNumber: 'MCQ',
-      maximumMarks: markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || 0,
+      maximumMarks: Number(markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || (objectiveMarksReconcile ? mcqMarkValue : 0)),
       compulsory: false,
       isMcq: true,
       officialKey: data?.officialKey,
@@ -1234,7 +1297,7 @@ function buildModelTestPaperStructure(options: {
     .filter((question) => !question.officialKey || !['A', 'B', 'C', 'D'].includes(String(question.officialKey).toUpperCase()))
     .map((question) => question.fullQuestionCode);
 
-  const markingSchemeQuestionIds = markingSchemeLeafAllocations
+  const markingSchemeQuestionIds = Array.from(markAllocations.values())
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const questionPaperQuestionIds = candidateIds.map((item) => item.fullQuestionCode);
@@ -1265,6 +1328,7 @@ function buildModelTestPaperStructure(options: {
     missingMarkQuestionIds,
     missingMcqKeyQuestionIds,
     markingSchemeOnlyQuestionIds,
+    markingSchemeParentTotalMismatchQuestionIds,
   };
 
   return {
