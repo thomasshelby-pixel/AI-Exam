@@ -168,6 +168,57 @@ export function validatePreEvaluationGate(params: {
         criticalFailures.push(msg);
       }
     }
+    // The selected source may constrain optional parent questions (for example,
+    // "attempt any four of Questions 2 to 6"). If more distinct optional
+    // parents are attempted than allowed, no source-backed tie-breaker exists.
+    // Stop for manual selection instead of scoring all questions or guessing.
+    if (coverageMap?.attemptedQuestions?.length) {
+      const seenChoiceRules = new Set<string>();
+      const numberWords: Record<string, number> = {
+        one: 1, two: 2, three: 3, four: 4, five: 5,
+        six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+      };
+      for (const parentQuestion of paperStructure.questions || []) {
+        const rule = String(parentQuestion.choiceRule || '').trim();
+        if (!rule || seenChoiceRules.has(rule)) continue;
+        seenChoiceRules.add(rule);
+        const ruleMatch = rule.match(/ATTEMPT\s+ANY\s+(\d{1,2}|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)\s+OF\s+QUESTIONS?\s*(\d{1,2})\s+TO\s+(\d{1,2})/i);
+        if (!ruleMatch) continue;
+        const limitToken = ruleMatch[1].toLowerCase();
+        const allowedCount = /^\d+$/.test(limitToken) ? Number(limitToken) : numberWords[limitToken];
+        const fromQuestion = Number(ruleMatch[2]);
+        const toQuestion = Number(ruleMatch[3]);
+        if (!Number.isFinite(allowedCount) || allowedCount < 1 || toQuestion < fromQuestion) continue;
+
+        const attemptedOptionalParents = new Set<string>();
+        for (const attempt of coverageMap.attemptedQuestions) {
+          const canonicalId = toCanonicalQuestionId(
+            attempt.fullQuestionCode || attempt.questionNumber,
+            attempt.subQuestionNumber,
+          );
+          const parsed = parseCanonicalQuestionIdentity(canonicalId);
+          const questionNumber = Number(parsed.questionNumber);
+          if (questionNumber >= fromQuestion && questionNumber <= toQuestion && !parsed.isMcq) {
+            attemptedOptionalParents.add(String(questionNumber));
+          }
+        }
+
+        if (attemptedOptionalParents.size > allowedCount) {
+          const attemptedList = Array.from(attemptedOptionalParents)
+            .sort((left, right) => Number(left) - Number(right))
+            .map((number) => 'Q' + number)
+            .join(', ');
+          const msg = 'MODEL_TEST_OPTIONAL_ATTEMPT_LIMIT_EXCEEDED: Student attempted ' +
+            attemptedOptionalParents.size + ' optional questions (' + attemptedList +
+            '), but the selected Marking Scheme permits any ' + allowedCount +
+            ' from Q' + fromQuestion + ' to Q' + toQuestion +
+            '. Manual selection is required before scoring; no tie-breaker is stated in the source.';
+          failedInvariants.push(msg);
+          criticalFailures.push(msg);
+        }
+      }
+    }
+
   }
 
   // 2. Canonical question map valid: check for malformed IDs like Q3(b(b))
