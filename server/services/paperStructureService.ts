@@ -513,8 +513,8 @@ function parseModelTestQuestionHeading(line: string): ModelTestQuestionCandidate
     /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){0,2})/i
   );
   if (!match) return null;
-  const suffix = (match[2] || '').match(/\(([a-z0-9]+)\)/gi) || [];
-  const rawCode = 'Q' + match[1] + suffix.join('');
+  const suffix = String(match[2] || '').replace(/\s+/g, '');
+  const rawCode = 'Q' + match[1] + suffix;
   return toModelTestCandidate(rawCode);
 }
 
@@ -526,8 +526,8 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
   const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
   if (!match) return null;
-  const suffix = match[2].match(/\(([a-z0-9]+)\)/gi) || [];
-  return toModelTestCandidate('Q' + match[1] + suffix.join(''));
+  const suffix = String(match[2] || '').replace(/\s+/g, '');
+  return toModelTestCandidate('Q' + match[1] + suffix);
 }
 
 function normalizeModelTestSectionHeading(line: string): string {
