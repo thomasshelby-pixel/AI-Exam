@@ -1293,6 +1293,45 @@ assert.equal(
   false,
   'A parent total must not silently cover lettered tasks with no child-specific maximum marks.',
 );
+
+// PDF page numbers are often emitted as indented standalone numeric lines.
+// They must never become a question's maximum marks or mask the real printed
+// mark value that appears after the page break.
+const pageNumberBetweenQuestionAndMarks = getAuthoritativePaperStructure({
+  level,
+  subjectName,
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 28,
+  questionPaperText: [
+    'MODEL TEST PAPER 1',
+    'PART II - DESCRIPTIVE QUESTIONS',
+    '1. Question 1 has two descriptive requirements.',
+    '(a) First requirement. (5 Marks)',
+    '(b) Second requirement begins on the previous page and continues.',
+    '                                      6',
+    'Continuation of the second requirement. (9 Marks)',
+    '2. Prepare the required statement. (14 Marks)',
+  ].join('\\n'),
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\\nDivision B\\nQuestion 1\\nQuestion 2',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\\nPART II - DESCRIPTIVE MARK ALLOCATION\\nQUESTION 1 - MAXIMUM 14 MARKS\\nQUESTION 2 - MAXIMUM 14 MARKS',
+});
+assert.deepEqual(
+  pageNumberBetweenQuestionAndMarks.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 5], ['Q1(b)', 9], ['Q2', 14]],
+  'An indented PDF page number must not replace the printed maximum that follows it.',
+);
+assert.deepEqual(pageNumberBetweenQuestionAndMarks.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(pageNumberBetweenQuestionAndMarks.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds, []);
+const pageNumberPreflight = validatePreEvaluationGate({
+  paperStructure: pageNumberBetweenQuestionAndMarks,
+  questionPaperText: 'Selected Question Paper source is present.',
+  suggestedAnswersText: 'Selected Suggested Answers source is present.',
+  markingSchemeText: 'Selected Marking Scheme source is present.',
+  officialPaperMaxMarks: 28,
+});
+assert.equal(pageNumberPreflight.passed, true,
+  'A PDF page number between a question continuation and its printed mark must not block preflight.');
 }
 }
 assert.equal(modelTestCourseSubjectCases, 18,
