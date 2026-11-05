@@ -233,8 +233,6 @@ async function run() {
       console.log('[PASS] TEST 1A: Super Admin can restore one verified REUSED_DEVICE account without changing paid credits or removing global device protection.');
     }
 
-    }
-
     // ------------------------------------------------------------------------------------------------
     // TEST 2 & 3: Completed evaluations are counted correctly and average includes ONLY completed evaluations
     // ------------------------------------------------------------------------------------------------
