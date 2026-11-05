@@ -48,6 +48,8 @@ export interface ModelTestSourceInventoryDiagnostics {
   missingMarkQuestionIds: string[];
   missingMcqKeyQuestionIds: string[];
   markingSchemeOnlyQuestionIds: string[];
+  /** Parent totals in the Marking Scheme must reconcile to QP-defined child maxima. */
+  markingSchemeParentTotalMismatchQuestionIds: string[];
   /** Optional when question-wise Suggested Answer headings are extractable. */
   suggestedAnswerQuestionIds: string[];
   suggestedAnswerMissingQuestionIds: string[];
@@ -495,6 +497,8 @@ interface ModelTestQuestionCandidate {
   questionNumber: string;
   subQuestionNumber?: string;
   isMcq: boolean;
+  /** Printed maximum from this exact source text, when explicitly present. */
+  maximumMarks?: number;
 }
 
 function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | null {
@@ -524,7 +528,11 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
-  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
+  const value = String(line || '');
+  // ICAI-style source text commonly starts a leaf as "1. (a) ...".
+  // Also accept compact "1(a) ..." and "1 (a) ..." forms.
+  const match = value.match(/^\s{0,3}(\d{1,2})\s*[.)]\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i)
+    || value.match(/^\s{0,3}(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
   if (!match) return null;
   const suffix = String(match[2] || '').replace(/\s+/g, '');
   return toModelTestCandidate('Q' + match[1] + suffix);
