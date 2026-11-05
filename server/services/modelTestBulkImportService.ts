@@ -22,6 +22,11 @@ export interface ParsedModelTestMaterial {
   suggestedAnswersText: string;
   markingSchemeText: string;
   sourceFileNames: string[];
+  sourceFiles: {
+    questionPaper?: string;
+    suggestedAnswers?: string;
+    markingScheme?: string;
+  };
 }
 
 export interface ModelTestBulkParseResult {
@@ -173,6 +178,11 @@ export function parseModelTestBulkFiles(
     suggestedAnswersText?: string;
     markingSchemeText?: string;
     sourceFileNames: string[];
+    sourceFiles: {
+      questionPaper?: string;
+      suggestedAnswers?: string;
+      markingScheme?: string;
+    };
   }>();
 
   if (!Array.isArray(files) || files.length === 0) {
@@ -180,12 +190,18 @@ export function parseModelTestBulkFiles(
   }
 
   const addComponent = (modelNumber: number, key: 'questionPaperText' | 'suggestedAnswersText' | 'markingSchemeText', text: string, fileName: string) => {
-    const current = materialsByNumber.get(modelNumber) || { sourceFileNames: [] };
+    const current = materialsByNumber.get(modelNumber) || { sourceFileNames: [], sourceFiles: {} };
     if (current[key]) {
       errors.push(`Model ${modelNumber}: duplicate ${key} file supplied (${fileName}).`);
       return;
     }
     current[key] = cleanText(text);
+    const sourceKey = key === 'questionPaperText'
+      ? 'questionPaper'
+      : key === 'suggestedAnswersText'
+        ? 'suggestedAnswers'
+        : 'markingScheme';
+    current.sourceFiles[sourceKey] = fileName;
     if (!current.sourceFileNames.includes(fileName)) current.sourceFileNames.push(fileName);
     materialsByNumber.set(modelNumber, current);
   };
@@ -284,6 +300,7 @@ export function parseModelTestBulkFiles(
         suggestedAnswersText: item.suggestedAnswersText,
         markingSchemeText: item.markingSchemeText,
         sourceFileNames: item.sourceFileNames,
+        sourceFiles: item.sourceFiles,
       });
     }
   }
