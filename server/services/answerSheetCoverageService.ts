@@ -57,6 +57,35 @@ export function requiresDescriptiveCoverageReview(
   });
 }
 
+/**
+ * Merge MCQ selections without silently letting a later page overwrite an
+ * earlier, conflicting answer. A conflict removes the answer from the scoring
+ * map and remains conflicted for the rest of this answer-sheet run.
+ */
+export function mergeMcqSelectionsSafely(
+  currentSelections: Record<string, string>,
+  incomingSelections: Record<string, string>,
+  conflictedQuestionNumbers: Set<string>
+): string[] {
+  const newConflicts: string[] = [];
+  for (const [rawNumber, rawOption] of Object.entries(incomingSelections || {})) {
+    const questionNumber = String(rawNumber || '').replace(/[^0-9]/g, '');
+    const option = String(rawOption || '').trim().toUpperCase();
+    if (!questionNumber || !/^[A-D]$/.test(option) || conflictedQuestionNumbers.has(questionNumber)) {
+      continue;
+    }
+    const existingOption = currentSelections[questionNumber];
+    if (existingOption && existingOption !== option) {
+      delete currentSelections[questionNumber];
+      conflictedQuestionNumbers.add(questionNumber);
+      newConflicts.push(questionNumber);
+      continue;
+    }
+    currentSelections[questionNumber] = option;
+  }
+  return newConflicts;
+}
+
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
 export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverageModelOutput {
   let clean = String(rawText || '').trim();
@@ -354,6 +383,8 @@ export async function buildAnswerSheetCoverageMap(
 
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
+  const conflictedMcqSelections = new Set<string>();
+  const mcqSelectionSourcePages = new Map<string, number>();
   let activeQuestionContext: string | undefined = undefined;
 
   // For each page, analyze with AI to detect question numbers, continuations, and content
@@ -386,12 +417,35 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext = nonMcqs[nonMcqs.length - 1].fullQuestionCode;
     }
 
-    // Collect any MCQs found on this page
-    for (const q of analysis.detectedQuestions) {
-      if (q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) {
-        const mcqNum = q.questionNumber;
-        mcqSelections[mcqNum] = q.studentSelectedOption.toUpperCase();
+    // Collect MCQs without silently overwriting a different option found on
+    // another page. A duplicate with the same option is harmless; a conflict
+    // invalidates both pages for certification and removes that MCQ from scoring.
+    const pageMcqSelections = Object.fromEntries(
+      analysis.detectedQuestions
+        .filter((q) => q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ'))
+        .map((q) => [q.questionNumber, q.studentSelectedOption!.toUpperCase()])
+    );
+    const mcqConflicts = mergeMcqSelectionsSafely(mcqSelections, pageMcqSelections, conflictedMcqSelections);
+    for (const [questionNumber, option] of Object.entries(pageMcqSelections)) {
+      if (!mcqConflicts.includes(questionNumber) && mcqSelections[questionNumber] === option && !mcqSelectionSourcePages.has(questionNumber)) {
+        mcqSelectionSourcePages.set(questionNumber, pageNum);
       }
+    }
+    for (const questionNumber of mcqConflicts) {
+      const previousPageNumber = mcqSelectionSourcePages.get(questionNumber);
+      const reason = `CONFLICTING_MCQ_SELECTION_ACROSS_PAGES: MCQ ${questionNumber} has different selected options on pages ${previousPageNumber ?? 'unknown'} and ${pageNum}; the selected option was not guessed.`;
+      analysis.status = 'QUESTION_NOT_IDENTIFIED';
+      analysis.mappingReviewReason = reason;
+      analysis.rawSummary = `${analysis.rawSummary} ${reason}`;
+      if (previousPageNumber) {
+        const previousPage = pageRecords.find((record) => record.pageNumber === previousPageNumber);
+        if (previousPage) {
+          previousPage.status = 'QUESTION_NOT_IDENTIFIED';
+          previousPage.mappingReviewReason = reason;
+          previousPage.rawSummary = `${previousPage.rawSummary} ${reason}`;
+        }
+      }
+      activeQuestionContext = undefined;
     }
   }
 
