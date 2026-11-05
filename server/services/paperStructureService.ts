@@ -750,7 +750,14 @@ function buildModelTestPaperStructure(options: {
     return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
   });
 
-  const markingSchemeOnlyQuestionIds = Array.from(markAllocations.values())
+  const markingSchemeLeafAllocations = Array.from(markAllocations.values()).filter((item) => {
+    if (item.isMcq || item.subQuestionNumber) return true;
+    return !Array.from(markAllocations.values()).some((candidate) =>
+      candidate.questionNumber === item.questionNumber && Boolean(candidate.subQuestionNumber)
+    );
+  });
+
+  const markingSchemeOnlyQuestionIds = markingSchemeLeafAllocations
     .filter((item) => !candidateMap.has(item.fullQuestionCode.toLowerCase()))
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -812,7 +819,7 @@ function buildModelTestPaperStructure(options: {
     });
   }
 
-  const markingSchemeQuestionIds = Array.from(markAllocations.values())
+  const markingSchemeQuestionIds = markingSchemeLeafAllocations
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const diagnostics = {
