@@ -614,70 +614,43 @@ export function buildPageCoveragePrompt(params: {
     .join('\\n');
 
   return `
-You are a universal CA examination answer-sheet reader and question-mapping auditor.
-This instruction applies equally to Foundation, Intermediate and Final, and to every subject
-(accounting, law, tax, costing, audit, finance, quantitative subjects, case studies, theory,
-and mixed-format papers). Do not use a subject-specific question-number template.
+Universal CA exam answer-sheet page reader and question mapper. Apply equally to Foundation,
+Intermediate and Final and every subject; never use a subject-specific question template.
 
-Analyze the COMPLETE scanned handwritten Page ${pageNumber} of ${totalPages}.
-Read the visual page itself; do not rely on embedded PDF text extraction.
+Read the visual scan of Page ${pageNumber}/${totalPages}, not extracted PDF text.
 
-AUTHORITATIVE QUESTION CANDIDATES
-Subject/paper: ${paperStructure.paperTitle || 'CA examination paper'}
-Descriptive question IDs and maximum marks:
+SELECTED PAPER: ${paperStructure.paperTitle || 'CA examination paper'}
+AUTHORITATIVE DESCRIPTIVE IDS:
 ${validDescriptiveList || 'None parsed'}
-MCQ IDs and maximum marks:
+AUTHORITATIVE MCQ IDS:
 ${validMcqList || 'None parsed'}
-Active question from the immediately previous page: ${previousActiveQuestion || 'None / first page'}
+PREVIOUS PAGE ACTIVE QUESTION: ${previousActiveQuestion || 'None / first page'}
 
-HANDWRITING AND PAGE-READING METHOD
-- Inspect the full page first, then carefully inspect the top, bottom, left margin, right margin,
-  question headings, circled annotations, underlined labels, and the beginning of each answer block.
-- Handwritten question labels may be faint, cursive, slanted, overwritten, abbreviated, or written
-  in a margin or circle. They are not necessarily on a printed heading line.
-- Read question labels such as Q2, Q. 2, Question 2, 2(a), (a), and circled/margin-written numbers.
-  Distinguish question labels from notebook page numbers, dates, roll numbers, scanner marks and
-  ordinary figures. A number is not a question ID merely because it is visible.
-- Read mixed handwriting, tables, ledger/journal formats, debit/credit columns, calculations,
-  formulas, diagrams, bullet points, paragraphs and case-study responses. Do not mistake amounts,
-  dates, section numbers, ledger references or working-note numbers for question labels.
-- Use the candidate question inventory to validate the label. Return the question number as digits
-  only (for example "2") and subQuestion separately (for example "a" or "a(1)").
-- If a label is partly unclear, compare its visible shape, nearby subpart label, answer-block layout,
-  prior-page context and the candidate IDs. Do not silently change an uncertain 3 into an 8.
-- A student may answer several questions on one page. Return every separately identifiable question
-  or sub-question on that page, not just the first one.
-- A page may continue the previous answer without repeating its question number. Mark it as a
-  continuation only when the handwriting/layout/content clearly continues the previous active
-  question. Do not require a repeated heading on every page.
-- If a new answer block begins but its identity is not reliably visible, do not attach it to the
-  previous question just to avoid a warning. Keep it unresolved for examiner review.
-- Never infer a question from the PDF page index, question order, marks, or subject-specific
-  assumptions. Never invent a question ID outside the authoritative candidate list.
-- Poor handwriting alone is not a reason to discard otherwise identifiable work. Use
-  ATTEMPTED_PARTIALLY_READABLE when some content is readable and preserve the question identity
-  whenever the label is sufficiently supported. Use ATTEMPTED_UNCLEAR when the answer itself
-  cannot be read reliably.
-- Do not guess unreadable amounts, dates, account names, statutory sections, formulas or words.
-  Preserve uncertainty explicitly instead of manufacturing a transcription.
+HANDWRITING AND MAPPING:
+- Inspect the whole page, especially top/bottom and left/right margins, answer-block starts,
+  circles, underlines and headings. Labels may be faint, cursive, slanted, overwritten or in margins.
+- Read labels such as Q2, Q. 2, Question 2, 2(a), (a), and circled/margin-written numbers.
+  Distinguish question labels from printed page numbers, dates, roll numbers, scanner marks and amounts.
+- Read all answer formats: paragraphs, tables, journal/ledger entries, Dr/Cr columns,
+  calculations, formulas, working notes, diagrams, bullet points and case studies.
+- Validate the visible label against the authoritative IDs above. Return questionNumber as digits
+  only and subQuestion separately. Return every identifiable question on a mixed-question page.
+- A continuation may omit its heading. Reuse the previous active question only when the page
+  clearly continues it; never force an ambiguous new answer onto the previous question.
+- Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
+- Poor handwriting alone is not a reason to discard identifiable work. Preserve partially readable
+  attempts; do not guess unreadable figures, words, dates, sections or formulas.
 
-TASK
-1. Identify every attempted question/sub-question. Check margin/circled labels as well as headings.
-2. For each detection, provide parentQuestionNumberVisible=true only if the parent question number
-   is physically visible on THIS page. If only "(a)" is visible, set false and rely on the previous
-   active question only when that context is unambiguous.
-3. If the page is a continuation and has no new heading, set isContinuation=true.
-4. Include a short literal questionLabelEvidence note describing what you read and where
-   (for example "circled 2 in left margin" or "Q3(a) written above the answer").
-5. Set readingConfidence from 0 to 1 for reading the question identity on this page. This is an
-   audit signal only; do not inflate it. Use a lower value when the label is faint or ambiguous.
-6. Identify MCQ selections only when both the question number and selected option are visible.
-   Return the student's selected option, not the official answer.
-7. Classify the answer page:
-   ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
-   CLEARLY_UNATTEMPTED, or QUESTION_NOT_IDENTIFIED.
+TASK:
+1. Identify every attempted question/sub-question and any visible MCQ selections.
+2. Set parentQuestionNumberVisible=true only when the parent label is visible on THIS page.
+3. Set isContinuation=true only for a clear continuation without a new label.
+4. Give literal questionLabelEvidence (e.g. "circled 2 in left margin") and readingConfidence 0–1.
+   Confidence is diagnostic only and must not override identity validation.
+5. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
+   CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
 
-Return strictly valid JSON only:
+Return valid JSON only:
 {
   "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
   "hasHandwriting": true,
@@ -690,7 +663,7 @@ Return strictly valid JSON only:
       "subQuestion": "a",
       "parentQuestionNumberVisible": true,
       "isContinuation": false,
-      "snippet": "short evidence from the answer"
+      "snippet": "short answer evidence"
     }
   ],
   "mcqSelections": { "1": "C" }
