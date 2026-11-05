@@ -49,6 +49,7 @@ Question 1(b): Compute tax liability.
 // the exact uploaded answer must be used.
 {
   const suggestedAnswers = `
+Suggested Answers - Selected Taxation Paper
 Division A - Multiple Choice Questions
 1. (C) The answer follows from the relevant provision.
 Division B - Descriptive Questions
@@ -64,6 +65,7 @@ Question 1(a): Explain the relevant provision.
 // from the old Taxation MTP Series 1 constants.
 {
   const suggestedAnswers = `
+Official Suggested Answers - Selected Taxation Paper
 Division A - MCQ Answers
 1. (D) Selected-source answer is D.
 Division B - Descriptive Questions
