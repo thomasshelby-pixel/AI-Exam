@@ -27,6 +27,9 @@ interface PreviewMaterial {
   sourceAudit?: {
     questionPaperQuestionIds: string[];
     markingSchemeQuestionIds: string[];
+    suggestedAnswerQuestionIds: string[];
+    suggestedAnswerMissingQuestionIds: string[];
+    suggestedAnswerOnlyQuestionIds: string[];
     missingMarkQuestionIds: string[];
     missingMcqKeyQuestionIds: string[];
     markingSchemeOnlyQuestionIds: string[];
@@ -297,10 +300,13 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
                     {item.sourceAudit && (
                       <div className="ml-10 space-y-1">
                         <p className="text-[10px] text-slate-600">
-                          QP IDs: {item.sourceAudit.questionPaperCount} · MS IDs: {item.sourceAudit.markingSchemeCount}
+                          QP IDs: {item.sourceAudit.questionPaperCount} · SA IDs: {(item.sourceAudit.suggestedAnswerQuestionIds || []).length} · MS IDs: {item.sourceAudit.markingSchemeCount}
                         </p>
                         <p className="text-[10px] text-slate-500 break-words">
                           QP: {(item.sourceAudit.questionPaperQuestionIds || []).join(', ') || 'No IDs parsed'}
+                        </p>
+                        <p className="text-[10px] text-slate-500 break-words">
+                          SA: {(item.sourceAudit.suggestedAnswerQuestionIds || []).join(', ') || 'No question-wise IDs parsed'}
                         </p>
                         <p className="text-[10px] text-slate-500 break-words">
                           MS: {(item.sourceAudit.markingSchemeQuestionIds || []).join(', ') || 'No IDs parsed'}
