@@ -365,6 +365,22 @@ ${transformationContextText}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
 
+UNIVERSAL HANDWRITING READING AND QUESTION-ISOLATION RULES (apply to every CA level and subject):
+- Read the attached page(s) as visual handwritten evidence, not as clean typed text. Inspect the entire page and the relevant answer block carefully, including margins, headings, sub-parts, tables and working notes.
+- Be resilient to cursive/connected letters, slanted writing, faint strokes, small or uneven letters, mixed print and cursive, overwritten figures, crossed-out and rewritten workings, abbreviations, arrows, underlining and handwritten symbols.
+- Interpret the page format according to its visible structure: ledger/journal entries, debit-credit columns, trial balances, financial statements, calculations, formulas, tables, legal/theory paragraphs, tax workings, audit notes, case-study responses and mixed formats.
+- Read numbers carefully, including decimal points, minus signs, brackets, commas, Dr/Cr columns and percentage signs. Use nearby visual context to distinguish similar characters, but never invent a missing digit, amount, word, provision or formula.
+- Use the selected Question Paper and verified Suggested Answer to understand context and common abbreviations. Context may clarify a genuinely visible handwritten word; it must not replace or contradict the candidate's actual writing.
+- A page may contain more than one question. Isolate only the answer block belonging to the locked question identity ${fullCode}. Do not award another question's work to this question merely because it appears on the same page.
+- Preserve partial credit for every independently readable and relevant step. Do not treat a hard-to-read line as automatically omitted or incorrect. Mark only the genuinely unreadable component as unclear; when essential evidence cannot be resolved, state the uncertainty and require review instead of guessing.
+- Transcribe studentEvidence faithfully. When a word/figure is only partly readable, say so explicitly (for example, "[partially legible]") rather than fabricating a confident transcription.
+- Handwriting style, neatness, slant, letter formation and presentation must never affect academic marks. Assess the accounting/legal/tax/technical substance against the official criteria only.
+
+STRICT QUESTION-IDENTITY LOCK:
+- The question identity and maximum marks supplied above are authoritative and immutable.
+- Confirm that the visible answer block is for ${fullCode}. If a different or ambiguous question is present on the supplied page, do not silently remap it; return an unclear/review outcome for the affected evidence.
+- Never use page number, answer order, expected question sequence or subject stereotypes to decide which question the student attempted.
+
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
