@@ -535,7 +535,8 @@ function isModelTestMcqSectionHeading(line: string): boolean {
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
   const value = String(line || '').trim();
-  return /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s*\([^)]*\))?\s*$/i.test(value);
+  const normalized = value.replace(/[()[\]]/g, ' ').replace(/[:\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s+)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s+SECTION)?$/i.test(normalized);
 }
 
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
