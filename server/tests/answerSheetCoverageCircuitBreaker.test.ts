@@ -49,7 +49,7 @@ async function run() {
     } as any,
     previousActiveQuestion: 'Q2(a)',
   });
-  assert.match(pagePrompt, /Foundation, Intermediate and Final/i);
+  assert.match(pagePrompt, /Foundation,\\s*Intermediate and Final/i);
   assert.match(pagePrompt, /every subject/i);
   assert.match(pagePrompt, /left margin/i);
   assert.match(pagePrompt, /circled\/margin-written numbers/i);
