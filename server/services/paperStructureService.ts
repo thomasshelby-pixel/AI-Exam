@@ -675,12 +675,8 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
     }
 
     if (activeParent) {
-      const nestedNumeric = line.match(/^[ ]{0,8}\((\d{1,2})\)\s+\S.{1,}/);
-      if (nestedNumeric && activeSubQuestion) {
-        add(toModelTestCandidate(activeSubQuestion + '(' + nestedNumeric[1] + ')'), line);
-        continue;
-      }
-
+      // Do not promote numbered facts/working-note lists into question IDs.
+      // A nested numeric leaf must be explicitly headed (e.g. Q3(a)(1)).
       const child = line.match(/^[ ]{0,8}(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
       if (child) {
         const part = String(child[1] || child[2] || '').toLowerCase();
