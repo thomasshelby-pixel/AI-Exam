@@ -518,6 +518,13 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
   return match ? toModelTestCandidate('Q' + match[1]) : null;
 }
 
+function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
+  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){1,2})(?=\s*(?:[-–—:.[(]|\s|$))/i);
+  if (!match) return null;
+  const suffix = match[2].match(/\(([a-z0-9]+)\)/gi) || [];
+  return toModelTestCandidate('Q' + match[1] + suffix.join(''));
+}
+
 function isModelTestMcqSectionHeading(line: string): boolean {
   const value = String(line || '').trim();
   return /\bMULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?\b/i.test(value) ||
@@ -575,6 +582,12 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
     const mcqHeading = line.match(/^\s*(?:MCQ|OBJECTIVE)\s*(\d{1,2})\b/i);
     if (mcqHeading) {
       add(toModelTestCandidate('MCQ' + mcqHeading[1]));
+      continue;
+    }
+
+    const bareSubQuestion = parseModelTestBareSubQuestionHeading(line);
+    if (bareSubQuestion) {
+      add(bareSubQuestion);
       continue;
     }
 
@@ -648,17 +661,8 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
   const hasObjectiveSection = lines.some((line) => isModelTestMcqSectionHeading(line));
 
-  // The older generic extractor does not know whether "Question 1" is inside
-  // an MCQ block. In a sectioned paper use the section-aware scanner below to
-  // prevent Q1 and MCQ1 from being created for the same objective question.
-  if (!hasObjectiveSection) {
-    for (const item of extractSubQuestionsFromText(String(markingSchemeText || ''))) {
-      const candidate = toModelTestCandidate(item.fullQuestionCode);
-      if (candidate && item.maximumMarks > 0) {
-        allocations.set(candidate.fullQuestionCode.toLowerCase(), { ...candidate, maximumMarks: item.maximumMarks });
-      }
-    }
-  }
+  // Use line-anchored identities below rather than broad in-text matches, so a
+  // narrative reference to another question cannot create an authoritative mark node.
 
   const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
   let activeParent = '';
@@ -707,6 +711,16 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       activeLeaf = candidate?.fullQuestionCode || '';
       pendingIdentity = activeLeaf;
       record(candidate, findExplicitModelTestMarks(line, true));
+      continue;
+    }
+
+    const bareSubQuestion = parseModelTestBareSubQuestionHeading(line);
+    if (bareSubQuestion) {
+      const parsed = parseCanonicalQuestionIdentity(bareSubQuestion.fullQuestionCode);
+      activeParent = parsed.parentQuestionId;
+      activeLeaf = bareSubQuestion.fullQuestionCode;
+      pendingIdentity = bareSubQuestion.fullQuestionCode;
+      record(bareSubQuestion, findExplicitModelTestMarks(line, true));
       continue;
     }
 
