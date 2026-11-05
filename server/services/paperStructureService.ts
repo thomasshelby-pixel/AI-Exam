@@ -519,11 +519,11 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function isModelTestMcqSectionHeading(line: string): boolean {
-  return /\b(?:MULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?|MCQ\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?)\b/i.test(String(line || ''));
+  return /\b(?:MULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?|MCQ(?:\s+QUESTIONS?)?|OBJECTIVE(?:\s+TYPE)?(?:\s+QUESTIONS?)?)\b/i.test(String(line || ''));
 }
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
-  return /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)\s+(?:QUESTIONS?|SECTION)\b/i.test(String(line || ''));
+  return /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)\b/i.test(String(line || ''));
 }
 
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
@@ -551,10 +551,14 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   for (const line of lines) {
     if (isModelTestMcqSectionHeading(line)) {
       insideMcqSection = true;
+      activeParent = '';
+      activeSubQuestion = '';
       continue;
     }
     if (isModelTestDescriptiveSectionHeading(line)) {
       insideMcqSection = false;
+      activeParent = '';
+      activeSubQuestion = '';
     }
 
     const explicit = parseModelTestQuestionHeading(line);
