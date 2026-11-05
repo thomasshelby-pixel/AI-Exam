@@ -717,7 +717,7 @@ function extractModelTestDescriptiveSectionText(
   const lines = String(sourceText || '').replace(/\r\n?/g, '\n').split('\n');
   const startIndex = lines.findIndex((line) => sourceKind === 'question-paper'
     ? /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)
-    : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?))/i.test(line));
+    : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?|QUESTIONS?))/i.test(line));
   return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
 }
 
