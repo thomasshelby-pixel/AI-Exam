@@ -570,15 +570,37 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   let activeSubQuestion = '';
   let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
+  let activeMarkCandidateId = '';
 
-  const add = (candidate: ModelTestQuestionCandidate | null) => {
+  const recordMarks = (line: string) => {
+    if (!activeMarkCandidateId) return;
+    const marks = findExplicitModelTestMarks(line, true);
+    if (!marks || marks <= 0) return;
+    const existing = candidates.get(activeMarkCandidateId);
+    if (existing && existing.maximumMarks === undefined) {
+      candidates.set(activeMarkCandidateId, { ...existing, maximumMarks: marks });
+    }
+  };
+
+  const add = (candidate: ModelTestQuestionCandidate | null, sourceLine = '') => {
     if (!candidate) return;
-    candidates.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+    const key = candidate.fullQuestionCode.toLowerCase();
+    const previous = candidates.get(key);
+    const merged = {
+      ...candidate,
+      maximumMarks: previous?.maximumMarks ?? candidate.maximumMarks,
+    };
+    candidates.set(key, merged);
+    activeMarkCandidateId = key;
     if (!candidate.isMcq) {
       const parsed = parseCanonicalQuestionIdentity(candidate.fullQuestionCode);
       activeParent = parsed.parentQuestionId;
       activeSubQuestion = parsed.subQuestion ? candidate.fullQuestionCode : '';
+    } else {
+      activeParent = '';
+      activeSubQuestion = '';
     }
+    recordMarks(sourceLine);
   };
 
   for (const line of lines) {
@@ -586,6 +608,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       insideMcqSection = true;
       activeParent = '';
       activeSubQuestion = '';
+      activeMarkCandidateId = '';
       lastQuestionHeadingNumber = 0;
       continue;
     }
@@ -593,6 +616,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       insideMcqSection = false;
       activeParent = '';
       activeSubQuestion = '';
+      activeMarkCandidateId = '';
       lastQuestionHeadingNumber = 0;
     }
 
@@ -601,7 +625,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       lastQuestionHeadingNumber = Number(explicit.questionNumber);
       add(insideMcqSection && !explicit.subQuestionNumber
         ? toModelTestCandidate('MCQ' + explicit.questionNumber)
-        : explicit);
+        : explicit, line);
       continue;
     }
 
@@ -610,7 +634,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       ? line.match(/^\s*OBJECTIVE\s*(\d{1,2})\b/i)
       : null;
     if (mcqHeading || objectiveHeading) {
-      add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]));
+      add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]), line);
       continue;
     }
 
@@ -624,40 +648,52 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       const number = Number(standaloneObjectiveNumber[1]);
       if (number >= 1 && number <= 30 && (number === 1 || number === lastQuestionHeadingNumber + 1)) {
         lastQuestionHeadingNumber = number;
-        add(toModelTestCandidate('MCQ' + number));
+        add(toModelTestCandidate('MCQ' + number), line);
         continue;
       }
     }
 
-    const bareSubQuestion = parseModelTestBareSubQuestionHeading(line);
+    // Do not mistake deeply-indented financial-statement/table rows for
+    // question subparts. Real part labels in these source PDFs are at the
+    // question margin (normally 0–8 spaces); table columns are further in.
+    const leadingSpaces = (line.match(/^ */) || [''])[0].length;
+    const bareSubQuestion = leadingSpaces <= 8 ? parseModelTestBareSubQuestionHeading(line) : null;
     if (bareSubQuestion) {
-      add(bareSubQuestion);
+      lastQuestionHeadingNumber = Number(bareSubQuestion.questionNumber);
+      add(bareSubQuestion, line);
       continue;
     }
 
-    const bare = parseModelTestBareQuestionHeading(line);
+    const bare = leadingSpaces <= 3 ? parseModelTestBareQuestionHeading(line) : null;
     if (bare) {
       const number = Number(bare.questionNumber);
       if (number === 1 || number === lastQuestionHeadingNumber + 1) {
         lastQuestionHeadingNumber = number;
-        add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare);
+        add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare, line);
         continue;
       }
     }
 
-    if (!activeParent) continue;
+    if (activeParent) {
+      const nestedNumeric = line.match(/^[ ]{0,8}\((\d{1,2})\)\s+\S.{1,}/);
+      if (nestedNumeric && activeSubQuestion) {
+        add(toModelTestCandidate(activeSubQuestion + '(' + nestedNumeric[1] + ')'), line);
+        continue;
+      }
 
-    const nestedNumeric = line.match(/^\s*\((\d{1,2})\)\s+\S.{1,}/);
-    if (nestedNumeric && activeSubQuestion) {
-      add(toModelTestCandidate(activeSubQuestion + '(' + nestedNumeric[1] + ')'));
-      continue;
+      const child = line.match(/^[ ]{0,8}(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
+      if (child) {
+        const part = String(child[1] || child[2] || '').toLowerCase();
+        if (!(activeSubQuestion && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part))) {
+          add(toModelTestCandidate(activeParent + '(' + part + ')'), line);
+          continue;
+        }
+      }
     }
 
-    const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
-    if (!child) continue;
-    const part = String(child[1] || child[2] || '').toLowerCase();
-    if (activeSubQuestion && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part)) continue;
-    add(toModelTestCandidate(activeParent + '(' + part + ')'));
+    // Maximum marks can be printed at the end of a multi-line question part.
+    // They stay attached only to the most recently opened source question ID.
+    recordMarks(line);
   }
 
   const all = Array.from(candidates.values());
@@ -671,6 +707,77 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       if (qOrder) return qOrder;
       return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
     });
+}
+
+/** Return the descriptive-answer portion of the selected source document. */
+function extractModelTestDescriptiveSectionText(
+  sourceText?: string,
+  sourceKind: 'question-paper' | 'suggested-answers' = 'question-paper',
+): string {
+  const lines = String(sourceText || '').replace(/\r\n?/g, '\n').split('\n');
+  const startIndex = lines.findIndex((line) => sourceKind === 'question-paper'
+    ? /^\s*(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE/i.test(line)
+    : /^\s*(?:DIVISION\s+B|PART\s+II\b)/i.test(line));
+  return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
+}
+
+/** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
+function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
+  const lines = String(questionPaperText || '').replace(/\r\n?/g, '\n').split('\n');
+  const result = new Map<string, ModelTestQuestionCandidate>();
+  let inObjectivePart = false;
+  let activeRootNumber: number | null = null;
+  let activeRootHasRomanChildren = false;
+  let lastRootNumber = 0;
+  let mcqNumber = 0;
+
+  const addMcq = () => {
+    mcqNumber += 1;
+    const candidate = toModelTestCandidate('MCQ' + mcqNumber);
+    if (candidate) result.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+  };
+  const flushRoot = () => {
+    if (activeRootNumber !== null && !activeRootHasRomanChildren) addMcq();
+    activeRootNumber = null;
+    activeRootHasRomanChildren = false;
+  };
+
+  for (const line of lines) {
+    if (!inObjectivePart && /(?:PART|SECTION|DIVISION)\s+(?:I|1|A)\b[^\n]*(?:MCQ|MULTIPLE\s+CHOICE)/i.test(line)) {
+      inObjectivePart = true;
+      continue;
+    }
+    if (inObjectivePart && /^\s*(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b/i.test(line)) {
+      flushRoot();
+      break;
+    }
+    if (!inObjectivePart && /(?:CASE\s+SCENARIO\s+BASED\s+MCQS?|MULTIPLE\s+CHOICE\s+QUESTIONS?)/i.test(line)) {
+      inObjectivePart = true;
+      continue;
+    }
+    if (!inObjectivePart) continue;
+
+    const root = line.match(/^\s{0,3}(\d{1,2})[.)]\s+\S.{2,}/);
+    if (root) {
+      const number = Number(root[1]);
+      if (number >= 1 && number <= 30 && (number === 1 || number === lastRootNumber + 1)) {
+        flushRoot();
+        activeRootNumber = number;
+        lastRootNumber = number;
+        continue;
+      }
+    }
+
+    // These are the four individual MCQs nested inside a case-scenario stem.
+    const romanPart = line.match(/^[ ]{0,8}(?:\(?)(i|ii|iii|iv|v|vi|vii|viii|ix|x)(?:\)?)[.)]\s+\S/i);
+    if (romanPart && activeRootNumber !== null) {
+      activeRootHasRomanChildren = true;
+      addMcq();
+    }
+  }
+
+  if (inObjectivePart) flushRoot();
+  return Array.from(result.values());
 }
 
 function findExplicitModelTestMarks(line: string, allowBareBracket = false): number | undefined {
