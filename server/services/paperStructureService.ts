@@ -735,7 +735,7 @@ function modelTestParentHasInstructionClauseList(questionPaperText: string | und
   const parentLines: string[] = [];
 
   for (const line of lines) {
-    const heading = parseModelTestQuestionHeading(line);
+    const heading = parseModelTestQuestionHeading(line) || parseModelTestBareQuestionHeading(line);
     if (heading && !heading.subQuestionNumber) {
       if (insideTargetQuestion) break;
       if (heading.questionNumber === questionNumber) insideTargetQuestion = true;
