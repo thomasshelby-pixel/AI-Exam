@@ -656,4 +656,20 @@ assert.deepEqual(
   'Ambiguous ranges/alternatives are not converted into invented maximum marks.',
 );
 
+
+const inlineStepComponentModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1(a) Explain the correct journal treatment.',
+  suggestedAnswersText: 'Suggested answer for Q1(a).',
+  markingSchemeText: `Question 1(a) 1 mark for correct account selection, 1 mark for correct debit/credit treatment, and 1 mark for narration.`,
+});
+assert.deepEqual(
+  inlineStepComponentModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 3]],
+  'Inline scoring components on the same identity line must be summed, not mistaken for a one-mark total.',
+);
+
 console.log('Model Test dynamic paper structure tests passed.');
