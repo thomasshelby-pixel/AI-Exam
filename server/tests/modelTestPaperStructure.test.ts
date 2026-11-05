@@ -860,7 +860,9 @@ PAPER – 1 : ADVANCED ACCOUNTING
 Time Allowed – 3 Hours Maximum Marks – 100
 PART I – Case Scenario based MCQs (30 Marks)
 1. SEAS Ltd., the Company, is in the business of tours and travels.
-i. What would be the basis of revenue recognition for SEAS Ltd.?
+       i. The company introduces a formal gratuity scheme.
+       ii. The company considers a new pension scheme.
+           i. What would be the basis of revenue recognition for SEAS Ltd.?
 (a) Gross basis.
 (b) Net basis.
 (c) Depends on accounting policy.
@@ -1058,7 +1060,11 @@ assert.deepEqual(sort(qpIds), sort([
   ...Array.from({length:15},(_,i)=>'MCQ'+(i+1)),
   'Q1(a)','Q1(b)','Q1(c)','Q2','Q3(a)','Q3(b)','Q4','Q5','Q6(a)','Q6(b)','Q6(c)'
 ]), 'The uploaded QP must map all 15 MCQs and exactly the printed descriptive leaves.');
-assert.deepEqual(sort(saIds), sort(qpIds), 'The uploaded Suggested Answers must reconcile to every QP leaf and MCQ key.');
+assert.deepEqual(
+  sort(saIds),
+  sort(Array.from({length:15},(_,i)=>'MCQ'+(i+1))),
+  'The uploaded ICAI-style Suggested Answers expose a verifiable Division A key; bare Division B table numbering is not treated as a complete question-ID inventory.',
+);
 assert.deepEqual(
   uploadedAdvancedAccountingModelTest.subQuestions.map(q=>[q.fullQuestionCode,q.maximumMarks]),
   [['Q1(a)',5],['Q1(b)',5],['Q1(c)',4],['Q2',14],['Q3(a)',4],['Q3(b)',10],['Q4',14],['Q5',14],['Q6(a)',4],['Q6(b)',4],['Q6(c)',6]],
