@@ -560,7 +560,10 @@ function isModelTestDescriptiveSectionHeading(line: string): boolean {
   return /^(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s+(?:SECTION|PART)\s+[A-Z0-9IVX]+)?$/i.test(normalized);
 }
 
-function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
+function extractModelTestQuestionPaperInventory(
+  questionPaperText?: string,
+  includeParentCandidates = false,
+): ModelTestQuestionCandidate[] {
   const lines = String(questionPaperText || '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
@@ -699,13 +702,14 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   const parentIdsWithChildren = new Set(
     all.filter((candidate) => candidate.subQuestionNumber).map((candidate) => ('Q' + candidate.questionNumber).toLowerCase())
   );
-  return all
-    .filter((candidate) => candidate.subQuestionNumber || !parentIdsWithChildren.has(candidate.fullQuestionCode.toLowerCase()))
-    .sort((left, right) => {
-      const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
-      if (qOrder) return qOrder;
-      return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
-    });
+  const inventory = includeParentCandidates
+    ? all
+    : all.filter((candidate) => candidate.subQuestionNumber || !parentIdsWithChildren.has(candidate.fullQuestionCode.toLowerCase()));
+  return inventory.sort((left, right) => {
+    const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
+    if (qOrder) return qOrder;
+    return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
+  });
 }
 
 /** Return the descriptive-answer portion of the selected source document. */
@@ -718,6 +722,31 @@ function extractModelTestDescriptiveSectionText(
     ? /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)
     : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?|QUESTIONS?))/i.test(line));
   return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
+}
+
+/**
+ * Detects parent-level fact/condition lists such as "absorbs the company on
+ * the following terms". Alphabetic labels below such a lead-in are often
+ * transaction clauses, not independently scorable sub-questions.
+ */
+function modelTestParentHasInstructionClauseList(questionPaperText: string | undefined, questionNumber: string): boolean {
+  const lines = String(questionPaperText || '').replace(/\\r\\n?/g, '\\n').split('\\n');
+  let insideTargetQuestion = false;
+  const parentLines: string[] = [];
+
+  for (const line of lines) {
+    const heading = parseModelTestQuestionHeading(line);
+    if (heading && !heading.subQuestionNumber) {
+      if (insideTargetQuestion) break;
+      if (heading.questionNumber === questionNumber) insideTargetQuestion = true;
+    }
+    if (insideTargetQuestion) parentLines.push(line);
+  }
+
+  if (!insideTargetQuestion) return false;
+  const body = parentLines.join(' ').replace(/\\s+/g, ' ');
+  return /\\b(?:on|under|subject\\s+to|based\\s+on|as\\s+per)\\s+the\\s+following\\s+(?:terms?|conditions?|adjustments?|scheme|arrangements?|basis|information|particulars|details|transactions?)\\b/i.test(body)
+    || /\\bthe\\s+following\\s+(?:terms?|conditions?|adjustments?)\\s+(?:apply|are\\s+applicable|shall\\s+apply)\\b/i.test(body);
 }
 
 /** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
@@ -1135,7 +1164,7 @@ function buildModelTestPaperStructure(options: {
 }): AuthoritativePaperStructure {
   const questionPaperDescriptiveText = extractModelTestDescriptiveSectionText(options.questionPaperText, 'question-paper');
   const suggestedAnswersDescriptiveText = extractModelTestDescriptiveSectionText(options.suggestedAnswersText, 'suggested-answers');
-  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText);
+  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText, true);
   const qpMcqCandidates = extractModelTestObjectiveQuestionPaperInventory(options.questionPaperText);
   const qpCandidates = [...qpMcqCandidates, ...qpDescriptiveCandidates];
   const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(suggestedAnswersDescriptiveText);
@@ -1209,15 +1238,67 @@ function buildModelTestPaperStructure(options: {
 
   const candidateMap = new Map<string, ModelTestQuestionCandidate>();
   for (const candidate of qpCandidates) {
-    if (candidate.isMcq || candidate.subQuestionNumber) {
+    if (candidate.isMcq) {
       candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
       continue;
     }
+    if (candidate.subQuestionNumber) continue;
+
     const qpChildren = qpChildrenByParent.get(candidate.questionNumber) || [];
     const msChildren = msChildrenByParent.get(candidate.questionNumber) || [];
-    const children = qpChildren.length > 0 ? qpChildren : msChildren;
-    if (children.length > 0) {
-      for (const child of children) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
+    const parentKey = ('q' + candidate.questionNumber).toLowerCase();
+    const parentAllocation = markAllocations.get(parentKey);
+    const exactMsChildKeys = new Set(msChildren.map((child) => child.fullQuestionCode.toLowerCase()));
+
+    // A trailing parent-level "(14 Marks)" can be attached to the final
+    // alphabetic clause by PDF text order. When it is the only marked child,
+    // equals the parent total, and all siblings are unmarked, it is not a safe
+    // child allocation. Keep the QP parent as the scorable node instead.
+    const childrenHoldingParentTotal = parentAllocation
+      ? qpChildren.filter((child) => Number(child.maximumMarks) > 0
+          && Math.abs(Number(child.maximumMarks) - parentAllocation.maximumMarks) < 0.01
+          && !exactMsChildKeys.has(child.fullQuestionCode.toLowerCase()))
+      : [];
+    const unmarkedSiblingCount = qpChildren.filter((child) =>
+      !(Number(child.maximumMarks) > 0) &&
+      !exactMsChildKeys.has(child.fullQuestionCode.toLowerCase())
+    ).length;
+    const trailingParentTotalWasMisattached = Boolean(
+      parentAllocation &&
+      qpChildren.length > 1 &&
+      childrenHoldingParentTotal.length === 1 &&
+      unmarkedSiblingCount > 0 &&
+      qpChildren.every((child) =>
+        exactMsChildKeys.has(child.fullQuestionCode.toLowerCase()) ||
+        !(Number(child.maximumMarks) > 0) ||
+        childrenHoldingParentTotal.includes(child)
+      )
+    );
+
+    const hasChildSpecificMarkEvidence = qpChildren.some((child) =>
+      Number(child.maximumMarks) > 0 || exactMsChildKeys.has(child.fullQuestionCode.toLowerCase())
+    );
+    const unmarkedClauseListWithParentTotal = Boolean(
+      parentAllocation &&
+      !hasChildSpecificMarkEvidence &&
+      qpChildren.length > 0 &&
+      modelTestParentHasInstructionClauseList(options.questionPaperText, candidate.questionNumber)
+    );
+
+    if (trailingParentTotalWasMisattached || unmarkedClauseListWithParentTotal) {
+      candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+      continue;
+    }
+
+    if (qpChildren.length > 0) {
+      // Preserve every detected child unless the source-backed parent-total
+      // rules above establish that the labels are non-scoring clauses. Any
+      // unresolved child remains visible and will fail preflight if unmarked.
+      for (const child of qpChildren) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
+    } else if (msChildren.length > 0) {
+      // Backward-compatible recovery when the QP parser finds only a parent
+      // heading but the selected Marking Scheme explicitly names its children.
+      for (const child of msChildren) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
     } else {
       candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
     }
