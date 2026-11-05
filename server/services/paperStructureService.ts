@@ -894,9 +894,12 @@ function findExplicitModelTestMarks(line: string, allowBareBracket = false): num
   }
 
   if (allowBareBracket) {
+    // Bracketed or delimiter-separated bare totals can be source mark values.
+    // Do NOT interpret a number aligned at the end of an indented line as
+    // marks: PDF text extraction commonly emits printed page numbers that way
+    // (e.g. a standalone "6" between a question stem and its "(5 Marks)" line).
     const bracketMatch = value.match(/(?:\[|\()\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*(?:\]|\))\s*$/i)
-      || value.match(/[-–—:|]\s*(\d+(?:\.\d+)?)\s*$/)
-      || value.match(/(?:\t+| {2,})(\d+(?:\.\d+)?)\s*$/);
+      || value.match(/[-–—:|]\s*(\d+(?:\.\d+)?)\s*$/);
     if (bracketMatch) {
       const parsed = Number(bracketMatch[1]);
       return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
