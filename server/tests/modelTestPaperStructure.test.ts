@@ -735,9 +735,9 @@ const threeSourceQuestionInventoryModelTest = getAuthoritativePaperStructure({
   questionPaperText: `Question 1(a) Prepare journal entries.
 Question 1(b) Prepare the revised balance sheet.
 Question 2 Calculate the amount.`,
-  suggestedAnswersText: `Answer 1(a) Journal entries.
-Answer 1(b) Revised balance sheet.
-Answer 3 Missing from the selected QP.`,
+  suggestedAnswersText: `Question 1(a) Journal entries.
+Question 1(b) Revised balance sheet.
+Question 3 Missing from the selected QP.`,
   markingSchemeText: `Question No. | Marks
 1(a) | 4
 1(b) | 6
