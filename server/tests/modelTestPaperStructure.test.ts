@@ -831,4 +831,248 @@ assert.deepEqual(
   [['MCQ1', 1, 'B'], ['MCQ2', 1, 'C']],
 );
 
+
+// Source-derived regression using the uploaded Advanced Accounting Model Test 1
+// document structure: Part I has three 4-MCQ case groups plus three standalone
+// MCQs; Part II has printed subpart maxima and table labels that are not questions.
+const uploadedAdvancedAccountingModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 100,
+  questionPaperText: \`MODEL TEST PAPER 1
+INTERMEDIATE COURSE: GROUP - I
+PAPER – 1 : ADVANCED ACCOUNTING
+Time Allowed – 3 Hours Maximum Marks – 100
+PART I – Case Scenario based MCQs (30 Marks)
+1. SEAS Ltd., the Company, is in the business of tours and travels.
+i. What would be the basis of revenue recognition for SEAS Ltd.?
+(a) Gross basis.
+(b) Net basis.
+(c) Depends on accounting policy.
+(d) Indian GAAP allows a choice.
+ii. Please suggest accounting treatment of forward contract.
+(a) MTM will be recorded.
+(b) Only loss will be recorded.
+(c) No accounting will be done.
+(d) Premium will be amortized.
+iii. Advise the Company in respect of accounting requirements.
+(a) Option A.
+(b) Option B.
+(c) Option C.
+(d) Option D.
+iv. Please comment regarding consolidation requirements.
+(a) Option A.
+(b) Option B.
+(c) Option C.
+(d) Option D.
+Multiple Choice Questions [4 MCQs of 2 Marks each: Total 8 Marks]
+2. On 1st April, 2022, Shubham Limited purchased some land for construction.
+i. Which cost will be capitalized to the factory building?
+(a) Legal cost.
+(b) Relocation cost.
+(c) Inauguration cost.
+(d) Allocated overhead.
+ii. What amount of employment cost will be capitalized?
+(a) 2,90,000.
+(b) 3,48,000.
+(c) 2,32,000.
+(d) 29,000.
+iii. What is the net borrowing cost capitalized?
+(a) 1,89,000.
+(b) 1,68,000.
+(c) 1,44,000.
+(d) 1,64,000.
+iv. What will be the carrying amount of the factory?
+(a) 30,00,000.
+(b) 57,78,125.
+(c) 27,78,125.
+(d) 58,00,000.
+Multiple Choice Questions [4 MCQs of 2 Marks each: Total 8 Marks]
+3. Kesar Ltd. has decided to initiate a share buy-back.
+i. By using the Shares Outstanding Test determine the number.
+(a) 1,25,000.
+(b) 31,250.
+(c) 25,000.
+(d) 30,000.
+ii. By using the Resources Test determine the number.
+(a) 25,000.
+(b) 31,250.
+(c) 28,750.
+(d) 39,062.
+iii. By using the Debt Equity Ratio Test determine the number.
+(a) 25,000.
+(b) 31,250.
+(c) 28,750.
+(d) 39,062.
+iv. On the basis of all three tests determine the maximum number.
+(a) 25,000.
+(b) 31,250.
+(c) 28,750.
+(d) 39,062.
+Multiple Choice Questions [4 MCQs of 2 Marks each: Total 8 Marks]
+4. All of the following costs are excluded while computing value of inventories except?
+(a) Selling and Distribution costs.
+(b) Allocated fixed production overheads.
+(c) Abnormal wastage.
+(d) Storage costs.
+(2 Marks)
+5. According to AS-18 Related Party Disclosures, which ONE is not a related party?
+(a) A shareholder owning 30%.
+(b) An entity providing banking facilities.
+(c) An associate.
+(d) Key management personnel. (2 Marks)
+6. A process of reconstruction without liquidation is called
+(a) Internal reconstruction.
+(b) External reconstruction.
+(c) Merger.
+(d) Purchase. (2 Marks)
+
+PART II – Descriptive Questions (70 Marks)
+Question No.1 is compulsory. Answer any four questions from the remaining five.
+1. (a) Innovative Garments Manufacturing Company Limited invested in shares.
+How should the investments be shown under AS 13? (5 Marks)
+     (b) Lessee Ltd. took a machine on lease. Calculate the machinery value and finance charges. (5 Marks)
+     (c) X Ltd. purchased PPE four years ago. Explain the treatment of impairment loss. (4 Marks)
+2. Following is the trial balance of Delta Limited. Prepare its Balance Sheet and Statement of Profit and Loss. (14 Marks)
+3. (a) Y Ltd. used resources of X Ltd. State whether and how the revenue can be recognized. (4 Marks)
+     (b) Following is the Balance Sheet of ABC Ltd. Pass journal entries and prepare Capital Reduction Account and Balance Sheet extract. (10 Marks)
+4. The financial position of Hari Ltd. and Vayu Ltd. is given. Prepare acquisition entries and Balance Sheet after absorption. (14 Marks)
+5. From the Balance Sheets and information given below, prepare Consolidated Balance Sheet of Virat Ltd. and Anushka Ltd. (14 Marks)
+     Particulars
+     I. Equity and Liabilities
+     (1) Shareholders' Funds
+          (a) Share Capital
+          (b) Reserves and Surplus
+     (2) Non-current Liabilities
+     1. Share Capital
+     2. Reserves and Surplus
+     3. Non-current investments
+     Assets and note rows are not separate question parts.
+6. (a) What are the qualitative characteristics of financial statements? (4 Marks)
+Or
+What are the issues with which Accounting Standards deal? (4 Marks)
+     (b) From the following information, calculate cash flow from operating activities. (4 Marks)
+     (c) Following is the information of the Jammu branch.
+     (i) Calculate the profit earned by the branch.
+     (ii) Calculate branch stock reserve in respect of unrealized profit. (6 Marks)\`,
+  suggestedAnswersText: \`ANSWERS OF MODEL TEST PAPER 1
+INTERMEDIATE COURSE: GROUP - I
+PAPER – 1 : ADVANCED ACCOUNTING
+ANSWER
+Division A (30 Marks)
+1. (i) (a)
+     (ii) (d)
+     (iii) (c)
+     (iv) (c)
+2. (i) (a)
+     (ii) (c)
+     (iii) (d)
+     (iv) (b)
+3. (i) (b)
+     (ii) (d)
+     (iii) (c)
+     (iv) (c)
+4. (b)
+5. (b)
+6. (a)
+Division B
+1. (a) As per AS 13, investment shares are accounted for as current or long-term.
+     (b) As per AS 19, the lessee recognizes an asset and liability.
+     (c) As per AS 28, impairment loss is recognized in profit and loss.
+2. Delta Limited
+     1. Shareholders' funds
+          (a) Share Capital
+          (b) Reserves and Surplus
+     2. Non-Current Liabilities
+3. (a) As per AS 9, interest and royalties are recognized on the stated bases.
+     (b) In the Books of ABC Ltd. Journal Entries and Capital Reduction Account.
+4. In the Books of Hari Ltd. Journal Entries.
+5. Consolidated Balance Sheet of Virat Ltd. and its Subsidiary Anushka Ltd.
+6. (a) Qualitative characteristics of financial statements.
+Or
+What are the issues with which Accounting Standards deal?
+     (b) Cash Flow Statement.
+     (c) Calculation of profit earned by the branch and stock reserve.\`,
+  markingSchemeText: \`MODEL TEST PAPER 1
+CA INTERMEDIATE - GROUP I
+SUBJECT: Advanced Accounting
+MARKING SCHEME
+DOCUMENT STATUS: DERIVED EVALUATION SCHEME
+
+SOURCE BASIS AND LIMITATION
+- Descriptive question/sub-question maxima below are taken from the Question Paper text where printed.
+- The source bundle does not provide a separate official step-by-step marks breakup for every descriptive answer.
+
+PAPER STRUCTURE
+- Part I: compulsory case-scenario MCQs; 30 marks in total.
+- MCQs are marked at 2 marks each as stated in the question-paper pattern; use the supplied answer key below.
+- Part II: 70 marks in total.
+- Question 1 is compulsory. Attempt any four questions from Questions 2 to 6.
+
+PART I - MCQ ANSWER KEY
+Transcribed from the corresponding Suggested Answer PDF:
+1. (i) (a)
+(ii) (d)
+2. (i) (a)
+(ii) (c)
+PART II - DESCRIPTIVE MARK ALLOCATION
+QUESTION 1 - MAXIMUM 14 MARKS
+Question text opening: 1. (a) Innovative Garments Manufacturing Company Limited invested in the
+- Printed allocation: (5 Marks) | Context: investments under AS 13 (5 Marks)
+- Printed allocation: (5 Marks) | Context: finance charges in each year (5 Marks)
+- Printed allocation: (4 Marks) | Context: impairment loss (4 Marks)
+QUESTION 2 - MAXIMUM 14 MARKS
+- Printed allocation: (14 Marks) | Context: trial balance and financial statements (14 Marks)
+QUESTION 3 - MAXIMUM 14 MARKS
+- Printed allocation: (4 Marks) | Context: revenues can be recognized by X Ltd. (4 Marks)
+- Printed allocation: (10 Marks) | Context: Capital Reduction Account (10 Marks)
+QUESTION 4 - MAXIMUM 14 MARKS
+- Printed allocation: (14 Marks) | Context: Balance Sheet after absorption (14 Marks)
+QUESTION 5 - MAXIMUM 14 MARKS
+- Printed allocation: (14 Marks) | Context: Consolidated Balance Sheet (14 Marks)
+QUESTION 6 - MAXIMUM 14 MARKS
+- Printed allocation: (4 Marks) | Context: qualitative characteristics (4 Marks)
+- Printed allocation: (4 Marks) | Context: issues with Accounting Standards (4 Marks)
+- Printed allocation: (4 Marks) | Context: operating activities (4 Marks)
+- Printed allocation: (6 Marks) | Context: branch stock reserve (6 Marks)\`,
+});
+const qpIds = uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics!.questionPaperQuestionIds;
+const saIds = uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics!.suggestedAnswerQuestionIds;
+const sort = (a:string[]) => [...a].sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
+assert.deepEqual(sort(qpIds), sort([
+  ...Array.from({length:15},(_,i)=>'MCQ'+(i+1)),
+  'Q1(a)','Q1(b)','Q1(c)','Q2','Q3(a)','Q3(b)','Q4','Q5','Q6(a)','Q6(b)','Q6(c)'
+]), 'The uploaded QP must map all 15 MCQs and exactly the printed descriptive leaves.');
+assert.deepEqual(sort(saIds), sort(qpIds), 'The uploaded Suggested Answers must reconcile to every QP leaf and MCQ key.');
+assert.deepEqual(
+  uploadedAdvancedAccountingModelTest.subQuestions.map(q=>[q.fullQuestionCode,q.maximumMarks]),
+  [['Q1(a)',5],['Q1(b)',5],['Q1(c)',4],['Q2',14],['Q3(a)',4],['Q3(b)',10],['Q4',14],['Q5',14],['Q6(a)',4],['Q6(b)',4],['Q6(c)',6]],
+  'Descriptive leaf maxima must be read from QP printed allocations, not invented from parent totals.',
+);
+assert.equal(uploadedAdvancedAccountingModelTest.mcqs.length,15);
+assert.ok(uploadedAdvancedAccountingModelTest.mcqs.every(q=>q.maximumMarks===2));
+assert.deepEqual(
+  uploadedAdvancedAccountingModelTest.mcqs.map(q=>q.officialKey),
+  ['A','D','C','C','A','C','D','B','B','D','C','C','B','B','A'],
+  'MCQ keys must retain the exact supplied Suggested Answer order.',
+);
+assert.equal(uploadedAdvancedAccountingModelTest.subQuestions.find(q=>q.fullQuestionCode==='Q5')?.maximumMarks,14,
+  'Financial-statement table labels (a), (b), (c) inside Q5 must not become false child questions.');
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds,[]);
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds,[]);
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds,[]);
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds,[]);
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.suggestedAnswerMissingQuestionIds,[]);
+assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.suggestedAnswerOnlyQuestionIds,[]);
+const uploadedGate = validatePreEvaluationGate({
+  paperStructure: uploadedAdvancedAccountingModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answers content is present and verified.',
+  markingSchemeText: 'Derived evaluation scheme is present and verified.',
+  officialPaperMaxMarks: 100,
+});
+assert.equal(uploadedGate.passed,true,'Uploaded Advanced Accounting source inventory must reconcile before evaluation.');
+
 console.log('Model Test dynamic paper structure tests passed.');
