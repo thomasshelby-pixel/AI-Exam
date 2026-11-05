@@ -497,5 +497,31 @@ const unsafeMcqAliasGate = validatePreEvaluationGate({
 });
 assert.equal(unsafeMcqAliasGate.passed, false, 'MCQ aliases without an official SA key must remain blocked.');
 
+// Do not alias Q1 marks to MCQ1 where the same QP separately contains
+// descriptive Q1(a); that paper uses overlapping section numbering.
+const ambiguousMcqAliasModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `MULTIPLE CHOICE QUESTIONS
+Question 1 - Select one answer.
+DESCRIPTIVE QUESTIONS
+Question 1(a) - Prepare the required statement.`,
+  suggestedAnswersText: `SUGGESTED ANSWERS
+Multiple Choice Questions
+1. (b)
+Descriptive Answers
+Question 1(a) - Full solution.`,
+  markingSchemeText: `Question 1 - 1 Mark
+Question 1(a) - 5 Marks`,
+});
+assert.deepEqual(ambiguousMcqAliasModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, ['MCQ1']);
+assert.equal(
+  ambiguousMcqAliasModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds.includes('MCQ1'),
+  false,
+  'A generic Q1 allocation must not be aliased to MCQ1 when descriptive Q1(a) also exists.',
+);
+
 
 console.log('Model Test dynamic paper structure tests passed.');
