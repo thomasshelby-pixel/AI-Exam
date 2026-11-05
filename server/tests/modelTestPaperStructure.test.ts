@@ -841,7 +841,7 @@ const uploadedAdvancedAccountingModelTest = getAuthoritativePaperStructure({
   paper: 'Paper 1',
   materialType: 'MODEL_TEST_PAPER',
   officialPaperMaxMarks: 100,
-  questionPaperText: \`MODEL TEST PAPER 1
+  questionPaperText: `MODEL TEST PAPER 1
 INTERMEDIATE COURSE: GROUP - I
 PAPER – 1 : ADVANCED ACCOUNTING
 Time Allowed – 3 Hours Maximum Marks – 100
@@ -956,8 +956,8 @@ What are the issues with which Accounting Standards deal? (4 Marks)
      (b) From the following information, calculate cash flow from operating activities. (4 Marks)
      (c) Following is the information of the Jammu branch.
      (i) Calculate the profit earned by the branch.
-     (ii) Calculate branch stock reserve in respect of unrealized profit. (6 Marks)\`,
-  suggestedAnswersText: \`ANSWERS OF MODEL TEST PAPER 1
+     (ii) Calculate branch stock reserve in respect of unrealized profit. (6 Marks)`,
+  suggestedAnswersText: `ANSWERS OF MODEL TEST PAPER 1
 INTERMEDIATE COURSE: GROUP - I
 PAPER – 1 : ADVANCED ACCOUNTING
 ANSWER
@@ -994,8 +994,8 @@ Division B
 Or
 What are the issues with which Accounting Standards deal?
      (b) Cash Flow Statement.
-     (c) Calculation of profit earned by the branch and stock reserve.\`,
-  markingSchemeText: \`MODEL TEST PAPER 1
+     (c) Calculation of profit earned by the branch and stock reserve.`,
+  markingSchemeText: `MODEL TEST PAPER 1
 CA INTERMEDIATE - GROUP I
 SUBJECT: Advanced Accounting
 MARKING SCHEME
@@ -1036,7 +1036,7 @@ QUESTION 6 - MAXIMUM 14 MARKS
 - Printed allocation: (4 Marks) | Context: qualitative characteristics (4 Marks)
 - Printed allocation: (4 Marks) | Context: issues with Accounting Standards (4 Marks)
 - Printed allocation: (4 Marks) | Context: operating activities (4 Marks)
-- Printed allocation: (6 Marks) | Context: branch stock reserve (6 Marks)\`,
+- Printed allocation: (6 Marks) | Context: branch stock reserve (6 Marks)`,
 });
 const qpIds = uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics!.questionPaperQuestionIds;
 const saIds = uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics!.suggestedAnswerQuestionIds;
