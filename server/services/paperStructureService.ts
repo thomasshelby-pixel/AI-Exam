@@ -101,12 +101,28 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
   if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
 
-  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Descriptive\s*Questions\b|$))/gi;
+  // Combined-PYQ splitting deliberately duplicates an ambiguous source into
+  // both fields with this marker. It is not safe to treat that duplicated text
+  // as an authoritative answer key; the pre-evaluation gate must request review.
+  if (/^\s*\[AUTHORITATIVE COMBINED PYQ DOCUMENT - SUGGESTED ANSWERS\]/i.test(suggestedAnswersText)) {
+    return result;
+  }
+
+  // Require an answer-document heading near the beginning of the selected source,
+  // not just a Division A label that may belong to the Question Paper's options.
+  const answerDocumentHeader = /(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|OFFICIAL\s+ANSWERS?|ANSWERS?\s+(?:OF|TO)\s+(?:(?:MODEL|QUESTION|EXAMINATION|ICAI|TEST|PAPER)\b))/i;
+  if (!answerDocumentHeader.test(suggestedAnswersText.slice(0, 1500))) return result;
+
+  // MCQ keys are accepted only when the source explicitly identifies an objective section.
+  // Otherwise a descriptive heading like "Question 1(a)" can be mistaken for MCQ 1.
+  const mcqSectionHeader = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i;
+  if (!mcqSectionHeader.test(suggestedAnswersText)) return result;
+
+  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
   const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
   const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
-
   // ICAI answer keys sometimes group four MCQs inside each numbered question:
   // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
   // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
@@ -214,56 +230,12 @@ function buildTaxationPaperStructure(options: {
   // Extract verified keys from the actual uploaded Suggested Answers
   const parsedKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
 
-  // Authoritative verified keys for July/August 2026 CA Intermediate Paper 3 Taxation (MTP Series 1):
-  // Income Tax (MCQ 1 to 8): 1: C, 2: C, 3: B, 4: A, 5: A, 6: D, 7: C, 8: D
-  // GST (MCQ 9 to 16): 9: D, 10: A, 11: C, 12: B, 13: C, 14: B, 15: B, 16: D
-  const verifiedDefaultKeys: Record<string, string> = {
-    '1': 'C', '2': 'C', '3': 'B', '4': 'A', '5': 'A', '6': 'D', '7': 'C', '8': 'D',
-    '9': 'D', '10': 'A', '11': 'C', '12': 'B', '13': 'C', '14': 'B', '15': 'B', '16': 'D',
-  };
-
-  const verifiedExplanations: Record<string, string> = {
-    '1': 'Under Section 23(1), Net Annual Value is Gross Annual Value (₹1,93,000) less municipal taxes actually paid (₹9,000) = ₹1,84,000. Option (C) is the verified correct answer.',
-    '2': 'Under Section 24(b), interest on capital borrowed for let-out property is deductible in full without any monetary limit. Aggregate allowable interest deduction across borrowings is ₹5,62,500. Option (C) is the verified correct answer.',
-    '3': 'Under the proviso to Section 24(b), the aggregate deduction for interest on capital borrowed for self-occupied residential property cannot exceed ₹2,00,000 for the assessment year. Option (B) is the verified correct answer.',
-    '4': 'The individual satisfies the basic condition under Section 6(1) (stayed in India >= 182 days) and both additional conditions under Section 6(6), qualifying as Resident and Ordinarily Resident (ROR). Option (A) is the verified correct answer.',
-    '5': 'Under Section 194-IB, an individual/HUF paying rent exceeding ₹50,000 per month is obligated to deduct TDS @ 5% on aggregate rent paid. Option (A) is the verified correct answer.',
-    '6': 'Under Section 208, advance tax payment is mandatory where computed net tax liability for the financial year is ₹10,000 or more. Option (D) is the verified correct answer.',
-    '7': 'Under Section 43B(h), delayed payments to micro and small enterprises beyond the time limit in Section 15 of MSMED Act (15/45 days) are disallowed and added back to total income (₹13 lakhs). Option (C) is the verified correct answer.',
-    '8': 'Under Section 115BBE, unexplained cash credit/investments are taxed at a special rate of 60% + 25% surcharge + 4% cess = 78%, yielding ₹5,46,000 on ₹7,00,000. Option (D) is the verified correct answer.',
-    '9': 'Commercial renting is taxable under forward charge. Renting of residential dwelling to a registered person is taxable under RCM under Section 9(3), while renting to unregistered persons for residence is exempt under Notification 12/2017-CT(R). Option (D) is the verified correct answer.',
-    '10': 'Under Circular No. 57/8/2018-GST and Rule 28, where an agent issues invoices in his own name, he qualifies as del-credere agent under Schedule I. Reliance Retail Ltd. and Ronn Traders Pvt. Ltd. represent the principal-agent relationship. Option (A) is the verified correct answer.',
-    '11': 'Under Section 9(5) of the CGST Act read with Notification No. 17/2021-CT(R), tax on restaurant services supplied through an ECO must be discharged by the ECO (Priyanka & Co.). Option (C) is the verified correct answer.',
-    '12': 'Under Section 15(1) and 15(3)(b), post-supply discounts not agreed before or at the time of supply cannot be excluded, yielding taxable value of ₹2,30,000. Option (B) is the verified correct answer.',
-    '13': 'Under Section 17(5)(a), passenger motor vehicles (<=13 seating) are blocked from ITC. General office repairs and equipment insurance qualify, yielding net eligible ITC of CGST ₹10,080 and SGST ₹10,080. Option (C) is the verified correct answer.',
-    '14': 'Under Section 31(5)(a) read with Section 13(2), for continuous supply of services where payment due date is ascertainable, invoice must be issued by 10th December, establishing the time of supply as 10th December. Option (B) is the verified correct answer.',
-    '15': 'Under Schedule II Para 5(b), construction of a complex/building intended for sale prior to completion certificate constitutes a supply of service in its entirety. Option (B) is the verified correct answer.',
-    '16': 'Under Section 34(3) of the CGST Act, where taxable value or tax charged in invoice is deficient, the registered supplier shall issue a debit note to the recipient. Option (D) is the verified correct answer.',
-  };
-
-  const verifiedProvisions: Record<string, string> = {
-    '1': 'Section 23(1) of the Income-tax Act, 1961',
-    '2': 'Section 24(b) of the Income-tax Act, 1961',
-    '3': 'Proviso to Section 24(b) of the Income-tax Act, 1961',
-    '4': 'Section 6(1) & Section 6(6) of the Income-tax Act, 1961',
-    '5': 'Section 194-IB of the Income-tax Act, 1961',
-    '6': 'Section 208 of the Income-tax Act, 1961',
-    '7': 'Section 43B(h) of the Income-tax Act, 1961 r/w Section 15 of MSMED Act, 2006',
-    '8': 'Section 115BBE of the Income-tax Act, 1961',
-    '9': 'Section 9 of CGST Act, 2017 & Notification No. 12/2017-CT(R)',
-    '10': 'Rule 28 of CGST Rules, 2017 r/w Schedule I of CGST Act, 2017',
-    '11': 'Section 9(5) of the CGST Act, 2017 r/w Notification No. 17/2021-CT(R)',
-    '12': 'Section 15(1) & 15(3)(b) of the CGST Act, 2017',
-    '13': 'Section 16 & Section 17(5) of the CGST Act, 2017',
-    '14': 'Section 13(2) r/w Section 31(5) of the CGST Act, 2017',
-    '15': 'Schedule II, Para 5(b) of the CGST Act, 2017',
-    '16': 'Section 34(3) of the CGST Act, 2017',
-  };
-
-  // Authoritative rule: Keys parsed directly from the uploaded Suggested Answers ALWAYS take precedence
-  const getKey = (qNum: string) => parsedKeys.get(qNum)?.officialKey || verifiedDefaultKeys[qNum] || 'A';
-  const getExplanation = (qNum: string) => parsedKeys.get(qNum)?.explanation || verifiedExplanations[qNum];
-  const getProvision = (qNum: string) => parsedKeys.get(qNum)?.provision || verifiedProvisions[qNum];
+  // Only keys parsed from this exact uploaded Suggested Answer are authoritative.
+  // Missing keys remain empty and are blocked by validatePreEvaluationGate().
+  // Never reuse hardcoded answers from a different attempt, MTP series, or paper.
+  const getKey = (qNum: string) => parsedKeys.get(qNum)?.officialKey || '';
+  const getExplanation = (qNum: string) => parsedKeys.get(qNum)?.explanation || '';
+  const getProvision = (qNum: string) => parsedKeys.get(qNum)?.provision || '';
 
   const subQuestions: PaperStructureSubQuestion[] = [
     // ----------------------------------------------------

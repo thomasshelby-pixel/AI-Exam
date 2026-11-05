@@ -34,7 +34,56 @@ export interface PageCoverageModelOutput {
     snippet?: string;
   }>;
   mcqSelections: Record<string, string>;
+  /** True when the page contains handwritten descriptive work, not just MCQ selections. */
+  hasDescriptiveWork: boolean;
   isContinuation?: boolean;
+}
+
+/**
+ * A page containing descriptive handwriting is not considered mapped merely
+ * because one or more MCQ selections were found. At least one descriptive
+ * identity must be mapped (or the page remains QUESTION_NOT_IDENTIFIED).
+ */
+export function requiresDescriptiveCoverageReview(
+  hasDescriptiveWork: boolean,
+  mappedQuestionCodes: string[]
+): boolean {
+  if (!hasDescriptiveWork) return false;
+  return !mappedQuestionCodes.some((code) => {
+    const normalizedCode = String(code || '').trim();
+    if (!normalizedCode) return false;
+    const parsed = parseCanonicalQuestionIdentity(normalizedCode);
+    return Boolean(parsed.questionNumber) && !parsed.isMcq;
+  });
+}
+
+/**
+ * Merge MCQ selections without silently letting a later page overwrite an
+ * earlier, conflicting answer. A conflict removes the answer from the scoring
+ * map and remains conflicted for the rest of this answer-sheet run.
+ */
+export function mergeMcqSelectionsSafely(
+  currentSelections: Record<string, string>,
+  incomingSelections: Record<string, string>,
+  conflictedQuestionNumbers: Set<string>
+): string[] {
+  const newConflicts: string[] = [];
+  for (const [rawNumber, rawOption] of Object.entries(incomingSelections || {})) {
+    const questionNumber = String(rawNumber || '').replace(/[^0-9]/g, '');
+    const option = String(rawOption || '').trim().toUpperCase();
+    if (!questionNumber || !/^[A-D]$/.test(option) || conflictedQuestionNumbers.has(questionNumber)) {
+      continue;
+    }
+    const existingOption = currentSelections[questionNumber];
+    if (existingOption && existingOption !== option) {
+      delete currentSelections[questionNumber];
+      conflictedQuestionNumbers.add(questionNumber);
+      newConflicts.push(questionNumber);
+      continue;
+    }
+    currentSelections[questionNumber] = option;
+  }
+  return newConflicts;
 }
 
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
@@ -62,6 +111,12 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   ]);
   if (typeof raw.status !== 'string' || !knownStatuses.has(raw.status)) {
     throw new Error('PAGE_COVERAGE_INVALID_STATUS: unknown page attempt status.');
+  }
+  if (typeof raw.hasDescriptiveWork !== 'boolean') {
+    throw new Error('PAGE_COVERAGE_DESCRIPTIVE_PRESENCE_MISSING: hasDescriptiveWork must be a boolean so descriptive work cannot be silently omitted.');
+  }
+  if (raw.hasDescriptiveWork && raw.hasHandwriting === false) {
+    throw new Error('PAGE_COVERAGE_DESCRIPTIVE_HANDWRITING_CONFLICT: descriptive work cannot be present when hasHandwriting is false.');
   }
   if (raw.hasHandwriting !== undefined && typeof raw.hasHandwriting !== 'boolean') {
     throw new Error('PAGE_COVERAGE_INVALID_HANDWRITING: hasHandwriting must be boolean when provided.');
@@ -123,13 +178,14 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   }
 
   if (raw.status === 'CLEARLY_UNATTEMPTED' &&
-      (raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
+      (raw.hasDescriptiveWork || raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
     throw new Error('PAGE_COVERAGE_STATUS_CONFLICT: page is marked unattempted but contains detected answers.');
   }
 
   return {
     status: raw.status,
     hasHandwriting: raw.hasHandwriting,
+    hasDescriptiveWork: raw.hasDescriptiveWork,
     summary: raw.summary,
     isContinuation: raw.isContinuation,
     detectedQuestions: raw.detectedQuestions,
@@ -327,6 +383,8 @@ export async function buildAnswerSheetCoverageMap(
 
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
+  const conflictedMcqSelections = new Set<string>();
+  const mcqSelectionSourcePages = new Map<string, number>();
   let activeQuestionContext: string | undefined = undefined;
 
   // For each page, analyze with AI to detect question numbers, continuations, and content
@@ -359,12 +417,35 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext = nonMcqs[nonMcqs.length - 1].fullQuestionCode;
     }
 
-    // Collect any MCQs found on this page
-    for (const q of analysis.detectedQuestions) {
-      if (q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) {
-        const mcqNum = q.questionNumber;
-        mcqSelections[mcqNum] = q.studentSelectedOption.toUpperCase();
+    // Collect MCQs without silently overwriting a different option found on
+    // another page. A duplicate with the same option is harmless; a conflict
+    // invalidates both pages for certification and removes that MCQ from scoring.
+    const pageMcqSelections = Object.fromEntries(
+      analysis.detectedQuestions
+        .filter((q) => q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ'))
+        .map((q) => [q.questionNumber, q.studentSelectedOption!.toUpperCase()])
+    );
+    const mcqConflicts = mergeMcqSelectionsSafely(mcqSelections, pageMcqSelections, conflictedMcqSelections);
+    for (const [questionNumber, option] of Object.entries(pageMcqSelections)) {
+      if (!mcqConflicts.includes(questionNumber) && mcqSelections[questionNumber] === option && !mcqSelectionSourcePages.has(questionNumber)) {
+        mcqSelectionSourcePages.set(questionNumber, pageNum);
       }
+    }
+    for (const questionNumber of mcqConflicts) {
+      const previousPageNumber = mcqSelectionSourcePages.get(questionNumber);
+      const reason = `CONFLICTING_MCQ_SELECTION_ACROSS_PAGES: MCQ ${questionNumber} has different selected options on pages ${previousPageNumber ?? 'unknown'} and ${pageNum}; the selected option was not guessed.`;
+      analysis.status = 'QUESTION_NOT_IDENTIFIED';
+      analysis.mappingReviewReason = reason;
+      analysis.rawSummary = `${analysis.rawSummary} ${reason}`;
+      if (previousPageNumber) {
+        const previousPage = pageRecords.find((record) => record.pageNumber === previousPageNumber);
+        if (previousPage) {
+          previousPage.status = 'QUESTION_NOT_IDENTIFIED';
+          previousPage.mappingReviewReason = reason;
+          previousPage.rawSummary = `${previousPage.rawSummary} ${reason}`;
+        }
+      }
+      activeQuestionContext = undefined;
     }
   }
 
@@ -471,22 +552,25 @@ Context:
 - Active question from previous page: ${previousActiveQuestion || 'None (First page)'}
 
 Task:
-1. Identify all question/sub-question headings attempted on this page (e.g. from valid questions above).
-2. For EVERY detected descriptive question, report parentQuestionNumberVisible=true only when that parent number is visibly written on this page. If only a child label such as "(a)" is visible, report false; do not guess a parent number from the question paper or page number.
-3. If this page is a continuation of the previous page's answer and does NOT start a new question header, mark isContinuation: true and identify the previous active question.
-4. If multiple sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
-5. Identify any MCQ answers written on this page with selected options (e.g. { "1": "C", "2": "D" }).
-6. Classify page status:
-   - ATTEMPTED_READABLE: Clear student handwritten solution
-   - ATTEMPTED_PARTIALLY_READABLE: Readable with minor handwriting difficulty
-   - ATTEMPTED_UNCLEAR: Heavily illegible or blurry
-   - CLEARLY_UNATTEMPTED: Blank page or crossed out entirely
-   - QUESTION_NOT_IDENTIFIED: Content is present but question number cannot be identified
+1. Decide whether this page contains handwritten DESCRIPTIVE work (explanations, calculations, journal entries, workings, legal/theory answers), separately from MCQ ticks/circles/options. Return this as the required boolean hasDescriptiveWork. An MCQ-only response page must set it to false.
+2. If hasDescriptiveWork=true, identify EVERY descriptive question/sub-question attempted on this page in detectedQuestions. Do not omit descriptive work just because MCQ selections are also present.
+3. For EVERY detected descriptive question, report parentQuestionNumberVisible=true only when that parent number is visibly written on this page. If only a child label such as "(a)" is visible, report false; do not guess a parent number from the question paper or page number.
+4. If this page continues the previous page's descriptive answer and does NOT start a new question header, mark isContinuation: true and identify the previous active question. This applies even when MCQ selections are also present on the page.
+5. If multiple descriptive sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
+6. Put MCQ answers ONLY in mcqSelections, using a selected option only when the actual student mark is clearly visible. Do not put an MCQ in detectedQuestions. Never infer an option from the official key or question sequence. If a mark is unclear or multiple options are marked, do not guess the answer.
+7. If hasDescriptiveWork=true but the descriptive question identity cannot be safely resolved, set status="QUESTION_NOT_IDENTIFIED". Preserve any separately identifiable MCQ selections; do not label the page fully readable based only on MCQs.
+8. Classify page status:
+   - ATTEMPTED_READABLE: All visible handwritten answer work is readable and safely identified
+   - ATTEMPTED_PARTIALLY_READABLE: Answer work is present and mostly readable, with minor handwriting difficulty
+   - ATTEMPTED_UNCLEAR: Handwriting is heavily illegible or blurry
+   - CLEARLY_UNATTEMPTED: Blank page or crossed out entirely, with no MCQ selection
+   - QUESTION_NOT_IDENTIFIED: Descriptive answer content is present but its question identity cannot be safely resolved
 
 Return strictly valid JSON with this schema:
 {
   "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
   "hasHandwriting": boolean,
+  "hasDescriptiveWork": boolean,
   "summary": string,
   "detectedQuestions": [
     {
@@ -586,9 +670,14 @@ Return strictly valid JSON with this schema:
       }
     }
 
-    // If no explicit question headings were found on this page, but it has handwriting and indicates continuation of previous active question:
+    // MCQ selections are independent of descriptive continuity. A page may contain
+    // MCQs and still continue a descriptive answer from the previous page.
+    const hasMappedDescriptiveQuestion = detectedQuestions.some((question) =>
+      !parseCanonicalQuestionIdentity(question.fullQuestionCode).isMcq
+    );
     if (
-      detectedQuestions.length === 0 &&
+      !hasMappedDescriptiveQuestion &&
+      raw.hasDescriptiveWork &&
       (raw.isContinuation === true || String(raw.summary || '').toLowerCase().includes('continuation')) &&
       previousActiveQuestion
     ) {
@@ -605,6 +694,17 @@ Return strictly valid JSON with this schema:
         });
         status = status === 'QUESTION_NOT_IDENTIFIED' ? 'ATTEMPTED_READABLE' : status;
       }
+    }
+
+    // A detected MCQ is not proof that descriptive handwriting on the same page
+    // was mapped. Fail closed rather than publishing an MCQ-only result as a
+    // complete paper evaluation.
+    const missingDescriptiveIdentity = requiresDescriptiveCoverageReview(
+      raw.hasDescriptiveWork,
+      detectedQuestions.map((question) => question.fullQuestionCode)
+    );
+    if (missingDescriptiveIdentity && !mappingReviewReason) {
+      mappingReviewReason = 'HANDWRITTEN_DESCRIPTIVE_WORK_NOT_MAPPED: descriptive answer content was detected but no descriptive question identity was safely mapped.';
     }
 
     // Do not infer a question from page position when the image was readable

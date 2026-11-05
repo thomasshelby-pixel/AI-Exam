@@ -67,6 +67,7 @@ assert.equal(fourthMcq?.officialCorrectOption, 'C');
 assert.equal(fourthMcq?.marksAwarded, 2, 'A C response to Q1(iv) must receive 2/2');
 
 const flatAnswers = extractOfficialMcqKeysFromSuggestedAnswers([
+  'Suggested Answers - Flat Key Format Test',
   'Division A',
   '1. (c) Flat-key test',
   '2. (d) Another flat-key test',

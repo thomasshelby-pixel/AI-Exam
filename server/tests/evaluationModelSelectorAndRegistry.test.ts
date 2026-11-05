@@ -20,7 +20,7 @@ import {
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
-import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
+import { mergeMcqSelectionsSafely, parseAndValidatePageCoverageOutput, requiresDescriptiveCoverageReview } from '../services/answerSheetCoverageService.js';
 import { getQuestionReferenceReviewErrors } from '../services/evaluationIntegrityEngine.js';
 import {
   getSupportedThinkingLevel,
@@ -436,6 +436,7 @@ async function runTests() {
   const validCoverage = {
     status: 'ATTEMPTED_READABLE',
     hasHandwriting: true,
+    hasDescriptiveWork: true,
     summary: 'Candidate answered Q2(a).',
     detectedQuestions: [{
       questionNumber: '2',
@@ -448,9 +449,56 @@ async function runTests() {
   };
   assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).detectedQuestions.length, 1);
   assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).mcqSelections['1'], 'B');
+  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).hasDescriptiveWork, true);
+  assert.equal(
+    requiresDescriptiveCoverageReview(true, ['MCQ1', 'MCQ2']),
+    true,
+    'MCQ detection alone must not count as mapped descriptive work.',
+  );
+  assert.equal(
+    requiresDescriptiveCoverageReview(true, ['Q2(a)', 'MCQ1']),
+    false,
+    'A page with a mapped descriptive question and MCQ selections is fully mapped.',
+  );
+  assert.equal(
+    requiresDescriptiveCoverageReview(false, ['MCQ1']),
+    false,
+    'An MCQ-only page must not be treated as missing descriptive work.',
+  );
+  const mergedMcqSelections: Record<string, string> = {};
+  const conflictingMcqNumbers = new Set<string>();
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B', '2': 'C' }, conflictingMcqNumbers),
+    [],
+    'Initial MCQ selections must be accepted.',
+  );
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B' }, conflictingMcqNumbers),
+    [],
+    'Repeated identical selection across pages must remain stable.',
+  );
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'C' }, conflictingMcqNumbers),
+    ['1'],
+    'A different selection on a later page must be classified as a conflict.',
+  );
+  assert.equal(mergedMcqSelections['1'], undefined, 'Conflicting MCQ answer must be removed rather than choosing the first or last option.');
+  assert.equal(conflictingMcqNumbers.has('1'), true);
+  mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'A' }, conflictingMcqNumbers);
+  assert.equal(mergedMcqSelections['1'], undefined, 'A conflicted answer must not be silently restored by a later page.');
+  assert.throws(
+    () => parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { '1': 'B' },
+    })),
+    /PAGE_COVERAGE_DESCRIPTIVE_PRESENCE_MISSING/,
+    'A page audit must explicitly declare whether descriptive handwriting is present.',
+  );
   assert.equal(
     parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
+      hasDescriptiveWork: true,
       detectedQuestions: [],
       mcqSelections: {},
       isContinuation: true,
@@ -462,6 +510,7 @@ async function runTests() {
   assert.deepEqual(
     parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
+      hasDescriptiveWork: false,
       detectedQuestions: [],
       mcqSelections: { 'MCQ 1': 'Option B', '1': 'B' },
     })).mcqSelections,
@@ -471,6 +520,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
+      hasDescriptiveWork: false,
       detectedQuestions: [],
       mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
     })),
@@ -480,6 +530,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
+      hasDescriptiveWork: true,
       detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
       mcqSelections: {},
     })),
@@ -489,6 +540,7 @@ async function runTests() {
   assert.equal(
     parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
+      hasDescriptiveWork: false,
       detectedQuestions: [],
       mcqSelections: {},
     })).status,
@@ -503,6 +555,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
+      hasDescriptiveWork: true,
       detectedQuestions: [{ subQuestion: 'a' }],
       mcqSelections: {},
     })),
@@ -521,6 +574,7 @@ async function runTests() {
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
       hasHandwriting: true,
+      hasDescriptiveWork: true,
       detectedQuestions: [
         { questionNumber: '2', subQuestion: 'a', parentQuestionNumberVisible: true, snippet: 'Readable Q2(a) working.' },
         { subQuestion: 'b', parentQuestionNumberVisible: true },
@@ -533,6 +587,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
+      hasDescriptiveWork: true,
       detectedQuestions: [{ questionNumber: '3', subQuestion: 'a', parentQuestionNumberVisible: true }],
       mcqSelections: { 'MCQ 1': 'A', '1': 'B', '2': 'C' },
     })),
@@ -542,6 +597,7 @@ async function runTests() {
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
+      hasDescriptiveWork: true,
       detectedQuestions: [{ questionNumber: '4', subQuestion: 'a', parentQuestionNumberVisible: true }],
       mcqSelections: {},
     })),
