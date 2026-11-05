@@ -628,9 +628,11 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   }
 
   const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
+  const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
   let activeParent = '';
   let activeLeaf = '';
   let pendingIdentity = '';
+  let lastBareQuestionNumber = 0;
 
   const record = (candidate: ModelTestQuestionCandidate | null, marks: number | undefined) => {
     if (!candidate || !marks || marks <= 0) return;
@@ -656,6 +658,22 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       pendingIdentity = activeLeaf;
       record(candidate, findExplicitModelTestMarks(line, true));
       continue;
+    }
+
+    if (!explicitQuestionHeadingsExist) {
+      const bare = parseModelTestBareQuestionHeading(line);
+      if (bare) {
+        const number = Number(bare.questionNumber);
+        if (number === 1 || number === lastBareQuestionNumber + 1) {
+          lastBareQuestionNumber = number;
+          const parsed = parseCanonicalQuestionIdentity(bare.fullQuestionCode);
+          activeParent = parsed.parentQuestionId;
+          activeLeaf = '';
+          pendingIdentity = bare.fullQuestionCode;
+          record(bare, findExplicitModelTestMarks(line, true));
+          continue;
+        }
+      }
     }
 
     if (activeParent) {
