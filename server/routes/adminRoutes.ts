@@ -1746,12 +1746,14 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
         questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
         markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
         missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
+        missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
         markingSchemeOnlyQuestionIds: inventory?.markingSchemeOnlyQuestionIds || [],
         missingMaximumMarks: Array.from(new Set(missingMaximumMarks)),
         isReadyForEvaluation: Boolean(
           inventory &&
           inventory.questionPaperQuestionIds.length > 0 &&
           inventory.missingMarkQuestionIds.length === 0 &&
+          inventory.missingMcqKeyQuestionIds.length === 0 &&
           inventory.markingSchemeOnlyQuestionIds.length === 0 &&
           missingMaximumMarks.length === 0
         ),
