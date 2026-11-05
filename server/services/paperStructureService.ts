@@ -748,9 +748,12 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
       flushRoot();
       break;
     }
-    if (!inObjectivePart && /(?:CASE\s+SCENARIO\s+BASED\s+MCQS?|MULTIPLE\s+CHOICE\s+QUESTIONS?)/i.test(line)) {
-      inObjectivePart = true;
-      continue;
+    if (!inObjectivePart) {
+      const objectiveHeading = normalizeModelTestSectionHeading(line);
+      if (/^(?:CASE\s+SCENARIO\s+BASED\s+MCQS?|MULTIPLE\s+CHOICE\s+QUESTIONS?|MCQS?|OBJECTIVE(?:\s+TYPE)?(?:\s+QUESTIONS?)?)$/i.test(objectiveHeading)) {
+        inObjectivePart = true;
+        continue;
+      }
     }
     if (!inObjectivePart) continue;
 
