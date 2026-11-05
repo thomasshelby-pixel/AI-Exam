@@ -1058,10 +1058,14 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <div className="rounded-lg bg-slate-50 p-2">
                           <span className="block text-[10px] font-bold text-slate-500">QP QUESTION IDs</span>
                           <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.questionPaperQuestionIds?.length || 0}</span>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-2">
+                          <span className="block text-[10px] font-bold text-slate-500">SA QUESTION IDs</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.suggestedAnswerQuestionIds?.length || 0}</span>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
                           <span className="block text-[10px] font-bold text-slate-500">MARKED QUESTION IDs</span>
@@ -1077,6 +1081,13 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       </div>
 
                       <div className="space-y-1">
+                        <span className="block text-[10px] font-bold uppercase text-slate-500">Suggested Answers inventory</span>
+                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
+                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerQuestionIds || []).join(', ') || 'No question-wise answer IDs parsed'}
+                        </code>
+                      </div>
+
+                      <div className="space-y-1">
                         <span className="block text-[10px] font-bold uppercase text-slate-500">Marking Scheme inventory</span>
                         <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
                           {(inspectFullText.sourceInventoryAudit.markingSchemeQuestionIds || []).join(', ') || 'No mark allocations parsed'}
@@ -1086,6 +1097,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       {(
                         (inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 ||
                         (inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds || []).length > 0 ||
                         (inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 ||
                         (inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0
                       ) && (
@@ -1099,6 +1112,16 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                           {(inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 && (
                             <p className="text-[11px] text-rose-800">
                               Official Suggested Answer key missing: {inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Question Paper IDs not found in question-wise Suggested Answers: {inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Suggested Answer IDs not found in Question Paper inventory: {inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds.join(', ')}
                             </p>
                           )}
                           {(inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 && (

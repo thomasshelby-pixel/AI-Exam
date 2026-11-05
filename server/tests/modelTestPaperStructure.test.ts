@@ -672,4 +672,97 @@ assert.deepEqual(
   'Inline scoring components on the same identity line must be summed, not mistaken for a one-mark total.',
 );
 
+
+const tableMarkingSchemeModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 20,
+  questionPaperText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1
+Question 1
+(a) Pass journal entries.
+(b) Prepare revised balance sheet.
+Question 2
+Calculate the required amount.`,
+  suggestedAnswersText: `SUGGESTED ANSWERS
+Question 1(a) - Journal entries.
+Question 1(b) - Revised balance sheet.
+Question 2 - Calculation.`,
+  markingSchemeText: `MARKING SCHEME
+Question No. | Particulars | Maximum Marks
+1(a) | Correct account heads and treatment | 4
+1(b) | Correct balance sheet presentation | 6
+2 | Correct calculation | 10`,
+});
+assert.deepEqual(
+  tableMarkingSchemeModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 4], ['Q1(b)', 6], ['Q2', 10]],
+  'Question/Maximum Marks tables must be parsed even when numeric cells do not repeat the word Marks.',
+);
+assert.deepEqual(tableMarkingSchemeModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(tableMarkingSchemeModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+const tableMarkingGate = validatePreEvaluationGate({
+  paperStructure: tableMarkingSchemeModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Suggested Answers verified.',
+  markingSchemeText: 'Marking Scheme table verified.',
+  officialPaperMaxMarks: 20,
+});
+assert.equal(tableMarkingGate.passed, true);
+
+// Tab-separated PDF text extraction should preserve the same question-to-mark mapping.
+const tabularMarkingSchemeModelTest = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Financial Reporting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1(a) Explain the treatment.\nQuestion 2 Calculate the amount.',
+  suggestedAnswersText: 'Question 1(a) Answer.\nQuestion 2 Answer.',
+  markingSchemeText: 'Question No.\tMarks\n1(a)\t3\n2\t7',
+});
+assert.deepEqual(
+  tabularMarkingSchemeModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 3], ['Q2', 7]],
+);
+
+
+const threeSourceQuestionInventoryModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `Question 1(a) Prepare journal entries.
+Question 1(b) Prepare the revised balance sheet.
+Question 2 Calculate the amount.`,
+  suggestedAnswersText: `Question 1(a) Journal entries.
+Question 1(b) Revised balance sheet.
+Question 3 Missing from the selected QP.`,
+  markingSchemeText: `Question No. | Marks
+1(a) | 4
+1(b) | 6
+2 | 10`,
+});
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerQuestionIds,
+  ['Q1(a)', 'Q1(b)', 'Q3'],
+);
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerMissingQuestionIds,
+  ['Q2'],
+);
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerOnlyQuestionIds,
+  ['Q3'],
+);
+const threeSourceGate = validatePreEvaluationGate({
+  paperStructure: threeSourceQuestionInventoryModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Question-wise Suggested Answers are present but mismatched.',
+  markingSchemeText: 'Marking Scheme verified.',
+});
+assert.equal(threeSourceGate.passed, false, 'Question-wise Suggested Answer IDs must reconcile when they are extractable.');
+assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_MISSING: Q2')));
+assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_SOURCE_CONFLICT: Q3')));
+
 console.log('Model Test dynamic paper structure tests passed.');

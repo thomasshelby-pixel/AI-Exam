@@ -72,6 +72,11 @@ assert.deepEqual(componentResult.errors, []);
 assert.equal(componentResult.materials.length, 8);
 assert.deepEqual(componentResult.materials.map((item) => item.modelTestNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
 assert.equal(componentResult.materials[0].sourceFileNames.length, 3);
+assert.deepEqual(componentResult.materials[0].sourceFiles, {
+  questionPaper: 'Model 1 Question Paper.txt',
+  suggestedAnswers: 'Model 1 Suggested Answers.txt',
+  markingScheme: 'Model 1 Marking Scheme.txt',
+});
 assert.match(componentResult.materials[7].markingSchemeText, /conclusion 2 marks/);
 
 
