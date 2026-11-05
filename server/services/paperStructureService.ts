@@ -1225,16 +1225,31 @@ function buildModelTestPaperStructure(options: {
     (Number(candidate.maximumMarks) > 0) ||
     (Number(markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks) > 0);
 
+  const hasMarkSchemeSupport = (candidate: ModelTestQuestionCandidate) => {
+    const exactKey = candidate.fullQuestionCode.toLowerCase();
+    const parentKey = ('q' + candidate.questionNumber).toLowerCase();
+    return markAllocations.has(exactKey) || markAllocations.has(parentKey);
+  };
+
   const missingMarkQuestionIds = candidateIds
-    .filter((item) => !hasAuthoritativeMaximum(item))
+    .filter((item) => !hasAuthoritativeMaximum(item) || !hasMarkSchemeSupport(item))
     .map((item) => item.fullQuestionCode);
 
   const markingSchemeParentTotalMismatchQuestionIds: string[] = [];
   const parentNumbers = new Set(candidateIds.filter((item) => !item.isMcq).map((item) => item.questionNumber));
   for (const questionNumber of parentNumbers) {
-    const parentAllocation = markAllocations.get(('q' + questionNumber).toLowerCase());
-    if (!parentAllocation) continue;
+    const parentKey = ('q' + questionNumber).toLowerCase();
+    const parentAllocation = markAllocations.get(parentKey);
     const children = candidateIds.filter((item) => !item.isMcq && item.questionNumber === questionNumber);
+    if (!parentAllocation) {
+      // Without a parent total, every leaf must have an explicit allocation
+      // in the selected Marking Scheme itself.
+      const allLeavesIndividuallyMarked = children.length > 0 && children.every((item) =>
+        Number(markAllocations.get(item.fullQuestionCode.toLowerCase())?.maximumMarks) > 0
+      );
+      if (!allLeavesIndividuallyMarked) markingSchemeParentTotalMismatchQuestionIds.push('Q' + questionNumber);
+      continue;
+    }
     if (children.length === 0) continue;
     const allChildMarksPresent = children.every(hasAuthoritativeMaximum);
     const childTotal = children.reduce((sum, item) =>
