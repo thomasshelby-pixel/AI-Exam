@@ -775,10 +775,37 @@ console.log('\n--- TEST Q: Handwriting & Degraded Scan Safety Guard ---');
 // --------------------------------------------------------------------------
 console.log('\n--- TEST R: Taxation MCQ Regression Test (8/15 + 4/15 = 12/30) ---');
 {
+  // This regression uses an explicit selected Suggested Answer fixture.
+  // Production must never fill missing keys from unrelated historical MTP defaults.
+  const selectedSuggestedAnswers = `
+Section A - Division A: Multiple Choice Questions
+1. (C) Official answer from this selected MTP source.
+2. (C) Official answer from this selected MTP source.
+3. (B) Official answer from this selected MTP source.
+4. (A) Official answer from this selected MTP source.
+5. (A) Official answer from this selected MTP source.
+6. (D) Official answer from this selected MTP source.
+7. (C) Official answer from this selected MTP source.
+8. (D) Official answer from this selected MTP source.
+Section A - Division B: Descriptive Questions
+
+Section B - Division A: Multiple Choice Questions
+9. (D) Official answer from this selected MTP source.
+10. (A) Official answer from this selected MTP source.
+11. (C) Official answer from this selected MTP source.
+12. (B) Official answer from this selected MTP source.
+13. (C) Official answer from this selected MTP source.
+14. (B) Official answer from this selected MTP source.
+15. (B) Official answer from this selected MTP source.
+16. (D) Official answer from this selected MTP source.
+Section B - Division B: Descriptive Questions
+`;
+
   const paperStructure = getAuthoritativePaperStructure({
     subjectName: 'Taxation',
     paper: 'Paper 3: Taxation',
     level: 'INTERMEDIATE',
+    suggestedAnswersText: selectedSuggestedAnswers,
     officialPaperMaxMarks: 100,
   });
 
