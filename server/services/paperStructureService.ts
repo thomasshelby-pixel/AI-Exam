@@ -41,12 +41,21 @@ export interface PaperStructureQuestion {
   subQuestions: PaperStructureSubQuestion[];
 }
 
+export interface ModelTestSourceInventoryDiagnostics {
+  sourceType: 'MODEL_TEST_PAPER';
+  questionPaperQuestionIds: string[];
+  markingSchemeQuestionIds: string[];
+  missingMarkQuestionIds: string[];
+  markingSchemeOnlyQuestionIds: string[];
+}
+
 export interface AuthoritativePaperStructure {
   paperTitle: string;
   totalPaperMaxMarks: number; // 100 for CA exams
   questions: PaperStructureQuestion[];
   subQuestions: PaperStructureSubQuestion[];
   mcqs: PaperStructureSubQuestion[];
+  sourceInventoryDiagnostics?: ModelTestSourceInventoryDiagnostics;
 }
 
 /**
@@ -476,6 +485,223 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
  * No generic six-question fallback is used: an unreadable structure must be
  * surfaced for review rather than silently mapping answers to invented IDs.
  */
+interface ModelTestQuestionCandidate {
+  fullQuestionCode: string;
+  questionNumber: string;
+  subQuestionNumber?: string;
+  isMcq: boolean;
+}
+
+function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | null {
+  const parsed = parseCanonicalQuestionIdentity(String(rawCode || '').trim());
+  if (!parsed.questionNumber) return null;
+  return {
+    fullQuestionCode: parsed.canonicalId,
+    questionNumber: parsed.questionNumber,
+    subQuestionNumber: parsed.subQuestion,
+    isMcq: parsed.isMcq,
+  };
+}
+
+function parseModelTestQuestionHeading(line: string): ModelTestQuestionCandidate | null {
+  const match = String(line || '').match(
+    /^\s*(?:QUESTION(?:\s+NO\.?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
+  );
+  if (!match) return null;
+  const suffix = (match[2] || '').match(/\(([a-z0-9]+)\)/gi) || [];
+  const rawCode = 'Q' + match[1] + suffix.join('');
+  return toModelTestCandidate(rawCode);
+}
+
+function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandidate | null {
+  const match = String(line || '').match(/^\s*(\d{1,2})\s*[.)]\s+\S.{3,}/);
+  return match ? toModelTestCandidate('Q' + match[1]) : null;
+}
+
+function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
+  const lines = String(questionPaperText || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
+    .split('\n');
+  const candidates = new Map<string, ModelTestQuestionCandidate>();
+  let activeParent = '';
+  let activeSubQuestion = '';
+  let lastBareQuestionNumber = 0;
+  const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
+
+  const add = (candidate: ModelTestQuestionCandidate | null) => {
+    if (!candidate) return;
+    candidates.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+    if (!candidate.isMcq) {
+      const parsed = parseCanonicalQuestionIdentity(candidate.fullQuestionCode);
+      activeParent = parsed.parentQuestionId;
+      activeSubQuestion = parsed.subQuestion ? candidate.fullQuestionCode : '';
+    }
+  };
+
+  for (const line of lines) {
+    const explicit = parseModelTestQuestionHeading(line);
+    if (explicit) {
+      add(explicit);
+      continue;
+    }
+
+    const mcqHeading = line.match(/^\s*(?:MCQ|OBJECTIVE)\s*(\d{1,2})\b/i);
+    if (mcqHeading) {
+      add(toModelTestCandidate('MCQ' + mcqHeading[1]));
+      continue;
+    }
+
+    if (!explicitQuestionHeadingsExist) {
+      const bare = parseModelTestBareQuestionHeading(line);
+      if (bare) {
+        const number = Number(bare.questionNumber);
+        if (number === 1 || number === lastBareQuestionNumber + 1) {
+          lastBareQuestionNumber = number;
+          add(bare);
+          continue;
+        }
+      }
+    }
+
+    if (!activeParent) continue;
+
+    const nestedNumeric = line.match(/^\s*\((\d{1,2})\)\s+\S.{1,}/);
+    if (nestedNumeric && activeSubQuestion) {
+      add(toModelTestCandidate(activeSubQuestion + '(' + nestedNumeric[1] + ')'));
+      continue;
+    }
+
+    const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
+    if (!child) continue;
+    const part = String(child[1] || child[2] || '').toLowerCase();
+    if (activeSubQuestion && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part)) continue;
+    add(toModelTestCandidate(activeParent + '(' + part + ')'));
+  }
+
+  const all = Array.from(candidates.values());
+  const parentIdsWithChildren = new Set(
+    all.filter((candidate) => candidate.subQuestionNumber).map((candidate) => ('Q' + candidate.questionNumber).toLowerCase())
+  );
+  return all
+    .filter((candidate) => candidate.subQuestionNumber || !parentIdsWithChildren.has(candidate.fullQuestionCode.toLowerCase()))
+    .sort((left, right) => {
+      const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
+      if (qOrder) return qOrder;
+      return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
+    });
+}
+
+function findExplicitModelTestMarks(line: string, allowBareBracket = false): number | undefined {
+  const value = String(line || '');
+  const unitMatches = Array.from(value.matchAll(/(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\b/gi));
+  if (unitMatches.length > 0) {
+    const parsed = Number(unitMatches[unitMatches.length - 1][1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
+  const totalMatch = value.match(/\b(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\s*[:=]\s*(\d+(?:\.\d+)?)/i);
+  if (totalMatch) {
+    const parsed = Number(totalMatch[1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
+  if (allowBareBracket) {
+    const bracketMatch = value.match(/(?:\[|\()\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*(?:\]|\))\s*$/i)
+      || value.match(/[-–—:]\s*(\d+(?:\.\d+)?)\s*$/);
+    if (bracketMatch) {
+      const parsed = Number(bracketMatch[1]);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    }
+  }
+  return undefined;
+}
+
+function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): Map<string, ModelTestQuestionCandidate & { maximumMarks: number }> {
+  const allocations = new Map<string, ModelTestQuestionCandidate & { maximumMarks: number }>();
+
+  for (const item of extractSubQuestionsFromText(String(markingSchemeText || ''))) {
+    const candidate = toModelTestCandidate(item.fullQuestionCode);
+    if (candidate && item.maximumMarks > 0) {
+      allocations.set(candidate.fullQuestionCode.toLowerCase(), { ...candidate, maximumMarks: item.maximumMarks });
+    }
+  }
+
+  const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
+  let activeParent = '';
+  let activeLeaf = '';
+  let pendingIdentity = '';
+
+  const record = (candidate: ModelTestQuestionCandidate | null, marks: number | undefined) => {
+    if (!candidate || !marks || marks <= 0) return;
+    const key = candidate.fullQuestionCode.toLowerCase();
+    if (!allocations.has(key)) allocations.set(key, { ...candidate, maximumMarks: marks });
+  };
+
+  for (const line of lines) {
+    const explicit = parseModelTestQuestionHeading(line);
+    if (explicit) {
+      const parsed = parseCanonicalQuestionIdentity(explicit.fullQuestionCode);
+      activeParent = parsed.parentQuestionId;
+      activeLeaf = explicit.subQuestionNumber ? explicit.fullQuestionCode : '';
+      pendingIdentity = explicit.fullQuestionCode;
+      record(explicit, findExplicitModelTestMarks(line, true));
+      continue;
+    }
+
+    const mcq = line.match(/^\s*(?:MCQ|OBJECTIVE)\s*(\d{1,2})\b/i);
+    if (mcq) {
+      const candidate = toModelTestCandidate('MCQ' + mcq[1]);
+      activeLeaf = candidate?.fullQuestionCode || '';
+      pendingIdentity = activeLeaf;
+      record(candidate, findExplicitModelTestMarks(line, true));
+      continue;
+    }
+
+    if (activeParent) {
+      const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
+      if (child) {
+        const part = String(child[1] || child[2] || '').toLowerCase();
+        if (!(activeLeaf && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part))) {
+          const candidate = toModelTestCandidate(activeParent + '(' + part + ')');
+          if (candidate) {
+            activeLeaf = candidate.fullQuestionCode;
+            pendingIdentity = candidate.fullQuestionCode;
+            record(candidate, findExplicitModelTestMarks(line, true));
+            continue;
+          }
+        }
+      }
+      const nested = line.match(/^\s*\((\d{1,2})\)\s+\S.{1,}/);
+      if (nested && activeLeaf) {
+        const candidate = toModelTestCandidate(activeLeaf + '(' + nested[1] + ')');
+        if (candidate) {
+          pendingIdentity = candidate.fullQuestionCode;
+          record(candidate, findExplicitModelTestMarks(line, true));
+          continue;
+        }
+      }
+    }
+
+    if (pendingIdentity) {
+      const compact = line.trim();
+      const standaloneTotal = compact.match(/^(?:(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\s*[:=]?\s*)?(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\.?$/i);
+      const labelledTotal = /\b(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\b/i.test(compact)
+        ? findExplicitModelTestMarks(compact, false)
+        : undefined;
+      const marks = standaloneTotal ? Number(standaloneTotal[1]) : labelledTotal;
+      if (marks && marks > 0) {
+        record(toModelTestCandidate(pendingIdentity), marks);
+        pendingIdentity = '';
+      } else if (compact) {
+        pendingIdentity = '';
+      }
+    }
+  }
+
+  return allocations;
+}
+
 function buildModelTestPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -483,93 +709,127 @@ function buildModelTestPaperStructure(options: {
   officialPaperMaxMarks?: number;
   level?: string;
 }): AuthoritativePaperStructure {
-  // Marking Scheme is first so its marks take precedence over repeated question
-  // references in the Question Paper and Suggested Answers.
-  const combined = [
-    options.markingSchemeText || '',
-    options.questionPaperText || '',
-    options.suggestedAnswersText || '',
-  ].filter(Boolean).join('\n');
+  const qpCandidates = extractModelTestQuestionPaperInventory(options.questionPaperText);
+  const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
 
-  let subQuestions = extractSubQuestionsFromText(combined);
-  const canonical = (question: PaperStructureSubQuestion) =>
-    toCanonicalQuestionId(question.fullQuestionCode || question.questionNumber, question.subQuestionNumber);
+  const qpChildrenByParent = new Map<string, ModelTestQuestionCandidate[]>();
+  for (const candidate of qpCandidates) {
+    if (!candidate.isMcq && candidate.subQuestionNumber) {
+      const key = candidate.questionNumber;
+      qpChildrenByParent.set(key, [...(qpChildrenByParent.get(key) || []), candidate]);
+    }
+  }
 
-  // Remove parent totals when the same paper explicitly provides marked child parts.
-  subQuestions = subQuestions.filter((parent) => {
-    const parentId = canonical(parent);
-    return !subQuestions.some((candidate) => {
-      const candidateId = canonical(candidate);
-      return candidateId !== parentId && candidateId.startsWith(`${parentId}(`);
-    });
-  });
-  subQuestions = deduplicateQuestionList(subQuestions).sort((left, right) => {
-    const questionOrder = Number(left.questionNumber) - Number(right.questionNumber);
-    if (questionOrder !== 0) return questionOrder;
-    if (!left.subQuestionNumber && right.subQuestionNumber) return -1;
-    if (left.subQuestionNumber && !right.subQuestionNumber) return 1;
+  const msChildrenByParent = new Map<string, Array<ModelTestQuestionCandidate & { maximumMarks: number }>>();
+  for (const allocation of markAllocations.values()) {
+    if (!allocation.isMcq && allocation.subQuestionNumber) {
+      const key = allocation.questionNumber;
+      msChildrenByParent.set(key, [...(msChildrenByParent.get(key) || []), allocation]);
+    }
+  }
+
+  const candidateMap = new Map<string, ModelTestQuestionCandidate>();
+  for (const candidate of qpCandidates) {
+    if (candidate.isMcq || candidate.subQuestionNumber) {
+      candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+      continue;
+    }
+    const qpChildren = qpChildrenByParent.get(candidate.questionNumber) || [];
+    const msChildren = msChildrenByParent.get(candidate.questionNumber) || [];
+    const children = qpChildren.length > 0 ? qpChildren : msChildren;
+    if (children.length > 0) {
+      for (const child of children) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
+    } else {
+      candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+    }
+  }
+
+  const candidateIds = Array.from(candidateMap.values()).sort((left, right) => {
+    const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
+    if (qOrder) return qOrder;
     return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
   });
 
-  // Do not presume that Q1/Q5 are compulsory in every Model Test.
-  // Only honor a compulsory/mandatory rule explicitly written in its source.
-  const ruleText = `${options.questionPaperText || ''}\n${options.markingSchemeText || ''}`;
-  const isExplicitlyCompulsory = (questionNumber: string) => {
-    const number = String(questionNumber).replace(/[^0-9]/g, '');
-    if (!number) return false;
-    const before = new RegExp(`\\b(?:COMPULSORY|MANDATORY)\\b[^\\n]{0,100}\\b(?:QUESTION|Q\\.?)\\s*${number}\\b`, 'i');
-    const after = new RegExp(`\\b(?:QUESTION|Q\\.?)\\s*${number}\\b[^\\n]{0,100}\\b(?:COMPULSORY|MANDATORY)\\b`, 'i');
-    return before.test(ruleText) || after.test(ruleText);
-  };
+  const markingSchemeOnlyQuestionIds = Array.from(markAllocations.values())
+    .filter((item) => !candidateMap.has(item.fullQuestionCode.toLowerCase()))
+    .map((item) => item.fullQuestionCode)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-  subQuestions = subQuestions.map((question) => ({
-    ...question,
-    compulsory: isExplicitlyCompulsory(question.questionNumber),
-    section: 'GENERAL' as const,
-    division: 'B' as const,
-  }));
+  const missingMarkQuestionIds = candidateIds
+    .filter((item) => !markAllocations.has(item.fullQuestionCode.toLowerCase()))
+    .map((item) => item.fullQuestionCode);
+
+  const subQuestions: PaperStructureSubQuestion[] = candidateIds
+    .filter((candidate) => !candidate.isMcq)
+    .map((candidate) => ({
+      fullQuestionCode: candidate.fullQuestionCode,
+      questionNumber: candidate.questionNumber,
+      subQuestionNumber: candidate.subQuestionNumber,
+      maximumMarks: markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0,
+      compulsory: false,
+      isMcq: false,
+      section: 'GENERAL',
+      division: 'B',
+    }));
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
   for (const subQuestion of subQuestions) {
-    const key = `Q${subQuestion.questionNumber}`;
+    const key = 'Q' + subQuestion.questionNumber;
     if (!questionsMap.has(key)) {
       questionsMap.set(key, {
         questionNumber: subQuestion.questionNumber,
         section: 'GENERAL',
         division: 'B',
-        compulsory: subQuestion.compulsory,
+        compulsory: false,
         maximumMarks: 0,
         subQuestions: [],
       });
     }
     const parent = questionsMap.get(key)!;
     parent.maximumMarks += subQuestion.maximumMarks;
-    parent.compulsory = parent.compulsory || subQuestion.compulsory;
     parent.subQuestions.push(subQuestion);
   }
 
-  const parsedMcqs = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
-  const mcqs: PaperStructureSubQuestion[] = Array.from(parsedMcqs.entries()).map(([questionNumber, data]) => ({
-    fullQuestionCode: `MCQ${questionNumber}`,
-    questionNumber,
-    subQuestionNumber: 'MCQ',
-    maximumMarks: 2,
-    compulsory: true,
-    isMcq: true,
-    officialKey: data.officialKey,
-    officialExplanation: data.explanation,
-    provision: data.provision,
-    topic: `Model Test Multiple Choice Question ${questionNumber}`,
-    section: 'GENERAL',
-    division: 'A',
-  }));
+  const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqQuestionIds = candidateIds.filter((candidate) => candidate.isMcq);
+  const mcqs: PaperStructureSubQuestion[] = [];
+  for (const [questionNumber, data] of parsedMcqKeys.entries()) {
+    const candidate = mcqQuestionIds.find((item) => item.questionNumber === questionNumber);
+    if (!candidate) continue;
+    mcqs.push({
+      fullQuestionCode: 'MCQ' + questionNumber,
+      questionNumber,
+      subQuestionNumber: 'MCQ',
+      maximumMarks: markAllocations.get(('mcq' + questionNumber).toLowerCase())?.maximumMarks || 0,
+      compulsory: false,
+      isMcq: true,
+      officialKey: data.officialKey,
+      officialExplanation: data.explanation,
+      provision: data.provision,
+      topic: 'Model Test Multiple Choice Question ' + questionNumber,
+      section: 'GENERAL',
+      division: 'A',
+    });
+  }
+
+  const markingSchemeQuestionIds = Array.from(markAllocations.values())
+    .map((item) => item.fullQuestionCode)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const diagnostics = {
+    sourceType: 'MODEL_TEST_PAPER' as const,
+    questionPaperQuestionIds: candidateIds.map((item) => item.fullQuestionCode),
+    markingSchemeQuestionIds,
+    missingMarkQuestionIds,
+    markingSchemeOnlyQuestionIds,
+  };
 
   return {
-    paperTitle: `CA ${options.level || ''} Model Test Paper`.replace(/\s+/g, ' ').trim(),
+    paperTitle: ('CA ' + (options.level || '') + ' Model Test Paper').replace(/\s+/g, ' ').trim(),
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
     questions: Array.from(questionsMap.values()),
     subQuestions,
     mcqs,
+    sourceInventoryDiagnostics: diagnostics,
   };
 }
 
