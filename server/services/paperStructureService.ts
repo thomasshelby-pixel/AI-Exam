@@ -1294,6 +1294,10 @@ function buildModelTestPaperStructure(options: {
     // alphabetic clause by PDF text order. When it is the only marked child,
     // equals the parent total, and all siblings are unmarked, it is not a safe
     // child allocation. Keep the QP parent as the scorable node instead.
+    const isFactualInstructionClauseList = modelTestParentHasInstructionClauseList(
+      options.questionPaperText,
+      candidate.questionNumber,
+    );
     const childrenHoldingParentTotal = parentAllocation
       ? qpChildren.filter((child) => Number(child.maximumMarks) > 0
           && Math.abs(Number(child.maximumMarks) - parentAllocation.maximumMarks) < 0.01
@@ -1305,6 +1309,7 @@ function buildModelTestPaperStructure(options: {
     ).length;
     const trailingParentTotalWasMisattached = Boolean(
       parentAllocation &&
+      isFactualInstructionClauseList &&
       qpChildren.length > 1 &&
       childrenHoldingParentTotal.length === 1 &&
       unmarkedSiblingCount > 0 &&
@@ -1322,7 +1327,7 @@ function buildModelTestPaperStructure(options: {
       parentAllocation &&
       !hasChildSpecificMarkEvidence &&
       qpChildren.length > 0 &&
-      modelTestParentHasInstructionClauseList(options.questionPaperText, candidate.questionNumber)
+      isFactualInstructionClauseList
     );
 
     if (trailingParentTotalWasMisattached || unmarkedClauseListWithParentTotal) {
