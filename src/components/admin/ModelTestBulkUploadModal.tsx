@@ -23,6 +23,19 @@ interface PreviewMaterial {
   questionPaperCharacters: number;
   suggestedAnswerCharacters: number;
   markingSchemeCharacters: number;
+  sourceFiles?: { questionPaper?: string; suggestedAnswers?: string; markingScheme?: string };
+  sourceAudit?: {
+    questionPaperQuestionIds: string[];
+    markingSchemeQuestionIds: string[];
+    missingMarkQuestionIds: string[];
+    missingMcqKeyQuestionIds: string[];
+    markingSchemeOnlyQuestionIds: string[];
+    missingMaximumMarks: string[];
+    questionPaperCount: number;
+    markingSchemeCount: number;
+    isReadyForEvaluation: boolean;
+  };
+  sourceIssues?: string[];
 }
 
 interface BulkResponse {
@@ -30,8 +43,9 @@ interface BulkResponse {
   uploaded?: number;
   validated?: number;
   materials?: PreviewMaterial[];
+  allSourceAuditsReady?: boolean;
   errors?: string[];
-  blocked?: Array<{ modelTestNumber: number; status?: string; message?: string; reason?: string; existingTitle?: string; existingId?: string }>;
+  blocked?: Array<{ modelTestNumber: number; status?: string; message?: string; reason?: string; existingTitle?: string; existingId?: string; sourceIssues?: string[]; sourceAudit?: PreviewMaterial['sourceAudit'] }>;
   error?: string;
   message?: string;
 }
@@ -129,7 +143,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
 
       if (dryRun) {
         setPreview(result.materials || []);
-        setSuccessMessage(result.message || `All ${maxModelTestNumber} model files passed validation.`);
+        setSuccessMessage(result.message || `All ${maxModelTestNumber} model files were checked.`);
       } else {
         setSuccessMessage(result.message || `Uploaded ${result.uploaded || maxModelTestNumber} Model Test Papers.`);
         setPreview(result.materials || []);
@@ -259,17 +273,52 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <p className="text-xs font-bold text-slate-800">Validated Model Sequence</p>
-                <span className="text-[10px] font-bold text-emerald-700">{preview.length}/{maxModelTestNumber} ready</span>
+                <span className={`text-[10px] font-bold ${preview.every((item) => item.sourceAudit?.isReadyForEvaluation) ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {preview.filter((item) => item.sourceAudit?.isReadyForEvaluation).length}/{maxModelTestNumber} source-ready
+                </span>
               </div>
               <div className="divide-y divide-slate-100">
                 {[...preview].sort((a, b) => a.modelTestNumber - b.modelTestNumber).map((item) => (
-                  <div key={item.modelTestNumber} className="px-3 py-2 flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center text-xs font-extrabold">{item.modelTestNumber}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
-                      <p className="text-[10px] text-slate-500">QP {item.questionPaperCharacters} chars · Answers {item.suggestedAnswerCharacters} chars · Marking Scheme {item.markingSchemeCharacters} chars</p>
+                  <div key={item.modelTestNumber} className="px-3 py-3 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-extrabold ${
+                        item.sourceAudit?.isReadyForEvaluation ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                      }`}>{item.modelTestNumber}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">{item.title}</p>
+                        <p className="text-[10px] text-slate-500">QP {item.questionPaperCharacters} chars · SA {item.suggestedAnswerCharacters} chars · MS {item.markingSchemeCharacters} chars</p>
+                      </div>
+                      <span className={`rounded-full px-2 py-1 text-[9px] font-bold ${
+                        item.sourceAudit?.isReadyForEvaluation ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {item.sourceAudit?.isReadyForEvaluation ? 'SOURCE READY' : 'REVIEW REQUIRED'}
+                      </span>
                     </div>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    {item.sourceAudit && (
+                      <div className="ml-10 space-y-1">
+                        <p className="text-[10px] text-slate-600">
+                          QP IDs: {item.sourceAudit.questionPaperCount} · MS IDs: {item.sourceAudit.markingSchemeCount}
+                        </p>
+                        <p className="text-[10px] text-slate-500 break-words">
+                          QP: {(item.sourceAudit.questionPaperQuestionIds || []).join(', ') || 'No IDs parsed'}
+                        </p>
+                        <p className="text-[10px] text-slate-500 break-words">
+                          MS: {(item.sourceAudit.markingSchemeQuestionIds || []).join(', ') || 'No IDs parsed'}
+                        </p>
+                        {(item.sourceIssues || []).length > 0 && (
+                          <div className="rounded-md border border-rose-200 bg-rose-50 p-2 space-y-1">
+                            {(item.sourceIssues || []).map((issue, index) => (
+                              <p key={index} className="text-[10px] text-rose-800">• {issue}</p>
+                            ))}
+                          </div>
+                        )}
+                        {item.sourceFiles && (
+                          <p className="text-[9px] text-slate-400 break-words">
+                            Sources — QP: {item.sourceFiles.questionPaper || '—'} · SA: {item.sourceFiles.suggestedAnswers || '—'} · MS: {item.sourceFiles.markingScheme || '—'}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -284,7 +333,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
                 {`Validate ${maxModelTestNumber} Models`}
               </button>
             ) : (
-              <button type="button" onClick={() => submitBatch(false)} disabled={busy || preview.length !== maxModelTestNumber} className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40">
+              <button type="button" onClick={() => submitBatch(false)} disabled={busy || preview.length !== maxModelTestNumber || !preview.every((item) => item.sourceAudit?.isReadyForEvaluation)} className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 {`Upload All ${maxModelTestNumber} Models`}
               </button>
