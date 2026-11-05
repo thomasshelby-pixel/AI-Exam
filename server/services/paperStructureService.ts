@@ -725,6 +725,7 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
   let activeRootNumber: number | null = null;
   let activeRootHasRomanChildren = false;
   let lastRootNumber = 0;
+  let lastStandaloneObjectiveNumber = 0;
   let mcqNumber = 0;
 
   const addMcq = () => {
@@ -764,6 +765,22 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
         flushRoot();
         activeRootNumber = number;
         lastRootNumber = number;
+        continue;
+      }
+    }
+
+    // Some extracted PDFs place an objective question number on its own line
+    // and put the stem below it. Accept only sequential standalone numbers
+    // inside an objective section, and never while inside a numbered case root.
+    const standaloneObjectiveNumber = activeRootNumber === null
+      ? line.match(/^\s*(?:(?:QUESTION|MCQ)\s*)?(\d{1,2})\s*[.)]?\s*$/i)
+      : null;
+    if (standaloneObjectiveNumber) {
+      const number = Number(standaloneObjectiveNumber[1]);
+      if (number >= 1 && number <= 30 &&
+          (number === 1 || number === lastStandaloneObjectiveNumber + 1)) {
+        lastStandaloneObjectiveNumber = number;
+        addMcq();
         continue;
       }
     }
