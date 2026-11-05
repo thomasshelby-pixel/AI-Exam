@@ -570,45 +570,6 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   };
 
   for (const line of lines) {
-    const cells = splitModelTestMarkingSchemeCells(line);
-    if (cells.length >= 2) {
-      const normalizedCells = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ' ').replace(/\s+/g, ' ').trim());
-      const questionHeaderIndex = normalizedCells.findIndex((cell) => /^(?:question|question no|question number|ques|q no|part|sub question|item)$/.test(cell));
-      const marksHeaderIndex = normalizedCells.findIndex((cell) => /\b(?:maximum marks|max marks|marks|mark allocation|marks allocated|total marks)\b/.test(cell));
-      if (questionHeaderIndex >= 0 && marksHeaderIndex >= 0 && questionHeaderIndex !== marksHeaderIndex) {
-        finalizePending();
-        tableQuestionColumn = questionHeaderIndex;
-        tableMarksColumn = marksHeaderIndex;
-        continue;
-      }
-
-      if (tableQuestionColumn >= 0 && tableMarksColumn >= 0 &&
-          cells[tableQuestionColumn] !== undefined && cells[tableMarksColumn] !== undefined) {
-        const identityCell = cells[tableQuestionColumn];
-        const markCell = cells[tableMarksColumn];
-        const rowCandidate = parseModelTestMarkingSchemeIdentityCell(identityCell, activeParent);
-        const markValueMatch = markCell.match(/^\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*[\])] ?\s*$/i)
-          || markCell.match(/^\s*(\d+(?:\.\d+)?)\s*$/);
-        if (rowCandidate && markValueMatch) {
-          finalizePending();
-          const rowMarks = Number(markValueMatch[1]);
-          if (rowMarks > 0) record(rowCandidate, rowMarks);
-          const parsedRow = parseCanonicalQuestionIdentity(rowCandidate.fullQuestionCode);
-          activeParent = parsedRow.isMcq ? '' : parsedRow.parentQuestionId;
-          activeLeaf = parsedRow.subQuestion ? rowCandidate.fullQuestionCode : '';
-          continue;
-        }
-        if (!identityCell && markValueMatch && pendingIdentity && pendingDirectMarks === undefined) {
-          const rowMarks = Number(markValueMatch[1]);
-          if (rowMarks > 0) {
-            pendingComponentMarks += rowMarks;
-            pendingComponentCount += 1;
-            continue;
-          }
-        }
-      }
-    }
-
     if (isModelTestMcqSectionHeading(line)) {
       insideMcqSection = true;
       activeParent = '';
@@ -818,6 +779,45 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   };
 
   for (const line of lines) {
+    const cells = splitModelTestMarkingSchemeCells(line);
+    if (cells.length >= 2) {
+      const normalizedCells = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ' ').replace(/\s+/g, ' ').trim());
+      const questionHeaderIndex = normalizedCells.findIndex((cell) => /^(?:question|question no|question number|ques|q no|part|sub question|item)$/.test(cell));
+      const marksHeaderIndex = normalizedCells.findIndex((cell) => /\b(?:maximum marks|max marks|marks|mark allocation|marks allocated|total marks)\b/.test(cell));
+      if (questionHeaderIndex >= 0 && marksHeaderIndex >= 0 && questionHeaderIndex !== marksHeaderIndex) {
+        finalizePending();
+        tableQuestionColumn = questionHeaderIndex;
+        tableMarksColumn = marksHeaderIndex;
+        continue;
+      }
+
+      if (tableQuestionColumn >= 0 && tableMarksColumn >= 0 &&
+          cells[tableQuestionColumn] !== undefined && cells[tableMarksColumn] !== undefined) {
+        const identityCell = cells[tableQuestionColumn];
+        const markCell = cells[tableMarksColumn];
+        const rowCandidate = parseModelTestMarkingSchemeIdentityCell(identityCell, activeParent);
+        const markValueMatch = markCell.match(/^\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*[\])] ?\s*$/i)
+          || markCell.match(/^\s*(\d+(?:\.\d+)?)\s*$/);
+        if (rowCandidate && markValueMatch) {
+          finalizePending();
+          const rowMarks = Number(markValueMatch[1]);
+          if (rowMarks > 0) record(rowCandidate, rowMarks);
+          const parsedRow = parseCanonicalQuestionIdentity(rowCandidate.fullQuestionCode);
+          activeParent = parsedRow.isMcq ? '' : parsedRow.parentQuestionId;
+          activeLeaf = parsedRow.subQuestion ? rowCandidate.fullQuestionCode : '';
+          continue;
+        }
+        if (!identityCell && markValueMatch && pendingIdentity && pendingDirectMarks === undefined) {
+          const rowMarks = Number(markValueMatch[1]);
+          if (rowMarks > 0) {
+            pendingComponentMarks += rowMarks;
+            pendingComponentCount += 1;
+            continue;
+          }
+        }
+      }
+    }
+
     if (isModelTestMcqSectionHeading(line)) {
       finalizePending();
       insideMcqSection = true;
