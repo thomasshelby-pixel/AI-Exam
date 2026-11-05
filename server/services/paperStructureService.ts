@@ -742,7 +742,8 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
     activeRootHasRomanChildren = false;
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     if (!inObjectivePart && /(?:PART|SECTION|DIVISION)\s+(?:I|1|A)\b[^\n]*(?:MCQ|MULTIPLE\s+CHOICE)/i.test(line)) {
       inObjectivePart = true;
       continue;
@@ -768,11 +769,25 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
       }
     }
 
-    // These are the four individual MCQs nested inside a case-scenario stem.
-    const romanPart = line.match(/^[ ]{0,8}(?:\(?)(i|ii|iii|iv|v|vi|vii|viii|ix|x)(?:\)?)[.)]\s+\S/i);
+    // A case-scenario stem may itself contain roman-numbered facts (i., ii.).
+    // Count a roman label as an MCQ only when that label owns a complete
+    // (a)-(d) option block before the next roman question or numbered root.
+    const romanPart = line.match(/^[ ]{0,24}\(?\s*(i|ii|iii|iv|v|vi|vii|viii|ix|x)\s*\)?[.)]\s+\S/i);
     if (romanPart && activeRootNumber !== null) {
-      activeRootHasRomanChildren = true;
-      addMcq();
+      const optionLetters = new Set<string>();
+      for (let lookAhead = lineIndex + 1; lookAhead < lines.length; lookAhead++) {
+        const nextLine = lines[lookAhead];
+        if (/^[ ]{0,24}\(?\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\s*\)?[.)]\s+\S/i.test(nextLine)) break;
+        if (/^\s{0,3}(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?)?\d{1,2}\s*[.)\-:]\s+\S.{2,}/i.test(nextLine)) break;
+        const option = nextLine.match(/^[ ]{0,28}\(([a-d])\)\s+\S/i);
+        if (option) optionLetters.add(option[1].toLowerCase());
+        if (['a', 'b', 'c', 'd'].every((letter) => optionLetters.has(letter))) break;
+      }
+
+      if (['a', 'b', 'c', 'd'].every((letter) => optionLetters.has(letter))) {
+        activeRootHasRomanChildren = true;
+        addMcq();
+      }
     }
   }
 
