@@ -1240,7 +1240,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 } catch (chunkErr: unknown) {
                   lastErr = chunkErr;
                   const rawDiagnostic = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
-                  const diagnostic = sanitizeSecretStrings(rawDiagnostic).replace(/\\s+/g, ' ').slice(0, 220);
+                  const diagnostic = sanitizeSecretStrings(rawDiagnostic).replace(/\s+/g, ' ').slice(0, 220);
                   console.error(`[EvaluationEngine] Fallback chain exhausted for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
                 }
 
@@ -1249,7 +1249,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 const rawFailureReason = lastErr instanceof Error ? lastErr.message : String(lastErr || 'Unknown technical failure');
-                const safeFailureReason = sanitizeSecretStrings(rawFailureReason).replace(/\\s+/g, ' ').slice(0, 220);
+                const safeFailureReason = sanitizeSecretStrings(rawFailureReason).replace(/\s+/g, ' ').slice(0, 220);
                 return {
                   questionNumber: subQ.questionNumber,
                   subQuestion: subQ.subQuestionNumber,
