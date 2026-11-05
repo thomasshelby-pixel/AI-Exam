@@ -720,7 +720,7 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
     const marks = pendingDirectMarks !== undefined
       ? pendingDirectMarks
       : pendingComponentCount > 0
-        ? pendingComponentMarks
+        ? Number(pendingComponentMarks.toFixed(2))
         : undefined;
     record(candidate, marks);
     pendingIdentity = '';
@@ -733,7 +733,17 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
     finalizePending();
     if (!candidate) return;
     pendingIdentity = candidate.fullQuestionCode;
-    pendingDirectMarks = findExplicitModelTestMarks(sourceLine, true);
+    const isInlineScoringComponent = /\d+(?:\.\d+)?\s*(?:MARKS?|M)\s+(?:FOR|EACH|PER|ON|WHEN|IF)\b/i.test(sourceLine);
+    pendingDirectMarks = isInlineScoringComponent
+      ? undefined
+      : findExplicitModelTestMarks(sourceLine, true);
+    if (pendingDirectMarks === undefined) {
+      const components = extractModelTestMarkComponents(sourceLine);
+      if (components.length > 0) {
+        pendingComponentMarks = components.reduce((sum, mark) => sum + mark, 0);
+        pendingComponentCount = components.length;
+      }
+    }
   };
 
   for (const line of lines) {
