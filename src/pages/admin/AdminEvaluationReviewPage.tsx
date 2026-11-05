@@ -233,6 +233,10 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
 
   const { evaluation, resultJson, activeVersion, versions, artifacts } = data;
   const questions = resultJson?.questions || [];
+  const isUnscoredReview = evaluation.status === 'NEEDS_REVIEW' && questions.length === 0;
+  const reviewDiagnostics = Array.isArray(resultJson?.validationErrors)
+    ? resultJson.validationErrors.filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
+    : [];
 
   // Compute live recalculated marks
   let liveTotalMarks = 0;
@@ -595,10 +599,14 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <Sparkles className="w-3.5 h-3.5" /> Confidence & Baseline
           </div>
           <p className="font-bold text-slate-800 text-sm">
-            {evaluation.confidence_score ? `${evaluation.confidence_score}% Confidence` : 'Verified Marking'}
+            {isUnscoredReview
+              ? 'Not scored — evaluation did not produce question marks'
+              : evaluation.confidence_score ? `${evaluation.confidence_score}% Confidence` : 'Verified Marking'}
           </p>
           <p className="text-slate-500">
-            Original Score: <span className="font-bold text-slate-800">{evaluation.total_marks}</span> / {evaluation.maximum_marks}
+            Original Score: <span className="font-bold text-slate-800">
+              {isUnscoredReview ? 'Not scored' : evaluation.total_marks}
+            </span>{!isUnscoredReview && ` / ${evaluation.maximum_marks}`}
           </p>
           <p className="text-[11px] text-slate-600">
             Original Grade: <span className="font-semibold text-slate-800">{evaluation.grade || 'N/A'}</span>
@@ -619,10 +627,12 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             )}
           </div>
           <p className="font-bold text-slate-900 text-lg">
-            {liveTotalMarks} <span className="text-xs text-slate-400 font-normal">/ {maxPaperMarks}</span>
+            {isUnscoredReview ? 'Not scored' : <>{liveTotalMarks} <span className="text-xs text-slate-400 font-normal">/ {maxPaperMarks}</span></>}
           </p>
           <p className="text-[11px] font-medium text-slate-600">
-            {livePercentage}% • <span className="font-bold text-blue-700">{liveGrade}</span>
+            {isUnscoredReview
+              ? 'No question-level marks exist to recalculate'
+              : <>{livePercentage}% • <span className="font-bold text-blue-700">{liveGrade}</span></>}
           </p>
         </div>
       </div>
@@ -806,6 +816,24 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           )}
         </div>
 
+        {isUnscoredReview ? (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-3">
+            <div className="font-semibold text-sm text-amber-950">
+              No question-level evaluation was generated. The stored 0 is a placeholder, not an academic score.
+            </div>
+            <p className="text-xs text-amber-900">
+              Do not affirm this result or publish Version 2 until the technical/integrity blocker is resolved and the answers have been scored.
+            </p>
+            {reviewDiagnostics.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-white p-3 space-y-1.5">
+                <p className="text-xs font-bold text-slate-800">Evaluation diagnostics</p>
+                {reviewDiagnostics.slice(0, 12).map((message, index) => (
+                  <p key={index} className="text-xs text-slate-700 break-words">{message}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="space-y-4">
           {questions.map((q, idx) => {
             const key = `${q.questionNumber}_${q.subQuestion || idx}`;
@@ -940,6 +968,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             );
           })}
         </div>
+        )}
       </div>
 
       {/* Review Finalization Control Card */}
@@ -958,7 +987,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             <span className="text-xs font-semibold text-slate-600">
               New Authoritative Total:{' '}
               <strong className="text-base text-slate-900 font-mono">
-                {liveTotalMarks} / {maxPaperMarks}
+                {isUnscoredReview ? 'Not available' : `${liveTotalMarks} / ${maxPaperMarks}`}
               </strong>
             </span>
           </div>
@@ -994,7 +1023,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             {evaluation.status === 'NEEDS_REVIEW' && (
               <button
                 onClick={handleVerifyConsistency}
-                disabled={saving}
+                disabled={saving || isUnscoredReview}
                 className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
                 title="Run automatic consistency verification and authoritative reconciliation"
               >
@@ -1006,7 +1035,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             {/* Affirm As-Is Option */}
             <button
               onClick={() => handleFinalize(true)}
-              disabled={saving}
+              disabled={saving || isUnscoredReview}
               className="px-4 py-2 border border-amber-300 hover:bg-amber-50 text-amber-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
               title="Confirm that original AI evaluation was correct and clear NEEDS_REVIEW without mark changes"
             >
@@ -1017,7 +1046,7 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
             {/* Primary Save & Finalize V2 */}
             <button
               onClick={() => handleFinalize(false)}
-              disabled={saving}
+              disabled={saving || isUnscoredReview}
               className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm transition cursor-pointer disabled:opacity-50"
             >
               {saving ? (
