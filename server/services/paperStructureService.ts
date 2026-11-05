@@ -570,6 +570,45 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   };
 
   for (const line of lines) {
+    const cells = splitModelTestMarkingSchemeCells(line);
+    if (cells.length >= 2) {
+      const normalizedCells = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ' ').replace(/\s+/g, ' ').trim());
+      const questionHeaderIndex = normalizedCells.findIndex((cell) => /^(?:question|question no|question number|ques|q no|part|sub question|item)$/.test(cell));
+      const marksHeaderIndex = normalizedCells.findIndex((cell) => /\b(?:maximum marks|max marks|marks|mark allocation|marks allocated|total marks)\b/.test(cell));
+      if (questionHeaderIndex >= 0 && marksHeaderIndex >= 0 && questionHeaderIndex !== marksHeaderIndex) {
+        finalizePending();
+        tableQuestionColumn = questionHeaderIndex;
+        tableMarksColumn = marksHeaderIndex;
+        continue;
+      }
+
+      if (tableQuestionColumn >= 0 && tableMarksColumn >= 0 &&
+          cells[tableQuestionColumn] !== undefined && cells[tableMarksColumn] !== undefined) {
+        const identityCell = cells[tableQuestionColumn];
+        const markCell = cells[tableMarksColumn];
+        const rowCandidate = parseModelTestMarkingSchemeIdentityCell(identityCell, activeParent);
+        const markValueMatch = markCell.match(/^\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*[\])] ?\s*$/i)
+          || markCell.match(/^\s*(\d+(?:\.\d+)?)\s*$/);
+        if (rowCandidate && markValueMatch) {
+          finalizePending();
+          const rowMarks = Number(markValueMatch[1]);
+          if (rowMarks > 0) record(rowCandidate, rowMarks);
+          const parsedRow = parseCanonicalQuestionIdentity(rowCandidate.fullQuestionCode);
+          activeParent = parsedRow.isMcq ? '' : parsedRow.parentQuestionId;
+          activeLeaf = parsedRow.subQuestion ? rowCandidate.fullQuestionCode : '';
+          continue;
+        }
+        if (!identityCell && markValueMatch && pendingIdentity && pendingDirectMarks === undefined) {
+          const rowMarks = Number(markValueMatch[1]);
+          if (rowMarks > 0) {
+            pendingComponentMarks += rowMarks;
+            pendingComponentCount += 1;
+            continue;
+          }
+        }
+      }
+    }
+
     if (isModelTestMcqSectionHeading(line)) {
       insideMcqSection = true;
       activeParent = '';
@@ -667,7 +706,8 @@ function findExplicitModelTestMarks(line: string, allowBareBracket = false): num
 
   if (allowBareBracket) {
     const bracketMatch = value.match(/(?:\[|\()\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*(?:\]|\))\s*$/i)
-      || value.match(/[-–—:]\s*(\d+(?:\.\d+)?)\s*$/);
+      || value.match(/[-–—:|]\s*(\d+(?:\.\d+)?)\s*$/)
+      || value.match(/(?:\t+| {2,})(\d+(?:\.\d+)?)\s*$/);
     if (bracketMatch) {
       const parsed = Number(bracketMatch[1]);
       return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -691,6 +731,35 @@ function extractModelTestMarkComponents(line: string): number[] {
   return values;
 }
 
+function splitModelTestMarkingSchemeCells(line: string): string[] {
+  const value = String(line || '').trim();
+  if (!value) return [];
+  if (value.includes('|')) return value.split('|').map((cell) => cell.trim()).filter(Boolean);
+  if (value.includes('\t')) return value.split(/\t+/).map((cell) => cell.trim()).filter(Boolean);
+  // PDF-to-TXT extractors often preserve table columns as multiple spaces.
+  if (/\S\s{2,}\S/.test(value)) return value.split(/\s{2,}/).map((cell) => cell.trim()).filter(Boolean);
+  return [];
+}
+
+function parseModelTestMarkingSchemeIdentityCell(
+  value: string,
+  activeParent: string,
+): ModelTestQuestionCandidate | null {
+  const cell = String(value || '').trim();
+  if (!cell) return null;
+  const explicit = parseModelTestQuestionHeading(cell);
+  if (explicit) return explicit;
+  const mcq = cell.match(/^MCQ\s*(\d{1,2})$/i);
+  if (mcq) return toModelTestCandidate('MCQ' + mcq[1]);
+  const bareSubQuestion = parseModelTestBareSubQuestionHeading(cell);
+  if (bareSubQuestion) return bareSubQuestion;
+  const bareParent = cell.match(/^(?:Q\.?\s*)?(\d{1,2})$/i);
+  if (bareParent) return toModelTestCandidate('Q' + bareParent[1]);
+  const child = cell.match(/^\(([a-z])\)$/i);
+  if (child && activeParent) return toModelTestCandidate(activeParent + '(' + child[1].toLowerCase() + ')');
+  return null;
+}
+
 function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): Map<string, ModelTestQuestionCandidate & { maximumMarks: number }> {
   const allocations = new Map<string, ModelTestQuestionCandidate & { maximumMarks: number }>();
   const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
@@ -705,6 +774,8 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   let pendingComponentCount = 0;
   let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
+  let tableQuestionColumn = -1;
+  let tableMarksColumn = -1;
 
   const record = (candidate: ModelTestQuestionCandidate | null, marks: number | undefined) => {
     if (!candidate || !marks || marks <= 0) return;
