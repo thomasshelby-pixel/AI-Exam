@@ -72,7 +72,6 @@ export function getAuthoritativePaperStructure(options: {
     subjectName = '',
     paper = '',
     officialPaperMaxMarks = 100,
-    materialType = '',
   } = options;
 
   const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
