@@ -19,6 +19,18 @@ Question 1(b): Compute tax liability.
   const parsed = extractOfficialMcqKeysFromSuggestedAnswers(descriptiveOnly);
   assert.equal(parsed.size, 0, 'Descriptive Q1(a) must not be interpreted as the key for MCQ 1.');
 
+  const ambiguousCombinedFallback = `
+[AUTHORITATIVE COMBINED PYQ DOCUMENT - SUGGESTED ANSWERS]
+Division A
+1. (B) These are Question Paper options, not a verified answer key.
+Division B
+`;
+  assert.equal(
+    extractOfficialMcqKeysFromSuggestedAnswers(ambiguousCombinedFallback).size,
+    0,
+    'An unsplit combined PYQ fallback must not be trusted as an MCQ answer key.',
+  );
+
   const structure = getAuthoritativePaperStructure({
     level: 'INTERMEDIATE',
     paper: 'Paper 3',
