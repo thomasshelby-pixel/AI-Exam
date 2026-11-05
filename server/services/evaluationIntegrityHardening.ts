@@ -29,7 +29,6 @@ import {
 } from '../../src/types/index.js';
 import {
   toCanonicalQuestionId,
-  parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
   validateQuestionDeduplication,
 } from './canonicalQuestionService.js';
