@@ -1312,9 +1312,9 @@ const pageNumberBetweenQuestionAndMarks = getAuthoritativePaperStructure({
     '                                      6',
     'Continuation of the second requirement. (9 Marks)',
     '2. Prepare the required statement. (14 Marks)',
-  ].join('\\n'),
-  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\\nDivision B\\nQuestion 1\\nQuestion 2',
-  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\\nPART II - DESCRIPTIVE MARK ALLOCATION\\nQUESTION 1 - MAXIMUM 14 MARKS\\nQUESTION 2 - MAXIMUM 14 MARKS',
+  ].join('\n'),
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nQuestion 1\nQuestion 2',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 1 - MAXIMUM 14 MARKS\nQUESTION 2 - MAXIMUM 14 MARKS',
 });
 assert.deepEqual(
   pageNumberBetweenQuestionAndMarks.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
