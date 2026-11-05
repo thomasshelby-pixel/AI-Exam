@@ -20,7 +20,7 @@ import {
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
-import { mergeMcqSelectionsSafely, parseAndValidatePageCoverageOutput, requiresDescriptiveCoverageReview } from '../services/answerSheetCoverageService.js';
+import { parseAndValidatePageCoverageOutput } from '../services/answerSheetCoverageService.js';
 import { getQuestionReferenceReviewErrors } from '../services/evaluationIntegrityEngine.js';
 import {
   getSupportedThinkingLevel,
@@ -436,7 +436,6 @@ async function runTests() {
   const validCoverage = {
     status: 'ATTEMPTED_READABLE',
     hasHandwriting: true,
-    hasDescriptiveWork: true,
     summary: 'Candidate answered Q2(a).',
     detectedQuestions: [{
       questionNumber: '2',
@@ -449,129 +448,103 @@ async function runTests() {
   };
   assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).detectedQuestions.length, 1);
   assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).mcqSelections['1'], 'B');
-  assert.equal(parseAndValidatePageCoverageOutput(JSON.stringify(validCoverage)).hasDescriptiveWork, true);
   assert.equal(
-    requiresDescriptiveCoverageReview(true, ['MCQ1', 'MCQ2']),
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: {},
+      isContinuation: true,
+      summary: 'Continuation of the previous answer.',
+    })).isContinuation,
     true,
-    'MCQ detection alone must not count as mapped descriptive work.',
-  );
-  assert.equal(
-    requiresDescriptiveCoverageReview(true, ['Q2(a)', 'MCQ1']),
-    false,
-    'A page with a mapped descriptive question and MCQ selections is fully mapped.',
-  );
-  assert.equal(
-    requiresDescriptiveCoverageReview(false, ['MCQ1']),
-    false,
-    'An MCQ-only page must not be treated as missing descriptive work.',
-  );
-  const mergedMcqSelections: Record<string, string> = {};
-  const conflictingMcqNumbers = new Set<string>();
-  assert.deepEqual(
-    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B', '2': 'C' }, conflictingMcqNumbers),
-    [],
-    'Initial MCQ selections must be accepted.',
+    'Top-level continuation signal must survive validated page parsing.',
   );
   assert.deepEqual(
-    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B' }, conflictingMcqNumbers),
-    [],
-    'Repeated identical selection across pages must remain stable.',
+    parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [],
+      mcqSelections: { 'MCQ 1': 'Option B', '1': 'B' },
+    })).mcqSelections,
+    { '1': 'B' },
+    'Equivalent MCQ keys must normalize to one canonical question number.',
   );
-  assert.deepEqual(
-    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'C' }, conflictingMcqNumbers),
-    ['1'],
-    'A different selection on a later page must be classified as a conflict.',
-  );
-  assert.equal(mergedMcqSelections['1'], undefined, 'Conflicting MCQ answer must be removed rather than choosing the first or last option.');
-  assert.equal(conflictingMcqNumbers.has('1'), true);
-  mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'A' }, conflictingMcqNumbers);
-  assert.equal(mergedMcqSelections['1'], undefined, 'A conflicted answer must not be silently restored by a later page.');
-  const legacyMixedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+  const conflictingMcqOnly = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_READABLE',
-    hasHandwriting: true,
-    summary: 'Q2(a) calculation and working; MCQ answers are also visible.',
-    detectedQuestions: [
-      { questionNumber: '2', subQuestion: 'a', parentQuestionNumberVisible: true, snippet: 'Working and conclusion.' },
-      { subQuestion: 'b', parentQuestionNumberVisible: true },
-      null,
-    ],
-    mcqSelections: { '1': 'B', '2': 'Z', 'MCQ 3': 'Option C' },
-  }));
-  assert.equal(legacyMixedPage.hasDescriptiveWork, true, 'A legacy response with descriptive identity and calculation evidence must retain descriptive coverage.');
-  assert.equal(legacyMixedPage.detectedQuestions.length, 1, 'Malformed detections must not erase valid question mappings from the same page.');
-  assert.equal(legacyMixedPage.detectedQuestions[0].questionNumber, '2');
-  assert.equal(legacyMixedPage.detectedQuestions[0].subQuestion, 'a');
-  assert.equal(legacyMixedPage.mcqSelections['1'], 'B', 'A valid MCQ selection must survive an unrelated invalid selection.');
-  assert.equal(legacyMixedPage.mcqSelections['3'], 'C', 'Equivalent option wording must normalize correctly.');
-  assert.ok(legacyMixedPage.mappingWarnings.length >= 2, 'Malformed detections and invalid options must remain visible for manual review.');
-
-  const numericSubQuestion = parseAndValidatePageCoverageOutput(JSON.stringify({
-    status: 'ATTEMPTED_READABLE',
-    hasHandwriting: true,
-    hasDescriptiveWork: true,
-    detectedQuestions: [{ questionNumber: 5, subQuestion: 1, parentQuestionNumberVisible: true }],
-    mcqSelections: {},
-  }));
-  assert.equal(numericSubQuestion.detectedQuestions[0].questionNumber, '5');
-  assert.equal(numericSubQuestion.detectedQuestions[0].subQuestion, '1', 'Numeric sub-question labels must remain backward-compatible.');
-
-  const legacyMcqOnlyPage = parseAndValidatePageCoverageOutput(JSON.stringify({
-    status: 'ATTEMPTED_READABLE',
-    hasHandwriting: true,
-    summary: 'Only options A, B and C are marked on this page.',
     detectedQuestions: [],
-    mcqSelections: { 'MCQ 1': 'Option B' },
+    mcqSelections: { 'MCQ 1': 'A', '1': 'B' },
   }));
-  assert.equal(legacyMcqOnlyPage.hasDescriptiveWork, false, 'A legacy page with only MCQ selections must not be forced into descriptive review.');
-
-  const ambiguousLegacyPage = parseAndValidatePageCoverageOutput(JSON.stringify({
-    status: 'ATTEMPTED_READABLE',
-    hasHandwriting: true,
-    summary: 'Handwritten answer is visible, but no question label was identified.',
-    detectedQuestions: [],
-    mcqSelections: {},
-  }));
-  assert.equal(ambiguousLegacyPage.hasDescriptiveWork, true, 'Unmapped handwriting without MCQ-only evidence must be preserved as possible descriptive work.');
-  assert.ok(ambiguousLegacyPage.mappingWarnings.length > 0, 'Ambiguous legacy handwriting must remain a review issue.');
-
-  const conflictedMcq = parseAndValidatePageCoverageOutput(JSON.stringify({
-    status: 'ATTEMPTED_READABLE',
-    hasHandwriting: true,
-    hasDescriptiveWork: false,
-    detectedQuestions: [],
-    mcqSelections: { 'MCQ 1': 'A', '1': 'B', '2': 'C' },
-  }));
-  assert.equal(conflictedMcq.mcqSelections['1'], undefined, 'Conflicting answers for one MCQ must never be selected arbitrarily.');
-  assert.equal(conflictedMcq.mcqSelections['2'], 'C', 'A conflict on one MCQ must not erase another valid MCQ.');
-  assert.ok(conflictedMcq.mappingWarnings.some((warning) => warning.includes('Conflicting options')));
-
-  const contradictoryBlankPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+  assert.equal(conflictingMcqOnly.mcqSelections['1'], undefined, 'Conflicting options must not be selected arbitrarily.');
+  assert.ok(conflictingMcqOnly.mappingWarnings.length > 0, 'Conflicting MCQ output must remain a page-level review issue.');
+  const contradictoryBlank = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'CLEARLY_UNATTEMPTED',
-    hasHandwriting: true,
-    hasDescriptiveWork: true,
-    detectedQuestions: [{ questionNumber: '4', subQuestion: 'a', parentQuestionNumberVisible: true }],
+    detectedQuestions: [{ questionNumber: '2', subQuestion: 'a' }],
     mcqSelections: {},
   }));
-  assert.equal(contradictoryBlankPage.status, 'ATTEMPTED_UNCLEAR', 'Detected work must not be discarded because the model labeled the page blank.');
-  assert.equal(contradictoryBlankPage.detectedQuestions.length, 1, 'The valid question identity must survive a contradictory status.');
-  assert.ok(contradictoryBlankPage.mappingWarnings.length > 0);
-
+  assert.equal(contradictoryBlank.status, 'ATTEMPTED_UNCLEAR', 'A page cannot be accepted as blank when it contains a detected answer.');
+  assert.equal(contradictoryBlank.detectedQuestions.length, 1, 'A valid question identity must survive the status contradiction.');
+  assert.ok(contradictoryBlank.mappingWarnings.length > 0, 'A contradictory page must remain a review issue.');
   assert.equal(
     parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'CLEARLY_UNATTEMPTED',
-      hasHandwriting: false,
-      hasDescriptiveWork: false,
       detectedQuestions: [],
       mcqSelections: {},
     })).status,
     'CLEARLY_UNATTEMPTED',
-    'A genuinely blank page remains a valid blank-page result.',
+    'A truly blank page is valid coverage output and must not trigger provider fallback.',
   );
   assert.throws(
     () => parseAndValidatePageCoverageOutput('not valid JSON'),
     /PAGE_COVERAGE_INVALID_JSON/,
-    'Malformed JSON must still trigger provider fallback.',
+    'Malformed page mapping JSON must trigger provider fallback.',
   );
+  const unmappedEntryOnly = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    detectedQuestions: [{ subQuestion: 'a' }],
+    mcqSelections: {},
+  }));
+  assert.equal(unmappedEntryOnly.detectedQuestions.length, 0, 'An answer without safe identity must not be mapped.');
+  assert.ok(unmappedEntryOnly.mappingWarnings.length > 0, 'An answer without safe identity must remain a manual-review issue.');
+  const invalidOptionOnly = parseAndValidatePageCoverageOutput(JSON.stringify({
+    ...validCoverage,
+    mcqSelections: { '1': 'Z' },
+  }));
+  assert.equal(invalidOptionOnly.mcqSelections['1'], undefined, 'An invalid MCQ option must not be scored.');
+  assert.ok(invalidOptionOnly.mappingWarnings.length > 0, 'An invalid MCQ option must remain a review issue.');
+
+  // A malformed detection on a mixed page must not erase other safely mapped
+  // questions or valid MCQs. The bad entry remains a review warning.
+  const partiallyResolvablePage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    detectedQuestions: [
+      { questionNumber: '2', subQuestion: 'a', parentQuestionNumberVisible: true, snippet: 'Readable Q2(a) working.' },
+      { subQuestion: 'b', parentQuestionNumberVisible: true },
+    ],
+    mcqSelections: { '1': 'B', '9': 'Z' },
+  }));
+  assert.equal(partiallyResolvablePage.detectedQuestions.length, 1, 'A malformed page entry must not discard a separate valid mapped question.');
+  assert.equal(partiallyResolvablePage.detectedQuestions[0].questionNumber, '2');
+  assert.equal(partiallyResolvablePage.mcqSelections['1'], 'B', 'A valid MCQ must survive a different invalid MCQ selection.');
+  assert.ok(partiallyResolvablePage.mappingWarnings.length >= 2, 'Unmapped answer content and the invalid MCQ must remain visible for review.');
+
+  const conflictedMcqMixedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    detectedQuestions: [{ questionNumber: '3', subQuestion: 'a', parentQuestionNumberVisible: true }],
+    mcqSelections: { 'MCQ 1': 'A', '1': 'B', '2': 'C' },
+  }));
+  assert.equal(conflictedMcqMixedPage.detectedQuestions.length, 1, 'Conflicting MCQ keys must not discard descriptive answers on the same page.');
+  assert.equal(conflictedMcqMixedPage.mcqSelections['1'], undefined, 'Conflicting answers for the same MCQ must not be guessed.');
+  assert.equal(conflictedMcqMixedPage.mcqSelections['2'], 'C', 'Unrelated valid MCQ selections must be preserved.');
+  assert.ok(conflictedMcqMixedPage.mappingWarnings.some((warning) => warning.includes('Conflicting options')));
+
+  const contradictoryBlankPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'CLEARLY_UNATTEMPTED',
+    detectedQuestions: [{ questionNumber: '4', subQuestion: 'a', parentQuestionNumberVisible: true }],
+    mcqSelections: {},
+  }));
+  assert.equal(contradictoryBlankPage.status, 'ATTEMPTED_UNCLEAR', 'A page with detected work must never be silently treated as blank.');
+  assert.equal(contradictoryBlankPage.detectedQuestions.length, 1, 'The valid question identity must remain available for provisional scoring.');
+  assert.ok(contradictoryBlankPage.mappingWarnings.length > 0, 'The contradictory page status must require review.');
 
   const mislabeledPartialChunk = {
     ...validChunk,
