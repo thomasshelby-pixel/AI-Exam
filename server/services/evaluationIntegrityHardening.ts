@@ -128,6 +128,27 @@ export function validatePreEvaluationGate(params: {
     criticalFailures.push(msg);
   }
 
+  // Model Test source identity and mark allocation must reconcile before page AI
+  // analysis. Never allow a partial Marking Scheme to shrink the QP inventory.
+  const modelTestInventory = paperStructure?.sourceInventoryDiagnostics;
+  if (modelTestInventory?.sourceType === 'MODEL_TEST_PAPER') {
+    if (modelTestInventory.questionPaperQuestionIds.length === 0) {
+      const msg = 'MODEL_TEST_QUESTION_INVENTORY_EMPTY: No question IDs could be independently extracted from the selected Question Paper.';
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
+    }
+    for (const questionId of modelTestInventory.missingMarkQuestionIds) {
+      const msg = 'MODEL_TEST_MARKS_NOT_RECONCILED: ' + questionId + ' is present in the selected Question Paper but has no explicit maximum-mark allocation in the selected Marking Scheme.';
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
+    }
+    for (const questionId of modelTestInventory.markingSchemeOnlyQuestionIds) {
+      const msg = 'MODEL_TEST_MARKING_SCHEME_SOURCE_CONFLICT: ' + questionId + ' has a mark allocation in the selected Marking Scheme but is not present in the selected Question Paper inventory.';
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
+    }
+  }
+
   // 2. Canonical question map valid: check for malformed IDs like Q3(b(b))
   for (const sq of subQs) {
     const canon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
