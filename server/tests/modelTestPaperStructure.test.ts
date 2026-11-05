@@ -297,4 +297,98 @@ assert.deepEqual(
 );
 assert.deepEqual(bareSubQuestionModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
 
+
+const parentTotalOnlyModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `Question 1
+(a) Journal entries.
+(b) Revised balance sheet.`,
+  suggestedAnswersText: 'Suggested answers for Q1(a) and Q1(b).',
+  markingSchemeText: 'Question 1 - 20 Marks',
+});
+assert.deepEqual(
+  parentTotalOnlyModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1(a)', 'Q1(b)'],
+);
+assert.deepEqual(parentTotalOnlyModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, ['Q1(a)', 'Q1(b)']);
+assert.deepEqual(
+  parentTotalOnlyModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds,
+  [],
+  'A QP-confirmed parent total is not an orphan Marking Scheme question when its children exist.',
+);
+const parentTotalGate = validatePreEvaluationGate({
+  paperStructure: parentTotalOnlyModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Suggested Answers verified.',
+  markingSchemeText: 'Marking Scheme verified.',
+});
+assert.equal(parentTotalGate.passed, false);
+assert.ok(parentTotalGate.failedInvariants.some((message) => message.includes('MODEL_TEST_MARKS_NOT_RECONCILED: Q1(a)')));
+
+// A section-labelled objective paper remains split into MCQ identities and
+// descriptive question identities, with source-defined MCQ marks.
+const sectionLabelledObjectiveModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 20,
+  questionPaperText: `MODEL TEST PAPER 1
+Section A (MCQs)
+Question No. 1 - Select one option.
+Question No. 2 - Select one option.
+Section B (Descriptive)
+Question No. 3 - Prepare the statement.`,
+  suggestedAnswersText: `MODEL TEST PAPER 1 SUGGESTED ANSWERS
+Multiple Choice Questions
+1. (b)
+2. (c)
+Descriptive Questions
+Question 3 - Full solution.`,
+  markingSchemeText: `MODEL TEST PAPER 1 MARKING SCHEME
+Section A (MCQs)
+Question No. 1 - 1 Mark
+Question No. 2 - 1 Mark
+Section B (Descriptive)
+Question No. 3 - 18 Marks.`,
+});
+assert.deepEqual(
+  sectionLabelledObjectiveModelTest.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks, question.officialKey]),
+  [['MCQ1', 1, 'B'], ['MCQ2', 1, 'C']],
+);
+assert.deepEqual(
+  sectionLabelledObjectiveModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q3', 18]],
+);
+assert.deepEqual(sectionLabelledObjectiveModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, []);
+
+// Never silently omit an MCQ whose official key is missing from the selected SA.
+const missingMcqKeyModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `Multiple Choice Questions
+Question 1 - Select one answer.
+Question 2 - Select one answer.`,
+  suggestedAnswersText: `Suggested Answers
+Multiple Choice Questions
+1. (b)`,
+  markingSchemeText: `Multiple Choice Questions
+Question 1 - 1 Mark
+Question 2 - 1 Mark`,
+});
+assert.deepEqual(missingMcqKeyModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, ['MCQ2']);
+const missingMcqKeyGate = validatePreEvaluationGate({
+  paperStructure: missingMcqKeyModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Suggested Answers verified.',
+  markingSchemeText: 'Marking Scheme verified.',
+});
+assert.equal(missingMcqKeyGate.passed, false);
+assert.ok(missingMcqKeyGate.failedInvariants.some((message) => message.includes('MISSING_OFFICIAL_MCQ_KEY: MCQ 2')));
+
 console.log('Model Test dynamic paper structure tests passed.');
