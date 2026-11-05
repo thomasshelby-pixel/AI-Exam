@@ -280,4 +280,21 @@ assert.deepEqual(
 );
 assert.deepEqual(mixedObjectiveAndDescriptiveModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
 
+
+const bareSubQuestionModelTest = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Financial Reporting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Q. No. 4(b) Explain the consolidation adjustment.',
+  suggestedAnswersText: 'Suggested Answer for Question 4(b).',
+  markingSchemeText: '4(b) [4 Marks]',
+});
+assert.deepEqual(
+  bareSubQuestionModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q4(b)', 4]],
+  'Bare numbered sub-question labels and bracketed mark values must be reconciled safely.',
+);
+assert.deepEqual(bareSubQuestionModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+
 console.log('Model Test dynamic paper structure tests passed.');
