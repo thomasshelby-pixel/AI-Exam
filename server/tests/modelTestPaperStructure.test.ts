@@ -87,6 +87,14 @@ const unparseableModelTest = getAuthoritativePaperStructure({
 assert.equal(unparseableModelTest.subQuestions.length, 0,
   'An unparseable Model Test must not receive invented Q1–Q6 defaults.');
 assert.equal(unparseableModelTest.mcqs.length, 0);
+const unparseableGate = validatePreEvaluationGate({
+  paperStructure: unparseableModelTest,
+  questionPaperText: 'Question paper text without numbered questions.',
+  suggestedAnswersText: 'Suggested answers are present but cannot identify questions.',
+  markingSchemeText: 'Marking scheme is present but does not identify allocations.',
+});
+assert.equal(unparseableGate.passed, false);
+assert.ok(unparseableGate.failedInvariants.some((message) => message.includes('MODEL_TEST_QUESTION_INVENTORY_EMPTY')));
 
 const mtp = getAuthoritativePaperStructure({ ...shared, materialType: 'MTP' });
 assert.ok(mtp.subQuestions.some((question) => question.fullQuestionCode === 'Q5(a)'),
