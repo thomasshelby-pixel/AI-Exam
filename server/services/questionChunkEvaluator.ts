@@ -365,22 +365,25 @@ ${transformationContextText}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
 
-UNIVERSAL HANDWRITING READING AND QUESTION-ISOLATION RULES (apply to every CA level and subject):
-- Read the attached page(s) as visual handwritten evidence, not as clean typed text. Inspect the entire page and the relevant answer block carefully, including margins, headings, sub-parts, tables and working notes.
-- Be resilient to cursive/connected letters, slanted writing, faint strokes, small or uneven letters, mixed print and cursive, overwritten figures, crossed-out and rewritten workings, abbreviations, arrows, underlining and handwritten symbols.
-- Interpret the page format according to its visible structure: ledger/journal entries, debit-credit columns, trial balances, financial statements, calculations, formulas, tables, legal/theory paragraphs, tax workings, audit notes, case-study responses and mixed formats.
-- Read numbers carefully, including decimal points, minus signs, brackets, commas, Dr/Cr columns and percentage signs. Use nearby visual context to distinguish similar characters, but never invent a missing digit, amount, word, provision or formula.
-- Use the selected Question Paper and verified Suggested Answer to understand context and common abbreviations. Context may clarify a genuinely visible handwritten word; it must not replace or contradict the candidate's actual writing.
-- A page may contain more than one question. Isolate only the answer block belonging to the locked question identity ${fullCode}. Do not award another question's work to this question merely because it appears on the same page.
-- Preserve partial credit for every independently readable and relevant step. Do not treat a hard-to-read line as automatically omitted or incorrect. Mark only the genuinely unreadable component as unclear; when essential evidence cannot be resolved, state the uncertainty and require review instead of guessing.
-- Transcribe studentEvidence faithfully. When a word/figure is only partly readable, say so explicitly (for example, "[partially legible]") rather than fabricating a confident transcription.
-- Handwriting style, neatness, slant, letter formation and presentation must never affect academic marks. Assess the accounting/legal/tax/technical substance against the official criteria only.
+UNIVERSAL HANDWRITING AND QUESTION-ISOLATION RULES (all CA levels and subjects):
+- Read the supplied page images visually. Handle faint/cursive, slanted, small, mixed print/cursive,
+  overwritten or rewritten writing, symbols, arrows and abbreviations.
+- Interpret visible layouts correctly: tables, ledgers/journals, Dr/Cr columns, statements,
+  calculations, formulas, working notes, legal/theory paragraphs, tax workings, audit notes
+  and case-study answers.
+- Read figures/signs carefully (decimals, negatives, brackets, commas, percentages). Context may
+  clarify visible writing but must never be used to invent missing words, figures or provisions.
+- Isolate only the answer block belonging to the locked question identity ${fullCode}. A page may
+  contain multiple questions; never award neighbouring-question work to this question.
+- Hard-to-read writing is not automatically omitted or incorrect. Award partial credit for each
+  independently readable relevant step; mark only genuinely unresolved evidence unclear.
+- Quote studentEvidence faithfully. Mark partly readable text as "[partially legible]" instead of
+  fabricating a transcription. Handwriting neatness/style must never affect academic marks.
 
 STRICT QUESTION-IDENTITY LOCK:
-- The question identity and maximum marks supplied above are authoritative and immutable.
-- Confirm that the visible answer block is for ${fullCode}. If a different or ambiguous question is present on the supplied page, do not silently remap it; return an unclear/review outcome for the affected evidence.
-- Never use page number, answer order, expected question sequence or subject stereotypes to decide which question the student attempted.
-
+- The supplied question ID and maximum marks are immutable. Do not remap by page number, answer
+  order, expected sequence or subject assumptions. If the answer block identity is ambiguous,
+  preserve it for review rather than scoring another question.
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
