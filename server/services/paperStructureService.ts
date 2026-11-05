@@ -1294,6 +1294,25 @@ function buildModelTestPaperStructure(options: {
     }
   }
 
+  // Compulsory and choice rules are source-driven, not generic Model Test defaults.
+  const selectedMarkingSchemeText = String(options.markingSchemeText || '');
+  const compulsoryParentNumbers = new Set<string>();
+  const compulsoryQuestionPattern = /\bQUESTION\s*(\d{1,2})\s+IS\s+COMPULSORY\b/gi;
+  for (const match of selectedMarkingSchemeText.matchAll(compulsoryQuestionPattern)) {
+    compulsoryParentNumbers.add(String(Number(match[1])));
+  }
+  const choiceGroupMatch = selectedMarkingSchemeText.match(
+    /\bATTEMPT\s+ANY\s+(\d{1,2})\s+QUESTIONS?\s+FROM\s+QUESTIONS?\s*(\d{1,2})\s*(?:TO|[-–—])\s*(\d{1,2})\b/i
+  );
+  const choiceRuleText = choiceGroupMatch
+    ? 'Attempt any ' + Number(choiceGroupMatch[1]) + ' of Questions ' + Number(choiceGroupMatch[2]) + ' to ' + Number(choiceGroupMatch[3])
+    : undefined;
+  const questionIsInChoiceGroup = (questionNumber: string) => {
+    if (!choiceGroupMatch) return false;
+    const number = Number(questionNumber);
+    return number >= Number(choiceGroupMatch[2]) && number <= Number(choiceGroupMatch[3]);
+  };
+
   const subQuestions: PaperStructureSubQuestion[] = candidateIds
     .filter((candidate) => !candidate.isMcq)
     .map((candidate) => ({
@@ -1301,9 +1320,7 @@ function buildModelTestPaperStructure(options: {
       questionNumber: candidate.questionNumber,
       subQuestionNumber: candidate.subQuestionNumber,
       maximumMarks: Number(candidate.maximumMarks || markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0),
-      // The selected Marking Scheme says Question 1 is compulsory;
-      // Questions 2–6 form an optional "attempt any four" group.
-      compulsory: candidate.questionNumber === '1',
+      compulsory: compulsoryParentNumbers.has(candidate.questionNumber),
       isMcq: false,
       section: 'GENERAL',
       division: 'B',
@@ -1317,8 +1334,8 @@ function buildModelTestPaperStructure(options: {
         questionNumber: subQuestion.questionNumber,
         section: 'GENERAL',
         division: 'B',
-        compulsory: subQuestion.questionNumber === '1',
-        choiceRule: subQuestion.questionNumber === '1' ? undefined : 'Attempt any four of Questions 2 to 6',
+        compulsory: compulsoryParentNumbers.has(subQuestion.questionNumber),
+        choiceRule: questionIsInChoiceGroup(subQuestion.questionNumber) ? choiceRuleText : undefined,
         maximumMarks: 0,
         subQuestions: [],
       });
