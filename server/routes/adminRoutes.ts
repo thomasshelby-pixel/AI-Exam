@@ -25,6 +25,7 @@ import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } fr
 import { extractMaterialFromPDF } from '../gemini.js';
 import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
+import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { validateSrn } from '../utils/srnValidator.js';
@@ -1724,7 +1725,42 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Evaluation material not found' });
     }
 
-    return res.json({ material });
+    let sourceInventoryAudit: any = undefined;
+    if (String(material.material_type || material.materialType || '').toUpperCase() === 'MODEL_TEST_PAPER') {
+      const structure = getAuthoritativePaperStructure({
+        level: material.level,
+        subjectName: material.subject_name || material.subjectName,
+        paper: material.paper,
+        materialType: 'MODEL_TEST_PAPER',
+        questionPaperText: material.question_paper_text || material.questionPaperText,
+        suggestedAnswersText: material.suggested_answers_text || material.suggestedAnswersText,
+        markingSchemeText: material.marking_scheme_text || material.markingSchemeText,
+        officialPaperMaxMarks: Number(material.official_max_marks || material.officialPaperMaxMarks) || 100,
+      });
+      const inventory = structure.sourceInventoryDiagnostics;
+      const missingMaximumMarks = [
+        ...structure.subQuestions.filter((item) => !Number.isFinite(item.maximumMarks) || item.maximumMarks <= 0).map((item) => item.fullQuestionCode),
+        ...structure.mcqs.filter((item) => !Number.isFinite(item.maximumMarks) || item.maximumMarks <= 0).map((item) => item.fullQuestionCode),
+      ];
+      sourceInventoryAudit = {
+        questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
+        markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
+        missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
+        missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
+        markingSchemeOnlyQuestionIds: inventory?.markingSchemeOnlyQuestionIds || [],
+        missingMaximumMarks: Array.from(new Set(missingMaximumMarks)),
+        isReadyForEvaluation: Boolean(
+          inventory &&
+          inventory.questionPaperQuestionIds.length > 0 &&
+          inventory.missingMarkQuestionIds.length === 0 &&
+          inventory.missingMcqKeyQuestionIds.length === 0 &&
+          inventory.markingSchemeOnlyQuestionIds.length === 0 &&
+          missingMaximumMarks.length === 0
+        ),
+      };
+    }
+
+    return res.json({ material, sourceInventoryAudit });
   } catch (error: unknown) {
     console.error('Get single material error:', error);
     return res.status(500).json({ error: 'Failed to load material details' });

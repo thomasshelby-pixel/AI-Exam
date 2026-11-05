@@ -408,8 +408,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     setInspectMaterial(mat);
     setLoadingInspect(true);
     try {
-      const res = await apiRequest<{ material: any }>(`/api/admin/materials/${mat.id}`);
-      setInspectFullText(res.material);
+      const res = await apiRequest<{ material: any; sourceInventoryAudit?: any }>(`/api/admin/materials/${mat.id}`);
+      setInspectFullText({ ...res.material, sourceInventoryAudit: res.sourceInventoryAudit });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load details';
       onNotify?.(msg, 'error');
@@ -868,6 +868,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     <td className="py-3 px-3 font-mono text-[11px] text-slate-500">
                       <div>QP: {m.qp_chars || 0} chars</div>
                       <div className="text-emerald-700">SA: {m.sa_chars || 0} chars</div>
+                      <div className="text-indigo-700">MS: {m.ms_chars || 0} chars</div>
                     </td>
 
                     <td className="py-3 px-3">
@@ -1035,6 +1036,83 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                           );
                         })}
                       </div>
+                    </section>
+                  )}
+
+                  {/* Parsed Model Test source inventory and mark reconciliation */}
+                  {inspectFullText.material_type === 'MODEL_TEST_PAPER' && inspectFullText.sourceInventoryAudit && (
+                    <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h5 className="font-bold text-slate-900">Question Inventory & Marking Scheme Audit</h5>
+                          <p className="text-[10px] text-slate-500">
+                            Question IDs are read from this material's Question Paper; maximum marks are matched from its Marking Scheme.
+                          </p>
+                        </div>
+                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
+                          inspectFullText.sourceInventoryAudit.isReadyForEvaluation
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-rose-100 text-rose-700'
+                        }`}>
+                          {inspectFullText.sourceInventoryAudit.isReadyForEvaluation ? 'READY FOR EVALUATION' : 'SOURCE REVIEW REQUIRED'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-slate-50 p-2">
+                          <span className="block text-[10px] font-bold text-slate-500">QP QUESTION IDs</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.questionPaperQuestionIds?.length || 0}</span>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-2">
+                          <span className="block text-[10px] font-bold text-slate-500">MARKED QUESTION IDs</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.markingSchemeQuestionIds?.length || 0}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="block text-[10px] font-bold uppercase text-slate-500">Question Paper inventory</span>
+                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
+                          {(inspectFullText.sourceInventoryAudit.questionPaperQuestionIds || []).join(', ') || 'No question IDs parsed'}
+                        </code>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="block text-[10px] font-bold uppercase text-slate-500">Marking Scheme inventory</span>
+                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
+                          {(inspectFullText.sourceInventoryAudit.markingSchemeQuestionIds || []).join(', ') || 'No mark allocations parsed'}
+                        </code>
+                      </div>
+
+                      {(
+                        (inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0
+                      ) && (
+                        <div className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
+                          <p className="text-[10px] font-bold uppercase text-rose-800">Issues that block evaluation</p>
+                          {(inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Missing Marking Scheme allocation: {inspectFullText.sourceInventoryAudit.missingMarkQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Official Suggested Answer key missing: {inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Marking Scheme IDs not found in Question Paper inventory: {inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              No verified maximum marks: {inspectFullText.sourceInventoryAudit.missingMaximumMarks.join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </section>
                   )}
 
