@@ -275,7 +275,7 @@ export const ModelTestBulkUploadModal: React.FC<ModelTestBulkUploadModalProps> =
           {preview && (
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="px-3 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                <p className="text-xs font-bold text-slate-800">Validated Model Sequence</p>
+                <p className="text-xs font-bold text-slate-800">Model Test Source Audit Results</p>
                 <span className={`text-[10px] font-bold ${preview.every((item) => item.sourceAudit?.isReadyForEvaluation) ? 'text-emerald-700' : 'text-rose-700'}`}>
                   {preview.filter((item) => item.sourceAudit?.isReadyForEvaluation).length}/{maxModelTestNumber} source-ready
                 </span>
