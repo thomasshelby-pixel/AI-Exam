@@ -716,8 +716,8 @@ function extractModelTestDescriptiveSectionText(
 ): string {
   const lines = String(sourceText || '').replace(/\r\n?/g, '\n').split('\n');
   const startIndex = lines.findIndex((line) => sourceKind === 'question-paper'
-    ? /^\s*(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE/i.test(line)
-    : /^\s*(?:DIVISION\s+B|PART\s+II\b)/i.test(line));
+    ? /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)
+    : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?))/i.test(line));
   return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
 }
 
@@ -747,7 +747,7 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
       inObjectivePart = true;
       continue;
     }
-    if (inObjectivePart && /^\s*(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b/i.test(line)) {
+    if (inObjectivePart && /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)) {
       flushRoot();
       break;
     }
