@@ -1316,7 +1316,17 @@ function buildModelTestPaperStructure(options: {
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const questionPaperQuestionIds = candidateIds.map((item) => item.fullQuestionCode);
-  const suggestedAnswerIds = new Set(suggestedAnswerCandidates.map((item) => item.fullQuestionCode.toLowerCase()));
+  // Narrative-style ICAI Suggested Answers often use bare "1. (a)" labels
+  // for answers and ordinary numbered table rows. Do not treat these as a
+  // complete question-wise identity inventory unless the selected source
+  // explicitly labels question headings (Question 1 / Q1). MCQ keys remain
+  // independently reconciled from Division A in all cases.
+  const suggestedAnswersHaveExplicitQuestionHeadings =
+    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?)\s*\d{1,2}\b/im.test(suggestedAnswersDescriptiveText);
+  const reconciledSuggestedAnswerCandidates = suggestedAnswersHaveExplicitQuestionHeadings
+    ? suggestedAnswerCandidates
+    : [];
+  const suggestedAnswerIds = new Set(reconciledSuggestedAnswerCandidates.map((item) => item.fullQuestionCode.toLowerCase()));
   for (const questionNumber of parsedMcqKeys.keys()) {
     suggestedAnswerIds.add(('mcq' + questionNumber).toLowerCase());
   }
@@ -1328,10 +1338,14 @@ function buildModelTestPaperStructure(options: {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const qpIdSet = new Set(questionPaperQuestionIds.map((id) => id.toLowerCase()));
   const saIdSet = new Set(suggestedAnswerQuestionIds.map((id) => id.toLowerCase()));
-  const suggestedAnswerMissingQuestionIds = suggestedAnswerQuestionIds.length > 0
-    ? questionPaperQuestionIds.filter((id) => !saIdSet.has(id.toLowerCase()))
+  const suggestedAnswerDescriptiveIds = suggestedAnswerQuestionIds.filter((id) => !/^MCQ\d+$/i.test(id));
+  const qpDescriptiveIds = questionPaperQuestionIds.filter((id) => !/^MCQ\d+$/i.test(id));
+  const suggestedAnswerMissingQuestionIds = reconciledSuggestedAnswerCandidates.length > 0
+    ? qpDescriptiveIds.filter((id) => !saIdSet.has(id.toLowerCase()))
     : [];
-  const suggestedAnswerOnlyQuestionIds = suggestedAnswerQuestionIds.filter((id) => !qpIdSet.has(id.toLowerCase()));
+  const suggestedAnswerOnlyQuestionIds = reconciledSuggestedAnswerCandidates.length > 0
+    ? suggestedAnswerDescriptiveIds.filter((id) => !qpIdSet.has(id.toLowerCase()))
+    : [];
 
   const diagnostics = {
     sourceType: 'MODEL_TEST_PAPER' as const,
