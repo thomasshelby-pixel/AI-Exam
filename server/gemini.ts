@@ -14,6 +14,7 @@ import {
 import { db } from './db.js';
 import {
   executeModelWithFallback,
+  sanitizeSecretStrings,
   isModelCoolingDown,
   markModelTemporarilyUnavailable,
   isProviderCreditExhausted,
@@ -1214,38 +1215,41 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 }
 
                 let evalResult: QuestionEvaluation | null = null;
-                let lastErr: any = null;
-                const maxRetries = 2;
+                let lastErr: unknown = null;
 
-                for (let retryAttempt = 0; retryAttempt <= maxRetries; retryAttempt++) {
-                  try {
-                    evalResult = await evaluateQuestionChunk({
-                      subQuestion: subQ,
-                      mapping: mapping as AttemptedQuestionMapping,
-                      fullPdfBuffer: pdfBuffer,
-                      questionPaperText: params.referenceQuestionPaperText,
-                      suggestedAnswersText: params.referenceSuggestedAnswersText,
-                      markingSchemeText: params.markingSchemeText,
-                      checkingMode: (params.checkingMode as any) || 'standard',
-                      level: params.level,
-                      subjectName: params.subjectName,
-                      referenceMetadata: questionReferenceMetadata,
-                    });
-                    break;
-                  } catch (chunkErr: any) {
-                    lastErr = chunkErr;
-                    console.warn(`[EvaluationEngine] Targeted retry ${retryAttempt + 1}/${maxRetries} for ${canonId}: ${chunkErr?.message || chunkErr}`);
-                    if (retryAttempt < maxRetries) {
-                      await new Promise((resolve) => setTimeout(resolve, 500 * (retryAttempt + 1)));
-                    }
-                  }
+                // evaluateQuestionChunk calls executeModelWithFallback(), which already
+                // walks the complete configured model fallback chain and validates each
+                // candidate. Repeating that entire chain here multiplied provider calls
+                // for the same question without adding a new reference or answer signal.
+                // Run the chain once; if every configured candidate fails, preserve the
+                // answer for review and expose a redacted diagnostic instead of spending
+                // again on an identical retry.
+                try {
+                  evalResult = await evaluateQuestionChunk({
+                    subQuestion: subQ,
+                    mapping: mapping as AttemptedQuestionMapping,
+                    fullPdfBuffer: pdfBuffer,
+                    questionPaperText: params.referenceQuestionPaperText,
+                    suggestedAnswersText: params.referenceSuggestedAnswersText,
+                    markingSchemeText: params.markingSchemeText,
+                    checkingMode: (params.checkingMode as any) || 'standard',
+                    level: params.level,
+                    subjectName: params.subjectName,
+                    referenceMetadata: questionReferenceMetadata,
+                  });
+                } catch (chunkErr: unknown) {
+                  lastErr = chunkErr;
+                  const rawDiagnostic = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
+                  const diagnostic = sanitizeSecretStrings(rawDiagnostic).replace(/\\s+/g, ' ').slice(0, 220);
+                  console.error(`[EvaluationEngine] Fallback chain exhausted for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
                 }
 
                 if (evalResult) {
                   return evalResult;
                 }
 
-                console.warn(`[EvaluationEngine] Chunk evaluation failed for ${canonId} after retries, preserving evidence as process state:`, lastErr);
+                const rawFailureReason = lastErr instanceof Error ? lastErr.message : String(lastErr || 'Unknown technical failure');
+                const safeFailureReason = sanitizeSecretStrings(rawFailureReason).replace(/\\s+/g, ' ').slice(0, 220);
                 return {
                   questionNumber: subQ.questionNumber,
                   subQuestion: subQ.subQuestionNumber,
@@ -1254,8 +1258,8 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   marksAwarded: 0,
                   marksLost: 0,
                   status: 'unclear',
-                  reasonForDeduction: 'Technical evaluation pending review: Model evaluation encountered a transient issue for this question. Not an academic mark loss.',
-                  detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. Automated chunk evaluation encountered a technical condition. Preserved for review; not scored as academic zero.`,
+                  reasonForDeduction: `Technical evaluation failure (not an academic deduction). Manual review required. Diagnostic: ${safeFailureReason}`,
+                  detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. The configured AI fallback chain could not produce a valid question-level evaluation. No academic marks have been assigned to this question. Diagnostic: ${safeFailureReason}`,
                   flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED', 'TECHNICAL_FAILURE'],
                   pageNumber: mapping.pages[0] || 1,
                 } as QuestionEvaluation;
