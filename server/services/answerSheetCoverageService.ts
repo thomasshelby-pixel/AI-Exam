@@ -36,6 +36,8 @@ export interface PageCoverageModelOutput {
   mcqSelections: Record<string, string>;
   /** True when the page contains handwritten descriptive work, not just MCQ selections. */
   hasDescriptiveWork: boolean;
+  /** Recoverable issues are surfaced for review without discarding valid mappings on this page. */
+  mappingWarnings: string[];
   isContinuation?: boolean;
 }
 
@@ -101,6 +103,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     throw new Error('PAGE_COVERAGE_INVALID_SCHEMA: response must be a JSON object.');
   }
 
+  const warnings: string[] = [];
   const knownStatuses = new Set<PageAttemptStatus>([
     'ATTEMPTED_READABLE',
     'ATTEMPTED_PARTIALLY_READABLE',
@@ -109,87 +112,194 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     'QUESTION_NOT_IDENTIFIED',
     'PAGE_UNREADABLE',
   ]);
-  if (typeof raw.status !== 'string' || !knownStatuses.has(raw.status)) {
-    throw new Error('PAGE_COVERAGE_INVALID_STATUS: unknown page attempt status.');
-  }
-  if (typeof raw.hasDescriptiveWork !== 'boolean') {
-    throw new Error('PAGE_COVERAGE_DESCRIPTIVE_PRESENCE_MISSING: hasDescriptiveWork must be a boolean so descriptive work cannot be silently omitted.');
-  }
-  if (raw.hasDescriptiveWork && raw.hasHandwriting === false) {
-    throw new Error('PAGE_COVERAGE_DESCRIPTIVE_HANDWRITING_CONFLICT: descriptive work cannot be present when hasHandwriting is false.');
-  }
-  if (raw.hasHandwriting !== undefined && typeof raw.hasHandwriting !== 'boolean') {
-    throw new Error('PAGE_COVERAGE_INVALID_HANDWRITING: hasHandwriting must be boolean when provided.');
-  }
-  if (raw.summary !== undefined && typeof raw.summary !== 'string') {
-    throw new Error('PAGE_COVERAGE_INVALID_SUMMARY: summary must be a string when provided.');
-  }
-  if (raw.isContinuation !== undefined && typeof raw.isContinuation !== 'boolean') {
-    throw new Error('PAGE_COVERAGE_INVALID_CONTINUATION: top-level isContinuation must be boolean when provided.');
-  }
-  if (!Array.isArray(raw.detectedQuestions)) {
-    throw new Error('PAGE_COVERAGE_INVALID_DETECTIONS: detectedQuestions must be an array.');
-  }
-  if (raw.mcqSelections !== undefined &&
-      (!raw.mcqSelections || typeof raw.mcqSelections !== 'object' || Array.isArray(raw.mcqSelections))) {
-    throw new Error('PAGE_COVERAGE_INVALID_MCQ_SELECTIONS: mcqSelections must be an object.');
+  const rawStatus = typeof raw.status === 'string' ? raw.status.trim().toUpperCase() : '';
+  let status: PageAttemptStatus = knownStatuses.has(rawStatus as PageAttemptStatus)
+    ? rawStatus as PageAttemptStatus
+    : 'ATTEMPTED_UNCLEAR';
+  if (status !== rawStatus) {
+    warnings.push('The page auditor returned a missing or unrecognized page status; the page was retained for review.');
   }
 
-  for (let index = 0; index < raw.detectedQuestions.length; index++) {
-    const question = raw.detectedQuestions[index];
-    if (!question || typeof question !== 'object' || Array.isArray(question)) {
-      throw new Error(`PAGE_COVERAGE_INVALID_DETECTION: detectedQuestions[${index}] must be an object.`);
-    }
-    const questionNumber = String(question.questionNumber || '').trim();
-    const subQuestion = String(question.subQuestion || '').trim();
-    const contextualIdentity = question.parentQuestionNumberVisible === false && subQuestion.length > 0;
-    const explicitContinuation = question.isContinuation === true;
-    if (!questionNumber && !contextualIdentity && !explicitContinuation) {
-      throw new Error(`PAGE_COVERAGE_MISSING_QUESTION_ID: detectedQuestions[${index}] has no safely resolvable question identity.`);
-    }
-    if (question.parentQuestionNumberVisible !== undefined && typeof question.parentQuestionNumberVisible !== 'boolean') {
-      throw new Error(`PAGE_COVERAGE_INVALID_PARENT_VISIBILITY: detectedQuestions[${index}] must use a boolean.`);
-    }
-    if (question.isContinuation !== undefined && typeof question.isContinuation !== 'boolean') {
-      throw new Error(`PAGE_COVERAGE_INVALID_CONTINUATION: detectedQuestions[${index}] must use a boolean.`);
-    }
-    if (question.subQuestion !== undefined && question.subQuestion !== null && typeof question.subQuestion !== 'string') {
-      throw new Error(`PAGE_COVERAGE_INVALID_SUBQUESTION: detectedQuestions[${index}] must use a string or null.`);
-    }
-    if (question.snippet !== undefined && typeof question.snippet !== 'string') {
-      throw new Error(`PAGE_COVERAGE_INVALID_SNIPPET: detectedQuestions[${index}] must use a string.`);
+  const hasHandwriting = typeof raw.hasHandwriting === 'boolean' ? raw.hasHandwriting : undefined;
+  if (raw.hasHandwriting !== undefined && hasHandwriting === undefined) {
+    warnings.push('The page auditor returned an invalid handwriting flag.');
+  }
+  const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
+  if (raw.summary !== undefined && summary === undefined) {
+    warnings.push('The page auditor returned a non-text page summary.');
+  }
+  const isContinuation = typeof raw.isContinuation === 'boolean' ? raw.isContinuation : undefined;
+  if (raw.isContinuation !== undefined && isContinuation === undefined) {
+    warnings.push('The page auditor returned an invalid continuation flag.');
+  }
+
+  // A malformed individual detection must not discard other confidently mapped
+  // questions from the same page. It is retained as a page-level review warning.
+  const detectedQuestions: PageCoverageModelOutput['detectedQuestions'] = [];
+  if (!Array.isArray(raw.detectedQuestions)) {
+    warnings.push('The page auditor did not return a question-detection list.');
+  } else {
+    for (let index = 0; index < raw.detectedQuestions.length; index++) {
+      const question = raw.detectedQuestions[index];
+      if (!question || typeof question !== 'object' || Array.isArray(question)) {
+        warnings.push('One detected answer had an invalid structure and was left for manual mapping.');
+        continue;
+      }
+
+      const rawQuestionNumber =
+        typeof question.questionNumber === 'string' || typeof question.questionNumber === 'number'
+          ? String(question.questionNumber).trim()
+          : '';
+      let questionNumber = '';
+      let inferredSubQuestion = '';
+      const mcqMatch = rawQuestionNumber.match(/^(?:MCQ|OBJECTIVE)\s*(\d+)$/i);
+      const questionMatch = rawQuestionNumber.match(/^\s*(?:(?:QUESTION|Q|ANSWER|ANS)\.?\s*)?(\d+)\s*((?:\([a-z0-9]+\))*)\s*$/i);
+      if (mcqMatch) {
+        questionNumber = mcqMatch[1];
+        inferredSubQuestion = 'MCQ';
+      } else if (questionMatch) {
+        questionNumber = questionMatch[1];
+        inferredSubQuestion = (questionMatch[2] || '').replace(/[()]/g, '');
+      } else if (rawQuestionNumber) {
+        warnings.push('A detected answer contained a question label that could not be safely normalized.');
+        continue;
+      }
+      if (question.questionNumber !== undefined &&
+          typeof question.questionNumber !== 'string' &&
+          typeof question.questionNumber !== 'number') {
+        warnings.push('A detected answer contained a non-text question number and was left for manual mapping.');
+        continue;
+      }
+
+      let subQuestion = '';
+      if (question.subQuestion === null || question.subQuestion === undefined || question.subQuestion === '') {
+        subQuestion = inferredSubQuestion;
+      } else if (typeof question.subQuestion === 'string' || typeof question.subQuestion === 'number') {
+        subQuestion = String(question.subQuestion).trim();
+      } else {
+        warnings.push('A detected answer contained an invalid sub-question label; that entry was left for manual mapping.');
+        continue;
+      }
+
+      const parentVisible =
+        typeof question.parentQuestionNumberVisible === 'boolean'
+          ? question.parentQuestionNumberVisible
+          : undefined;
+      if (question.parentQuestionNumberVisible !== undefined && parentVisible === undefined) {
+        warnings.push('A detected answer contained an invalid parent-number visibility flag.');
+      }
+      const continuation =
+        typeof question.isContinuation === 'boolean' ? question.isContinuation : false;
+      if (question.isContinuation !== undefined && typeof question.isContinuation !== 'boolean') {
+        warnings.push('A detected answer contained an invalid continuation flag.');
+      }
+      const snippet = typeof question.snippet === 'string' ? question.snippet : undefined;
+      if (question.snippet !== undefined && snippet === undefined) {
+        warnings.push('A detected answer contained a non-text evidence snippet.');
+      }
+
+      const contextualIdentity = parentVisible === false && Boolean(subQuestion);
+      const explicitContinuation = continuation || isContinuation === true;
+      if (!questionNumber && !contextualIdentity && !explicitContinuation) {
+        warnings.push('One attempted answer had no safely resolvable question identity and was left for manual mapping.');
+        continue;
+      }
+
+      detectedQuestions.push({
+        ...(questionNumber ? { questionNumber } : {}),
+        ...(subQuestion ? { subQuestion } : {}),
+        ...(parentVisible !== undefined ? { parentQuestionNumberVisible: parentVisible } : {}),
+        isContinuation: explicitContinuation,
+        ...(snippet !== undefined ? { snippet } : {}),
+      });
     }
   }
 
   const selections: Record<string, string> = {};
-  for (const [questionNumber, rawOption] of Object.entries(raw.mcqSelections || {})) {
-    const normalizedNumber = String(questionNumber).replace(/[^0-9]/g, '');
-    const option = String(rawOption || '').trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()]/g, '');
-    if (!/^[A-D]$/.test(option)) {
-      throw new Error(`PAGE_COVERAGE_INVALID_MCQ_OPTION: MCQ ${questionNumber} has an invalid selected option.`);
+  const conflictedSelections = new Set<string>();
+  if (raw.mcqSelections !== undefined &&
+      (!raw.mcqSelections || typeof raw.mcqSelections !== 'object' || Array.isArray(raw.mcqSelections))) {
+    warnings.push('The page auditor returned an invalid MCQ selection list; affected MCQs were left for review.');
+  } else {
+    for (const [rawQuestionNumber, rawOption] of Object.entries(raw.mcqSelections || {})) {
+      const normalizedNumber = String(rawQuestionNumber).replace(/[^0-9]/g, '');
+      const option = typeof rawOption === 'string'
+        ? rawOption.trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()\s]/g, '')
+        : '';
+      if (!normalizedNumber || !/^[A-D]$/.test(option)) {
+        warnings.push('An MCQ selection had an invalid question number or option and was left for review.');
+        continue;
+      }
+      if (conflictedSelections.has(normalizedNumber)) continue;
+      if (selections[normalizedNumber] && selections[normalizedNumber] !== option) {
+        delete selections[normalizedNumber];
+        conflictedSelections.add(normalizedNumber);
+        warnings.push('Conflicting options were detected for one MCQ; that MCQ was left for manual review.');
+        continue;
+      }
+      selections[normalizedNumber] = option;
     }
-    if (!normalizedNumber) {
-      throw new Error('PAGE_COVERAGE_INVALID_MCQ_NUMBER: MCQ selection keys must contain a question number.');
-    }
-    if (selections[normalizedNumber] && selections[normalizedNumber] !== option) {
-      throw new Error(`PAGE_COVERAGE_CONFLICTING_MCQ_SELECTION: MCQ ${normalizedNumber} has conflicting detected options.`);
-    }
-    selections[normalizedNumber] = option;
   }
 
-  if (raw.status === 'CLEARLY_UNATTEMPTED' &&
-      (raw.hasDescriptiveWork || raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
-    throw new Error('PAGE_COVERAGE_STATUS_CONFLICT: page is marked unattempted but contains detected answers.');
+  const hasDetectedAnswers = detectedQuestions.length > 0 || Object.keys(selections).length > 0;
+  const hasMappedDescriptiveIdentity = detectedQuestions.some((question) =>
+    String(question.subQuestion || '').trim().toUpperCase() !== 'MCQ'
+  );
+  const summarySuggestsDescriptiveWork =
+    /\b(?:descriptive|written answer|written work|calculation|working|journal|ledger|balance sheet|paragraph|explanation|provision|entry|solution|theory|handwritten text|computation)\b/i.test(summary || '');
+  const explicitlyDeclaredDescriptiveWork =
+    typeof raw.hasDescriptiveWork === 'boolean' ? raw.hasDescriptiveWork : undefined;
+
+  // Keep accepting older page-auditor responses that pre-date this field. Prefer
+  // actual mapped descriptive identities, then visual summary evidence. An
+  // MCQ-only response remains MCQ-only unless the summary signals written work.
+  let hasDescriptiveWork = hasMappedDescriptiveIdentity ||
+    explicitlyDeclaredDescriptiveWork === true ||
+    (explicitlyDeclaredDescriptiveWork === undefined &&
+      status !== 'CLEARLY_UNATTEMPTED' &&
+      (summarySuggestsDescriptiveWork || (Object.keys(selections).length === 0 && hasHandwriting !== false)));
+
+  if (explicitlyDeclaredDescriptiveWork === false && hasMappedDescriptiveIdentity) {
+    warnings.push('The page auditor marked the page as having no descriptive work despite returning a descriptive question identity; descriptive work was retained.');
+  }
+  if (explicitlyDeclaredDescriptiveWork === undefined &&
+      status !== 'CLEARLY_UNATTEMPTED' &&
+      !hasMappedDescriptiveIdentity &&
+      Object.keys(selections).length === 0 &&
+      hasHandwriting !== false) {
+    warnings.push('Legacy page-auditor output omitted the descriptive-work flag and did not provide a question identity; manual mapping is required.');
+  }
+  if (hasDescriptiveWork && !hasMappedDescriptiveIdentity) {
+    warnings.push('Descriptive handwriting was detected, but no descriptive question identity was safely mapped.');
+  }
+
+  let normalizedHandwriting = hasHandwriting;
+  if ((hasDetectedAnswers || hasDescriptiveWork) && hasHandwriting === false) {
+    normalizedHandwriting = true;
+    warnings.push('The page auditor marked a page with detected work as having no handwriting; the contradiction was retained for review.');
+  }
+  if ((hasDetectedAnswers || hasDescriptiveWork) && (status === 'CLEARLY_UNATTEMPTED' || status === 'PAGE_UNREADABLE')) {
+    status = 'ATTEMPTED_UNCLEAR';
+    warnings.push('The page was marked blank or unreadable despite detected answers; the page was retained as an attempted answer requiring review.');
+  } else if (status === 'QUESTION_NOT_IDENTIFIED' && hasDetectedAnswers) {
+    // Preserve confidently identified questions from a mixed page. The separate
+    // warning keeps the page uncertified until its unidentified content is reviewed.
+    status = 'ATTEMPTED_READABLE';
+    warnings.push('The page contains mapped answers as well as content the auditor could not fully identify.');
+  }
+  if (status === 'ATTEMPTED_UNCLEAR' && warnings.length === 0) {
+    warnings.push('The page handwriting or answer identity requires examiner review.');
   }
 
   return {
-    status: raw.status,
-    hasHandwriting: raw.hasHandwriting,
-    hasDescriptiveWork: raw.hasDescriptiveWork,
-    summary: raw.summary,
-    isContinuation: raw.isContinuation,
-    detectedQuestions: raw.detectedQuestions,
+    status,
+    hasHandwriting: normalizedHandwriting,
+    hasDescriptiveWork,
+    summary,
+    isContinuation,
+    detectedQuestions,
     mcqSelections: selections,
+    mappingWarnings: Array.from(new Set(warnings)),
   };
 }
 
@@ -612,7 +722,9 @@ Return strictly valid JSON with this schema:
     let status: PageAttemptStatus = raw.status;
     const hasHandwriting = raw.hasHandwriting !== false;
     const summary = raw.summary || `Page ${pageNumber} analysis`;
-    let mappingReviewReason: string | undefined;
+    let mappingReviewReason: string | undefined = raw.mappingWarnings?.length
+      ? raw.mappingWarnings.join(' | ')
+      : undefined;
     let pageActiveQuestionContext = previousActiveQuestion;
 
     if (Array.isArray(raw.detectedQuestions)) {
