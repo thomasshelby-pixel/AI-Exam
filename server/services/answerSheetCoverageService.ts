@@ -633,6 +633,10 @@ HANDWRITING AND MAPPING:
   Distinguish question labels from printed page numbers, dates, roll numbers, scanner marks and amounts.
 - Read all answer formats: paragraphs, tables, journal/ledger entries, Dr/Cr columns,
   calculations, formulas, working notes, diagrams, bullet points and case studies.
+- Do not classify descriptive question labels (Q1, 1(a), (b), etc.), calculations, or ordinary
+  A/B/C/D letters in prose as MCQ attempts. An MCQ selection exists only when this student's page
+  visibly shows an objective question identity and a chosen option A, B, C or D for that question.
+  If the answer sheet contains no MCQ attempt, return an empty mcqSelections object.
 - Validate the visible label against the authoritative IDs above. Return questionNumber as digits
   only and subQuestion separately. Return every identifiable question on a mixed-question page.
 - A continuation may omit its heading. Reuse the previous active question only when the page

@@ -56,6 +56,8 @@ async function run() {
   assert.match(pagePrompt, /faint, cursive/i);
   assert.match(pagePrompt, /PREVIOUS PAGE ACTIVE QUESTION: Q2\(a\)/i);
   assert.match(pagePrompt, /Never infer identity from PDF page index/i);
+  assert.match(pagePrompt, /Do not classify descriptive question labels/i);
+  assert.match(pagePrompt, /return an empty mcqSelections object/i);
   assert.match(pagePrompt, /Q1\(a\) — 5 marks — Accounting treatment and journal entries/i);
 
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
@@ -76,6 +78,8 @@ async function run() {
   assert.equal(parsedPage.detectedQuestions[0].questionNumber, '6');
   assert.equal(parsedPage.questionLabelEvidence, 'Circled 6 in the left margin above the journal entry.');
   assert.equal(parsedPage.readingConfidence, 0.82);
+  assert.deepEqual(parsedPage.mcqSelections, {}, 'A descriptive answer with no visible MCQ choice must not create MCQ attempts.');
+  assert.equal(parsedPage.detectedQuestions.some((question) => String(question.questionNumber).startsWith('MCQ')), false);
 
   let providerCalls = 0;
   const analyzePage = async (_base64: string, pageNumber: number): Promise<PageCoverageRecord> => {
