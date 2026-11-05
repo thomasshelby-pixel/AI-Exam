@@ -147,7 +147,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   }
 
   if (raw.status === 'CLEARLY_UNATTEMPTED' &&
-      (raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
+      (raw.hasDescriptiveWork || raw.detectedQuestions.length > 0 || Object.keys(selections).length > 0)) {
     throw new Error('PAGE_COVERAGE_STATUS_CONFLICT: page is marked unattempted but contains detected answers.');
   }
 
