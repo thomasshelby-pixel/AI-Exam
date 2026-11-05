@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import {
   buildAnswerSheetCoverageMap,
+  buildPageCoveragePrompt,
   clearCoverageMapCache,
+  parseAndValidatePageCoverageOutput,
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
 
@@ -32,6 +34,48 @@ async function run() {
     ],
     mcqs: [],
   };
+
+  // Universal prompt regression: no subject-specific template; margin/circled labels,
+  // faint cursive, continuation pages and candidate-ID validation must be explicit.
+  const pagePrompt = buildPageCoveragePrompt({
+    pageNumber: 7,
+    totalPages: 19,
+    paperStructure: {
+      ...paperStructure,
+      subQuestions: [{
+        ...paperStructure.subQuestions[0],
+        topic: 'Accounting treatment and journal entries',
+      }],
+    } as any,
+    previousActiveQuestion: 'Q2(a)',
+  });
+  assert.match(pagePrompt, /Foundation, Intermediate and Final/i);
+  assert.match(pagePrompt, /every subject/i);
+  assert.match(pagePrompt, /left margin/i);
+  assert.match(pagePrompt, /circled\/margin-written numbers/i);
+  assert.match(pagePrompt, /faint, cursive/i);
+  assert.match(pagePrompt, /immediately previous page: Q2\(a\)/i);
+  assert.match(pagePrompt, /Never infer a question from the PDF page index/i);
+  assert.match(pagePrompt, /Q1\(a\) — 5 marks — Accounting treatment and journal entries/i);
+
+  const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_PARTIALLY_READABLE',
+    hasHandwriting: true,
+    summary: 'A handwritten answer continues.',
+    questionLabelEvidence: 'Circled 6 in the left margin above the journal entry.',
+    readingConfidence: 0.82,
+    detectedQuestions: [{
+      questionNumber: '6',
+      subQuestion: null,
+      parentQuestionNumberVisible: true,
+      isContinuation: false,
+      snippet: 'Journal entry with debit and credit columns.',
+    }],
+    mcqSelections: {},
+  }));
+  assert.equal(parsedPage.detectedQuestions[0].questionNumber, '6');
+  assert.equal(parsedPage.questionLabelEvidence, 'Circled 6 in the left margin above the journal entry.');
+  assert.equal(parsedPage.readingConfidence, 0.82);
 
   let providerCalls = 0;
   const analyzePage = async (_base64: string, pageNumber: number): Promise<PageCoverageRecord> => {
