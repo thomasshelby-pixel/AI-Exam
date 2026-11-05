@@ -767,7 +767,7 @@ assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('M
 
 
 // Real PDF text extraction may place an objective question number on its own
-// line and express nested numeric parts as either Q3(c)(1) or Q3(c(1)).
+// line and express nested numeric parts as either Q3(c(1)) or Q3(c(1)).
 // All three selected sources must normalize those equivalent spellings to one ID.
 const nestedAndStandaloneMcqModelTest = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
@@ -809,12 +809,12 @@ assert.deepEqual(
 );
 assert.deepEqual(
   nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.suggestedAnswerQuestionIds,
-  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  ['MCQ1', 'MCQ2', 'Q3(c(1))', 'Q5(a(1))', 'Q5(b(2))'],
   'Equivalent nested spellings in the Suggested Answers must reconcile to the QP IDs.',
 );
 assert.deepEqual(
   nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
-  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  ['MCQ1', 'MCQ2', 'Q3(c(1))', 'Q5(a(1))', 'Q5(b(2))'],
   'Nested Marking Scheme rows must map to the exact QP subparts.',
 );
 assert.deepEqual(
