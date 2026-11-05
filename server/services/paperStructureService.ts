@@ -1301,7 +1301,9 @@ function buildModelTestPaperStructure(options: {
       questionNumber: candidate.questionNumber,
       subQuestionNumber: candidate.subQuestionNumber,
       maximumMarks: Number(candidate.maximumMarks || markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0),
-      compulsory: false,
+      // The selected Marking Scheme says Question 1 is compulsory;
+      // Questions 2–6 form an optional "attempt any four" group.
+      compulsory: candidate.questionNumber === '1',
       isMcq: false,
       section: 'GENERAL',
       division: 'B',
@@ -1315,7 +1317,8 @@ function buildModelTestPaperStructure(options: {
         questionNumber: subQuestion.questionNumber,
         section: 'GENERAL',
         division: 'B',
-        compulsory: false,
+        compulsory: subQuestion.questionNumber === '1',
+        choiceRule: subQuestion.questionNumber === '1' ? undefined : 'Attempt any four of Questions 2 to 6',
         maximumMarks: 0,
         subQuestions: [],
       });
@@ -1333,7 +1336,7 @@ function buildModelTestPaperStructure(options: {
       questionNumber: candidate.questionNumber,
       subQuestionNumber: 'MCQ',
       maximumMarks: Number(markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || (objectiveMarksReconcile ? mcqMarkValue : 0)),
-      compulsory: false,
+      compulsory: true,
       isMcq: true,
       officialKey: data?.officialKey,
       officialExplanation: data?.explanation,
