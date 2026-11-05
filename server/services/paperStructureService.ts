@@ -1302,7 +1302,7 @@ function buildModelTestPaperStructure(options: {
     compulsoryParentNumbers.add(String(Number(match[1])));
   }
   const choiceGroupMatch = selectedMarkingSchemeText.match(
-    /\bATTEMPT\s+ANY\s+(\d{1,2})\s+QUESTIONS?\s+FROM\s+QUESTIONS?\s*(\d{1,2})\s*(?:TO|[-–—])\s*(\d{1,2})\b/i
+    /\bATTEMPT\s+ANY\s+(\d{1,2}|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)\s+QUESTIONS?\s+FROM\s+QUESTIONS?\s*(\d{1,2})\s*(?:TO|[-–—])\s*(\d{1,2})\b/i
   );
   const choiceRuleText = choiceGroupMatch
     ? 'Attempt any ' + String(choiceGroupMatch[1]).toLowerCase() + ' of Questions ' + Number(choiceGroupMatch[2]) + ' to ' + Number(choiceGroupMatch[3])
