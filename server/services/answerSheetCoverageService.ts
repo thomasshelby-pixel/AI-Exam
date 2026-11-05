@@ -608,7 +608,7 @@ export function buildPageCoveragePrompt(params: {
   const validDescriptiveList = paperStructure.subQuestions
     .filter((s) => !s.isMcq)
     .map((s) => `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`)
-    .join('\\n');
+    .join('\n');
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => `${m.fullQuestionCode} — ${m.maximumMarks} marks`)
     .join('\\n');
