@@ -50,7 +50,9 @@ export function requiresDescriptiveCoverageReview(
 ): boolean {
   if (!hasDescriptiveWork) return false;
   return !mappedQuestionCodes.some((code) => {
-    const parsed = parseCanonicalQuestionIdentity(String(code || ''));
+    const normalizedCode = String(code || '').trim();
+    if (!normalizedCode) return false;
+    const parsed = parseCanonicalQuestionIdentity(normalizedCode);
     return Boolean(parsed.questionNumber) && !parsed.isMcq;
   });
 }
