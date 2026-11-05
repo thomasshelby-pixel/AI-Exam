@@ -645,15 +645,21 @@ function findExplicitModelTestMarks(line: string, allowBareBracket = false): num
 
 function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): Map<string, ModelTestQuestionCandidate & { maximumMarks: number }> {
   const allocations = new Map<string, ModelTestQuestionCandidate & { maximumMarks: number }>();
+  const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
+  const hasObjectiveSection = lines.some((line) => isModelTestMcqSectionHeading(line));
 
-  for (const item of extractSubQuestionsFromText(String(markingSchemeText || ''))) {
-    const candidate = toModelTestCandidate(item.fullQuestionCode);
-    if (candidate && item.maximumMarks > 0) {
-      allocations.set(candidate.fullQuestionCode.toLowerCase(), { ...candidate, maximumMarks: item.maximumMarks });
+  // The older generic extractor does not know whether "Question 1" is inside
+  // an MCQ block. In a sectioned paper use the section-aware scanner below to
+  // prevent Q1 and MCQ1 from being created for the same objective question.
+  if (!hasObjectiveSection) {
+    for (const item of extractSubQuestionsFromText(String(markingSchemeText || ''))) {
+      const candidate = toModelTestCandidate(item.fullQuestionCode);
+      if (candidate && item.maximumMarks > 0) {
+        allocations.set(candidate.fullQuestionCode.toLowerCase(), { ...candidate, maximumMarks: item.maximumMarks });
+      }
     }
   }
 
-  const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
   const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
   let activeParent = '';
   let activeLeaf = '';
