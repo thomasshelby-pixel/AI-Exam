@@ -578,4 +578,98 @@ const descriptiveOnlyGate = validatePreEvaluationGate({
 assert.equal(descriptiveOnlyGate.passed, true, 'Descriptive-only paper with matching sources must pass without any MCQ requirement.');
 
 
+
+const stepWiseMarkingSchemeModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 20,
+  questionPaperText: `ADVANCED ACCOUNTING MODEL TEST PAPER
+Question 1
+(a) Pass the journal entries.
+(b) Prepare the revised balance sheet.
+Question 2
+(i) Explain the accounting treatment.`,
+  suggestedAnswersText: 'Question-wise suggested answers are present for Q1(a), Q1(b) and Q2(i).',
+  markingSchemeText: `MARKING SCHEME
+Question 1
+(a) Journal entries
+1 mark for the correct account heads.
+1 mark for the debit and credit treatment.
+1 mark for the narration.
+(b) Revised balance sheet
+1 mark for correct classification.
+2 marks for correct presentation.
+Maximum Marks: 4
+Question 2
+(i) Accounting treatment
+0.5 marks for identifying the standard.
+0.5 marks for correct application.
+1 mark for the conclusion.`,
+});
+assert.deepEqual(
+  stepWiseMarkingSchemeModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 3], ['Q1(b)', 4], ['Q2(i)', 2]],
+  'Step-wise mark components must be summed within the exact active sub-question; explicit maximum totals override component sums.',
+);
+assert.deepEqual(stepWiseMarkingSchemeModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(stepWiseMarkingSchemeModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+const stepWiseMarkingGate = validatePreEvaluationGate({
+  paperStructure: stepWiseMarkingSchemeModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Suggested Answers verified.',
+  markingSchemeText: 'Step-wise Marking Scheme verified.',
+  officialPaperMaxMarks: 20,
+});
+assert.equal(stepWiseMarkingGate.passed, true, 'A fully explicit step-wise marking scheme should reconcile before page analysis.');
+
+// More than one explicitly labelled component on a line is additive, but a
+// mark range or alternative ("1 or 2 marks") must never be summed as a total.
+const multipleComponentsOnLineModelTest = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Financial Reporting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1(a) Explain the treatment.',
+  suggestedAnswersText: 'Suggested answer for Q1(a).',
+  markingSchemeText: `Question 1(a)
+1 mark for the treatment and 2 marks for the calculation.`,
+});
+assert.deepEqual(
+  multipleComponentsOnLineModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 3]],
+);
+
+const ambiguousStepMarksModelTest = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Financial Reporting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1(a) Explain the treatment.',
+  suggestedAnswersText: 'Suggested answer for Q1(a).',
+  markingSchemeText: 'Question 1(a)\nAward 1 or 2 marks depending on the explanation.',
+});
+assert.deepEqual(
+  ambiguousStepMarksModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds,
+  ['Q1(a)'],
+  'Ambiguous ranges/alternatives are not converted into invented maximum marks.',
+);
+
+
+const inlineStepComponentModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1(a) Explain the correct journal treatment.',
+  suggestedAnswersText: 'Suggested answer for Q1(a).',
+  markingSchemeText: `Question 1(a) 1 mark for correct account selection, 1 mark for correct debit/credit treatment, and 1 mark for narration.`,
+});
+assert.deepEqual(
+  inlineStepComponentModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 3]],
+  'Inline scoring components on the same identity line must be summed, not mistaken for a one-mark total.',
+);
+
 console.log('Model Test dynamic paper structure tests passed.');
