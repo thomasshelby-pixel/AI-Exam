@@ -489,7 +489,7 @@ function buildModelTestPaperStructure(options: {
     options.markingSchemeText || '',
     options.questionPaperText || '',
     options.suggestedAnswersText || '',
-  ].filter(Boolean).join('\\n');
+  ].filter(Boolean).join('\n');
 
   let subQuestions = extractSubQuestionsFromText(combined);
   const canonical = (question: PaperStructureSubQuestion) =>
@@ -507,12 +507,12 @@ function buildModelTestPaperStructure(options: {
 
   // Do not presume that Q1/Q5 are compulsory in every Model Test.
   // Only honor a compulsory/mandatory rule explicitly written in its source.
-  const ruleText = `${options.questionPaperText || ''}\\n${options.markingSchemeText || ''}`;
+  const ruleText = `${options.questionPaperText || ''}\n${options.markingSchemeText || ''}`;
   const isExplicitlyCompulsory = (questionNumber: string) => {
     const number = String(questionNumber).replace(/[^0-9]/g, '');
     if (!number) return false;
-    const before = new RegExp(`\\\\b(?:COMPULSORY|MANDATORY)\\\\b[^\\\\n]{0,100}\\\\b(?:QUESTION|Q\\\\.?)\\\\s*${number}\\\\b`, 'i');
-    const after = new RegExp(`\\\\b(?:QUESTION|Q\\\\.?)\\\\s*${number}\\\\b[^\\\\n]{0,100}\\\\b(?:COMPULSORY|MANDATORY)\\\\b`, 'i');
+    const before = new RegExp(`\\b(?:COMPULSORY|MANDATORY)\\b[^\\n]{0,100}\\b(?:QUESTION|Q\\.?)\\s*${number}\\b`, 'i');
+    const after = new RegExp(`\\b(?:QUESTION|Q\\.?)\\s*${number}\\b[^\\n]{0,100}\\b(?:COMPULSORY|MANDATORY)\\b`, 'i');
     return before.test(ruleText) || after.test(ruleText);
   };
 
@@ -559,7 +559,7 @@ function buildModelTestPaperStructure(options: {
   }));
 
   return {
-    paperTitle: `CA ${options.level || ''} Model Test Paper`.replace(/\\s+/g, ' ').trim(),
+    paperTitle: `CA ${options.level || ''} Model Test Paper`.replace(/\s+/g, ' ').trim(),
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
     questions: Array.from(questionsMap.values()),
     subQuestions,
