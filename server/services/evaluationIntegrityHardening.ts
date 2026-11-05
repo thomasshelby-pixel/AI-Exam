@@ -147,6 +147,12 @@ export function validatePreEvaluationGate(params: {
       failedInvariants.push(msg);
       criticalFailures.push(msg);
     }
+
+    for (const questionId of modelTestInventory.markingSchemeParentTotalMismatchQuestionIds || []) {
+      const msg = 'MODEL_TEST_PARENT_MARK_TOTAL_MISMATCH: ' + questionId + ' child maxima from the Question Paper do not reconcile to the corresponding parent total in the selected Marking Scheme.';
+      failedInvariants.push(msg);
+      criticalFailures.push(msg);
+    }
     // Some Suggested Answer documents are narrative-only and expose no
     // question headings. Reconcile them only when a question-wise inventory
     // could actually be extracted; never infer missing answers from silence.
