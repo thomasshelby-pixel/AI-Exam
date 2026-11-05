@@ -48,6 +48,10 @@ export interface ModelTestSourceInventoryDiagnostics {
   missingMarkQuestionIds: string[];
   missingMcqKeyQuestionIds: string[];
   markingSchemeOnlyQuestionIds: string[];
+  /** Optional when question-wise Suggested Answer headings are extractable. */
+  suggestedAnswerQuestionIds: string[];
+  suggestedAnswerMissingQuestionIds: string[];
+  suggestedAnswerOnlyQuestionIds: string[];
 }
 
 export interface AuthoritativePaperStructure {
@@ -950,6 +954,7 @@ function buildModelTestPaperStructure(options: {
   level?: string;
 }): AuthoritativePaperStructure {
   const qpCandidates = extractModelTestQuestionPaperInventory(options.questionPaperText);
+  const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(options.suggestedAnswersText);
   const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
   const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
   const qpMcqNumbers = new Set(qpCandidates.filter((candidate) => candidate.isMcq).map((candidate) => candidate.questionNumber));
@@ -1102,9 +1107,30 @@ function buildModelTestPaperStructure(options: {
   const markingSchemeQuestionIds = markingSchemeLeafAllocations
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const questionPaperQuestionIds = candidateIds.map((item) => item.fullQuestionCode);
+  const suggestedAnswerIds = new Set(suggestedAnswerCandidates.map((item) => item.fullQuestionCode.toLowerCase()));
+  for (const questionNumber of parsedMcqKeys.keys()) {
+    suggestedAnswerIds.add(('mcq' + questionNumber).toLowerCase());
+  }
+  const suggestedAnswerQuestionIds = Array.from(suggestedAnswerIds)
+    .map((id) => {
+      const parsed = parseCanonicalQuestionIdentity(id);
+      return parsed.canonicalId;
+    })
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const qpIdSet = new Set(questionPaperQuestionIds.map((id) => id.toLowerCase()));
+  const saIdSet = new Set(suggestedAnswerQuestionIds.map((id) => id.toLowerCase()));
+  const suggestedAnswerMissingQuestionIds = suggestedAnswerQuestionIds.length > 0
+    ? questionPaperQuestionIds.filter((id) => !saIdSet.has(id.toLowerCase()))
+    : [];
+  const suggestedAnswerOnlyQuestionIds = suggestedAnswerQuestionIds.filter((id) => !qpIdSet.has(id.toLowerCase()));
+
   const diagnostics = {
     sourceType: 'MODEL_TEST_PAPER' as const,
-    questionPaperQuestionIds: candidateIds.map((item) => item.fullQuestionCode),
+    questionPaperQuestionIds,
+    suggestedAnswerQuestionIds,
+    suggestedAnswerMissingQuestionIds,
+    suggestedAnswerOnlyQuestionIds,
     markingSchemeQuestionIds,
     missingMarkQuestionIds,
     missingMcqKeyQuestionIds,
