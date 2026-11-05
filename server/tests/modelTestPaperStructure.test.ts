@@ -804,7 +804,7 @@ Question 5(b(2)) - 4 Marks`,
 });
 assert.deepEqual(
   nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
-  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  ['MCQ1', 'MCQ2', 'Q3(c(1))', 'Q5(a(1))', 'Q5(b(2))'],
   'Standalone MCQ question numbers and nested QP identities must be preserved.',
 );
 assert.deepEqual(
@@ -819,7 +819,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   nestedAndStandaloneMcqModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
-  [['Q3(c)(1)', 4], ['Q5(a)(1)', 4], ['Q5(b)(2)', 4]],
+  [['Q3(c(1))', 4], ['Q5(a(1))', 4], ['Q5(b(2))', 4]],
 );
 assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
 assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, []);
