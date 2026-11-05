@@ -726,4 +726,43 @@ assert.deepEqual(
   [['Q1(a)', 3], ['Q2', 7]],
 );
 
+
+const threeSourceQuestionInventoryModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `Question 1(a) Prepare journal entries.
+Question 1(b) Prepare the revised balance sheet.
+Question 2 Calculate the amount.`,
+  suggestedAnswersText: `Answer 1(a) Journal entries.
+Answer 1(b) Revised balance sheet.
+Answer 3 Missing from the selected QP.`,
+  markingSchemeText: `Question No. | Marks
+1(a) | 4
+1(b) | 6
+2 | 10`,
+});
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerQuestionIds,
+  ['Q1(a)', 'Q1(b)', 'Q3'],
+);
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerMissingQuestionIds,
+  ['Q2'],
+);
+assert.deepEqual(
+  threeSourceQuestionInventoryModelTest.sourceInventoryDiagnostics?.suggestedAnswerOnlyQuestionIds,
+  ['Q3'],
+);
+const threeSourceGate = validatePreEvaluationGate({
+  paperStructure: threeSourceQuestionInventoryModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Question-wise Suggested Answers are present but mismatched.',
+  markingSchemeText: 'Marking Scheme verified.',
+});
+assert.equal(threeSourceGate.passed, false, 'Question-wise Suggested Answer IDs must reconcile when they are extractable.');
+assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_MISSING: Q2')));
+assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_SOURCE_CONFLICT: Q3')));
+
 console.log('Model Test dynamic paper structure tests passed.');
