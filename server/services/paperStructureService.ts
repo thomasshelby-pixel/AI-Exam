@@ -48,6 +48,8 @@ export interface ModelTestSourceInventoryDiagnostics {
   missingMarkQuestionIds: string[];
   missingMcqKeyQuestionIds: string[];
   markingSchemeOnlyQuestionIds: string[];
+  /** Parent totals in the Marking Scheme must reconcile to QP-defined child maxima. */
+  markingSchemeParentTotalMismatchQuestionIds: string[];
   /** Optional when question-wise Suggested Answer headings are extractable. */
   suggestedAnswerQuestionIds: string[];
   suggestedAnswerMissingQuestionIds: string[];
@@ -495,6 +497,8 @@ interface ModelTestQuestionCandidate {
   questionNumber: string;
   subQuestionNumber?: string;
   isMcq: boolean;
+  /** Printed maximum from this exact source text, when explicitly present. */
+  maximumMarks?: number;
 }
 
 function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | null {
@@ -524,7 +528,11 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
-  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
+  const value = String(line || '');
+  // ICAI-style source text commonly starts a leaf as "1. (a) ...".
+  // Also accept compact "1(a) ..." and "1 (a) ..." forms.
+  const match = value.match(/^\s{0,3}(\d{1,2})\s*[.)]\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i)
+    || value.match(/^\s{0,3}(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
   if (!match) return null;
   const suffix = String(match[2] || '').replace(/\s+/g, '');
   return toModelTestCandidate('Q' + match[1] + suffix);
@@ -562,15 +570,37 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   let activeSubQuestion = '';
   let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
+  let activeMarkCandidateId = '';
 
-  const add = (candidate: ModelTestQuestionCandidate | null) => {
+  const recordMarks = (line: string) => {
+    if (!activeMarkCandidateId) return;
+    const marks = findExplicitModelTestMarks(line, true);
+    if (!marks || marks <= 0) return;
+    const existing = candidates.get(activeMarkCandidateId);
+    if (existing && existing.maximumMarks === undefined) {
+      candidates.set(activeMarkCandidateId, { ...existing, maximumMarks: marks });
+    }
+  };
+
+  const add = (candidate: ModelTestQuestionCandidate | null, sourceLine = '') => {
     if (!candidate) return;
-    candidates.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+    const key = candidate.fullQuestionCode.toLowerCase();
+    const previous = candidates.get(key);
+    const merged = {
+      ...candidate,
+      maximumMarks: previous?.maximumMarks ?? candidate.maximumMarks,
+    };
+    candidates.set(key, merged);
+    activeMarkCandidateId = key;
     if (!candidate.isMcq) {
       const parsed = parseCanonicalQuestionIdentity(candidate.fullQuestionCode);
       activeParent = parsed.parentQuestionId;
       activeSubQuestion = parsed.subQuestion ? candidate.fullQuestionCode : '';
+    } else {
+      activeParent = '';
+      activeSubQuestion = '';
     }
+    recordMarks(sourceLine);
   };
 
   for (const line of lines) {
@@ -578,6 +608,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       insideMcqSection = true;
       activeParent = '';
       activeSubQuestion = '';
+      activeMarkCandidateId = '';
       lastQuestionHeadingNumber = 0;
       continue;
     }
@@ -585,6 +616,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       insideMcqSection = false;
       activeParent = '';
       activeSubQuestion = '';
+      activeMarkCandidateId = '';
       lastQuestionHeadingNumber = 0;
     }
 
@@ -593,7 +625,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       lastQuestionHeadingNumber = Number(explicit.questionNumber);
       add(insideMcqSection && !explicit.subQuestionNumber
         ? toModelTestCandidate('MCQ' + explicit.questionNumber)
-        : explicit);
+        : explicit, line);
       continue;
     }
 
@@ -602,7 +634,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       ? line.match(/^\s*OBJECTIVE\s*(\d{1,2})\b/i)
       : null;
     if (mcqHeading || objectiveHeading) {
-      add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]));
+      add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]), line);
       continue;
     }
 
@@ -614,42 +646,53 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       : null;
     if (standaloneObjectiveNumber) {
       const number = Number(standaloneObjectiveNumber[1]);
-      if (number >= 1 && number <= 30 && (number === 1 || number === lastQuestionHeadingNumber + 1)) {
+      if (number >= 1 && number <= 30 &&
+          (lastQuestionHeadingNumber === 0 || number === lastQuestionHeadingNumber + 1)) {
         lastQuestionHeadingNumber = number;
-        add(toModelTestCandidate('MCQ' + number));
+        add(toModelTestCandidate('MCQ' + number), line);
         continue;
       }
     }
 
-    const bareSubQuestion = parseModelTestBareSubQuestionHeading(line);
+    // Do not mistake deeply-indented financial-statement/table rows for
+    // question subparts. Real part labels in these source PDFs are at the
+    // question margin (normally 0–8 spaces); table columns are further in.
+    const leadingSpaces = (line.match(/^ */) || [''])[0].length;
+    const bareSubQuestion = leadingSpaces <= 8 ? parseModelTestBareSubQuestionHeading(line) : null;
     if (bareSubQuestion) {
-      add(bareSubQuestion);
+      lastQuestionHeadingNumber = Number(bareSubQuestion.questionNumber);
+      add(bareSubQuestion, line);
       continue;
     }
 
-    const bare = parseModelTestBareQuestionHeading(line);
+    const bare = leadingSpaces <= 3 ? parseModelTestBareQuestionHeading(line) : null;
     if (bare) {
       const number = Number(bare.questionNumber);
       if (number === 1 || number === lastQuestionHeadingNumber + 1) {
         lastQuestionHeadingNumber = number;
-        add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare);
+        add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare, line);
         continue;
       }
     }
 
-    if (!activeParent) continue;
-
-    const nestedNumeric = line.match(/^\s*\((\d{1,2})\)\s+\S.{1,}/);
-    if (nestedNumeric && activeSubQuestion) {
-      add(toModelTestCandidate(activeSubQuestion + '(' + nestedNumeric[1] + ')'));
-      continue;
+    if (activeParent) {
+      // Do not promote numbered facts/working-note lists into question IDs.
+      // A nested numeric leaf must be explicitly headed (e.g. Q3(a)(1)).
+      const child = line.match(/^[ ]{0,8}(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
+      if (child) {
+        const part = String(child[1] || child[2] || '').toLowerCase();
+        // Roman-numbered lines are internal clauses or financial-statement
+        // section labels (e.g. "I. Equity and Liabilities"), not scorable
+        // descriptive leaves in this inventory.
+        if (/^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part)) continue;
+        add(toModelTestCandidate(activeParent + '(' + part + ')'), line);
+        continue;
+      }
     }
 
-    const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
-    if (!child) continue;
-    const part = String(child[1] || child[2] || '').toLowerCase();
-    if (activeSubQuestion && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part)) continue;
-    add(toModelTestCandidate(activeParent + '(' + part + ')'));
+    // Maximum marks can be printed at the end of a multi-line question part.
+    // They stay attached only to the most recently opened source question ID.
+    recordMarks(line);
   }
 
   const all = Array.from(candidates.values());
@@ -663,6 +706,113 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       if (qOrder) return qOrder;
       return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
     });
+}
+
+/** Return the descriptive-answer portion of the selected source document. */
+function extractModelTestDescriptiveSectionText(
+  sourceText?: string,
+  sourceKind: 'question-paper' | 'suggested-answers' = 'question-paper',
+): string {
+  const lines = String(sourceText || '').replace(/\r\n?/g, '\n').split('\n');
+  const startIndex = lines.findIndex((line) => sourceKind === 'question-paper'
+    ? /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)
+    : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?|QUESTIONS?))/i.test(line));
+  return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
+}
+
+/** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
+function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
+  const lines = String(questionPaperText || '').replace(/\r\n?/g, '\n').split('\n');
+  const result = new Map<string, ModelTestQuestionCandidate>();
+  let inObjectivePart = false;
+  let activeRootNumber: number | null = null;
+  let activeRootHasRomanChildren = false;
+  let lastRootNumber = 0;
+  let lastStandaloneObjectiveNumber = 0;
+  let mcqNumber = 0;
+
+  const addMcq = (sourceNumber?: number) => {
+    const questionNumber = Number.isInteger(sourceNumber) ? Number(sourceNumber) : mcqNumber + 1;
+    mcqNumber = Math.max(mcqNumber, questionNumber);
+    const candidate = toModelTestCandidate('MCQ' + questionNumber);
+    if (candidate) result.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+  };
+  const flushRoot = () => {
+    if (activeRootNumber !== null && !activeRootHasRomanChildren) addMcq();
+    activeRootNumber = null;
+    activeRootHasRomanChildren = false;
+  };
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (!inObjectivePart && /(?:PART|SECTION|DIVISION)\s+(?:I|1|A)\b[^\n]*(?:MCQ|MULTIPLE\s+CHOICE)/i.test(line)) {
+      inObjectivePart = true;
+      continue;
+    }
+    if (inObjectivePart && /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)) {
+      flushRoot();
+      break;
+    }
+    if (!inObjectivePart) {
+      const objectiveHeading = normalizeModelTestSectionHeading(line);
+      if (/^(?:CASE\s+SCENARIO\s+BASED\s+MCQS?|MULTIPLE\s+CHOICE\s+QUESTIONS?|MCQS?|OBJECTIVE(?:\s+TYPE)?(?:\s+QUESTIONS?)?)$/i.test(objectiveHeading)) {
+        inObjectivePart = true;
+        continue;
+      }
+    }
+    if (!inObjectivePart) continue;
+
+    const root = line.match(/^\s{0,3}(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?)?(\d{1,2})\s*[.)\-:]\s+\S.{2,}/i);
+    if (root) {
+      const number = Number(root[1]);
+      if (number >= 1 && number <= 30 && (number === 1 || number === lastRootNumber + 1)) {
+        flushRoot();
+        activeRootNumber = number;
+        lastRootNumber = number;
+        continue;
+      }
+    }
+
+    // Some extracted PDFs place an objective question number on its own line
+    // and put the stem below it. Accept only sequential standalone numbers
+    // inside an objective section, and never while inside a numbered case root.
+    const standaloneObjectiveNumber = activeRootNumber === null
+      ? line.match(/^\s*(?:(?:QUESTION|MCQ)\s*)?(\d{1,2})\s*[.)]?\s*$/i)
+      : null;
+    if (standaloneObjectiveNumber) {
+      const number = Number(standaloneObjectiveNumber[1]);
+      if (number >= 1 && number <= 30 &&
+          (lastStandaloneObjectiveNumber === 0 || number === lastStandaloneObjectiveNumber + 1)) {
+        lastStandaloneObjectiveNumber = number;
+        addMcq(number);
+        continue;
+      }
+    }
+
+    // A case-scenario stem may itself contain roman-numbered facts (i., ii.).
+    // Count a roman label as an MCQ only when that label owns a complete
+    // (a)-(d) option block before the next roman question or numbered root.
+    const romanPart = line.match(/^[ ]{0,24}\(?\s*(i|ii|iii|iv|v|vi|vii|viii|ix|x)\s*\)?[.)]\s+\S/i);
+    if (romanPart && activeRootNumber !== null) {
+      const optionLetters = new Set<string>();
+      for (let lookAhead = lineIndex + 1; lookAhead < lines.length; lookAhead++) {
+        const nextLine = lines[lookAhead];
+        if (/^[ ]{0,24}\(?\s*(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)\s*\)?[.)]\s+\S/i.test(nextLine)) break;
+        if (/^\s{0,3}(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?)?\d{1,2}\s*[.)\-:]\s+\S.{2,}/i.test(nextLine)) break;
+        const option = nextLine.match(/^[ ]{0,28}\(([a-d])\)\s+\S/i);
+        if (option) optionLetters.add(option[1].toLowerCase());
+        if (['a', 'b', 'c', 'd'].every((letter) => optionLetters.has(letter))) break;
+      }
+
+      if (['a', 'b', 'c', 'd'].every((letter) => optionLetters.has(letter))) {
+        activeRootHasRomanChildren = true;
+        addMcq();
+      }
+    }
+  }
+
+  if (inObjectivePart) flushRoot();
+  return Array.from(result.values());
 }
 
 function findExplicitModelTestMarks(line: string, allowBareBracket = false): number | undefined {
@@ -961,6 +1111,21 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   return allocations;
 }
 
+function extractModelTestMcqMarkValue(
+  questionPaperText?: string,
+  markingSchemeText?: string,
+): number | undefined {
+  const paperText = String(questionPaperText || '');
+  const schemeText = String(markingSchemeText || '');
+  const partTotalMatch = paperText.match(/PART\s+I\b[^\n]{0,120}?\(\s*(\d+(?:\.\d+)?)\s*MARKS?\s*\)/i);
+  const totalMarks = partTotalMatch ? Number(partTotalMatch[1]) : undefined;
+  const eachMatch = schemeText.match(/\bMCQs?\s+(?:ARE\s+)?MARKED\s+AT\s+(\d+(?:\.\d+)?)\s+MARKS?\s+EACH\b/i)
+    || paperText.match(/\b\d+\s+MCQs?\s+OF\s+(\d+(?:\.\d+)?)\s+MARKS?\s+EACH\b/i);
+  const eachMarks = eachMatch ? Number(eachMatch[1]) : undefined;
+  if (!totalMarks || !eachMarks || totalMarks <= 0 || eachMarks <= 0) return undefined;
+  return eachMarks;
+}
+
 function buildModelTestPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -968,10 +1133,36 @@ function buildModelTestPaperStructure(options: {
   officialPaperMaxMarks?: number;
   level?: string;
 }): AuthoritativePaperStructure {
-  const qpCandidates = extractModelTestQuestionPaperInventory(options.questionPaperText);
-  const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(options.suggestedAnswersText);
+  const questionPaperDescriptiveText = extractModelTestDescriptiveSectionText(options.questionPaperText, 'question-paper');
+  const suggestedAnswersDescriptiveText = extractModelTestDescriptiveSectionText(options.suggestedAnswersText, 'suggested-answers');
+  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText);
+  const qpMcqCandidates = extractModelTestObjectiveQuestionPaperInventory(options.questionPaperText);
+  const qpCandidates = [...qpMcqCandidates, ...qpDescriptiveCandidates];
+  const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(suggestedAnswersDescriptiveText);
   const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
   const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqMarkValue = extractModelTestMcqMarkValue(options.questionPaperText, options.markingSchemeText);
+
+  // The selected Marking Scheme explicitly states the per-MCQ mark value.
+  // Combine it with the Question Paper's Part I total and the QP-parsed
+  // objective count; do not assign a mark when those source values disagree.
+  const partOneTotalMatch = String(options.questionPaperText || '').match(/PART\s+I\b[^\n]{0,120}?\(\s*(\d+(?:\.\d+)?)\s*MARKS?\s*\)/i);
+  const partOneTotal = partOneTotalMatch ? Number(partOneTotalMatch[1]) : undefined;
+  const objectiveMarksReconcile = Boolean(
+    mcqMarkValue &&
+    partOneTotal &&
+    qpMcqCandidates.length > 0 &&
+    Math.abs(qpMcqCandidates.length * mcqMarkValue - partOneTotal) < 0.01
+  );
+  if (objectiveMarksReconcile) {
+    for (const candidate of qpMcqCandidates) {
+      const key = candidate.fullQuestionCode.toLowerCase();
+      if (!markAllocations.has(key)) {
+        markAllocations.set(key, { ...candidate, maximumMarks: mcqMarkValue! });
+      }
+    }
+  }
+
   const qpMcqNumbers = new Set(qpCandidates.filter((candidate) => candidate.isMcq).map((candidate) => candidate.questionNumber));
   const qpDescriptiveNumbers = new Set(qpCandidates.filter((candidate) => !candidate.isMcq).map((candidate) => candidate.questionNumber));
 
@@ -1044,9 +1235,8 @@ function buildModelTestPaperStructure(options: {
 
   const markingSchemeLeafAllocations = Array.from(markAllocations.values()).filter((item) => {
     if (item.isMcq || item.subQuestionNumber) return true;
-    // A parent-level total in the Marking Scheme is not an orphan when the QP
-    // has the same parent with child parts. It cannot be split among children,
-    // so those leaves remain explicitly missing marks and block evaluation.
+    // Parent totals are reconciled against QP child maxima below. The parent
+    // is not an extra scorable leaf when the Question Paper defines subparts.
     if ((qpChildrenByParent.get(item.questionNumber) || []).length > 0) return false;
     return !Array.from(markAllocations.values()).some((candidate) =>
       candidate.questionNumber === item.questionNumber && Boolean(candidate.subQuestionNumber)
@@ -1062,9 +1252,66 @@ function buildModelTestPaperStructure(options: {
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
+  // QP printed maxima are authoritative for descriptive leaves. The uploaded
+  // Derived Evaluation Scheme says these maxima are taken from the QP where
+  // printed; the MS parent totals are used to reconcile their sum, not to
+  // invent a split among child parts.
+  const hasAuthoritativeMaximum = (candidate: ModelTestQuestionCandidate) =>
+    (Number(candidate.maximumMarks) > 0) ||
+    (Number(markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks) > 0);
+
+  const hasMarkSchemeSupport = (candidate: ModelTestQuestionCandidate) => {
+    const exactKey = candidate.fullQuestionCode.toLowerCase();
+    const parentKey = ('q' + candidate.questionNumber).toLowerCase();
+    return markAllocations.has(exactKey) || markAllocations.has(parentKey);
+  };
+
   const missingMarkQuestionIds = candidateIds
-    .filter((item) => !markAllocations.has(item.fullQuestionCode.toLowerCase()))
+    .filter((item) => !hasAuthoritativeMaximum(item) || !hasMarkSchemeSupport(item))
     .map((item) => item.fullQuestionCode);
+
+  const markingSchemeParentTotalMismatchQuestionIds: string[] = [];
+  const parentNumbers = new Set(candidateIds.filter((item) => !item.isMcq).map((item) => item.questionNumber));
+  for (const questionNumber of parentNumbers) {
+    const parentKey = ('q' + questionNumber).toLowerCase();
+    const parentAllocation = markAllocations.get(parentKey);
+    const children = candidateIds.filter((item) => !item.isMcq && item.questionNumber === questionNumber);
+    if (!parentAllocation) {
+      // Without a parent total, every leaf must have an explicit allocation
+      // in the selected Marking Scheme itself.
+      const allLeavesIndividuallyMarked = children.length > 0 && children.every((item) =>
+        Number(markAllocations.get(item.fullQuestionCode.toLowerCase())?.maximumMarks) > 0
+      );
+      if (!allLeavesIndividuallyMarked) markingSchemeParentTotalMismatchQuestionIds.push('Q' + questionNumber);
+      continue;
+    }
+    if (children.length === 0) continue;
+    const allChildMarksPresent = children.every(hasAuthoritativeMaximum);
+    const childTotal = children.reduce((sum, item) =>
+      sum + Number(item.maximumMarks || markAllocations.get(item.fullQuestionCode.toLowerCase())?.maximumMarks || 0), 0);
+    if (!allChildMarksPresent || Math.abs(childTotal - parentAllocation.maximumMarks) > 0.01) {
+      markingSchemeParentTotalMismatchQuestionIds.push('Q' + questionNumber);
+    }
+  }
+
+  // Compulsory and choice rules are source-driven, not generic Model Test defaults.
+  const selectedMarkingSchemeText = String(options.markingSchemeText || '');
+  const compulsoryParentNumbers = new Set<string>();
+  const compulsoryQuestionPattern = /\bQUESTION\s*(\d{1,2})\s+IS\s+COMPULSORY\b/gi;
+  for (const match of selectedMarkingSchemeText.matchAll(compulsoryQuestionPattern)) {
+    compulsoryParentNumbers.add(String(Number(match[1])));
+  }
+  const choiceGroupMatch = selectedMarkingSchemeText.match(
+    /\bATTEMPT\s+ANY\s+(\d{1,2}|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)\s+QUESTIONS?\s+FROM\s+QUESTIONS?\s*(\d{1,2})\s*(?:TO|[-–—])\s*(\d{1,2})\b/i
+  );
+  const choiceRuleText = choiceGroupMatch
+    ? 'Attempt any ' + String(choiceGroupMatch[1]).toLowerCase() + ' of Questions ' + Number(choiceGroupMatch[2]) + ' to ' + Number(choiceGroupMatch[3])
+    : undefined;
+  const questionIsInChoiceGroup = (questionNumber: string) => {
+    if (!choiceGroupMatch) return false;
+    const number = Number(questionNumber);
+    return number >= Number(choiceGroupMatch[2]) && number <= Number(choiceGroupMatch[3]);
+  };
 
   const subQuestions: PaperStructureSubQuestion[] = candidateIds
     .filter((candidate) => !candidate.isMcq)
@@ -1072,8 +1319,8 @@ function buildModelTestPaperStructure(options: {
       fullQuestionCode: candidate.fullQuestionCode,
       questionNumber: candidate.questionNumber,
       subQuestionNumber: candidate.subQuestionNumber,
-      maximumMarks: markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0,
-      compulsory: false,
+      maximumMarks: Number(candidate.maximumMarks || markAllocations.get(candidate.fullQuestionCode.toLowerCase())?.maximumMarks || 0),
+      compulsory: compulsoryParentNumbers.has(candidate.questionNumber),
       isMcq: false,
       section: 'GENERAL',
       division: 'B',
@@ -1087,7 +1334,8 @@ function buildModelTestPaperStructure(options: {
         questionNumber: subQuestion.questionNumber,
         section: 'GENERAL',
         division: 'B',
-        compulsory: false,
+        compulsory: compulsoryParentNumbers.has(subQuestion.questionNumber),
+        choiceRule: questionIsInChoiceGroup(subQuestion.questionNumber) ? choiceRuleText : undefined,
         maximumMarks: 0,
         subQuestions: [],
       });
@@ -1104,8 +1352,8 @@ function buildModelTestPaperStructure(options: {
       fullQuestionCode: 'MCQ' + candidate.questionNumber,
       questionNumber: candidate.questionNumber,
       subQuestionNumber: 'MCQ',
-      maximumMarks: markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || 0,
-      compulsory: false,
+      maximumMarks: Number(markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || (objectiveMarksReconcile ? mcqMarkValue : 0)),
+      compulsory: true,
       isMcq: true,
       officialKey: data?.officialKey,
       officialExplanation: data?.explanation,
@@ -1119,11 +1367,21 @@ function buildModelTestPaperStructure(options: {
     .filter((question) => !question.officialKey || !['A', 'B', 'C', 'D'].includes(String(question.officialKey).toUpperCase()))
     .map((question) => question.fullQuestionCode);
 
-  const markingSchemeQuestionIds = markingSchemeLeafAllocations
+  const markingSchemeQuestionIds = Array.from(markAllocations.values())
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const questionPaperQuestionIds = candidateIds.map((item) => item.fullQuestionCode);
-  const suggestedAnswerIds = new Set(suggestedAnswerCandidates.map((item) => item.fullQuestionCode.toLowerCase()));
+  // Narrative-style ICAI Suggested Answers often use bare "1. (a)" labels
+  // for answers and ordinary numbered table rows. Do not treat these as a
+  // complete question-wise identity inventory unless the selected source
+  // explicitly labels question headings (Question 1 / Q1). MCQ keys remain
+  // independently reconciled from Division A in all cases.
+  const suggestedAnswersHaveExplicitQuestionHeadings =
+    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?)\s*\d{1,2}\b/im.test(suggestedAnswersDescriptiveText);
+  const reconciledSuggestedAnswerCandidates = suggestedAnswersHaveExplicitQuestionHeadings
+    ? suggestedAnswerCandidates
+    : [];
+  const suggestedAnswerIds = new Set(reconciledSuggestedAnswerCandidates.map((item) => item.fullQuestionCode.toLowerCase()));
   for (const questionNumber of parsedMcqKeys.keys()) {
     suggestedAnswerIds.add(('mcq' + questionNumber).toLowerCase());
   }
@@ -1135,10 +1393,14 @@ function buildModelTestPaperStructure(options: {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const qpIdSet = new Set(questionPaperQuestionIds.map((id) => id.toLowerCase()));
   const saIdSet = new Set(suggestedAnswerQuestionIds.map((id) => id.toLowerCase()));
-  const suggestedAnswerMissingQuestionIds = suggestedAnswerQuestionIds.length > 0
-    ? questionPaperQuestionIds.filter((id) => !saIdSet.has(id.toLowerCase()))
+  const suggestedAnswerDescriptiveIds = suggestedAnswerQuestionIds.filter((id) => !/^MCQ\d+$/i.test(id));
+  const qpDescriptiveIds = questionPaperQuestionIds.filter((id) => !/^MCQ\d+$/i.test(id));
+  const suggestedAnswerMissingQuestionIds = reconciledSuggestedAnswerCandidates.length > 0
+    ? qpDescriptiveIds.filter((id) => !saIdSet.has(id.toLowerCase()))
     : [];
-  const suggestedAnswerOnlyQuestionIds = suggestedAnswerQuestionIds.filter((id) => !qpIdSet.has(id.toLowerCase()));
+  const suggestedAnswerOnlyQuestionIds = reconciledSuggestedAnswerCandidates.length > 0
+    ? suggestedAnswerDescriptiveIds.filter((id) => !qpIdSet.has(id.toLowerCase()))
+    : [];
 
   const diagnostics = {
     sourceType: 'MODEL_TEST_PAPER' as const,
@@ -1150,6 +1412,7 @@ function buildModelTestPaperStructure(options: {
     missingMarkQuestionIds,
     missingMcqKeyQuestionIds,
     markingSchemeOnlyQuestionIds,
+    markingSchemeParentTotalMismatchQuestionIds,
   };
 
   return {
