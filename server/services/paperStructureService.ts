@@ -46,6 +46,7 @@ export interface ModelTestSourceInventoryDiagnostics {
   questionPaperQuestionIds: string[];
   markingSchemeQuestionIds: string[];
   missingMarkQuestionIds: string[];
+  missingMcqKeyQuestionIds: string[];
   markingSchemeOnlyQuestionIds: string[];
 }
 
@@ -882,25 +883,26 @@ function buildModelTestPaperStructure(options: {
 
   const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
   const mcqQuestionIds = candidateIds.filter((candidate) => candidate.isMcq);
-  const mcqs: PaperStructureSubQuestion[] = [];
-  for (const [questionNumber, data] of parsedMcqKeys.entries()) {
-    const candidate = mcqQuestionIds.find((item) => item.questionNumber === questionNumber);
-    if (!candidate) continue;
-    mcqs.push({
-      fullQuestionCode: 'MCQ' + questionNumber,
-      questionNumber,
+  const mcqs: PaperStructureSubQuestion[] = mcqQuestionIds.map((candidate) => {
+    const data = parsedMcqKeys.get(candidate.questionNumber);
+    return {
+      fullQuestionCode: 'MCQ' + candidate.questionNumber,
+      questionNumber: candidate.questionNumber,
       subQuestionNumber: 'MCQ',
-      maximumMarks: markAllocations.get(('mcq' + questionNumber).toLowerCase())?.maximumMarks || 0,
+      maximumMarks: markAllocations.get(('mcq' + candidate.questionNumber).toLowerCase())?.maximumMarks || 0,
       compulsory: false,
       isMcq: true,
-      officialKey: data.officialKey,
-      officialExplanation: data.explanation,
-      provision: data.provision,
-      topic: 'Model Test Multiple Choice Question ' + questionNumber,
+      officialKey: data?.officialKey,
+      officialExplanation: data?.explanation,
+      provision: data?.provision,
+      topic: 'Model Test Multiple Choice Question ' + candidate.questionNumber,
       section: 'GENERAL',
       division: 'A',
-    });
-  }
+    };
+  });
+  const missingMcqKeyQuestionIds = mcqs
+    .filter((question) => !question.officialKey || !['A', 'B', 'C', 'D'].includes(String(question.officialKey).toUpperCase()))
+    .map((question) => question.fullQuestionCode);
 
   const markingSchemeQuestionIds = markingSchemeLeafAllocations
     .map((item) => item.fullQuestionCode)
@@ -910,6 +912,7 @@ function buildModelTestPaperStructure(options: {
     questionPaperQuestionIds: candidateIds.map((item) => item.fullQuestionCode),
     markingSchemeQuestionIds,
     missingMarkQuestionIds,
+    missingMcqKeyQuestionIds,
     markingSchemeOnlyQuestionIds,
   };
 
