@@ -519,7 +519,7 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
-  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){1,2})(?=\s*(?:[-–—:.[(]|\s|$))/i);
+  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){1,2})/i);
   if (!match) return null;
   const suffix = match[2].match(/\(([a-z0-9]+)\)/gi) || [];
   return toModelTestCandidate('Q' + match[1] + suffix.join(''));
@@ -634,6 +634,11 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
 function findExplicitModelTestMarks(line: string, allowBareBracket = false): number | undefined {
   const value = String(line || '');
   const unitMatches = Array.from(value.matchAll(/(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\b/gi));
+  if (unitMatches.length > 1 && !/\b(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\b/i.test(value)) {
+    // Multiple component marks on a single rubric line are not a total unless
+    // the source explicitly labels the total/maximum.
+    return undefined;
+  }
   if (unitMatches.length > 0) {
     const parsed = Number(unitMatches[unitMatches.length - 1][1]);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -659,9 +664,7 @@ function findExplicitModelTestMarks(line: string, allowBareBracket = false): num
 function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): Map<string, ModelTestQuestionCandidate & { maximumMarks: number }> {
   const allocations = new Map<string, ModelTestQuestionCandidate & { maximumMarks: number }>();
   const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
-  const hasObjectiveSection = lines.some((line) => isModelTestMcqSectionHeading(line));
-
-  // Use line-anchored identities below rather than broad in-text matches, so a
+  // Use line-anchored identities rather than broad in-text matches, so a
   // narrative reference to another question cannot create an authoritative mark node.
 
   const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
