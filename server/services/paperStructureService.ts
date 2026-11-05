@@ -1305,7 +1305,7 @@ function buildModelTestPaperStructure(options: {
     /\bATTEMPT\s+ANY\s+(\d{1,2})\s+QUESTIONS?\s+FROM\s+QUESTIONS?\s*(\d{1,2})\s*(?:TO|[-–—])\s*(\d{1,2})\b/i
   );
   const choiceRuleText = choiceGroupMatch
-    ? 'Attempt any ' + Number(choiceGroupMatch[1]) + ' of Questions ' + Number(choiceGroupMatch[2]) + ' to ' + Number(choiceGroupMatch[3])
+    ? 'Attempt any ' + String(choiceGroupMatch[1]).toLowerCase() + ' of Questions ' + Number(choiceGroupMatch[2]) + ' to ' + Number(choiceGroupMatch[3])
     : undefined;
   const questionIsInChoiceGroup = (questionNumber: string) => {
     if (!choiceGroupMatch) return false;
