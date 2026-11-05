@@ -646,7 +646,8 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       : null;
     if (standaloneObjectiveNumber) {
       const number = Number(standaloneObjectiveNumber[1]);
-      if (number >= 1 && number <= 30 && (number === 1 || number === lastQuestionHeadingNumber + 1)) {
+      if (number >= 1 && number <= 30 &&
+          (lastQuestionHeadingNumber === 0 || number === lastQuestionHeadingNumber + 1)) {
         lastQuestionHeadingNumber = number;
         add(toModelTestCandidate('MCQ' + number), line);
         continue;
@@ -730,9 +731,10 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
   let lastStandaloneObjectiveNumber = 0;
   let mcqNumber = 0;
 
-  const addMcq = () => {
-    mcqNumber += 1;
-    const candidate = toModelTestCandidate('MCQ' + mcqNumber);
+  const addMcq = (sourceNumber?: number) => {
+    const questionNumber = Number.isInteger(sourceNumber) ? Number(sourceNumber) : mcqNumber + 1;
+    mcqNumber = Math.max(mcqNumber, questionNumber);
+    const candidate = toModelTestCandidate('MCQ' + questionNumber);
     if (candidate) result.set(candidate.fullQuestionCode.toLowerCase(), candidate);
   };
   const flushRoot = () => {
@@ -780,9 +782,9 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
     if (standaloneObjectiveNumber) {
       const number = Number(standaloneObjectiveNumber[1]);
       if (number >= 1 && number <= 30 &&
-          (number === 1 || number === lastStandaloneObjectiveNumber + 1)) {
+          (lastStandaloneObjectiveNumber === 0 || number === lastStandaloneObjectiveNumber + 1)) {
         lastStandaloneObjectiveNumber = number;
-        addMcq();
+        addMcq(number);
         continue;
       }
     }
