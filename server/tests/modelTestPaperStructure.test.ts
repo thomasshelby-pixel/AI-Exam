@@ -24,34 +24,52 @@ Question 3(b) - 5 Marks`,
   officialPaperMaxMarks: 50,
 };
 
-for (const subjectName of [
-  'Advanced Accounting',
-  'Costing',
-  'Corporate and Other Laws',
-  'Taxation',
-  'Audit',
-  'Financial Management and Strategic Management',
-]) {
-  const modelTest = getAuthoritativePaperStructure({
-    ...shared,
-    subjectName,
-    paper: subjectName,
-    materialType: 'MODEL_TEST_PAPER',
-  });
-  assert.deepEqual(
-    modelTest.subQuestions.map((question) => question.fullQuestionCode),
-    ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)'],
-    `\u0024{subjectName}: Model Test mapping must follow the selected source and remove parent totals when marked child parts exist.`,
-  );
-  assert.deepEqual(
-    modelTest.subQuestions.map((question) => question.maximumMarks),
-    [8, 12, 10, 5, 5],
-    `\u0024{subjectName}: Model Test maximum marks must come from its own Marking Scheme.`,
-  );
-  assert.equal(modelTest.totalPaperMaxMarks, 50);
-  assert.ok(modelTest.subQuestions.every((question) => question.section === 'GENERAL'));
-  assert.equal(modelTest.subQuestions.some((question) => question.compulsory), false,
-    `\u0024{subjectName}: Model Test must not assume Q1 or Q5 is compulsory without an explicit source rule.`);
+const levelSubjectMatrix: Record<string, string[]> = {
+  FOUNDATION: ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'],
+  INTERMEDIATE: [
+    'Advanced Accounting',
+    'Costing',
+    'Corporate and Other Laws',
+    'Taxation',
+    'Audit',
+    'Financial Management and Strategic Management',
+  ],
+  FINAL: [
+    'Financial Reporting',
+    'Advanced Financial Management',
+    'Advanced Auditing, Assurance and Professional Ethics',
+    'Direct Tax Laws and International Taxation',
+    'Indirect Tax Laws',
+    'Corporate and Economic Laws',
+    'Strategic Cost and Performance Management',
+    'Integrated Business Solutions',
+  ],
+};
+
+for (const [level, subjects] of Object.entries(levelSubjectMatrix)) {
+  for (const subjectName of subjects) {
+    const modelTest = getAuthoritativePaperStructure({
+      ...shared,
+      level,
+      subjectName,
+      paper: subjectName,
+      materialType: 'MODEL_TEST_PAPER',
+    });
+    assert.deepEqual(
+      modelTest.subQuestions.map((question) => question.fullQuestionCode),
+      ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)'],
+      `\u0024{level} / \u0024{subjectName}: Model Test mapping must follow the selected source and remove parent totals when marked child parts exist.`,
+    );
+    assert.deepEqual(
+      modelTest.subQuestions.map((question) => question.maximumMarks),
+      [8, 12, 10, 5, 5],
+      `\u0024{level} / \u0024{subjectName}: Model Test maximum marks must come from its own Marking Scheme.`,
+    );
+    assert.equal(modelTest.totalPaperMaxMarks, 50);
+    assert.ok(modelTest.subQuestions.every((question) => question.section === 'GENERAL'));
+    assert.equal(modelTest.subQuestions.some((question) => question.compulsory), false,
+      `\u0024{level} / \u0024{subjectName}: Model Test must not assume Q1 or Q5 is compulsory without an explicit source rule.`);
+  }
 }
 
 // The old Taxation Q1–Q8 special case must not leak into Model Test routing.
