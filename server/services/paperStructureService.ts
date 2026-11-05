@@ -1295,7 +1295,7 @@ function buildModelTestPaperStructure(options: {
     // equals the parent total, and all siblings are unmarked, it is not a safe
     // child allocation. Keep the QP parent as the scorable node instead.
     const isFactualInstructionClauseList = modelTestParentHasInstructionClauseList(
-      options.questionPaperText,
+      questionPaperDescriptiveText,
       candidate.questionNumber,
     );
     const childrenHoldingParentTotal = parentAllocation
