@@ -1498,64 +1498,11 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
         rawText: combinedText,
       });
 
-      const structure = getAuthoritativePaperStructure({
-        level: normalizedLevel,
-        subjectName: cleanSubjectName,
-        paper: paper || 'Paper 1',
-        materialType: 'MODEL_TEST_PAPER',
-        questionPaperText: item.questionPaperText,
-        suggestedAnswersText: item.suggestedAnswersText,
-        markingSchemeText: item.markingSchemeText,
-        officialPaperMaxMarks: 100,
-      });
-      const inventory = structure.sourceInventoryDiagnostics;
-      const missingMaximumMarks = [
-        ...structure.subQuestions.filter((question) => !Number.isFinite(question.maximumMarks) || question.maximumMarks <= 0).map((question) => question.fullQuestionCode),
-        ...structure.mcqs.filter((question) => !Number.isFinite(question.maximumMarks) || question.maximumMarks <= 0).map((question) => question.fullQuestionCode),
-      ];
-      const sourceAudit = {
-        questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
-        suggestedAnswerQuestionIds: inventory?.suggestedAnswerQuestionIds || [],
-        suggestedAnswerMissingQuestionIds: inventory?.suggestedAnswerMissingQuestionIds || [],
-        suggestedAnswerOnlyQuestionIds: inventory?.suggestedAnswerOnlyQuestionIds || [],
-        markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
-        missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
-        missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
-        markingSchemeOnlyQuestionIds: inventory?.markingSchemeOnlyQuestionIds || [],
-        missingMaximumMarks: Array.from(new Set(missingMaximumMarks)),
-        questionPaperCount: inventory?.questionPaperQuestionIds.length || 0,
-        suggestedAnswerCount: inventory?.suggestedAnswerQuestionIds.length || 0,
-        markingSchemeCount: inventory?.markingSchemeQuestionIds.length || 0,
-        isReadyForEvaluation: Boolean(
-          inventory &&
-          inventory.questionPaperQuestionIds.length > 0 &&
-          inventory.markingSchemeQuestionIds.length > 0 &&
-          inventory.missingMarkQuestionIds.length === 0 &&
-          inventory.missingMcqKeyQuestionIds.length === 0 &&
-          inventory.markingSchemeOnlyQuestionIds.length === 0 &&
-          (inventory.suggestedAnswerQuestionIds.length === 0 ||
-            (inventory.suggestedAnswerMissingQuestionIds.length === 0 && inventory.suggestedAnswerOnlyQuestionIds.length === 0)) &&
-          missingMaximumMarks.length === 0
-        ),
-      };
-      const sourceIssues = [
-        ...(sourceAudit.questionPaperCount === 0 ? ['No question IDs could be parsed from the Question Paper.'] : []),
-        ...(sourceAudit.markingSchemeCount === 0 ? ['No question/mark allocations could be parsed from the Marking Scheme.'] : []),
-        ...sourceAudit.missingMarkQuestionIds.map((id) => `No Marking Scheme allocation found for ${id}.`),
-        ...sourceAudit.missingMcqKeyQuestionIds.map((id) => `No official Suggested Answer key found for ${id}.`),
-        ...sourceAudit.suggestedAnswerMissingQuestionIds.map((id) => `Question Paper ID ${id} is missing from the question-wise Suggested Answers inventory.`),
-        ...sourceAudit.suggestedAnswerOnlyQuestionIds.map((id) => `Suggested Answer ID ${id} is not in the Question Paper inventory.`),
-        ...sourceAudit.markingSchemeOnlyQuestionIds.map((id) => `Marking Scheme ID ${id} is not in the Question Paper inventory.`),
-        ...sourceAudit.missingMaximumMarks.map((id) => `No verified maximum marks found for ${id}.`),
-      ];
-
       return {
         item,
         title,
         combinedText,
         duplicate,
-        sourceAudit,
-        sourceIssues,
         id: `mat_${crypto.randomBytes(8).toString('hex')}`,
       };
     });
@@ -1579,20 +1526,12 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       });
     }
 
-    const sourceBlocked = materials
-      .filter((entry) => !entry.sourceAudit.isReadyForEvaluation)
-      .map((entry) => ({
-        modelTestNumber: entry.item.modelTestNumber,
-        sourceIssues: entry.sourceIssues,
-        sourceAudit: entry.sourceAudit,
-      }));
-
+    // Model Tests use the shared PYQ/MTP paper parser during evaluation.
+    // Do not reintroduce a separate source-inventory reconciliation gate here.
     if (req.body?.dryRun === true) {
-      const allSourcesReady = sourceBlocked.length === 0;
       return res.json({
         success: true,
         validated: materials.length,
-        allSourceAuditsReady: allSourcesReady,
         materials: materials.map((entry) => ({
           modelTestNumber: entry.item.modelTestNumber,
           title: entry.title,
@@ -1600,21 +1539,8 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
           suggestedAnswerCharacters: entry.item.suggestedAnswersText.length,
           markingSchemeCharacters: entry.item.markingSchemeText.length,
           sourceFiles: entry.item.sourceFiles,
-          sourceAudit: entry.sourceAudit,
-          sourceIssues: entry.sourceIssues,
         })),
-        message: allSourcesReady
-          ? `All ${maxModelTestNumber} model TXT bundles passed source inventory, marking reconciliation and duplicate validation. Nothing has been saved yet.`
-          : `TXT files were separated, but ${sourceBlocked.length} Model Test source inventory/integrity audit(s) need correction. Nothing has been saved.`,
-      });
-    }
-
-    if (sourceBlocked.length > 0) {
-      return res.status(422).json({
-        success: false,
-        code: 'MODEL_TEST_SOURCE_RECONCILIATION_FAILED',
-        blocked: sourceBlocked,
-        error: 'The Model Test batch was not uploaded because one or more Question Paper, Suggested Answer and Marking Scheme inventories do not reconcile. Correct the source files and validate again.',
+        message: `All ${maxModelTestNumber} model TXT bundles were separated and passed duplicate validation. The shared PYQ/MTP paper structure is applied during evaluation. Nothing has been saved yet.`,
       });
     }
 
@@ -1806,7 +1732,7 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Evaluation material not found' });
     }
 
-    let sourceInventoryAudit: any = undefined;
+    let paperStructureSummary: any = undefined;
     if (String(material.material_type || material.materialType || '').toUpperCase() === 'MODEL_TEST_PAPER') {
       const structure = getAuthoritativePaperStructure({
         level: material.level,
@@ -1818,36 +1744,24 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
         markingSchemeText: material.marking_scheme_text || material.markingSchemeText,
         officialPaperMaxMarks: Number(material.official_max_marks || material.officialPaperMaxMarks) || 100,
       });
-      const inventory = structure.sourceInventoryDiagnostics;
-      const missingMaximumMarks = [
-        ...structure.subQuestions.filter((item) => !Number.isFinite(item.maximumMarks) || item.maximumMarks <= 0).map((item) => item.fullQuestionCode),
-        ...structure.mcqs.filter((item) => !Number.isFinite(item.maximumMarks) || item.maximumMarks <= 0).map((item) => item.fullQuestionCode),
-      ];
-      sourceInventoryAudit = {
-        questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
-        suggestedAnswerQuestionIds: inventory?.suggestedAnswerQuestionIds || [],
-        suggestedAnswerMissingQuestionIds: inventory?.suggestedAnswerMissingQuestionIds || [],
-        suggestedAnswerOnlyQuestionIds: inventory?.suggestedAnswerOnlyQuestionIds || [],
-        markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
-        missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
-        missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
-        markingSchemeOnlyQuestionIds: inventory?.markingSchemeOnlyQuestionIds || [],
-        missingMaximumMarks: Array.from(new Set(missingMaximumMarks)),
-        isReadyForEvaluation: Boolean(
-          inventory &&
-          inventory.questionPaperQuestionIds.length > 0 &&
-          inventory.markingSchemeQuestionIds.length > 0 &&
-          inventory.missingMarkQuestionIds.length === 0 &&
-          inventory.missingMcqKeyQuestionIds.length === 0 &&
-          inventory.markingSchemeOnlyQuestionIds.length === 0 &&
-          (inventory.suggestedAnswerQuestionIds.length === 0 ||
-            (inventory.suggestedAnswerMissingQuestionIds.length === 0 && inventory.suggestedAnswerOnlyQuestionIds.length === 0)) &&
-          missingMaximumMarks.length === 0
-        ),
+      const parsedQuestions = [...structure.subQuestions, ...structure.mcqs];
+      const questionIds = Array.from(new Set(parsedQuestions.map((item) => item.fullQuestionCode)));
+      const missingMaximumMarks = Array.from(new Set(
+        parsedQuestions
+          .filter((item) => !Number.isFinite(item.maximumMarks) || item.maximumMarks <= 0)
+          .map((item) => item.fullQuestionCode),
+      ));
+      paperStructureSummary = {
+        questionIds,
+        questionCount: questionIds.length,
+        descriptiveQuestionCount: structure.subQuestions.length,
+        mcqCount: structure.mcqs.length,
+        missingMaximumMarks,
+        hasParsedQuestions: questionIds.length > 0,
       };
     }
 
-    return res.json({ material, sourceInventoryAudit });
+    return res.json({ material, paperStructureSummary });
   } catch (error: unknown) {
     console.error('Get single material error:', error);
     return res.status(500).json({ error: 'Failed to load material details' });

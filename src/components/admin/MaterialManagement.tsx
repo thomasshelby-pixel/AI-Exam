@@ -408,8 +408,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     setInspectMaterial(mat);
     setLoadingInspect(true);
     try {
-      const res = await apiRequest<{ material: any; sourceInventoryAudit?: any }>(`/api/admin/materials/${mat.id}`);
-      setInspectFullText({ ...res.material, sourceInventoryAudit: res.sourceInventoryAudit });
+      const res = await apiRequest<{ material: any; paperStructureSummary?: any }>(`/api/admin/materials/${mat.id}`);
+      setInspectFullText({ ...res.material, paperStructureSummary: res.paperStructureSummary });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load details';
       onNotify?.(msg, 'error');
@@ -1039,102 +1039,60 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     </section>
                   )}
 
-                  {/* Parsed Model Test source inventory and mark reconciliation */}
-                  {inspectFullText.material_type === 'MODEL_TEST_PAPER' && inspectFullText.sourceInventoryAudit && (
+                  {/* Shared Model Test / PYQ-MTP paper parser summary */}
+                  {inspectFullText.material_type === 'MODEL_TEST_PAPER' && inspectFullText.paperStructureSummary && (
                     <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
-                          <h5 className="font-bold text-slate-900">Question Inventory & Marking Scheme Audit</h5>
+                          <h5 className="font-bold text-slate-900">Shared Paper Structure Parser</h5>
                           <p className="text-[10px] text-slate-500">
-                            Question IDs are read from this material's Question Paper; maximum marks are matched from its Marking Scheme.
+                            Uses the same subject-aware paper parser as PYQ/MTP. This is a parsed-structure summary, not a separate QP/SA/MS source reconciliation.
                           </p>
                         </div>
                         <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                          inspectFullText.sourceInventoryAudit.isReadyForEvaluation
+                          inspectFullText.paperStructureSummary.hasParsedQuestions
                             ? 'bg-emerald-100 text-emerald-700'
                             : 'bg-rose-100 text-rose-700'
                         }`}>
-                          {inspectFullText.sourceInventoryAudit.isReadyForEvaluation ? 'READY FOR EVALUATION' : 'SOURCE REVIEW REQUIRED'}
+                          {inspectFullText.paperStructureSummary.hasParsedQuestions ? 'QUESTION IDS FOUND' : 'NO QUESTION IDS FOUND'}
                         </span>
                       </div>
 
                       <div className="grid grid-cols-3 gap-2">
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">QP QUESTION IDs</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.questionPaperQuestionIds?.length || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">PARSED QUESTION IDS</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.questionCount || 0}</span>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">SA QUESTION IDs</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.suggestedAnswerQuestionIds?.length || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">DESCRIPTIVE ITEMS</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.descriptiveQuestionCount || 0}</span>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">MARKED QUESTION IDs</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.sourceInventoryAudit.markingSchemeQuestionIds?.length || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">MCQ ITEMS</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.mcqCount || 0}</span>
                         </div>
                       </div>
 
                       <div className="space-y-1">
-                        <span className="block text-[10px] font-bold uppercase text-slate-500">Question Paper inventory</span>
+                        <span className="block text-[10px] font-bold uppercase text-slate-500">Question IDs returned by the shared parser</span>
                         <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
-                          {(inspectFullText.sourceInventoryAudit.questionPaperQuestionIds || []).join(', ') || 'No question IDs parsed'}
+                          {(inspectFullText.paperStructureSummary.questionIds || []).join(', ') || 'No question IDs were extracted.'}
                         </code>
                       </div>
 
-                      <div className="space-y-1">
-                        <span className="block text-[10px] font-bold uppercase text-slate-500">Suggested Answers inventory</span>
-                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
-                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerQuestionIds || []).join(', ') || 'No question-wise answer IDs parsed'}
-                        </code>
-                      </div>
-
-                      <div className="space-y-1">
-                        <span className="block text-[10px] font-bold uppercase text-slate-500">Marking Scheme inventory</span>
-                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
-                          {(inspectFullText.sourceInventoryAudit.markingSchemeQuestionIds || []).join(', ') || 'No mark allocations parsed'}
-                        </code>
-                      </div>
-
-                      {(
-                        (inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 ||
-                        (inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 ||
-                        (inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds || []).length > 0 ||
-                        (inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds || []).length > 0 ||
-                        (inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 ||
-                        (inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0
-                      ) && (
-                        <div className="space-y-2 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
-                          <p className="text-[10px] font-bold uppercase text-rose-800">Issues that block evaluation</p>
-                          {(inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              Missing Marking Scheme allocation: {inspectFullText.sourceInventoryAudit.missingMarkQuestionIds.join(', ')}
-                            </p>
-                          )}
-                          {(inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              Official Suggested Answer key missing: {inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds.join(', ')}
-                            </p>
-                          )}
-                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              Question Paper IDs not found in question-wise Suggested Answers: {inspectFullText.sourceInventoryAudit.suggestedAnswerMissingQuestionIds.join(', ')}
-                            </p>
-                          )}
-                          {(inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              Suggested Answer IDs not found in Question Paper inventory: {inspectFullText.sourceInventoryAudit.suggestedAnswerOnlyQuestionIds.join(', ')}
-                            </p>
-                          )}
-                          {(inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              Marking Scheme IDs not found in Question Paper inventory: {inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds.join(', ')}
-                            </p>
-                          )}
-                          {(inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0 && (
-                            <p className="text-[11px] text-rose-800">
-                              No verified maximum marks: {inspectFullText.sourceInventoryAudit.missingMaximumMarks.join(', ')}
-                            </p>
-                          )}
+                      {(inspectFullText.paperStructureSummary.missingMaximumMarks || []).length > 0 && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3">
+                          <p className="text-[10px] font-bold uppercase text-rose-800">Parsed items with invalid maximum marks</p>
+                          <p className="text-[11px] text-rose-800">
+                            {(inspectFullText.paperStructureSummary.missingMaximumMarks || []).join(', ')}
+                          </p>
                         </div>
+                      )}
+
+                      {!inspectFullText.paperStructureSummary.hasParsedQuestions && (
+                        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+                          The shared parser did not identify question IDs in the combined source text. Review the source text before attempting an evaluation.
+                        </p>
                       )}
                     </section>
                   )}
