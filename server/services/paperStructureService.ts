@@ -799,7 +799,7 @@ function buildModelTestPaperStructure(options: {
   const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
   const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
   const qpMcqNumbers = new Set(qpCandidates.filter((candidate) => candidate.isMcq).map((candidate) => candidate.questionNumber));
-  const qpDescriptiveNumbers = new Set(qpCandidates.filter((candidate) => !candidate.isMcq && !candidate.subQuestionNumber).map((candidate) => candidate.questionNumber));
+  const qpDescriptiveNumbers = new Set(qpCandidates.filter((candidate) => !candidate.isMcq).map((candidate) => candidate.questionNumber));
 
   // A selected QP may label objective questions MCQ1..n while the selected MS
   // uses Question 1..n without repeating the objective section heading. Promote
