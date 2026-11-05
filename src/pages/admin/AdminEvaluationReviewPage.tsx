@@ -57,6 +57,8 @@ interface EvaluationResult {
       pageNumber: number;
       status: string;
       rawSummary?: string;
+      questionLabelEvidence?: string;
+      readingConfidence?: number;
       analysisFailure?: {
         code: string;
         message: string;
@@ -858,6 +860,12 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
                     <p className="text-xs text-slate-600 break-words">
                       {page.analysisFailure?.message || page.rawSummary || 'Question identity was not established.'}
                     </p>
+                    {page.questionLabelEvidence && (
+                      <p className="text-xs text-slate-600 break-words">Question-label evidence: {page.questionLabelEvidence}</p>
+                    )}
+                    {typeof page.readingConfidence === 'number' && (
+                      <p className="text-[11px] text-slate-500">Question-label reading confidence (AI estimate): {Math.round(page.readingConfidence * 100)}%</p>
+                    )}
                     {page.analysisFailure?.failedOnPage && page.analysisFailure.failedOnPage !== page.pageNumber && (
                       <p className="text-[11px] text-amber-700">Analysis stopped after the failure on page {page.analysisFailure.failedOnPage}; this page was not sent to the AI provider.</p>
                     )}
