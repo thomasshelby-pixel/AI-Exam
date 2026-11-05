@@ -868,6 +868,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     <td className="py-3 px-3 font-mono text-[11px] text-slate-500">
                       <div>QP: {m.qp_chars || 0} chars</div>
                       <div className="text-emerald-700">SA: {m.sa_chars || 0} chars</div>
+                      <div className="text-indigo-700">MS: {m.ms_chars || 0} chars</div>
                     </td>
 
                     <td className="py-3 px-3">
