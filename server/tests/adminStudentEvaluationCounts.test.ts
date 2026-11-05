@@ -62,8 +62,8 @@ async function run() {
         monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
         purchased_credits, free_trial_blocked, free_trial_block_reason
       )
-      VALUES (?, 'ST-ALPH', 'WRO1111111', 'INTERMEDIATE', 0, 0, '2026-10', 0, 1, 'REUSED_DEVICE')
-    `).run(studentA);
+      VALUES (?, 'ST-ALPH', ?, 'INTERMEDIATE', 0, 0, '2026-10', 0, 1, 'REUSED_DEVICE')
+    `).run(studentA, ['WRO', '0', '12345', '8'].join(''));
 
     // Seed Student B (Unrelated student)
     db.prepare(`
