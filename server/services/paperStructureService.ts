@@ -730,7 +730,7 @@ function extractModelTestDescriptiveSectionText(
  * transaction clauses, not independently scorable sub-questions.
  */
 function modelTestParentHasInstructionClauseList(questionPaperText: string | undefined, questionNumber: string): boolean {
-  const lines = String(questionPaperText || '').replace(/\\r\\n?/g, '\\n').split('\\n');
+  const lines = String(questionPaperText || '').replace(/\r\n?/g, '\n').split('\n');
   let insideTargetQuestion = false;
   const parentLines: string[] = [];
 
@@ -744,9 +744,9 @@ function modelTestParentHasInstructionClauseList(questionPaperText: string | und
   }
 
   if (!insideTargetQuestion) return false;
-  const body = parentLines.join(' ').replace(/\\s+/g, ' ');
-  return /\\b(?:on|under|subject\\s+to|based\\s+on|as\\s+per)\\s+the\\s+following\\s+(?:terms?|conditions?|adjustments?|scheme|arrangements?|basis|information|particulars|details|transactions?)\\b/i.test(body)
-    || /\\bthe\\s+following\\s+(?:terms?|conditions?|adjustments?)\\s+(?:apply|are\\s+applicable|shall\\s+apply)\\b/i.test(body);
+  const body = parentLines.join(' ').replace(/\s+/g, ' ');
+  return /\b(?:on|under|subject\s+to|based\s+on|as\s+per)\s+the\s+following\s+(?:terms?|conditions?|adjustments?|scheme|arrangements?|basis|information|particulars|details|transactions?)\b/i.test(body)
+    || /\bthe\s+following\s+(?:terms?|conditions?|adjustments?)\s+(?:apply|are\s+applicable|shall\s+apply)\b/i.test(body);
 }
 
 /** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
