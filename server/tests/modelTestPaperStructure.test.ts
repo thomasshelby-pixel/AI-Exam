@@ -391,4 +391,111 @@ const missingMcqKeyGate = validatePreEvaluationGate({
 assert.equal(missingMcqKeyGate.passed, false);
 assert.ok(missingMcqKeyGate.failedInvariants.some((message) => message.includes('MISSING_OFFICIAL_MCQ_KEY: MCQ 2')));
 
+
+const mixedNumberingObjectiveModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 20,
+  // Reproduces the production shape: the first MCQ has an explicit heading,
+  // following MCQs use bare sequential numbering, and a descriptive section
+  // restarts with an explicit Question heading.
+  questionPaperText: `MODEL TEST PAPER 1
+MULTIPLE CHOICE QUESTIONS
+Question 1 - Which of the following is correct?
+2. Select the correct accounting treatment.
+3. Identify the correct principle.
+4. Select the correct journal entry.
+5. Choose the correct amount.
+6. Identify the correct statement.
+DESCRIPTIVE QUESTIONS
+Question 7 - Prepare the required financial statement.`,
+  suggestedAnswersText: `MODEL TEST PAPER 1 SUGGESTED ANSWERS
+Multiple Choice Questions
+1. (b)
+2. (c)
+3. (a)
+4. (d)
+5. (b)
+6. (a)
+Descriptive Questions
+Question 7 - Full solution.`,
+  // Marking Scheme numbers the MCQ answers generically as Q1..Q6 and omits
+  // its own objective-section heading. The QP + official key provide the safe alias.
+  markingSchemeText: `MODEL TEST PAPER 1 MARKING SCHEME
+Question 1 - 1 Mark
+Question 2 - 1 Mark
+Question 3 - 1 Mark
+Question 4 - 1 Mark
+Question 5 - 1 Mark
+Question 6 - 1 Mark
+DESCRIPTIVE QUESTIONS
+Question 7 - 14 Marks`,
+});
+assert.deepEqual(
+  mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['MCQ1', 'MCQ2', 'MCQ3', 'MCQ4', 'MCQ5', 'MCQ6', 'Q7'],
+  'Explicit and bare sequential headings must coexist in one QP without dropping later questions.',
+);
+assert.deepEqual(
+  mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
+  ['MCQ1', 'MCQ2', 'MCQ3', 'MCQ4', 'MCQ5', 'MCQ6', 'Q7'],
+  'Generic Q1..Q6 Marking Scheme IDs must reconcile to MCQ1..MCQ6 only when the selected QP and official SA key agree.',
+);
+assert.deepEqual(
+  mixedNumberingObjectiveModelTest.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks, question.officialKey]),
+  [
+    ['MCQ1', 1, 'B'],
+    ['MCQ2', 1, 'C'],
+    ['MCQ3', 1, 'A'],
+    ['MCQ4', 1, 'D'],
+    ['MCQ5', 1, 'B'],
+    ['MCQ6', 1, 'A'],
+  ],
+);
+assert.deepEqual(
+  mixedNumberingObjectiveModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q7', 14]],
+);
+assert.deepEqual(mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, []);
+assert.deepEqual(mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+const mixedNumberingGate = validatePreEvaluationGate({
+  paperStructure: mixedNumberingObjectiveModelTest,
+  questionPaperText: 'Question Paper text present.',
+  suggestedAnswersText: 'Official Suggested Answer key present.',
+  markingSchemeText: 'Marking Scheme text present.',
+  officialPaperMaxMarks: 20,
+});
+assert.equal(mixedNumberingGate.passed, true, 'Three-source-consistent mixed numbering must pass preflight.');
+
+// The same alias must NOT be applied if the selected Suggested Answers do not
+// provide an official key for that MCQ number.
+const unsafeMcqAliasModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `MULTIPLE CHOICE QUESTIONS
+Question 1 - Select an answer.
+2. Select an answer.`,
+  suggestedAnswersText: `SUGGESTED ANSWERS
+Multiple Choice Questions
+1. (b)`,
+  markingSchemeText: `Question 1 - 1 Mark
+Question 2 - 1 Mark`,
+});
+assert.deepEqual(unsafeMcqAliasModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, ['Q2']);
+assert.deepEqual(unsafeMcqAliasModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, ['MCQ2']);
+assert.deepEqual(unsafeMcqAliasModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, ['MCQ2']);
+const unsafeMcqAliasGate = validatePreEvaluationGate({
+  paperStructure: unsafeMcqAliasModelTest,
+  questionPaperText: 'Question Paper text present.',
+  suggestedAnswersText: 'Official Suggested Answer key incomplete.',
+  markingSchemeText: 'Marking Scheme text present.',
+});
+assert.equal(unsafeMcqAliasGate.passed, false, 'MCQ aliases without an official SA key must remain blocked.');
+
+
 console.log('Model Test dynamic paper structure tests passed.');
