@@ -155,6 +155,63 @@ function splitIntoSections(docText: string): { sectionA: string; sectionB: strin
 }
 
 /**
+ * Finds a lettered sub-question only inside its own numbered parent question.
+ * This deliberately refuses a bare "(d) ..." found elsewhere in the document:
+ * such a match can otherwise lock Q6(d) to an unrelated Q2(d) table row.
+ */
+function findSubQuestionInsideParent(
+  lines: string[],
+  qNum: string,
+  subQ: string
+): number {
+  const target = String(Number(qNum));
+  const normalizedSub = subQ.toLowerCase();
+  let activeParent = false;
+
+  const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,2})\b/i;
+  const numberedHeader = /^\s*(\d{1,2})\s*[.)]\s*(?=\(|[A-Z]|$)/;
+
+  const explicitTarget = new RegExp(
+    `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${target}\\s*[.):\\-]?\\s*\\(\\s*${normalizedSub}\\s*\\)`,
+    'i'
+  );
+  const childHeader = new RegExp(
+    `^\\s*(?:\\(\\s*${normalizedSub}\\s*\\)|${normalizedSub}[.)])\\s*(?:[-–—:.)]\\s*)?(?=[A-Z(])`,
+    'i'
+  );
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const named = trimmed.match(namedHeader);
+    const numbered = named ? null : trimmed.match(numberedHeader);
+    const detectedParent = named?.[1] || numbered?.[1];
+
+    if (detectedParent) {
+      const normalizedParent = String(Number(detectedParent));
+      if (normalizedParent !== target) {
+        if (activeParent && Number(normalizedParent) > Number(target)) {
+          return -1;
+        }
+        activeParent = false;
+        continue;
+      }
+      activeParent = true;
+      if (explicitTarget.test(trimmed)) return index;
+      continue;
+    }
+
+    if (activeParent && childHeader.test(trimmed)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+/**
  * Searches for a specific question/sub-question within a given document text.
  * Strictly extracts the question's content without bleeding into adjacent questions.
  */
@@ -187,6 +244,14 @@ export function extractLockedQuestionSlice(
     } else if (sectionB && !isSectionB && num <= 4) {
       targetText = sectionA;
     }
+  }
+
+  // Descriptive Q1-Q8 answers commonly sit under "Division B" while the
+  // preceding "Division A" contains a separate MCQ numbering sequence.
+  // Search the descriptive division first to avoid crossing those identities.
+  if (!isFallback && subQ && subQ.toUpperCase() !== 'MCQ') {
+    const divisionBIndex = targetText.search(/\bDivision\s*B\b/i);
+    if (divisionBIndex >= 0) targetText = targetText.slice(divisionBIndex);
   }
 
   const lines = targetText.split('\n');
@@ -228,21 +293,18 @@ export function extractLockedQuestionSlice(
     } else if (isSectionB && qNum === '6') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*6|6\\.|6)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*6|6\.)\b/i);
       }
     } else if (isSectionB && qNum === '7') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*7|7\\.|7)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*7|7\.)\b/i);
       }
     } else if (isSectionB && qNum === '8') {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*8|8\\.|8)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(/(?:Question\s*8|8\.)\b/i);
       }
@@ -254,7 +316,6 @@ export function extractLockedQuestionSlice(
         startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
       } else if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Questions?\\s*${qNum}\\.|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
       }
@@ -278,7 +339,6 @@ export function extractLockedQuestionSlice(
     } else {
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-        startRegexes.push(new RegExp(`(?:^|\\s)\\(?${subQ}\\)?\\s+[A-Z]`, 'i'));
       } else {
         startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
       }
@@ -321,6 +381,15 @@ export function extractLockedQuestionSlice(
       }
     }
     if (startIndex !== -1) break;
+  }
+
+  // Some Suggested Answer / Question Paper layouts repeat the parent question
+  // once, then label child answers as bare "(a)", "(b)", etc. Resolve those only
+  // while the matching parent question is active; never use a document-wide
+  // bare-subpart regex.
+  if (startIndex === -1 && subQ && subQ.toUpperCase() !== 'MCQ') {
+    startIndex = findSubQuestionInsideParent(lines, qNum, subQ);
+    if (startIndex !== -1) matchedHeader = lines[startIndex].trim();
   }
 
   // If not found with strict regexes in section, check whole docText as fallback
@@ -395,7 +464,16 @@ export function extractLockedQuestionSlice(
       isStop = true;
     }
 
-    if (isStop && capturedLines.length >= 2) {
+    // A new numbered question heading is an authoritative section boundary,
+    // even when the current answer contains only one captured line. Waiting for
+    // a second line here can bleed the following question (and later answers)
+    // into a short sub-question reference such as Q2(d).
+    const explicitNextMainQuestionHeader = new RegExp(
+      `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${nextQ}\\s*(?:[.):]?\\s*)(?:\\([a-z0-9]+\\)|[A-Z][a-z])`,
+      'i'
+    ).test(trimmed);
+
+    if ((isStop && capturedLines.length >= 2) || explicitNextMainQuestionHeader) {
       break;
     }
 
@@ -406,9 +484,15 @@ export function extractLockedQuestionSlice(
   const snippet = capturedLines.join('\n').trim();
   const checksum = crypto.createHash('sha256').update(snippet).digest('hex');
 
+  // A correctly parent-scoped one-line answer (e.g. "(d) Short-term provision")
+  // can be authoritative even when shorter than 30 characters. Keep a lower
+  // threshold only for a matched sub-question, never for an unscoped hit.
+  const minimumMeaningfulLength = subQ ? 15 : 30;
+  const found = Boolean(matchedHeader) && snippet.length > minimumMeaningfulLength;
+
   return {
-    found: snippet.length > 30,
-    confidence: snippet.length > 30 ? 95 : 40,
+    found,
+    confidence: found ? (snippet.length > 30 ? 95 : 72) : 40,
     sectionHeader: matchedHeader || `${docType} for Q${qNum}${subQ ? `(${subQ})` : ''}`,
     snippet,
     characterCount: snippet.length,
