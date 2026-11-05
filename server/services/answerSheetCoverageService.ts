@@ -611,7 +611,7 @@ export function buildPageCoveragePrompt(params: {
     .join('\n');
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => `${m.fullQuestionCode} — ${m.maximumMarks} marks`)
-    .join('\\n');
+    .join('\n');
 
   return `
 Universal CA exam answer-sheet page reader and question mapper. Apply equally to Foundation,
