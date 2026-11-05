@@ -560,7 +560,10 @@ function isModelTestDescriptiveSectionHeading(line: string): boolean {
   return /^(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s+(?:SECTION|PART)\s+[A-Z0-9IVX]+)?$/i.test(normalized);
 }
 
-function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
+function extractModelTestQuestionPaperInventory(
+  questionPaperText?: string,
+  includeParentCandidates = false,
+): ModelTestQuestionCandidate[] {
   const lines = String(questionPaperText || '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
@@ -699,13 +702,14 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   const parentIdsWithChildren = new Set(
     all.filter((candidate) => candidate.subQuestionNumber).map((candidate) => ('Q' + candidate.questionNumber).toLowerCase())
   );
-  return all
-    .filter((candidate) => candidate.subQuestionNumber || !parentIdsWithChildren.has(candidate.fullQuestionCode.toLowerCase()))
-    .sort((left, right) => {
-      const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
-      if (qOrder) return qOrder;
-      return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
-    });
+  const inventory = includeParentCandidates
+    ? all
+    : all.filter((candidate) => candidate.subQuestionNumber || !parentIdsWithChildren.has(candidate.fullQuestionCode.toLowerCase()));
+  return inventory.sort((left, right) => {
+    const qOrder = Number(left.questionNumber) - Number(right.questionNumber);
+    if (qOrder) return qOrder;
+    return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
+  });
 }
 
 /** Return the descriptive-answer portion of the selected source document. */
@@ -718,6 +722,61 @@ function extractModelTestDescriptiveSectionText(
     ? /^\s*(?:(?:PART|SECTION|DIVISION)\s+(?:II|2|B)\b.*DESCRIPTIVE|DESCRIPTIVE\s+QUESTIONS?)/i.test(line)
     : /^\s*(?:DIVISION\s+B|PART\s+II\b|DESCRIPTIVE\s+(?:ANSWERS?|SOLUTIONS?|QUESTIONS?))/i.test(line));
   return startIndex >= 0 ? lines.slice(startIndex + 1).join('\n') : String(sourceText || '');
+}
+
+/**
+ * Detects parent-level fact/condition lists such as "absorbs the company on
+ * the following terms". Alphabetic labels below such a lead-in are often
+ * transaction clauses, not independently scorable sub-questions.
+ */
+function modelTestParentHasInstructionClauseList(questionPaperText: string | undefined, questionNumber: string): boolean {
+  const lines = String(questionPaperText || '').replace(/\r\n?/g, '\n').split('\n');
+  let insideTargetQuestion = false;
+  const parentLines: string[] = [];
+
+  for (const line of lines) {
+    const heading = parseModelTestQuestionHeading(line) || parseModelTestBareQuestionHeading(line);
+    if (heading && !heading.subQuestionNumber) {
+      if (insideTargetQuestion) break;
+      if (heading.questionNumber === questionNumber) insideTargetQuestion = true;
+    }
+    if (insideTargetQuestion) parentLines.push(line);
+  }
+
+  if (!insideTargetQuestion) return false;
+  const body = parentLines.join(' ').replace(/\s+/g, ' ');
+  const leadIn = /\b(?:on|under|subject\s+to|based\s+on|as\s+per)\s+the\s+following\s+(?:terms?|conditions?|adjustments?|scheme|arrangements?|basis|information|particulars|details|transactions?)\b/i.exec(body)
+    || /\bthe\s+following\s+(?:terms?|conditions?|adjustments?)\s+(?:apply|are\s+applicable|shall\s+apply)\b/i.exec(body);
+  if (!leadIn) return false;
+
+  // Require at least two lettered clauses after the lead-in.
+  const clauseStarts: number[] = [];
+  for (let index = 0; index < parentLines.length; index++) {
+    if (/^\s{0,8}\([a-h]\)\s+\S/i.test(parentLines[index])) clauseStarts.push(index);
+  }
+  if (clauseStarts.length < 2) return false;
+  const leadInPosition = body.toLowerCase().indexOf(leadIn[0].toLowerCase());
+  const firstClausePosition = parentLines.slice(0, clauseStarts[0]).join(' ').length;
+  if (leadInPosition < 0 || leadInPosition > firstClausePosition) return false;
+
+  // Find a separate combined task after the facts. The task must not be one
+  // of the labelled items themselves.
+  const taskOpening = /^\s*(?:you\s+are\s+required\s+to|what|who|when|where|why|how|calculate|compute|determine|prepare|draft|pass\s+necessary|state|explain|discuss|describe|comment|identify|give|show|work\s+out|ascertain|record|journalise|journalize|account\s+for|write|list|enumerate|analyse|analyze|examine)\b/i;
+  const terminalInstructionIndex = parentLines.findIndex((line, index) =>
+    index > clauseStarts[clauseStarts.length - 1] && taskOpening.test(line));
+  if (terminalInstructionIndex < 0) return false;
+
+  const factualPredicate = /\b(?:is|are|was|were|will\s+be|shall\s+be|would\s+be|to\s+be|has\s+to\s+be|have\s+to\s+be|must\s+be|should\s+be)\b/i;
+  const taskInfinitive = /\b(?:required|required\s+by|must|should|has|have)\s+to\s+(?:calculate|compute|determine|prepare|draft|pass|state|explain|discuss|describe|show|record|write|identify|analyse|analyze|examine)\b|\bto\s+be\s+(?:calculated|computed|determined|prepared|drafted|explained|discussed|shown|recorded|analysed|analyzed)\b/i;
+  for (let index = 0; index < clauseStarts.length; index++) {
+    const clauseEnd = clauseStarts[index + 1] ?? terminalInstructionIndex;
+    const clauseLines = parentLines.slice(clauseStarts[index], clauseEnd);
+    const clauseText = clauseLines.join(' ').replace(/\s+/g, ' ').replace(/^\s*\([a-h]\)\s*/i, '');
+    if (!clauseText || clauseText.includes('?') || taskOpening.test(clauseText) || taskInfinitive.test(clauseText)) return false;
+    if (!factualPredicate.test(clauseText)) return false;
+  }
+
+  return true;
 }
 
 /** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
@@ -1135,7 +1194,7 @@ function buildModelTestPaperStructure(options: {
 }): AuthoritativePaperStructure {
   const questionPaperDescriptiveText = extractModelTestDescriptiveSectionText(options.questionPaperText, 'question-paper');
   const suggestedAnswersDescriptiveText = extractModelTestDescriptiveSectionText(options.suggestedAnswersText, 'suggested-answers');
-  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText);
+  const qpDescriptiveCandidates = extractModelTestQuestionPaperInventory(questionPaperDescriptiveText, true);
   const qpMcqCandidates = extractModelTestObjectiveQuestionPaperInventory(options.questionPaperText);
   const qpCandidates = [...qpMcqCandidates, ...qpDescriptiveCandidates];
   const suggestedAnswerCandidates = extractModelTestQuestionPaperInventory(suggestedAnswersDescriptiveText);
@@ -1208,16 +1267,83 @@ function buildModelTestPaperStructure(options: {
   }
 
   const candidateMap = new Map<string, ModelTestQuestionCandidate>();
+  const qpParentCandidateNumbers = new Set(qpCandidates
+    .filter((candidate) => !candidate.isMcq && !candidate.subQuestionNumber)
+    .map((candidate) => candidate.questionNumber));
   for (const candidate of qpCandidates) {
-    if (candidate.isMcq || candidate.subQuestionNumber) {
+    if (candidate.isMcq) {
       candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
       continue;
     }
+    if (candidate.subQuestionNumber) {
+      // Some source PDFs identify a child directly (Q3(a), Q3(b)) without
+      // a separate parent heading. Preserve those explicit child identities.
+      if (!qpParentCandidateNumbers.has(candidate.questionNumber)) {
+        candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+      }
+      continue;
+    }
+
     const qpChildren = qpChildrenByParent.get(candidate.questionNumber) || [];
     const msChildren = msChildrenByParent.get(candidate.questionNumber) || [];
-    const children = qpChildren.length > 0 ? qpChildren : msChildren;
-    if (children.length > 0) {
-      for (const child of children) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
+    const parentKey = ('q' + candidate.questionNumber).toLowerCase();
+    const parentAllocation = markAllocations.get(parentKey);
+    const exactMsChildKeys = new Set(msChildren.map((child) => child.fullQuestionCode.toLowerCase()));
+
+    // A trailing parent-level "(14 Marks)" can be attached to the final
+    // alphabetic clause by PDF text order. When it is the only marked child,
+    // equals the parent total, and all siblings are unmarked, it is not a safe
+    // child allocation. Keep the QP parent as the scorable node instead.
+    const isFactualInstructionClauseList = modelTestParentHasInstructionClauseList(
+      options.questionPaperText,
+      candidate.questionNumber,
+    );
+    const childrenHoldingParentTotal = parentAllocation
+      ? qpChildren.filter((child) => Number(child.maximumMarks) > 0
+          && Math.abs(Number(child.maximumMarks) - parentAllocation.maximumMarks) < 0.01
+          && !exactMsChildKeys.has(child.fullQuestionCode.toLowerCase()))
+      : [];
+    const unmarkedSiblingCount = qpChildren.filter((child) =>
+      !(Number(child.maximumMarks) > 0) &&
+      !exactMsChildKeys.has(child.fullQuestionCode.toLowerCase())
+    ).length;
+    const trailingParentTotalWasMisattached = Boolean(
+      parentAllocation &&
+      isFactualInstructionClauseList &&
+      qpChildren.length > 1 &&
+      childrenHoldingParentTotal.length === 1 &&
+      unmarkedSiblingCount > 0 &&
+      qpChildren.every((child) =>
+        exactMsChildKeys.has(child.fullQuestionCode.toLowerCase()) ||
+        !(Number(child.maximumMarks) > 0) ||
+        childrenHoldingParentTotal.includes(child)
+      )
+    );
+
+    const hasChildSpecificMarkEvidence = qpChildren.some((child) =>
+      Number(child.maximumMarks) > 0 || exactMsChildKeys.has(child.fullQuestionCode.toLowerCase())
+    );
+    const unmarkedClauseListWithParentTotal = Boolean(
+      parentAllocation &&
+      !hasChildSpecificMarkEvidence &&
+      qpChildren.length > 0 &&
+      isFactualInstructionClauseList
+    );
+
+    if (trailingParentTotalWasMisattached || unmarkedClauseListWithParentTotal) {
+      candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+      continue;
+    }
+
+    if (qpChildren.length > 0) {
+      // Preserve every detected child unless the source-backed parent-total
+      // rules above establish that the labels are non-scoring clauses. Any
+      // unresolved child remains visible and will fail preflight if unmarked.
+      for (const child of qpChildren) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
+    } else if (msChildren.length > 0) {
+      // Backward-compatible recovery when the QP parser finds only a parent
+      // heading but the selected Marking Scheme explicitly names its children.
+      for (const child of msChildren) candidateMap.set(child.fullQuestionCode.toLowerCase(), child);
     } else {
       candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
     }

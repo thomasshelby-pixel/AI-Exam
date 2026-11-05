@@ -1191,4 +1191,105 @@ assert.ok(overChoiceLimitGate.failedInvariants.some(message =>
  assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds,[]);
  assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds,[]);
 
+
+
+// A list of merger terms is factual input to a single parent question, not
+// four independently scored child questions. The final 14-mark instruction
+// must remain attached to Q4 rather than being mistaken for Q4(d).
+for (const subjectName of levelSubjectMatrix.INTERMEDIATE) {
+const instructionClauseParentTotalModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName,
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 14,
+  questionPaperText: [
+    'MODEL TEST PAPER 1',
+    'PART II - DESCRIPTIVE QUESTIONS',
+    '1. First descriptive question. (14 Marks)',
+    '2. Second descriptive question. (14 Marks)',
+    '3. Third descriptive question. (14 Marks)',
+    '4. The financial position of two companies Hari Ltd. and Vayu Ltd. as at 31st March, 2023 was as under.',
+    'Hari Ltd. absorbs Vayu Ltd. on the following terms:',
+    '(a) 10% Preference Shareholders are to be paid at 10% premium by issue of 9% Preference Shares of Hari Ltd.',
+    '(b) Goodwill of Vayu Ltd. is valued at Rs. 50,000, Buildings are valued at Rs. 1,50,000 and the Machinery at Rs. 1,60,000.',
+    '(c) Inventory to be taken over at 10% less value and Provision for Doubtful Debts to be created @ 7.5%.',
+    '(d) Equity Shareholders of Vayu Ltd. will be issued necessary Equity Shares @ 5% premium.',
+    'Prepare necessary acquisition entries in the books of Hari Ltd. Also draft the Balance Sheet after absorption as at 31st March, 2023. (14 Marks)',
+  ].join('\n'),
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nDetailed narrative answers are provided for the descriptive section.',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 1 - MAXIMUM 14 MARKS\nQUESTION 2 - MAXIMUM 14 MARKS\nQUESTION 3 - MAXIMUM 14 MARKS\nQUESTION 4 - MAXIMUM 14 MARKS',
+});
+assert.deepEqual(
+  instructionClauseParentTotalModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1', 14], ['Q2', 14], ['Q3', 14], ['Q4', 14]],
+  'Unmarked alphabetic terms must not become child questions or steal the parent-level 14-mark allocation.',
+);
+assert.deepEqual(
+  instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1', 'Q2', 'Q3', 'Q4'],
+);
+assert.deepEqual(
+  instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
+  ['Q1', 'Q2', 'Q3', 'Q4'],
+);
+assert.deepEqual(instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds, []);
+const instructionClauseParentTotalGate = validatePreEvaluationGate({
+  paperStructure: instructionClauseParentTotalModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+  officialPaperMaxMarks: 14,
+});
+assert.equal(
+  instructionClauseParentTotalGate.passed,
+  true,
+  'A parent-level instruction list with a verified parent maximum must pass the source preflight.',
+);
+
+// If the lettered items are themselves tasks, retain them as separate IDs and
+// keep the evaluation blocked when the supplied scheme has no child maxima.
+const explicitTaskChildrenModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName,
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 14,
+  questionPaperText: [
+    'MODEL TEST PAPER 1',
+    'PART II - DESCRIPTIVE QUESTIONS',
+    '1. First descriptive question. (14 Marks)',
+    '2. Second descriptive question. (14 Marks)',
+    '3. Third descriptive question. (14 Marks)',
+    '4. Question 4 concerns the following acquisition.',
+    'The company is acquired under the following terms:',
+    '(a) Calculate goodwill using the values supplied.',
+    '(b) Prepare the acquisition journal entries.',
+    'You are required to present both results. (14 Marks)',
+  ].join('\n'),
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nDetailed narrative answers are provided for the descriptive section.',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 1 - MAXIMUM 14 MARKS\nQUESTION 2 - MAXIMUM 14 MARKS\nQUESTION 3 - MAXIMUM 14 MARKS\nQUESTION 4 - MAXIMUM 14 MARKS',
+});
+assert.deepEqual(
+  explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1', 'Q2', 'Q3', 'Q4(a)', 'Q4(b)'],
+  'Lettered tasks must remain separate question IDs even when they follow a terms lead-in.',
+);
+assert.ok(explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds.includes('Q4(a)'));
+assert.ok(explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds.includes('Q4'));
+const explicitTaskChildrenGate = validatePreEvaluationGate({
+  paperStructure: explicitTaskChildrenModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+  officialPaperMaxMarks: 14,
+});
+assert.equal(
+  explicitTaskChildrenGate.passed,
+  false,
+  'A parent total must not silently cover lettered tasks with no child-specific maximum marks.',
+);
+}
+
 console.log('Model Test dynamic paper structure tests passed.');
