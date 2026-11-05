@@ -20,7 +20,7 @@ import {
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateAllAuthoritativeMcqs } from '../services/deterministicMcqScorer.js';
 import { classifyPreEvaluationFailures, isEvaluationValidationSafeForCertification, validatePostEvaluationGate } from '../services/evaluationIntegrityHardening.js';
-import { parseAndValidatePageCoverageOutput, requiresDescriptiveCoverageReview } from '../services/answerSheetCoverageService.js';
+import { mergeMcqSelectionsSafely, parseAndValidatePageCoverageOutput, requiresDescriptiveCoverageReview } from '../services/answerSheetCoverageService.js';
 import { getQuestionReferenceReviewErrors } from '../services/evaluationIntegrityEngine.js';
 import {
   getSupportedThinkingLevel,
@@ -465,6 +465,27 @@ async function runTests() {
     false,
     'An MCQ-only page must not be treated as missing descriptive work.',
   );
+  const mergedMcqSelections: Record<string, string> = {};
+  const conflictingMcqNumbers = new Set<string>();
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B', '2': 'C' }, conflictingMcqNumbers),
+    [],
+    'Initial MCQ selections must be accepted.',
+  );
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'B' }, conflictingMcqNumbers),
+    [],
+    'Repeated identical selection across pages must remain stable.',
+  );
+  assert.deepEqual(
+    mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'C' }, conflictingMcqNumbers),
+    ['1'],
+    'A different selection on a later page must be classified as a conflict.',
+  );
+  assert.equal(mergedMcqSelections['1'], undefined, 'Conflicting MCQ answer must be removed rather than choosing the first or last option.');
+  assert.equal(conflictingMcqNumbers.has('1'), true);
+  mergeMcqSelectionsSafely(mergedMcqSelections, { '1': 'A' }, conflictingMcqNumbers);
+  assert.equal(mergedMcqSelections['1'], undefined, 'A conflicted answer must not be silently restored by a later page.');
   assert.throws(
     () => parseAndValidatePageCoverageOutput(JSON.stringify({
       status: 'ATTEMPTED_READABLE',
