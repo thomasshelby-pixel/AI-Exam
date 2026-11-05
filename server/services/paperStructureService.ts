@@ -518,6 +518,14 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
   return match ? toModelTestCandidate('Q' + match[1]) : null;
 }
 
+function isModelTestMcqSectionHeading(line: string): boolean {
+  return /\b(?:MULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?|MCQ\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?)\b/i.test(String(line || ''));
+}
+
+function isModelTestDescriptiveSectionHeading(line: string): boolean {
+  return /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)\s+(?:QUESTIONS?|SECTION)\b/i.test(String(line || ''));
+}
+
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
   const lines = String(questionPaperText || '')
     .replace(/\r\n?/g, '\n')
@@ -527,6 +535,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   let activeParent = '';
   let activeSubQuestion = '';
   let lastBareQuestionNumber = 0;
+  let insideMcqSection = false;
   const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
 
   const add = (candidate: ModelTestQuestionCandidate | null) => {
@@ -540,9 +549,19 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   };
 
   for (const line of lines) {
+    if (isModelTestMcqSectionHeading(line)) {
+      insideMcqSection = true;
+      continue;
+    }
+    if (isModelTestDescriptiveSectionHeading(line)) {
+      insideMcqSection = false;
+    }
+
     const explicit = parseModelTestQuestionHeading(line);
     if (explicit) {
-      add(explicit);
+      add(insideMcqSection && !explicit.subQuestionNumber
+        ? toModelTestCandidate('MCQ' + explicit.questionNumber)
+        : explicit);
       continue;
     }
 
@@ -558,7 +577,7 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
         const number = Number(bare.questionNumber);
         if (number === 1 || number === lastBareQuestionNumber + 1) {
           lastBareQuestionNumber = number;
-          add(bare);
+          add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare);
           continue;
         }
       }
@@ -633,6 +652,7 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   let activeLeaf = '';
   let pendingIdentity = '';
   let lastBareQuestionNumber = 0;
+  let insideMcqSection = false;
 
   const record = (candidate: ModelTestQuestionCandidate | null, marks: number | undefined) => {
     if (!candidate || !marks || marks <= 0) return;
@@ -641,13 +661,30 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   };
 
   for (const line of lines) {
+    if (isModelTestMcqSectionHeading(line)) {
+      insideMcqSection = true;
+      activeParent = '';
+      activeLeaf = '';
+      pendingIdentity = '';
+      continue;
+    }
+    if (isModelTestDescriptiveSectionHeading(line)) {
+      insideMcqSection = false;
+      activeParent = '';
+      activeLeaf = '';
+      pendingIdentity = '';
+    }
+
     const explicit = parseModelTestQuestionHeading(line);
     if (explicit) {
-      const parsed = parseCanonicalQuestionIdentity(explicit.fullQuestionCode);
+      const candidate = insideMcqSection && !explicit.subQuestionNumber
+        ? toModelTestCandidate('MCQ' + explicit.questionNumber)
+        : explicit;
+      const parsed = parseCanonicalQuestionIdentity(candidate?.fullQuestionCode || explicit.fullQuestionCode);
       activeParent = parsed.parentQuestionId;
-      activeLeaf = explicit.subQuestionNumber ? explicit.fullQuestionCode : '';
-      pendingIdentity = explicit.fullQuestionCode;
-      record(explicit, findExplicitModelTestMarks(line, true));
+      activeLeaf = candidate?.subQuestionNumber ? candidate.fullQuestionCode : '';
+      pendingIdentity = candidate?.fullQuestionCode || explicit.fullQuestionCode;
+      record(candidate, findExplicitModelTestMarks(line, true));
       continue;
     }
 
@@ -667,10 +704,10 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
         if (number === 1 || number === lastBareQuestionNumber + 1) {
           lastBareQuestionNumber = number;
           const parsed = parseCanonicalQuestionIdentity(bare.fullQuestionCode);
-          activeParent = parsed.parentQuestionId;
+          activeParent = insideMcqSection ? '' : parsed.parentQuestionId;
           activeLeaf = '';
-          pendingIdentity = bare.fullQuestionCode;
-          record(bare, findExplicitModelTestMarks(line, true));
+          pendingIdentity = insideMcqSection ? 'MCQ' + bare.questionNumber : bare.fullQuestionCode;
+          record(insideMcqSection ? toModelTestCandidate(pendingIdentity) : bare, findExplicitModelTestMarks(line, true));
           continue;
         }
       }
@@ -710,8 +747,6 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       const marks = standaloneTotal ? Number(standaloneTotal[1]) : labelledTotal;
       if (marks && marks > 0) {
         record(toModelTestCandidate(pendingIdentity), marks);
-        pendingIdentity = '';
-      } else if (compact) {
         pendingIdentity = '';
       }
     }
