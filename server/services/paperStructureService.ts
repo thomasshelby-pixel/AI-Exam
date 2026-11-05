@@ -528,8 +528,9 @@ function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCa
 
 function isModelTestMcqSectionHeading(line: string): boolean {
   const value = String(line || '').trim();
+  const normalized = value.replace(/[()[\]]/g, ' ').replace(/[:\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
   return /\bMULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?\b/i.test(value) ||
-    /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:MCQS?|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?(?:\s*\([^)]*\))?\s*$/i.test(value);
+    /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s+)?(?:MCQS?|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?(?:\s+SECTION)?$/i.test(normalized);
 }
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
@@ -834,15 +835,27 @@ function buildModelTestPaperStructure(options: {
     return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
   });
 
+  const qpParentNumbers = new Set(qpCandidates
+    .filter((candidate) => !candidate.isMcq)
+    .map((candidate) => candidate.questionNumber));
+
   const markingSchemeLeafAllocations = Array.from(markAllocations.values()).filter((item) => {
     if (item.isMcq || item.subQuestionNumber) return true;
+    // A parent-level total in the Marking Scheme is not an orphan when the QP
+    // has the same parent with child parts. It cannot be split among children,
+    // so those leaves remain explicitly missing marks and block evaluation.
+    if ((qpChildrenByParent.get(item.questionNumber) || []).length > 0) return false;
     return !Array.from(markAllocations.values()).some((candidate) =>
       candidate.questionNumber === item.questionNumber && Boolean(candidate.subQuestionNumber)
     );
   });
 
   const markingSchemeOnlyQuestionIds = markingSchemeLeafAllocations
-    .filter((item) => !candidateMap.has(item.fullQuestionCode.toLowerCase()))
+    .filter((item) => {
+      if (candidateMap.has(item.fullQuestionCode.toLowerCase())) return false;
+      if (!item.isMcq && !item.subQuestionNumber && qpParentNumbers.has(item.questionNumber)) return false;
+      return true;
+    })
     .map((item) => item.fullQuestionCode)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
