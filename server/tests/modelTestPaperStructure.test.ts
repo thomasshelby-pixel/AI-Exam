@@ -524,4 +524,58 @@ assert.equal(
 );
 
 
+
+const descriptiveOnlyModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 100,
+  // The source says there are no MCQs. A prose mention must not activate the
+  // objective-section parser. A descriptive section with trailing marks must
+  // be recognized even when question numbering mixes explicit and bare forms.
+  questionPaperText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1
+INSTRUCTIONS: This paper does not contain multiple choice questions.
+SECTION A: DESCRIPTIVE QUESTIONS (100 MARKS)
+Question 1 - Prepare journal entries for the reconstruction.
+2. Prepare the revised balance sheet.
+Question 3(a) - Calculate the purchase consideration.
+Question 3(b) - Prepare the realization account.`,
+  suggestedAnswersText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1 SUGGESTED ANSWERS
+Question 1 - Full journal entry solution.
+Question 2 - Full revised balance sheet solution.
+Question 3(a) - Purchase consideration.
+Question 3(b) - Realization account.`,
+  markingSchemeText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1 MARKING SCHEME
+Question 1 - 20 Marks
+Question 2 - 30 Marks
+Question 3(a) - 25 Marks
+Question 3(b) - 25 Marks.`,
+});
+assert.deepEqual(
+  descriptiveOnlyModelTest.mcqs,
+  [],
+  'A descriptive-only Model Test must not create MCQ inventory from explanatory prose mentioning MCQs.',
+);
+assert.deepEqual(
+  descriptiveOnlyModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1', 'Q2', 'Q3(a)', 'Q3(b)'],
+);
+assert.deepEqual(
+  descriptiveOnlyModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1', 20], ['Q2', 30], ['Q3(a)', 25], ['Q3(b)', 25]],
+);
+assert.deepEqual(descriptiveOnlyModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(descriptiveOnlyModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, []);
+assert.deepEqual(descriptiveOnlyModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+const descriptiveOnlyGate = validatePreEvaluationGate({
+  paperStructure: descriptiveOnlyModelTest,
+  questionPaperText: 'Question Paper verified.',
+  suggestedAnswersText: 'Suggested Answers verified.',
+  markingSchemeText: 'Marking Scheme verified.',
+  officialPaperMaxMarks: 100,
+});
+assert.equal(descriptiveOnlyGate.passed, true, 'Descriptive-only paper with matching sources must pass without any MCQ requirement.');
+
+
 console.log('Model Test dynamic paper structure tests passed.');
