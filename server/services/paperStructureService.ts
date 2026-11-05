@@ -101,9 +101,21 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
   if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
 
+  // Combined-PYQ splitting deliberately duplicates an ambiguous source into
+  // both fields with this marker. It is not safe to treat that duplicated text
+  // as an authoritative answer key; the pre-evaluation gate must request review.
+  if (/^\\s*\\[AUTHORITATIVE COMBINED PYQ DOCUMENT - SUGGESTED ANSWERS\\]/i.test(suggestedAnswersText)) {
+    return result;
+  }
+
+  // Require an answer-document heading near the beginning of the selected source,
+  // not just a Division A label that may belong to the Question Paper's options.
+  const answerDocumentHeader = /(?:SUGGESTED\\s+ANSWERS?|MODEL\\s+ANSWERS?|ANSWER\\s+KEY|OFFICIAL\\s+ANSWERS?|ANSWERS?\\s+(?:OF|TO)\\s+(?:(?:MODEL|QUESTION|EXAMINATION|ICAI|TEST|PAPER)\\b))/i;
+  if (!answerDocumentHeader.test(suggestedAnswersText.slice(0, 1500))) return result;
+
   // MCQ keys are accepted only when the source explicitly identifies an objective section.
   // Otherwise a descriptive heading like "Question 1(a)" can be mistaken for MCQ 1.
-  const mcqSectionHeader = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i;
+  const mcqSectionHeader = /(?:Division\\s*A\\b|Multiple\\s*Choice\\s*Questions\\b|Objective(?:\\s*Type)?\\s*Questions\\b|Section\\s*A\\b[\\s\\S]{0,120}(?:MCQ|Objective))/i;
   if (!mcqSectionHeader.test(suggestedAnswersText)) return result;
 
   const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
