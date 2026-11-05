@@ -1087,6 +1087,58 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
         });
 
+        const createTechnicalReview = (reviewCoverageMap: any, errors: string[]) => createEvaluationReviewResult({
+          evaluationId: params.evaluationId,
+          studentName: params.studentName,
+          icaiRegistrationNumber: params.icaiRegistrationNumber || 'Not provided',
+          level: params.level,
+          subjectKey: params.subjectKey,
+          subjectName: params.subjectName,
+          materialType: params.materialType,
+          attempt: params.attempt,
+          paper: params.paper,
+          checkingMode: params.checkingMode,
+          officialPaperMaxMarks: params.officialPaperMaxMarks,
+          sourceFormat: params.sourceFormat,
+          sourceMaterialIds: {
+            combinedSourceMaterialId: params.combinedSourceMaterialId,
+            questionMaterialId: params.questionMaterialId,
+            suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
+            markingSchemeMaterialId: params.markingSchemeMaterialId,
+          },
+          coverageMap: reviewCoverageMap,
+          errors,
+        });
+
+        // Run deterministic source/paper checks BEFORE sending every answer-sheet
+        // page through the AI page auditor. An unparsed or conflicting reference set
+        // cannot produce a trustworthy mapping, so page-level provider calls would
+        // only spend money before the same blocker is detected below.
+        const sourcePreflight = validatePreEvaluationGate({
+          paperStructure,
+          questionPaperText: params.referenceQuestionPaperText,
+          suggestedAnswersText: params.referenceSuggestedAnswersText || params.suggestedAnswersText,
+          markingSchemeText: params.markingSchemeText,
+          officialPaperMaxMarks: params.officialPaperMaxMarks || 100,
+          level: params.level,
+          subjectName: params.subjectName,
+        });
+        const sourcePreflightDisposition = classifyPreEvaluationFailures(sourcePreflight.failedInvariants);
+        if (sourcePreflightDisposition.blockingFailures.length > 0) {
+          const emptyCoverageMap = {
+            totalPages: 0,
+            pages: [],
+            attemptedQuestions: [],
+            allDetectedCodes: [],
+            unmappedPages: [],
+            unclearPages: [],
+            coveredPages: [],
+            is100PercentCovered: false,
+            mcqSelections: {},
+          };
+          return createTechnicalReview(emptyCoverageMap, sourcePreflight.failedInvariants);
+        }
+
         coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure);
 
         const preGate = validatePreEvaluationGate({
@@ -1118,28 +1170,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         // question can be mapped. Coverage-only ambiguity stays review-required,
         // but must not suppress marking for other correctly mapped attempts.
         if (preGateDisposition.blockingFailures.length > 0 || attemptedScorableQuestions.length === 0) {
-          return createEvaluationReviewResult({
-            evaluationId: params.evaluationId,
-            studentName: params.studentName,
-            icaiRegistrationNumber: params.icaiRegistrationNumber || 'Not provided',
-            level: params.level,
-            subjectKey: params.subjectKey,
-            subjectName: params.subjectName,
-            materialType: params.materialType,
-            attempt: params.attempt,
-            paper: params.paper,
-            checkingMode: params.checkingMode,
-            officialPaperMaxMarks: params.officialPaperMaxMarks,
-            sourceFormat: params.sourceFormat,
-            sourceMaterialIds: {
-              combinedSourceMaterialId: params.combinedSourceMaterialId,
-              questionMaterialId: params.questionMaterialId,
-              suggestedAnswerMaterialId: params.suggestedAnswerMaterialId,
-              markingSchemeMaterialId: params.markingSchemeMaterialId,
-            },
-            coverageMap,
-            errors: preGate.failedInvariants,
-          });
+          return createTechnicalReview(coverageMap, preGate.failedInvariants);
         }
 
         if (coverageMap && coverageMap.attemptedQuestions && coverageMap.attemptedQuestions.length > 0) {
