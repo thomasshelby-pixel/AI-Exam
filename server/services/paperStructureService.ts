@@ -519,11 +519,14 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function isModelTestMcqSectionHeading(line: string): boolean {
-  return /\b(?:MULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?|MCQ(?:\s+QUESTIONS?)?|OBJECTIVE(?:\s+TYPE)?(?:\s+QUESTIONS?)?)\b/i.test(String(line || ''));
+  const value = String(line || '').trim();
+  return /\bMULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?\b/i.test(value) ||
+    /^(?:SECTION\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:MCQ|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?\s*$/i.test(value);
 }
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
-  return /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)\b/i.test(String(line || ''));
+  const value = String(line || '').trim();
+  return /^(?:SECTION\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?\s*$/i.test(value);
 }
 
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
