@@ -95,8 +95,13 @@ function summarizeEvaluationRejectionReason(value: unknown): string {
 }
 
 function canManuallyReviewFreeTrialReason(value: unknown): boolean {
+  // Legacy accounts can have a deliberate blank reason in storage. The UI
+  // presents those as UNKNOWN_LEGACY_BLOCK, and the backend already permits
+  // them for audited Super Admin review after its full identity/quota checks.
   const normalized = String(value || '').trim().toUpperCase().replace(/^PROFILE_COMPLETION_/, '');
-  return normalized === 'UNKNOWN_LEGACY_BLOCK' || normalized === 'REUSED_DEVICE';
+  return normalized === '' ||
+    normalized === 'UNKNOWN_LEGACY_BLOCK' ||
+    normalized === 'REUSED_DEVICE';
 }
 
 function isReusedDeviceFreeTrialBlock(value: unknown): boolean {
