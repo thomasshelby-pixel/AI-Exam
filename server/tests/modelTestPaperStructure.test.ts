@@ -1247,6 +1247,49 @@ assert.equal(
   true,
   'A parent-level instruction list with a verified parent maximum must pass the source preflight.',
 );
+
+// If the lettered items are themselves tasks, retain them as separate IDs and
+// keep the evaluation blocked when the supplied scheme has no child maxima.
+const explicitTaskChildrenModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName,
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 14,
+  questionPaperText: [
+    'MODEL TEST PAPER 1',
+    'PART II - DESCRIPTIVE QUESTIONS',
+    '1. First descriptive question. (14 Marks)',
+    '2. Second descriptive question. (14 Marks)',
+    '3. Third descriptive question. (14 Marks)',
+    '4. Question 4 concerns the following acquisition.',
+    'The company is acquired under the following terms:',
+    '(a) Calculate goodwill using the values supplied.',
+    '(b) Prepare the acquisition journal entries.',
+    'You are required to present both results. (14 Marks)',
+  ].join('\n'),
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nDetailed narrative answers are provided for the descriptive section.',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 1 - MAXIMUM 14 MARKS\nQUESTION 2 - MAXIMUM 14 MARKS\nQUESTION 3 - MAXIMUM 14 MARKS\nQUESTION 4 - MAXIMUM 14 MARKS',
+});
+assert.deepEqual(
+  explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1', 'Q2', 'Q3', 'Q4(a)', 'Q4(b)'],
+  'Lettered tasks must remain separate question IDs even when they follow a terms lead-in.',
+);
+assert.ok(explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds.includes('Q4(a)'));
+assert.ok(explicitTaskChildrenModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds.includes('Q4'));
+const explicitTaskChildrenGate = validatePreEvaluationGate({
+  paperStructure: explicitTaskChildrenModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+  officialPaperMaxMarks: 14,
+});
+assert.equal(
+  explicitTaskChildrenGate.passed,
+  false,
+  'A parent total must not silently cover lettered tasks with no child-specific maximum marks.',
+);
 }
 
 console.log('Model Test dynamic paper structure tests passed.');
