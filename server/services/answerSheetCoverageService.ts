@@ -26,6 +26,10 @@ export interface PageCoverageModelOutput {
   status: PageAttemptStatus;
   hasHandwriting?: boolean;
   summary?: string;
+  /** Literal visual evidence used to identify the question label (margin/circle/header/etc.). */
+  questionLabelEvidence?: string;
+  /** Audit signal only; never used to override deterministic identity checks. */
+  readingConfidence?: number;
   detectedQuestions: Array<{
     questionNumber?: string;
     subQuestion?: string | null;
@@ -78,6 +82,21 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
   if (raw.summary !== undefined && summary === undefined) {
     warnings.push('The page auditor returned a non-text page summary.');
+  }
+  const questionLabelEvidence = typeof raw.questionLabelEvidence === 'string'
+    ? raw.questionLabelEvidence.trim().slice(0, 300)
+    : undefined;
+  if (raw.questionLabelEvidence !== undefined && questionLabelEvidence === undefined) {
+    warnings.push('The page auditor returned invalid question-label evidence.');
+  }
+  const readingConfidence = typeof raw.readingConfidence === 'number' &&
+    Number.isFinite(raw.readingConfidence) &&
+    raw.readingConfidence >= 0 &&
+    raw.readingConfidence <= 1
+      ? raw.readingConfidence
+      : undefined;
+  if (raw.readingConfidence !== undefined && readingConfidence === undefined) {
+    warnings.push('The page auditor returned an invalid reading-confidence value.');
   }
   const isContinuation = typeof raw.isContinuation === 'boolean' ? raw.isContinuation : undefined;
   if (raw.isContinuation !== undefined && isContinuation === undefined) {
@@ -215,6 +234,8 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     status,
     hasHandwriting: normalizedHandwriting,
     summary,
+    questionLabelEvidence,
+    readingConfidence,
     isContinuation,
     detectedQuestions,
     mcqSelections: selections,
@@ -360,6 +381,8 @@ export interface PageCoverageRecord {
   rawSummary: string;
   hasHandwriting: boolean;
   mappingReviewReason?: string;
+  questionLabelEvidence?: string;
+  readingConfidence?: number;
   /** Technical failure details are kept separate from handwriting/question ambiguity. */
   analysisFailure?: PageAnalysisFailure;
 }
@@ -575,6 +598,110 @@ export async function buildAnswerSheetCoverageMap(
  * Analyzes a single page of the answer sheet.
  * Uses structured heuristics and Gemini vision model to classify page content accurately.
  */
+export function buildPageCoveragePrompt(params: {
+  pageNumber: number;
+  totalPages: number;
+  paperStructure: AuthoritativePaperStructure;
+  previousActiveQuestion?: string;
+}): string {
+  const { pageNumber, totalPages, paperStructure, previousActiveQuestion } = params;
+  const validDescriptiveList = paperStructure.subQuestions
+    .filter((s) => !s.isMcq)
+    .map((s) => `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`)
+    .join('\\n');
+  const validMcqList = (paperStructure.mcqs || [])
+    .map((m) => `${m.fullQuestionCode} — ${m.maximumMarks} marks`)
+    .join('\\n');
+
+  return `
+You are a universal CA examination answer-sheet reader and question-mapping auditor.
+This instruction applies equally to Foundation, Intermediate and Final, and to every subject
+(accounting, law, tax, costing, audit, finance, quantitative subjects, case studies, theory,
+and mixed-format papers). Do not use a subject-specific question-number template.
+
+Analyze the COMPLETE scanned handwritten Page ${pageNumber} of ${totalPages}.
+Read the visual page itself; do not rely on embedded PDF text extraction.
+
+AUTHORITATIVE QUESTION CANDIDATES
+Subject/paper: ${paperStructure.paperTitle || 'CA examination paper'}
+Descriptive question IDs and maximum marks:
+${validDescriptiveList || 'None parsed'}
+MCQ IDs and maximum marks:
+${validMcqList || 'None parsed'}
+Active question from the immediately previous page: ${previousActiveQuestion || 'None / first page'}
+
+HANDWRITING AND PAGE-READING METHOD
+- Inspect the full page first, then carefully inspect the top, bottom, left margin, right margin,
+  question headings, circled annotations, underlined labels, and the beginning of each answer block.
+- Handwritten question labels may be faint, cursive, slanted, overwritten, abbreviated, or written
+  in a margin or circle. They are not necessarily on a printed heading line.
+- Read question labels such as Q2, Q. 2, Question 2, 2(a), (a), and circled/margin-written numbers.
+  Distinguish question labels from notebook page numbers, dates, roll numbers, scanner marks and
+  ordinary figures. A number is not a question ID merely because it is visible.
+- Read mixed handwriting, tables, ledger/journal formats, debit/credit columns, calculations,
+  formulas, diagrams, bullet points, paragraphs and case-study responses. Do not mistake amounts,
+  dates, section numbers, ledger references or working-note numbers for question labels.
+- Use the candidate question inventory to validate the label. Return the question number as digits
+  only (for example "2") and subQuestion separately (for example "a" or "a(1)").
+- If a label is partly unclear, compare its visible shape, nearby subpart label, answer-block layout,
+  prior-page context and the candidate IDs. Do not silently change an uncertain 3 into an 8.
+- A student may answer several questions on one page. Return every separately identifiable question
+  or sub-question on that page, not just the first one.
+- A page may continue the previous answer without repeating its question number. Mark it as a
+  continuation only when the handwriting/layout/content clearly continues the previous active
+  question. Do not require a repeated heading on every page.
+- If a new answer block begins but its identity is not reliably visible, do not attach it to the
+  previous question just to avoid a warning. Keep it unresolved for examiner review.
+- Never infer a question from the PDF page index, question order, marks, or subject-specific
+  assumptions. Never invent a question ID outside the authoritative candidate list.
+- Poor handwriting alone is not a reason to discard otherwise identifiable work. Use
+  ATTEMPTED_PARTIALLY_READABLE when some content is readable and preserve the question identity
+  whenever the label is sufficiently supported. Use ATTEMPTED_UNCLEAR when the answer itself
+  cannot be read reliably.
+- Do not guess unreadable amounts, dates, account names, statutory sections, formulas or words.
+  Preserve uncertainty explicitly instead of manufacturing a transcription.
+
+TASK
+1. Identify every attempted question/sub-question. Check margin/circled labels as well as headings.
+2. For each detection, provide parentQuestionNumberVisible=true only if the parent question number
+   is physically visible on THIS page. If only "(a)" is visible, set false and rely on the previous
+   active question only when that context is unambiguous.
+3. If the page is a continuation and has no new heading, set isContinuation=true.
+4. Include a short literal questionLabelEvidence note describing what you read and where
+   (for example "circled 2 in left margin" or "Q3(a) written above the answer").
+5. Set readingConfidence from 0 to 1 for reading the question identity on this page. This is an
+   audit signal only; do not inflate it. Use a lower value when the label is faint or ambiguous.
+6. Identify MCQ selections only when both the question number and selected option are visible.
+   Return the student's selected option, not the official answer.
+7. Classify the answer page:
+   ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
+   CLEARLY_UNATTEMPTED, or QUESTION_NOT_IDENTIFIED.
+
+Return strictly valid JSON only:
+{
+  "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
+  "hasHandwriting": true,
+  "summary": "brief factual page summary",
+  "questionLabelEvidence": "literal label evidence and its location",
+  "readingConfidence": 0.0,
+  "detectedQuestions": [
+    {
+      "questionNumber": "2",
+      "subQuestion": "a",
+      "parentQuestionNumberVisible": true,
+      "isContinuation": false,
+      "snippet": "short evidence from the answer"
+    }
+  ],
+  "mcqSelections": { "1": "C" }
+}
+`;
+}
+
+/**
+ * Analyzes a single page of the answer sheet using a subject-neutral handwriting
+ * and question-identity prompt anchored to the selected authoritative question inventory.
+ */
 async function analyzeSinglePageCoverage(
   pageBase64: string,
   pageNumber: number,
@@ -582,54 +709,12 @@ async function analyzeSinglePageCoverage(
   totalPages: number = 1,
   previousActiveQuestion?: string
 ): Promise<PageCoverageRecord> {
-  const validDescriptiveList = paperStructure.subQuestions
-    .filter((s) => !s.isMcq)
-    .map((s) => s.fullQuestionCode)
-    .join(', ');
-  const validMcqList = (paperStructure.mcqs || []).map((m) => m.fullQuestionCode).join(', ');
-
-  const prompt = `
-You are an expert CA Exam Answer Sheet Page Auditor.
-Analyze Page ${pageNumber} of ${totalPages} of this CA student answer sheet.
-
-Context:
-- Subject: ${paperStructure.paperTitle || 'CA Examination Paper'}
-- Valid Descriptive Questions on this paper: ${validDescriptiveList || 'Standard CA questions'}
-- Valid MCQs on this paper: ${validMcqList || 'None'}
-- Active question from previous page: ${previousActiveQuestion || 'None (First page)'}
-
-Task:
-1. Identify all question/sub-question headings attempted on this page (e.g. from valid questions above).
-2. For EVERY detected descriptive question, report parentQuestionNumberVisible=true only when that parent number is visibly written on this page. If only a child label such as "(a)" is visible, report false; do not guess a parent number from the question paper or page number.
-3. If this page is a continuation of the previous page's answer and does NOT start a new question header, mark isContinuation: true and identify the previous active question.
-4. If multiple sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
-5. Identify any MCQ answers written on this page with selected options (e.g. { "1": "C", "2": "D" }).
-6. Classify page status:
-   - ATTEMPTED_READABLE: Clear student handwritten solution
-   - ATTEMPTED_PARTIALLY_READABLE: Readable with minor handwriting difficulty
-   - ATTEMPTED_UNCLEAR: Heavily illegible or blurry
-   - CLEARLY_UNATTEMPTED: Blank page or crossed out entirely
-   - QUESTION_NOT_IDENTIFIED: Content is present but question number cannot be identified
-
-Return strictly valid JSON with this schema:
-{
-  "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
-  "hasHandwriting": boolean,
-  "summary": string,
-  "detectedQuestions": [
-    {
-      "questionNumber": string,
-      "subQuestion": string | null,
-      "parentQuestionNumberVisible": boolean,
-      "isContinuation": boolean,
-      "snippet": string
-    }
-  ],
-  "mcqSelections": {
-    [key: string]: string
-  }
-}
-`;
+  const prompt = buildPageCoveragePrompt({
+    pageNumber,
+    totalPages,
+    paperStructure,
+    previousActiveQuestion,
+  });
 
   try {
     const res = await executeModelWithFallback({
@@ -753,6 +838,8 @@ Return strictly valid JSON with this schema:
       rawSummary: mappingReviewReason ? `${summary} Mapping review required: ${mappingReviewReason}` : summary,
       hasHandwriting,
       mappingReviewReason,
+      questionLabelEvidence: raw.questionLabelEvidence,
+      readingConfidence: raw.readingConfidence,
     };
   } catch (err: any) {
     const rawError = err?.message || String(err);
