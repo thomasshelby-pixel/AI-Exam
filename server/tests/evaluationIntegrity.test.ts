@@ -778,6 +778,7 @@ console.log('\n--- TEST R: Taxation MCQ Regression Test (8/15 + 4/15 = 12/30) --
   // This regression uses an explicit selected Suggested Answer fixture.
   // Production must never fill missing keys from unrelated historical MTP defaults.
   const selectedSuggestedAnswers = `
+ICAI Suggested Answers - CA Intermediate Paper 3 Taxation
 Section A - Division A: Multiple Choice Questions
 1. (C) Official answer from this selected MTP source.
 2. (C) Official answer from this selected MTP source.
