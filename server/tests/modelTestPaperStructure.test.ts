@@ -1206,6 +1206,9 @@ const instructionClauseParentTotalModelTest = getAuthoritativePaperStructure({
   questionPaperText: [
     'MODEL TEST PAPER 1',
     'PART II - DESCRIPTIVE QUESTIONS',
+    '1. First descriptive question. (14 Marks)',
+    '2. Second descriptive question. (14 Marks)',
+    '3. Third descriptive question. (14 Marks)',
     '4. The financial position of two companies Hari Ltd. and Vayu Ltd. as at 31st March, 2023 was as under.',
     'Hari Ltd. absorbs Vayu Ltd. on the following terms:',
     '(a) 10% Preference Shareholders are to be paid at 10% premium by issue of 9% Preference Shares of Hari Ltd.',
@@ -1214,21 +1217,21 @@ const instructionClauseParentTotalModelTest = getAuthoritativePaperStructure({
     '(d) Equity Shareholders of Vayu Ltd. will be issued necessary Equity Shares @ 5% premium.',
     'Prepare necessary acquisition entries in the books of Hari Ltd. Also draft the Balance Sheet after absorption as at 31st March, 2023. (14 Marks)',
   ].join('\n'),
-  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nQuestion 4\nAcquisition entries and Balance Sheet after absorption.',
-  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 4 - MAXIMUM 14 MARKS',
+  suggestedAnswersText: 'ANSWERS OF MODEL TEST PAPER 1\nDivision B\nDetailed narrative answers are provided for the descriptive section.',
+  markingSchemeText: 'MODEL TEST PAPER 1 MARKING SCHEME\nPART II - DESCRIPTIVE MARK ALLOCATION\nQUESTION 1 - MAXIMUM 14 MARKS\nQUESTION 2 - MAXIMUM 14 MARKS\nQUESTION 3 - MAXIMUM 14 MARKS\nQUESTION 4 - MAXIMUM 14 MARKS',
 });
 assert.deepEqual(
   instructionClauseParentTotalModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
-  [['Q4', 14]],
+  [['Q1', 14], ['Q2', 14], ['Q3', 14], ['Q4', 14]],
   'Unmarked alphabetic terms must not become child questions or steal the parent-level 14-mark allocation.',
 );
 assert.deepEqual(
   instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
-  ['Q4'],
+  ['Q1', 'Q2', 'Q3', 'Q4'],
 );
 assert.deepEqual(
   instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
-  ['Q4'],
+  ['Q1', 'Q2', 'Q3', 'Q4'],
 );
 assert.deepEqual(instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
 assert.deepEqual(instructionClauseParentTotalModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds, []);
