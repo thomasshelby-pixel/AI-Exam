@@ -147,6 +147,21 @@ export function validatePreEvaluationGate(params: {
       failedInvariants.push(msg);
       criticalFailures.push(msg);
     }
+    // Some Suggested Answer documents are narrative-only and expose no
+    // question headings. Reconcile them only when a question-wise inventory
+    // could actually be extracted; never infer missing answers from silence.
+    if (modelTestInventory.suggestedAnswerQuestionIds.length > 0) {
+      for (const questionId of modelTestInventory.suggestedAnswerMissingQuestionIds) {
+        const msg = 'MODEL_TEST_SUGGESTED_ANSWER_MISSING: ' + questionId + ' is in the Question Paper but not found in the selected question-wise Suggested Answers inventory.';
+        failedInvariants.push(msg);
+        criticalFailures.push(msg);
+      }
+      for (const questionId of modelTestInventory.suggestedAnswerOnlyQuestionIds) {
+        const msg = 'MODEL_TEST_SUGGESTED_ANSWER_SOURCE_CONFLICT: ' + questionId + ' is in the Suggested Answers but not in the selected Question Paper inventory.';
+        failedInvariants.push(msg);
+        criticalFailures.push(msg);
+      }
+    }
   }
 
   // 2. Canonical question map valid: check for malformed IDs like Q3(b(b))
