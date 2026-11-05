@@ -676,6 +676,21 @@ function findExplicitModelTestMarks(line: string, allowBareBracket = false): num
   return undefined;
 }
 
+function extractModelTestMarkComponents(line: string): number[] {
+  const value = String(line || '').trim();
+  if (!value) return [];
+  // Ranges, alternatives and "x out of y" are not safely additive components.
+  if (/\d+(?:\.\d+)?\s*(?:-|–|—|TO|OR|OUT\s+OF)\s*\d+(?:\.\d+)?\s*(?:MARKS?|M)\b/i.test(value)) {
+    return [];
+  }
+  if (/\b(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\b/i.test(value)) return [];
+
+  const matches = Array.from(value.matchAll(/(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\b/gi));
+  const values = matches.map((match) => Number(match[1]));
+  if (values.length === 0 || values.some((mark) => !Number.isFinite(mark) || mark <= 0)) return [];
+  return values;
+}
+
 function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): Map<string, ModelTestQuestionCandidate & { maximumMarks: number }> {
   const allocations = new Map<string, ModelTestQuestionCandidate & { maximumMarks: number }>();
   const lines = String(markingSchemeText || '').replace(/\r\n?/g, '\n').split('\n');
@@ -685,6 +700,9 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   let activeParent = '';
   let activeLeaf = '';
   let pendingIdentity = '';
+  let pendingDirectMarks: number | undefined;
+  let pendingComponentMarks = 0;
+  let pendingComponentCount = 0;
   let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
 
@@ -694,20 +712,44 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
     if (!allocations.has(key)) allocations.set(key, { ...candidate, maximumMarks: marks });
   };
 
+  const finalizePending = () => {
+    if (!pendingIdentity) return;
+    const candidate = toModelTestCandidate(pendingIdentity);
+    // An explicit question/sub-question total takes precedence over summed
+    // rubric components. Components are used only when no explicit total exists.
+    const marks = pendingDirectMarks !== undefined
+      ? pendingDirectMarks
+      : pendingComponentCount > 0
+        ? pendingComponentMarks
+        : undefined;
+    record(candidate, marks);
+    pendingIdentity = '';
+    pendingDirectMarks = undefined;
+    pendingComponentMarks = 0;
+    pendingComponentCount = 0;
+  };
+
+  const beginPending = (candidate: ModelTestQuestionCandidate | null, sourceLine: string) => {
+    finalizePending();
+    if (!candidate) return;
+    pendingIdentity = candidate.fullQuestionCode;
+    pendingDirectMarks = findExplicitModelTestMarks(sourceLine, true);
+  };
+
   for (const line of lines) {
     if (isModelTestMcqSectionHeading(line)) {
+      finalizePending();
       insideMcqSection = true;
       activeParent = '';
       activeLeaf = '';
-      pendingIdentity = '';
       lastQuestionHeadingNumber = 0;
       continue;
     }
     if (isModelTestDescriptiveSectionHeading(line)) {
+      finalizePending();
       insideMcqSection = false;
       activeParent = '';
       activeLeaf = '';
-      pendingIdentity = '';
       lastQuestionHeadingNumber = 0;
     }
 
@@ -718,10 +760,9 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
         ? toModelTestCandidate('MCQ' + explicit.questionNumber)
         : explicit;
       const parsed = parseCanonicalQuestionIdentity(candidate?.fullQuestionCode || explicit.fullQuestionCode);
-      activeParent = parsed.parentQuestionId;
+      activeParent = parsed.isMcq ? '' : parsed.parentQuestionId;
       activeLeaf = candidate?.subQuestionNumber ? candidate.fullQuestionCode : '';
-      pendingIdentity = candidate?.fullQuestionCode || explicit.fullQuestionCode;
-      record(candidate, findExplicitModelTestMarks(line, true));
+      beginPending(candidate, line);
       continue;
     }
 
@@ -729,9 +770,9 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
     const objective = insideMcqSection ? line.match(/^\s*OBJECTIVE\s*(\d{1,2})\b/i) : null;
     if (mcq || objective) {
       const candidate = toModelTestCandidate('MCQ' + (mcq || objective)![1]);
+      activeParent = '';
       activeLeaf = candidate?.fullQuestionCode || '';
-      pendingIdentity = activeLeaf;
-      record(candidate, findExplicitModelTestMarks(line, true));
+      beginPending(candidate, line);
       continue;
     }
 
@@ -740,8 +781,7 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       const parsed = parseCanonicalQuestionIdentity(bareSubQuestion.fullQuestionCode);
       activeParent = parsed.parentQuestionId;
       activeLeaf = bareSubQuestion.fullQuestionCode;
-      pendingIdentity = bareSubQuestion.fullQuestionCode;
-      record(bareSubQuestion, findExplicitModelTestMarks(line, true));
+      beginPending(bareSubQuestion, line);
       continue;
     }
 
@@ -750,35 +790,39 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       const number = Number(bare.questionNumber);
       if (number === 1 || number === lastQuestionHeadingNumber + 1) {
         lastQuestionHeadingNumber = number;
-        const parsed = parseCanonicalQuestionIdentity(bare.fullQuestionCode);
-        activeParent = insideMcqSection ? '' : parsed.parentQuestionId;
-        activeLeaf = '';
-        pendingIdentity = insideMcqSection ? 'MCQ' + bare.questionNumber : bare.fullQuestionCode;
-        record(insideMcqSection ? toModelTestCandidate(pendingIdentity) : bare, findExplicitModelTestMarks(line, true));
+        const candidate = insideMcqSection
+          ? toModelTestCandidate('MCQ' + bare.questionNumber)
+          : bare;
+        const parsed = parseCanonicalQuestionIdentity(candidate?.fullQuestionCode || bare.fullQuestionCode);
+        activeParent = parsed.isMcq ? '' : parsed.parentQuestionId;
+        activeLeaf = candidate?.subQuestionNumber ? candidate.fullQuestionCode : '';
+        beginPending(candidate, line);
         continue;
       }
     }
 
     if (activeParent) {
-      const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
+      // Accept both "(a) ..." and a label-only "(a)" line; the following
+      // explicit rubric rows then belong to that sub-question until the next ID.
+      const child = line.match(/^\s*(?:\(([a-z])\)|([a-z])\s*[).])(?:\s+.*)?$/i);
       if (child) {
         const part = String(child[1] || child[2] || '').toLowerCase();
         if (!(activeLeaf && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part))) {
           const candidate = toModelTestCandidate(activeParent + '(' + part + ')');
           if (candidate) {
             activeLeaf = candidate.fullQuestionCode;
-            pendingIdentity = candidate.fullQuestionCode;
-            record(candidate, findExplicitModelTestMarks(line, true));
+            beginPending(candidate, line);
             continue;
           }
         }
       }
-      const nested = line.match(/^\s*\((\d{1,2})\)\s+\S.{1,}/);
+
+      const nested = line.match(/^\s*\((\d{1,2})\)(?:\s+.*)?$/);
       if (nested && activeLeaf) {
         const candidate = toModelTestCandidate(activeLeaf + '(' + nested[1] + ')');
         if (candidate) {
-          pendingIdentity = candidate.fullQuestionCode;
-          record(candidate, findExplicitModelTestMarks(line, true));
+          activeLeaf = candidate.fullQuestionCode;
+          beginPending(candidate, line);
           continue;
         }
       }
@@ -786,18 +830,34 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
 
     if (pendingIdentity) {
       const compact = line.trim();
-      const standaloneTotal = compact.match(/^(?:(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\s*[:=]?\s*)?(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\.?$/i);
+      if (!compact) continue;
+
+      // "Total: 4", "Maximum marks = 4", "Total 4 marks" or a standalone
+      // "4 Marks" are treated as an explicit total for the active question.
+      const standaloneTotal = compact.match(/^(?:(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?|MARKS?)\s*[:=]?\s*)(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\.?$/i)
+        || compact.match(/^(\d+(?:\.\d+)?)\s*(?:MARKS?|M)\.?$/i);
       const labelledTotal = /\b(?:TOTAL|MAX(?:IMUM)?(?:\s+MARKS?)?)\b/i.test(compact)
         ? findExplicitModelTestMarks(compact, false)
         : undefined;
-      const marks = standaloneTotal ? Number(standaloneTotal[1]) : labelledTotal;
-      if (marks && marks > 0) {
-        record(toModelTestCandidate(pendingIdentity), marks);
-        pendingIdentity = '';
+      const explicitTotal = standaloneTotal ? Number(standaloneTotal[1]) : labelledTotal;
+      if (explicitTotal && explicitTotal > 0) {
+        pendingDirectMarks = explicitTotal;
+        pendingComponentMarks = 0;
+        pendingComponentCount = 0;
+        continue;
+      }
+
+      if (pendingDirectMarks === undefined) {
+        const components = extractModelTestMarkComponents(compact);
+        if (components.length > 0) {
+          pendingComponentMarks += components.reduce((sum, mark) => sum + mark, 0);
+          pendingComponentCount += components.length;
+        }
       }
     }
   }
 
+  finalizePending();
   return allocations;
 }
 
