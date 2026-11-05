@@ -1515,12 +1515,16 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
       ];
       const sourceAudit = {
         questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
+        suggestedAnswerQuestionIds: inventory?.suggestedAnswerQuestionIds || [],
+        suggestedAnswerMissingQuestionIds: inventory?.suggestedAnswerMissingQuestionIds || [],
+        suggestedAnswerOnlyQuestionIds: inventory?.suggestedAnswerOnlyQuestionIds || [],
         markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
         missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
         missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
         markingSchemeOnlyQuestionIds: inventory?.markingSchemeOnlyQuestionIds || [],
         missingMaximumMarks: Array.from(new Set(missingMaximumMarks)),
         questionPaperCount: inventory?.questionPaperQuestionIds.length || 0,
+        suggestedAnswerCount: inventory?.suggestedAnswerQuestionIds.length || 0,
         markingSchemeCount: inventory?.markingSchemeQuestionIds.length || 0,
         isReadyForEvaluation: Boolean(
           inventory &&
@@ -1529,6 +1533,8 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
           inventory.missingMarkQuestionIds.length === 0 &&
           inventory.missingMcqKeyQuestionIds.length === 0 &&
           inventory.markingSchemeOnlyQuestionIds.length === 0 &&
+          (inventory.suggestedAnswerQuestionIds.length === 0 ||
+            (inventory.suggestedAnswerMissingQuestionIds.length === 0 && inventory.suggestedAnswerOnlyQuestionIds.length === 0)) &&
           missingMaximumMarks.length === 0
         ),
       };
@@ -1537,6 +1543,8 @@ router.post('/materials/bulk-model-tests', async (req: AuthRequest, res: Respons
         ...(sourceAudit.markingSchemeCount === 0 ? ['No question/mark allocations could be parsed from the Marking Scheme.'] : []),
         ...sourceAudit.missingMarkQuestionIds.map((id) => `No Marking Scheme allocation found for ${id}.`),
         ...sourceAudit.missingMcqKeyQuestionIds.map((id) => `No official Suggested Answer key found for ${id}.`),
+        ...sourceAudit.suggestedAnswerMissingQuestionIds.map((id) => `Question Paper ID ${id} is missing from the question-wise Suggested Answers inventory.`),
+        ...sourceAudit.suggestedAnswerOnlyQuestionIds.map((id) => `Suggested Answer ID ${id} is not in the Question Paper inventory.`),
         ...sourceAudit.markingSchemeOnlyQuestionIds.map((id) => `Marking Scheme ID ${id} is not in the Question Paper inventory.`),
         ...sourceAudit.missingMaximumMarks.map((id) => `No verified maximum marks found for ${id}.`),
       ];
@@ -1817,6 +1825,9 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
       ];
       sourceInventoryAudit = {
         questionPaperQuestionIds: inventory?.questionPaperQuestionIds || [],
+        suggestedAnswerQuestionIds: inventory?.suggestedAnswerQuestionIds || [],
+        suggestedAnswerMissingQuestionIds: inventory?.suggestedAnswerMissingQuestionIds || [],
+        suggestedAnswerOnlyQuestionIds: inventory?.suggestedAnswerOnlyQuestionIds || [],
         markingSchemeQuestionIds: inventory?.markingSchemeQuestionIds || [],
         missingMarkQuestionIds: inventory?.missingMarkQuestionIds || [],
         missingMcqKeyQuestionIds: inventory?.missingMcqKeyQuestionIds || [],
@@ -1825,9 +1836,12 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
         isReadyForEvaluation: Boolean(
           inventory &&
           inventory.questionPaperQuestionIds.length > 0 &&
+          inventory.markingSchemeQuestionIds.length > 0 &&
           inventory.missingMarkQuestionIds.length === 0 &&
           inventory.missingMcqKeyQuestionIds.length === 0 &&
           inventory.markingSchemeOnlyQuestionIds.length === 0 &&
+          (inventory.suggestedAnswerQuestionIds.length === 0 ||
+            (inventory.suggestedAnswerMissingQuestionIds.length === 0 && inventory.suggestedAnswerOnlyQuestionIds.length === 0)) &&
           missingMaximumMarks.length === 0
         ),
       };
