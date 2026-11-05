@@ -786,8 +786,8 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
     const cells = splitModelTestMarkingSchemeCells(line);
     if (cells.length >= 2) {
       const normalizedCells = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ' ').replace(/\s+/g, ' ').trim());
-      const questionHeaderIndex = normalizedCells.findIndex((cell) => /^(?:question|question no|question number|ques|q no|part|sub question|item)$/.test(cell));
-      const marksHeaderIndex = normalizedCells.findIndex((cell) => /\b(?:maximum marks|max marks|marks|mark allocation|marks allocated|total marks)\b/.test(cell));
+      const questionHeaderIndex = normalizedCells.findIndex((cell) => /^(?:question|question id|question code|question no|question number|ques|q no|no|part|sub question|subpart|item)$/.test(cell));
+      const marksHeaderIndex = normalizedCells.findIndex((cell) => /\b(?:maximum marks?|max marks?|marks?|mark allocation|marks allocated|total marks?)\b/.test(cell));
       if (questionHeaderIndex >= 0 && marksHeaderIndex >= 0 && questionHeaderIndex !== marksHeaderIndex) {
         finalizePending();
         tableQuestionColumn = questionHeaderIndex;
@@ -800,7 +800,7 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
         const identityCell = cells[tableQuestionColumn];
         const markCell = cells[tableMarksColumn];
         const rowCandidate = parseModelTestMarkingSchemeIdentityCell(identityCell, activeParent);
-        const markValueMatch = markCell.match(/^\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*[\])] ?\s*$/i)
+        const markValueMatch = markCell.match(/^\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:MARKS?|M)?\s*[\])]?\s*$/i)
           || markCell.match(/^\s*(\d+(?:\.\d+)?)\s*$/);
         if (rowCandidate && markValueMatch) {
           finalizePending();
