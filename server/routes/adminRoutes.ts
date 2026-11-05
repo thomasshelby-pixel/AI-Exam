@@ -28,6 +28,7 @@ import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { validateSrn } from '../utils/srnValidator.js';
+import { canManuallyRestoreFreeTrialForReason } from '../services/freeTrialAbuseService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
 import { deleteStudentAccount, updateStudentClassification } from '../services/studentDeleteService.js';
 import { deleteInstituteAccount, updateInstituteClassification } from '../services/instituteDeleteService.js';
@@ -3315,7 +3316,7 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
   }
 });
 
-// Manual review and restore for legacy free-trial blocks whose original reason was not recorded.
+// Super Admin manual review and restore for unknown legacy blocks or explicit per-account REUSED_DEVICE overrides.
 router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Response) => {
   let transactionOpen = false;
   try {
@@ -3360,14 +3361,15 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
       }
 
       const existingReason = String(account.free_trial_block_reason || '').trim().toUpperCase();
-      if (existingReason && existingReason !== 'UNKNOWN_LEGACY_BLOCK') {
+      if (!canManuallyRestoreFreeTrialForReason(existingReason)) {
         return {
           ok: false as const,
           status: 409,
           code: 'MANUAL_REVIEW_NOT_ALLOWED_FOR_REASON',
-          error: 'Manual restore is limited to UNKNOWN_LEGACY_BLOCK records. Known anti-abuse blocks must retain their existing protection.',
+          error: 'Manual restore is available only for UNKNOWN_LEGACY_BLOCK or REUSED_DEVICE after identity review. Other anti-abuse blocks remain protected.',
         };
       }
+      const normalizedExistingReason = existingReason.replace(/^PROFILE_COMPLETION_/, '');
 
       const srnValidation = validateSrn(String(account.icai_registration_number || ''));
       if (!srnValidation.isValid) {
@@ -3422,7 +3424,7 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
           AND (
             free_trial_block_reason IS NULL
             OR TRIM(free_trial_block_reason) = ''
-            OR UPPER(TRIM(free_trial_block_reason)) = 'UNKNOWN_LEGACY_BLOCK'
+            OR REPLACE(UPPER(TRIM(free_trial_block_reason)), 'PROFILE_COMPLETION_', '') IN ('UNKNOWN_LEGACY_BLOCK', 'REUSED_DEVICE')
           )
       `).run(ledgerUsed, currentMonth, ledgerUsed, studentId);
 
@@ -3438,7 +3440,7 @@ router.post('/students/:id/review-free-trial', async (req: AuthRequest, res: Res
         `aud_${crypto.randomBytes(8).toString('hex')}`,
         req.user!.id,
         studentId,
-        `Admin manually approved a legacy unknown free-trial block after verified email, active account, valid ICAI SRN format, unique in-app SRN identity, and current-month ledger checks. Current-month quota: 2; used: ${ledgerUsed}; remaining: ${remaining}. Admin review note: ${reviewReason}`
+        `Admin manually approved a free-trial block after verified email, active account, valid ICAI SRN format, unique in-app SRN identity, and current-month ledger checks. Previous block reason: ${normalizedExistingReason || 'UNKNOWN_LEGACY_BLOCK'}. ${normalizedExistingReason === 'REUSED_DEVICE' ? 'Explicit one-account override: the original hashed device claim was retained; all other accounts on that device remain subject to duplicate-device protection.' : 'Legacy unknown block restored after manual identity review.'} Current-month quota: 2; used: ${ledgerUsed}; remaining: ${remaining}. Admin review note: ${reviewReason}`
       );
 
       return { ok: true as const, used: ledgerUsed, remaining };

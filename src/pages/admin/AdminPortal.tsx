@@ -94,6 +94,15 @@ function summarizeEvaluationRejectionReason(value: unknown): string {
   return summary.length > 135 ? `${summary.slice(0, 132).trimEnd()}…` : summary;
 }
 
+function canManuallyReviewFreeTrialReason(value: unknown): boolean {
+  const normalized = String(value || '').trim().toUpperCase().replace(/^PROFILE_COMPLETION_/, '');
+  return normalized === 'UNKNOWN_LEGACY_BLOCK' || normalized === 'REUSED_DEVICE';
+}
+
+function isReusedDeviceFreeTrialBlock(value: unknown): boolean {
+  return String(value || '').trim().toUpperCase().replace(/^PROFILE_COMPLETION_/, '') === 'REUSED_DEVICE';
+}
+
 function describeFreeTrialBlockReason(value: unknown): { code: string; description: string } {
   const code = String(value || '').trim().toUpperCase() || 'UNKNOWN_LEGACY_BLOCK';
   const normalized = code.replace(/^PROFILE_COMPLETION_/, '');
@@ -690,7 +699,18 @@ export const AdminPortal: React.FC = () => {
     }
   };
 
-  // Admin-only manual review for legacy unknown free-trial blocks.
+  // Open the Super Admin's audited manual free-trial review for explicitly reviewable blocks.
+  const openManualFreeTrialReview = (student: any) => {
+    setFreeTrialReviewModal({
+      student,
+      reviewReason: '',
+      identityConfirmed: false,
+      error: '',
+      loading: false,
+    });
+  };
+
+  // Admin-only manual review for unknown legacy blocks and explicit per-account reused-device overrides.
   const handleManualFreeTrialReview = async () => {
     if (!freeTrialReviewModal) return;
     const reviewReason = freeTrialReviewModal.reviewReason.trim();
@@ -2424,6 +2444,23 @@ export const AdminPortal: React.FC = () => {
                                     <Eye className="w-3.5 h-3.5" />
                                     View
                                   </button>
+
+                                  {/* Manual restore for eligible free-trial blocks */}
+                                  {st.status === 'ACTIVE' &&
+                                    st.free_trial_status === 'NOT_GRANTED' &&
+                                    st.free_trial_blocked === 1 &&
+                                    canManuallyReviewFreeTrialReason(st.free_trial_block_reason) && (
+                                      <button
+                                        onClick={() => openManualFreeTrialReview(st)}
+                                        className="px-2 py-1 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition flex items-center gap-1"
+                                        title={isReusedDeviceFreeTrialBlock(st.free_trial_block_reason)
+                                          ? 'Review and explicitly restore this account despite the reused-device signal'
+                                          : 'Manually review and restore the standard free-trial allowance'}
+                                      >
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        Restore Trial
+                                      </button>
+                                    )}
 
                                   {/* 2. Suspend / Reactivate */}
                                   <button
@@ -4504,20 +4541,19 @@ export const AdminPortal: React.FC = () => {
                     <p className="font-mono text-xs font-bold text-rose-800 break-all">{reason.code}</p>
                     <p className="text-xs leading-relaxed text-slate-700">{reason.description}</p>
                     <p className="text-[10px] text-slate-500">No raw device identifier or IP address is exposed in this view.</p>
-                    {reason.code === 'UNKNOWN_LEGACY_BLOCK' && viewStudentModal.student.free_trial_blocked === 1 && viewStudentModal.student.status === 'ACTIVE' && (
+                    {canManuallyReviewFreeTrialReason(viewStudentModal.student.free_trial_block_reason) && viewStudentModal.student.free_trial_blocked === 1 && viewStudentModal.student.status === 'ACTIVE' && (
                       <div className="pt-2 mt-2 border-t border-rose-200 space-y-2">
                         <p className="text-[10px] leading-relaxed text-slate-600">
-                          A Super Admin can manually review this legacy record. The restore checks verified email, ICAI SRN format, duplicate in-app identity and current-month usage.
+                          A Super Admin can manually review this record. Approval checks verified email, ICAI SRN format, duplicate in-app identity and current-month usage.
                         </p>
+                        {isReusedDeviceFreeTrialBlock(viewStudentModal.student.free_trial_block_reason) && (
+                          <p className="text-[10px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                            This is an explicit exception for this student account only. The original hashed device claim is retained, so other accounts using the same device remain blocked.
+                          </p>
+                        )}
                         <button
                           type="button"
-                          onClick={() => setFreeTrialReviewModal({
-                            student: viewStudentModal.student,
-                            reviewReason: '',
-                            identityConfirmed: false,
-                            error: '',
-                            loading: false,
-                          })}
+                          onClick={() => openManualFreeTrialReview(viewStudentModal.student)}
                           className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition"
                         >
                           Review & Restore 2 Free Evaluations
@@ -4731,6 +4767,11 @@ export const AdminPortal: React.FC = () => {
             <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 mb-4 text-xs text-amber-900 space-y-1">
               <p className="font-bold">Before approving, review the student's identity.</p>
               <p>This tool checks that the email is verified, the ICAI SRN format is valid, the same SRN digits are not linked to another app account, and the monthly usage ledger does not exceed the standard limit.</p>
+              {isReusedDeviceFreeTrialBlock(freeTrialReviewModal.student.free_trial_block_reason) && (
+                <p className="font-semibold border-t border-amber-200 pt-2">
+                  REUSED_DEVICE override: approval applies only to this student. The hashed device claim is not deleted, and duplicate-device protection remains active for every other account on that device.
+                </p>
+              )}
               <p className="font-semibold">Format validation is not live verification against ICAI SSP. Confirm the student's identity from their submitted details before approving.</p>
             </div>
 

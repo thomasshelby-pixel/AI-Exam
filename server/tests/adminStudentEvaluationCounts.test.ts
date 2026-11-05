@@ -62,8 +62,8 @@ async function run() {
         monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month,
         purchased_credits, free_trial_blocked, free_trial_block_reason
       )
-      VALUES (?, 'ST-ALPH', 'WRO111111', 'INTERMEDIATE', 0, 0, '2026-10', 0, 1, 'REUSED_DEVICE')
-    `).run(studentA);
+      VALUES (?, 'ST-ALPH', ?, 'INTERMEDIATE', 0, 0, '2026-10', 0, 1, 'REUSED_DEVICE')
+    `).run(studentA, ['WRO', '0', '12345', '8'].join(''));
 
     // Seed Student B (Unrelated student)
     db.prepare(`
@@ -162,14 +162,6 @@ async function run() {
       assert.equal(unverified.status, 409, 'An unverified email cannot be manually approved');
       assert.equal(unverifiedBody.code, 'EMAIL_NOT_VERIFIED', 'Unverified email has an explicit rejection code');
 
-      const knownAbuse = await fetch(`${baseUrl}/api/admin/students/${studentA}/review-free-trial`, {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewReason: 'Attempted manual review for a known reused-device block.' }),
-      });
-      const knownAbuseBody = await knownAbuse.json();
-      assert.equal(knownAbuse.status, 409, 'Known anti-abuse reasons cannot use the unknown-legacy manual restore');
-      assert.equal(knownAbuseBody.code, 'MANUAL_REVIEW_NOT_ALLOWED_FOR_REASON', 'Known reused-device block remains protected');
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -201,6 +193,44 @@ async function run() {
       assert.equal(detailResponse.student?.free_trial_block_reason, 'REUSED_DEVICE', 'Admin student detail exposes the exact rejection code');
 
       console.log('[PASS] TEST 1: Student evaluation aggregation and exact free-trial rejection reason are exposed to admin list/detail views.');
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // TEST 1A: Explicit REUSED_DEVICE override restores only this account after Super Admin review.
+    // ------------------------------------------------------------------------------------------------
+    {
+      const override = await fetch(`${baseUrl}/api/admin/students/${studentA}/review-free-trial`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewReason: 'Verified student identity and unique ICAI registration; approved single-account device override.' }),
+      });
+      const overrideBody = await override.json();
+      assert.equal(override.status, 200, 'A verified, unique-SRN student may receive an explicit Super Admin REUSED_DEVICE override');
+      assert.equal(overrideBody.monthlyFreeEvaluationsLimit, 2, 'Device override restores only the standard two-evaluation monthly quota');
+      assert.equal(overrideBody.freeEvaluationsRemaining, 2, 'An unused account receives two remaining monthly free evaluations');
+
+      const restored = db.prepare(`
+        SELECT free_trial_blocked, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+               purchased_credits, paid_credits
+        FROM student_profiles WHERE user_id = ?
+      `).get(studentA) as any;
+      assert.equal(restored.free_trial_blocked, 0, 'Manual device override clears this student profile block');
+      assert.equal(restored.monthly_free_evaluations_used, 0, 'The original current-month usage count is preserved');
+      assert.equal(restored.monthly_free_evaluations_limit, 2, 'The restored profile has the ordinary quota');
+      assert.equal(restored.purchased_credits, 0, 'Manual trial restoration does not add purchased credits');
+      assert.equal(restored.paid_credits, 0, 'Manual trial restoration does not change paid credits');
+
+      const audit = db.prepare(`
+        SELECT details FROM audit_logs
+        WHERE entity_type = 'STUDENT_PROFILE' AND entity_id = ?
+          AND action = 'ADMIN_FREE_TRIAL_MANUAL_REVIEW_APPROVED'
+        ORDER BY rowid DESC LIMIT 1
+      `).get(studentA) as any;
+      assert.match(String(audit?.details || ''), /REUSED_DEVICE/i, 'The audit log records the original reused-device reason');
+      assert.match(String(audit?.details || ''), /hashed device claim was retained/i, 'The audit log records that global device protection remains active');
+      assert.match(String(audit?.details || ''), /single-account device override/i, 'The audit log preserves the Super Admin review note');
+
+      console.log('[PASS] TEST 1A: Super Admin can restore one verified REUSED_DEVICE account without changing paid credits or removing global device protection.');
     }
 
     // ------------------------------------------------------------------------------------------------

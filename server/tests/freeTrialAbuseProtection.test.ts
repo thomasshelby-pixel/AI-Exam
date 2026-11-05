@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { ensureMonthlyFreeEvaluationsReset, getCurrentServerMonth, repairTransientFreeTrialBlockAfterVerifiedSignals } from '../services/studentCreditService.js';
-import { decideFreeTrialEligibility, isSignalOwnedByAnotherUser } from '../services/freeTrialAbuseService.js';
+import { canManuallyRestoreFreeTrialForReason, decideFreeTrialEligibility, isSignalOwnedByAnotherUser } from '../services/freeTrialAbuseService.js';
 
 initDatabase();
 
@@ -61,6 +61,11 @@ assert(!noSignalDecision.eligible && noSignalDecision.reason === 'NO_RELIABLE_SI
 assert(!isSignalOwnedByAnotherUser(true, 'usr_same_account', 'usr_same_account'), "A student's own repeated login on the same device/IP is not treated as another account");
 assert(isSignalOwnedByAnotherUser(true, 'usr_first_account', 'usr_second_account'), 'A device/IP claim owned by a different account is treated as reuse');
 assert(isSignalOwnedByAnotherUser(true, null, 'usr_new_account'), 'Legacy ownerless device/IP claims remain protected from duplicate free-trial claims');
+assert(canManuallyRestoreFreeTrialForReason('UNKNOWN_LEGACY_BLOCK'), 'Super Admin manual review can restore an unknown legacy block after identity checks');
+assert(canManuallyRestoreFreeTrialForReason('REUSED_DEVICE'), 'Super Admin can explicitly override a reused-device block for one verified account');
+assert(canManuallyRestoreFreeTrialForReason('PROFILE_COMPLETION_REUSED_DEVICE'), 'Profile-completion reused-device reason is normalized for manual review');
+assert(!canManuallyRestoreFreeTrialForReason('REUSED_SRN'), 'Manual review cannot override a duplicate ICAI registration identity');
+assert(!canManuallyRestoreFreeTrialForReason('SIGNAL_STORE_UNAVAILABLE'), 'Transient signal-store failures still require a fresh eligibility check instead of manual override');
 
 try {
   db.prepare(`
