@@ -54,8 +54,8 @@ async function run() {
   assert.match(pagePrompt, /left margin/i);
   assert.match(pagePrompt, /circled\/margin-written numbers/i);
   assert.match(pagePrompt, /faint, cursive/i);
-  assert.match(pagePrompt, /immediately previous page: Q2\(a\)/i);
-  assert.match(pagePrompt, /Never infer a question from the PDF page index/i);
+  assert.match(pagePrompt, /PREVIOUS PAGE ACTIVE QUESTION: Q2\(a\)/i);
+  assert.match(pagePrompt, /Never infer identity from PDF page index/i);
   assert.match(pagePrompt, /Q1\(a\) — 5 marks — Accounting treatment and journal entries/i);
 
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
