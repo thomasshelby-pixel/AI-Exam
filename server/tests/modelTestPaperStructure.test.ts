@@ -468,7 +468,20 @@ const mixedNumberingGate = validatePreEvaluationGate({
   markingSchemeText: 'Marking Scheme text present.',
   officialPaperMaxMarks: 20,
 });
-assert.equal(mixedNumberingGate.passed, true, 'Three-source-consistent mixed numbering must pass preflight.');
+assert.equal(
+  mixedNumberingGate.passed,
+  true,
+  'Three-source-consistent mixed numbering must pass preflight. ' + JSON.stringify({
+    questionPaperIds: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+    suggestedAnswerIds: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.suggestedAnswerQuestionIds,
+    markingSchemeIds: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
+    missingMarks: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds,
+    missingKeys: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds,
+    markSchemeOnly: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds,
+    parentMismatches: mixedNumberingObjectiveModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds,
+    failedInvariants: mixedNumberingGate.failedInvariants,
+  }),
+);
 
 // The same alias must NOT be applied if the selected Suggested Answers do not
 // provide an official key for that MCQ number.
