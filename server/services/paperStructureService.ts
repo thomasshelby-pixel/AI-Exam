@@ -510,7 +510,7 @@ function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | nul
 
 function parseModelTestQuestionHeading(line: string): ModelTestQuestionCandidate | null {
   const match = String(line || '').match(
-    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
+    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|ANSWER(?:\s+TO)?|ANS\.?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
   );
   if (!match) return null;
   const suffix = (match[2] || '').match(/\(([a-z0-9]+)\)/gi) || [];
