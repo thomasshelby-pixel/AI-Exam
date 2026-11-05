@@ -1237,12 +1237,22 @@ function buildModelTestPaperStructure(options: {
   }
 
   const candidateMap = new Map<string, ModelTestQuestionCandidate>();
+  const qpParentCandidateNumbers = new Set(qpCandidates
+    .filter((candidate) => !candidate.isMcq && !candidate.subQuestionNumber)
+    .map((candidate) => candidate.questionNumber));
   for (const candidate of qpCandidates) {
     if (candidate.isMcq) {
       candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
       continue;
     }
-    if (candidate.subQuestionNumber) continue;
+    if (candidate.subQuestionNumber) {
+      // Some source PDFs identify a child directly (Q3(a), Q3(b)) without
+      // a separate parent heading. Preserve those explicit child identities.
+      if (!qpParentCandidateNumbers.has(candidate.questionNumber)) {
+        candidateMap.set(candidate.fullQuestionCode.toLowerCase(), candidate);
+      }
+      continue;
+    }
 
     const qpChildren = qpChildrenByParent.get(candidate.questionNumber) || [];
     const msChildren = msChildrenByParent.get(candidate.questionNumber) || [];
