@@ -756,7 +756,7 @@ Return strictly valid JSON with this schema:
     };
   } catch (err: any) {
     const rawError = err?.message || String(err);
-    const safeError = sanitizeSecretStrings(rawError).replace(/[\\r\\n]+/g, ' ').slice(0, 240);
+    const safeError = sanitizeSecretStrings(rawError).replace(/[\r\n]+/g, ' ').slice(0, 240);
     const lowerError = rawError.toLowerCase();
     const isQuotaOrBilling =
       lowerError.includes('429') ||
