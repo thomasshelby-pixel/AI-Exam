@@ -765,4 +765,70 @@ assert.equal(threeSourceGate.passed, false, 'Question-wise Suggested Answer IDs 
 assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_MISSING: Q2')));
 assert.ok(threeSourceGate.failedInvariants.some((message) => message.includes('MODEL_TEST_SUGGESTED_ANSWER_SOURCE_CONFLICT: Q3')));
 
+
+// Real PDF text extraction may place an objective question number on its own
+// line and express nested numeric parts as either Q3(c)(1) or Q3(c(1)).
+// All three selected sources must normalize those equivalent spellings to one ID.
+const nestedAndStandaloneMcqModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 14,
+  questionPaperText: `MODEL TEST PAPER 1
+MULTIPLE CHOICE QUESTIONS
+1
+Select the correct accounting treatment.
+2
+Choose the correct journal entry.
+DESCRIPTIVE QUESTIONS
+Question 3(c)(1) Explain the accounting treatment.
+Question 5(a)(1) Prepare the required calculation.
+Question 5(b)(2) State the correct treatment.`,
+  suggestedAnswersText: `SUGGESTED ANSWERS
+MULTIPLE CHOICE QUESTIONS
+1. (b)
+2. (c)
+DESCRIPTIVE ANSWERS
+Question 3(c(1)) Explanation of the accounting treatment.
+Question 5(a)(1) Required calculation.
+Question 5(b(2)) Correct treatment.`,
+  markingSchemeText: `MARKING SCHEME
+MULTIPLE CHOICE QUESTIONS
+Question 1 - 1 Mark
+Question 2 - 1 Mark
+DESCRIPTIVE QUESTIONS
+Question 3(c(1)) - 4 Marks
+Question 5(a)(1) - 4 Marks
+Question 5(b(2)) - 4 Marks`,
+});
+assert.deepEqual(
+  nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  'Standalone MCQ question numbers and nested QP identities must be preserved.',
+);
+assert.deepEqual(
+  nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.suggestedAnswerQuestionIds,
+  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  'Equivalent nested spellings in the Suggested Answers must reconcile to the QP IDs.',
+);
+assert.deepEqual(
+  nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.markingSchemeQuestionIds,
+  ['MCQ1', 'MCQ2', 'Q3(c)(1)', 'Q5(a)(1)', 'Q5(b)(2)'],
+  'Nested Marking Scheme rows must map to the exact QP subparts.',
+);
+assert.deepEqual(
+  nestedAndStandaloneMcqModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q3(c)(1)', 4], ['Q5(a)(1)', 4], ['Q5(b)(2)', 4]],
+);
+assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds, []);
+assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.suggestedAnswerMissingQuestionIds, []);
+assert.deepEqual(nestedAndStandaloneMcqModelTest.sourceInventoryDiagnostics?.suggestedAnswerOnlyQuestionIds, []);
+assert.deepEqual(
+  nestedAndStandaloneMcqModelTest.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks, question.officialKey]),
+  [['MCQ1', 1, 'B'], ['MCQ2', 1, 'C']],
+);
+
 console.log('Model Test dynamic paper structure tests passed.');
