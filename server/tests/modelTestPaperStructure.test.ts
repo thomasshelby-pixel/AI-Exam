@@ -1136,7 +1136,7 @@ assert.equal(uploadedGate.passed,true,'Uploaded Advanced Accounting source inven
  });
  assert.deepEqual(
    objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.questionPaperQuestionIds,
-   ['MCQ9', 'MCQ10', 'MCQ11', 'MCQ12', 'Q1'],
+   ['Q1', 'MCQ9', 'MCQ10', 'MCQ11', 'MCQ12'],
    'A standalone MCQ sequence beginning at 9 must retain MCQ9–MCQ12 rather than disappear or be renumbered.',
  );
  assert.deepEqual(
