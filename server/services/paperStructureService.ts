@@ -680,10 +680,12 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       const child = line.match(/^[ ]{0,8}(?:\(([a-z])\)|([a-z])\s*[).])\s+\S.{1,}/i);
       if (child) {
         const part = String(child[1] || child[2] || '').toLowerCase();
-        if (!(activeSubQuestion && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part))) {
-          add(toModelTestCandidate(activeParent + '(' + part + ')'), line);
-          continue;
-        }
+        // Roman-numbered lines are internal clauses or financial-statement
+        // section labels (e.g. "I. Equity and Liabilities"), not scorable
+        // descriptive leaves in this inventory.
+        if (/^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x)$/i.test(part)) continue;
+        add(toModelTestCandidate(activeParent + '(' + part + ')'), line);
+        continue;
       }
     }
 
