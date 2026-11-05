@@ -235,4 +235,41 @@ assert.deepEqual(
   [4, 6],
 );
 
+
+const mixedObjectiveAndDescriptiveModelTest = getAuthoritativePaperStructure({
+  level: 'FOUNDATION',
+  subjectName: 'Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 20,
+  questionPaperText: `MODEL TEST PAPER
+Multiple Choice Questions
+Question 1 - Select the correct option.
+Question 2 - Select the correct option.
+Descriptive Questions
+Question 3 - Prepare the required statement.`,
+  suggestedAnswersText: `MODEL TEST PAPER SUGGESTED ANSWERS
+Multiple Choice Questions
+1. (b)
+2. (c)
+Descriptive Questions
+Question 3 - Full solution.`,
+  markingSchemeText: `MODEL TEST PAPER MARKING SCHEME
+Multiple Choice Questions
+Question 1 - 1 Mark
+Question 2 - 1 Mark
+Descriptive Questions
+Question 3 - 18 Marks`,
+});
+assert.deepEqual(
+  mixedObjectiveAndDescriptiveModelTest.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks, question.officialKey]),
+  [['MCQ1', 1, 'B'], ['MCQ2', 1, 'C']],
+  'Model Test MCQs must use the QP objective section, the official key, and exact marks from the Marking Scheme.',
+);
+assert.deepEqual(
+  mixedObjectiveAndDescriptiveModelTest.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q3', 18]],
+);
+assert.deepEqual(mixedObjectiveAndDescriptiveModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+
 console.log('Model Test dynamic paper structure tests passed.');
