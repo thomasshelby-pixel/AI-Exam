@@ -1078,6 +1078,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
       if (pdfBuffer.length > 50 && pdfBuffer.subarray(0, 5).toString('ascii').startsWith('%PDF')) {
         const paperStructure = getAuthoritativePaperStructure({
           level: params.level,
+          materialType: params.materialType,
           paper: params.paper || params.subjectName,
           subjectName: params.subjectName,
           questionPaperText: params.referenceQuestionPaperText,
