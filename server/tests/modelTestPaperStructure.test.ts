@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 
 const shared = {
   level: 'INTERMEDIATE',
@@ -96,5 +97,142 @@ assert.equal(mtp.mcqs.length, 16,
 const pyq = getAuthoritativePaperStructure({ ...shared, materialType: 'PYQ' });
 assert.ok(pyq.subQuestions.some((question) => question.fullQuestionCode === 'Q5(a)'),
   'Existing PYQ Taxation template must remain unchanged.');
+
+
+// QP and Marking Scheme often use different layouts. The QP labels remain the
+// authoritative identity inventory even when marks are only printed beside a
+// child in the Marking Scheme.
+const splitLayoutModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  officialPaperMaxMarks: 40,
+  questionPaperText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1
+Question No. 1
+(a) Pass the required journal entries for internal reconstruction.
+(b) Prepare the revised balance sheet.
+Question No. 2
+Prepare the statement of affairs and explain the treatment.
+Q.3(a) Calculate the goodwill.
+Q.3(b) Prepare the capital accounts.
+Question No. 4
+Calculate the purchase consideration.`,
+  suggestedAnswersText: `MODEL TEST PAPER 1 SUGGESTED ANSWERS
+Answer 1(a), 1(b), 2, 3(a), 3(b) and 4 are provided.`,
+  markingSchemeText: `ADVANCED ACCOUNTING MODEL TEST PAPER 1 MARKING SCHEME
+Question No. 1
+(a) 4 Marks
+(b) 6 Marks
+Question No. 2
+10 Marks
+Q.3(a) - 5 Marks
+Q.3(b) - 5 Marks
+Question No. 4 - 10 Marks`,
+});
+assert.deepEqual(
+  splitLayoutModelTest.subQuestions.map((question) => question.fullQuestionCode),
+  ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)', 'Q4'],
+  'The complete QP inventory must survive when QP and Marking Scheme use different heading layouts.',
+);
+assert.deepEqual(
+  splitLayoutModelTest.subQuestions.map((question) => question.maximumMarks),
+  [4, 6, 10, 5, 5, 10],
+  'Maximum marks must be joined to the exact QP canonical ID, not inferred from another source.',
+);
+assert.deepEqual(splitLayoutModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds, []);
+assert.deepEqual(splitLayoutModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, []);
+const splitLayoutGate = validatePreEvaluationGate({
+  paperStructure: splitLayoutModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+  officialPaperMaxMarks: 40,
+});
+assert.equal(splitLayoutGate.passed, true, 'A fully reconciled QP/MS inventory should pass source preflight.');
+
+// Reproduce the failure shape from the post-merge review: one marked leaf must
+// not become the entire authoritative paper when the QP contains other questions.
+const partialMarksModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `Question No. 1
+(a) Journal entries.
+(b) Revised balance sheet.
+Question No. 2
+Statement of profit and loss.
+Question No. 3(a)
+Goodwill calculation.
+Question No. 3(b)
+Capital accounts.
+Question No. 4
+Purchase consideration.`,
+  suggestedAnswersText: 'Suggested answer document contains the answers.',
+  markingSchemeText: 'Question 3(b) - 5 Marks',
+});
+assert.deepEqual(
+  partialMarksModelTest.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+  ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q3(b)', 'Q4'],
+  'A sparse Marking Scheme must never shrink the QP inventory to the only ID it happened to parse.',
+);
+assert.deepEqual(
+  partialMarksModelTest.sourceInventoryDiagnostics?.missingMarkQuestionIds,
+  ['Q1(a)', 'Q1(b)', 'Q2', 'Q3(a)', 'Q4'],
+);
+const partialMarksGate = validatePreEvaluationGate({
+  paperStructure: partialMarksModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+});
+assert.equal(partialMarksGate.passed, false, 'An incomplete Marking Scheme must fail closed before page-AI analysis.');
+assert.ok(partialMarksGate.failedInvariants.some((message) => message.includes('MODEL_TEST_MARKS_NOT_RECONCILED: Q1(a)')));
+
+// Unmatched Marking Scheme entries are source conflicts, not extra questions to
+// silently add to the selected paper.
+const orphanMarkModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: 'Question 1 - 10 Marks',
+  suggestedAnswersText: 'Suggested answer document.',
+  markingSchemeText: 'Question 1 - 10 Marks\nQuestion 9 - 5 Marks',
+});
+assert.deepEqual(orphanMarkModelTest.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds, ['Q9']);
+const orphanMarkGate = validatePreEvaluationGate({
+  paperStructure: orphanMarkModelTest,
+  questionPaperText: 'Question Paper content is present and verified.',
+  suggestedAnswersText: 'Suggested Answer content is present and verified.',
+  markingSchemeText: 'Marking Scheme content is present and verified.',
+});
+assert.equal(orphanMarkGate.passed, false);
+assert.ok(orphanMarkGate.failedInvariants.some((message) => message.includes('MODEL_TEST_MARKING_SCHEME_SOURCE_CONFLICT: Q9')));
+
+// Unprefixed sequential question headings are accepted only when the document
+// has no explicit Q/Question markers.
+const bareNumberModelTest = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Costing',
+  paper: 'Paper 4',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: `1. Calculate the contribution and P/V ratio.
+(a) Compute the break-even point.
+2. Prepare the marginal costing statement.`,
+  suggestedAnswersText: 'Suggested answers for questions 1(a) and 2.',
+  markingSchemeText: `1. Question total - 10 Marks
+(a) 4 Marks
+2. Question total - 6 Marks`,
+});
+assert.deepEqual(
+  bareNumberModelTest.subQuestions.map((question) => question.fullQuestionCode),
+  ['Q1(a)', 'Q2'],
+);
+assert.deepEqual(
+  bareNumberModelTest.subQuestions.map((question) => question.maximumMarks),
+  [4, 6],
+);
 
 console.log('Model Test dynamic paper structure tests passed.');
