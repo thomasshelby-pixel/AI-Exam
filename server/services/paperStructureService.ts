@@ -526,17 +526,26 @@ function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCa
   return toModelTestCandidate('Q' + match[1] + suffix.join(''));
 }
 
+function normalizeModelTestSectionHeading(line: string): string {
+  let value = String(line || '').trim();
+  // A section title may end with its marks, e.g. "(20 Marks)", "[80 marks]"
+  // or "- Total: 40 marks". Strip only this trailing metadata.
+  value = value.replace(/\s*(?:[-–—:]?\s*)[\[(]?\s*(?:TOTAL\s*)?\d+(?:\.\d+)?\s*(?:MARKS?|M)\s*[\])]?\s*$/i, '');
+  value = value.replace(/[()[\]]/g, ' ').replace(/[:\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+  value = value.replace(/^(?:(?:SECTION|DIVISION|PART)\s+[A-Z0-9IVX]+\s+)/i, '');
+  return value.trim();
+}
+
 function isModelTestMcqSectionHeading(line: string): boolean {
-  const value = String(line || '').trim();
-  const normalized = value.replace(/[()[\]]/g, ' ').replace(/[:\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
-  return /\bMULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?\b/i.test(value) ||
-    /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s+)?(?:MCQS?|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?(?:\s+SECTION)?$/i.test(normalized);
+  const normalized = normalizeModelTestSectionHeading(line);
+  // Strict full-line match: explanatory prose mentioning MCQs must not switch
+  // the parser into objective mode.
+  return /^(?:MULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?|MCQS?|OBJECTIVE(?:\s+TYPE)?(?:\s+QUESTIONS?)?)(?:\s+(?:SECTION|PART)\s+[A-Z0-9IVX]+)?$/i.test(normalized);
 }
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
-  const value = String(line || '').trim();
-  const normalized = value.replace(/[()[\]]/g, ' ').replace(/[:\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
-  return /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s+)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s+SECTION)?$/i.test(normalized);
+  const normalized = normalizeModelTestSectionHeading(line);
+  return /^(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s+(?:SECTION|PART)\s+[A-Z0-9IVX]+)?$/i.test(normalized);
 }
 
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
@@ -584,9 +593,12 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       continue;
     }
 
-    const mcqHeading = line.match(/^\s*(?:MCQ|OBJECTIVE)\s*(\d{1,2})\b/i);
-    if (mcqHeading) {
-      add(toModelTestCandidate('MCQ' + mcqHeading[1]));
+    const mcqHeading = line.match(/^\s*MCQ\s*(\d{1,2})\b/i);
+    const objectiveHeading = insideMcqSection
+      ? line.match(/^\s*OBJECTIVE\s*(\d{1,2})\b/i)
+      : null;
+    if (mcqHeading || objectiveHeading) {
+      add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]));
       continue;
     }
 
@@ -713,9 +725,10 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       continue;
     }
 
-    const mcq = line.match(/^\s*(?:MCQ|OBJECTIVE)\s*(\d{1,2})\b/i);
-    if (mcq) {
-      const candidate = toModelTestCandidate('MCQ' + mcq[1]);
+    const mcq = line.match(/^\s*MCQ\s*(\d{1,2})\b/i);
+    const objective = insideMcqSection ? line.match(/^\s*OBJECTIVE\s*(\d{1,2})\b/i) : null;
+    if (mcq || objective) {
+      const candidate = toModelTestCandidate('MCQ' + (mcq || objective)![1]);
       activeLeaf = candidate?.fullQuestionCode || '';
       pendingIdentity = activeLeaf;
       record(candidate, findExplicitModelTestMarks(line, true));
