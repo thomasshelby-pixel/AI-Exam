@@ -547,9 +547,8 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
   const candidates = new Map<string, ModelTestQuestionCandidate>();
   let activeParent = '';
   let activeSubQuestion = '';
-  let lastBareQuestionNumber = 0;
+  let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
-  const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
 
   const add = (candidate: ModelTestQuestionCandidate | null) => {
     if (!candidate) return;
@@ -566,16 +565,19 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       insideMcqSection = true;
       activeParent = '';
       activeSubQuestion = '';
+      lastQuestionHeadingNumber = 0;
       continue;
     }
     if (isModelTestDescriptiveSectionHeading(line)) {
       insideMcqSection = false;
       activeParent = '';
       activeSubQuestion = '';
+      lastQuestionHeadingNumber = 0;
     }
 
     const explicit = parseModelTestQuestionHeading(line);
     if (explicit) {
+      lastQuestionHeadingNumber = Number(explicit.questionNumber);
       add(insideMcqSection && !explicit.subQuestionNumber
         ? toModelTestCandidate('MCQ' + explicit.questionNumber)
         : explicit);
@@ -594,15 +596,13 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
       continue;
     }
 
-    if (!explicitQuestionHeadingsExist) {
-      const bare = parseModelTestBareQuestionHeading(line);
-      if (bare) {
-        const number = Number(bare.questionNumber);
-        if (number === 1 || number === lastBareQuestionNumber + 1) {
-          lastBareQuestionNumber = number;
-          add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare);
-          continue;
-        }
+    const bare = parseModelTestBareQuestionHeading(line);
+    if (bare) {
+      const number = Number(bare.questionNumber);
+      if (number === 1 || number === lastQuestionHeadingNumber + 1) {
+        lastQuestionHeadingNumber = number;
+        add(insideMcqSection ? toModelTestCandidate('MCQ' + bare.questionNumber) : bare);
+        continue;
       }
     }
 
@@ -670,11 +670,10 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
   // Use line-anchored identities rather than broad in-text matches, so a
   // narrative reference to another question cannot create an authoritative mark node.
 
-  const explicitQuestionHeadingsExist = lines.some((line) => Boolean(parseModelTestQuestionHeading(line)));
   let activeParent = '';
   let activeLeaf = '';
   let pendingIdentity = '';
-  let lastBareQuestionNumber = 0;
+  let lastQuestionHeadingNumber = 0;
   let insideMcqSection = false;
 
   const record = (candidate: ModelTestQuestionCandidate | null, marks: number | undefined) => {
@@ -689,6 +688,7 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       activeParent = '';
       activeLeaf = '';
       pendingIdentity = '';
+      lastQuestionHeadingNumber = 0;
       continue;
     }
     if (isModelTestDescriptiveSectionHeading(line)) {
@@ -696,10 +696,12 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       activeParent = '';
       activeLeaf = '';
       pendingIdentity = '';
+      lastQuestionHeadingNumber = 0;
     }
 
     const explicit = parseModelTestQuestionHeading(line);
     if (explicit) {
+      lastQuestionHeadingNumber = Number(explicit.questionNumber);
       const candidate = insideMcqSection && !explicit.subQuestionNumber
         ? toModelTestCandidate('MCQ' + explicit.questionNumber)
         : explicit;
@@ -730,19 +732,17 @@ function extractModelTestMarkingSchemeAllocations(markingSchemeText?: string): M
       continue;
     }
 
-    if (!explicitQuestionHeadingsExist) {
-      const bare = parseModelTestBareQuestionHeading(line);
-      if (bare) {
-        const number = Number(bare.questionNumber);
-        if (number === 1 || number === lastBareQuestionNumber + 1) {
-          lastBareQuestionNumber = number;
-          const parsed = parseCanonicalQuestionIdentity(bare.fullQuestionCode);
-          activeParent = insideMcqSection ? '' : parsed.parentQuestionId;
-          activeLeaf = '';
-          pendingIdentity = insideMcqSection ? 'MCQ' + bare.questionNumber : bare.fullQuestionCode;
-          record(insideMcqSection ? toModelTestCandidate(pendingIdentity) : bare, findExplicitModelTestMarks(line, true));
-          continue;
-        }
+    const bare = parseModelTestBareQuestionHeading(line);
+    if (bare) {
+      const number = Number(bare.questionNumber);
+      if (number === 1 || number === lastQuestionHeadingNumber + 1) {
+        lastQuestionHeadingNumber = number;
+        const parsed = parseCanonicalQuestionIdentity(bare.fullQuestionCode);
+        activeParent = insideMcqSection ? '' : parsed.parentQuestionId;
+        activeLeaf = '';
+        pendingIdentity = insideMcqSection ? 'MCQ' + bare.questionNumber : bare.fullQuestionCode;
+        record(insideMcqSection ? toModelTestCandidate(pendingIdentity) : bare, findExplicitModelTestMarks(line, true));
+        continue;
       }
     }
 
@@ -797,6 +797,34 @@ function buildModelTestPaperStructure(options: {
 }): AuthoritativePaperStructure {
   const qpCandidates = extractModelTestQuestionPaperInventory(options.questionPaperText);
   const markAllocations = extractModelTestMarkingSchemeAllocations(options.markingSchemeText);
+  const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const qpMcqNumbers = new Set(qpCandidates.filter((candidate) => candidate.isMcq).map((candidate) => candidate.questionNumber));
+  const qpDescriptiveNumbers = new Set(qpCandidates.filter((candidate) => !candidate.isMcq && !candidate.subQuestionNumber).map((candidate) => candidate.questionNumber));
+
+  // A selected QP may label objective questions MCQ1..n while the selected MS
+  // uses Question 1..n without repeating the objective section heading. Promote
+  // Qn to MCQn only when the QP has MCQn, the selected SA has that exact official
+  // key, and there is no separate descriptive Qn in the QP.
+  for (const questionNumber of qpMcqNumbers) {
+    const genericKey = ('q' + questionNumber).toLowerCase();
+    const mcqKey = ('mcq' + questionNumber).toLowerCase();
+    if (
+      markAllocations.has(genericKey) &&
+      !markAllocations.has(mcqKey) &&
+      parsedMcqKeys.has(questionNumber) &&
+      !qpDescriptiveNumbers.has(questionNumber)
+    ) {
+      const allocation = markAllocations.get(genericKey)!;
+      markAllocations.delete(genericKey);
+      markAllocations.set(mcqKey, {
+        ...allocation,
+        fullQuestionCode: 'MCQ' + questionNumber,
+        questionNumber,
+        subQuestionNumber: 'MCQ',
+        isMcq: true,
+      });
+    }
+  }
 
   const qpChildrenByParent = new Map<string, ModelTestQuestionCandidate[]>();
   for (const candidate of qpCandidates) {
@@ -895,7 +923,6 @@ function buildModelTestPaperStructure(options: {
     parent.subQuestions.push(subQuestion);
   }
 
-  const parsedMcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
   const mcqQuestionIds = candidateIds.filter((candidate) => candidate.isMcq);
   const mcqs: PaperStructureSubQuestion[] = mcqQuestionIds.map((candidate) => {
     const data = parsedMcqKeys.get(candidate.questionNumber);
