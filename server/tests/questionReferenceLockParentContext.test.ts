@@ -49,6 +49,11 @@ assert.match(q1c.snippet, /Treatment of Impairment Loss/i);
 assert.match(q1c.snippet, /AS 28/i);
 assert.doesNotMatch(q1c.snippet, /Delta Limited/i);
 
+const q2d = extractLockedQuestionSlice(suggestedAnswers, '2', 'd', 'SA');
+assert.equal(q2d.found, true, 'Q2(d) must resolve under Q2 when its own parent is present.');
+assert.match(q2d.snippet, /Short-term provision/i);
+assert.doesNotMatch(q2d.snippet, /Qualitative characteristics/i);
+
 const falseQ6d = extractLockedQuestionSlice(suggestedAnswers, '6', 'd', 'SA');
 assert.equal(falseQ6d.found, false, 'Q6(d) must not borrow the unrelated Q2(d) short-term provision line');
 assert.equal(falseQ6d.snippet, '');
