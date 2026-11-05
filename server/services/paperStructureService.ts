@@ -62,6 +62,7 @@ export function getAuthoritativePaperStructure(options: {
   paper?: string;
   level?: string;
   officialPaperMaxMarks?: number;
+  materialType?: string;
 }): AuthoritativePaperStructure {
   const {
     markingSchemeText = '',
@@ -70,7 +71,14 @@ export function getAuthoritativePaperStructure(options: {
     subjectName = '',
     paper = '',
     officialPaperMaxMarks = 100,
+    materialType = '',
   } = options;
+
+  // Model Tests are independently authored. Use their selected source documents
+  // instead of the fixed ICAI Taxation Q1–Q8 paper template.
+  if (String(materialType).trim().toUpperCase() === 'MODEL_TEST_PAPER') {
+    return buildModelTestPaperStructure(options);
+  }
 
   const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
   const isTaxationPaper =
@@ -461,6 +469,108 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   }
 
   return deduplicateQuestionList(subQuestions);
+}
+
+/**
+ * Builds a Model Test inventory from the exact selected source documents.
+ * No generic six-question fallback is used: an unreadable structure must be
+ * surfaced for review rather than silently mapping answers to invented IDs.
+ */
+function buildModelTestPaperStructure(options: {
+  markingSchemeText?: string;
+  questionPaperText?: string;
+  suggestedAnswersText?: string;
+  officialPaperMaxMarks?: number;
+  level?: string;
+}): AuthoritativePaperStructure {
+  // Marking Scheme is first so its marks take precedence over repeated question
+  // references in the Question Paper and Suggested Answers.
+  const combined = [
+    options.markingSchemeText || '',
+    options.questionPaperText || '',
+    options.suggestedAnswersText || '',
+  ].filter(Boolean).join('\n');
+
+  let subQuestions = extractSubQuestionsFromText(combined);
+  const canonical = (question: PaperStructureSubQuestion) =>
+    toCanonicalQuestionId(question.fullQuestionCode || question.questionNumber, question.subQuestionNumber);
+
+  // Remove parent totals when the same paper explicitly provides marked child parts.
+  subQuestions = subQuestions.filter((parent) => {
+    const parentId = canonical(parent);
+    return !subQuestions.some((candidate) => {
+      const candidateId = canonical(candidate);
+      return candidateId !== parentId && candidateId.startsWith(`${parentId}(`);
+    });
+  });
+  subQuestions = deduplicateQuestionList(subQuestions).sort((left, right) => {
+    const questionOrder = Number(left.questionNumber) - Number(right.questionNumber);
+    if (questionOrder !== 0) return questionOrder;
+    if (!left.subQuestionNumber && right.subQuestionNumber) return -1;
+    if (left.subQuestionNumber && !right.subQuestionNumber) return 1;
+    return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
+  });
+
+  // Do not presume that Q1/Q5 are compulsory in every Model Test.
+  // Only honor a compulsory/mandatory rule explicitly written in its source.
+  const ruleText = `${options.questionPaperText || ''}\n${options.markingSchemeText || ''}`;
+  const isExplicitlyCompulsory = (questionNumber: string) => {
+    const number = String(questionNumber).replace(/[^0-9]/g, '');
+    if (!number) return false;
+    const before = new RegExp(`\\b(?:COMPULSORY|MANDATORY)\\b[^\\n]{0,100}\\b(?:QUESTION|Q\\.?)\\s*${number}\\b`, 'i');
+    const after = new RegExp(`\\b(?:QUESTION|Q\\.?)\\s*${number}\\b[^\\n]{0,100}\\b(?:COMPULSORY|MANDATORY)\\b`, 'i');
+    return before.test(ruleText) || after.test(ruleText);
+  };
+
+  subQuestions = subQuestions.map((question) => ({
+    ...question,
+    compulsory: isExplicitlyCompulsory(question.questionNumber),
+    section: 'GENERAL' as const,
+    division: 'B' as const,
+  }));
+
+  const questionsMap = new Map<string, PaperStructureQuestion>();
+  for (const subQuestion of subQuestions) {
+    const key = `Q${subQuestion.questionNumber}`;
+    if (!questionsMap.has(key)) {
+      questionsMap.set(key, {
+        questionNumber: subQuestion.questionNumber,
+        section: 'GENERAL',
+        division: 'B',
+        compulsory: subQuestion.compulsory,
+        maximumMarks: 0,
+        subQuestions: [],
+      });
+    }
+    const parent = questionsMap.get(key)!;
+    parent.maximumMarks += subQuestion.maximumMarks;
+    parent.compulsory = parent.compulsory || subQuestion.compulsory;
+    parent.subQuestions.push(subQuestion);
+  }
+
+  const parsedMcqs = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqs: PaperStructureSubQuestion[] = Array.from(parsedMcqs.entries()).map(([questionNumber, data]) => ({
+    fullQuestionCode: `MCQ${questionNumber}`,
+    questionNumber,
+    subQuestionNumber: 'MCQ',
+    maximumMarks: 2,
+    compulsory: true,
+    isMcq: true,
+    officialKey: data.officialKey,
+    officialExplanation: data.explanation,
+    provision: data.provision,
+    topic: `Model Test Multiple Choice Question ${questionNumber}`,
+    section: 'GENERAL',
+    division: 'A',
+  }));
+
+  return {
+    paperTitle: `CA ${options.level || ''} Model Test Paper`.replace(/\s+/g, ' ').trim(),
+    totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
+    questions: Array.from(questionsMap.values()),
+    subQuestions,
+    mcqs,
+  };
 }
 
 /**

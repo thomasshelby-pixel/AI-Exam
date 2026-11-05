@@ -471,6 +471,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // Structural Deduplication Validation: Canonical Exactly-Once Rule
     const paperStruct = getAuthoritativePaperStructure({
       level: job.level,
+      materialType: job.materialType,
       paper: job.paper || job.subjectName,
       subjectName: job.subjectName,
       questionPaperText: job.referenceQuestionPaperText,
