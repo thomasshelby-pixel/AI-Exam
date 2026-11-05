@@ -80,7 +80,7 @@ export function getAuthoritativePaperStructure(options: {
     return buildModelTestPaperStructure(options);
   }
 
-  const textCombined = `${markingSchemeText}\\n${questionPaperText}\\n${suggestedAnswersText}`.toLowerCase();
+  const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
   const isTaxationPaper =
     subjectName.toLowerCase().includes('tax') ||
     paper.toLowerCase().includes('tax') ||
