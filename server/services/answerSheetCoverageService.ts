@@ -39,6 +39,22 @@ export interface PageCoverageModelOutput {
   isContinuation?: boolean;
 }
 
+/**
+ * A page containing descriptive handwriting is not considered mapped merely
+ * because one or more MCQ selections were found. At least one descriptive
+ * identity must be mapped (or the page remains QUESTION_NOT_IDENTIFIED).
+ */
+export function requiresDescriptiveCoverageReview(
+  hasDescriptiveWork: boolean,
+  mappedQuestionCodes: string[]
+): boolean {
+  if (!hasDescriptiveWork) return false;
+  return !mappedQuestionCodes.some((code) => {
+    const parsed = parseCanonicalQuestionIdentity(String(code || ''));
+    return Boolean(parsed.questionNumber) && !parsed.isMcq;
+  });
+}
+
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
 export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverageModelOutput {
   let clean = String(rawText || '').trim();
@@ -627,10 +643,11 @@ Return strictly valid JSON with this schema:
     // A detected MCQ is not proof that descriptive handwriting on the same page
     // was mapped. Fail closed rather than publishing an MCQ-only result as a
     // complete paper evaluation.
-    const finalHasMappedDescriptiveQuestion = detectedQuestions.some((question) =>
-      !parseCanonicalQuestionIdentity(question.fullQuestionCode).isMcq
+    const missingDescriptiveIdentity = requiresDescriptiveCoverageReview(
+      raw.hasDescriptiveWork,
+      detectedQuestions.map((question) => question.fullQuestionCode)
     );
-    if (raw.hasDescriptiveWork && !finalHasMappedDescriptiveQuestion && !mappingReviewReason) {
+    if (missingDescriptiveIdentity && !mappingReviewReason) {
       mappingReviewReason = 'HANDWRITTEN_DESCRIPTIVE_WORK_NOT_MAPPED: descriptive answer content was detected but no descriptive question identity was safely mapped.';
     }
 
