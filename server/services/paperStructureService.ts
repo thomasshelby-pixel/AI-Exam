@@ -510,7 +510,7 @@ function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | nul
 
 function parseModelTestQuestionHeading(line: string): ModelTestQuestionCandidate | null {
   const match = String(line || '').match(
-    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
+    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){0,2})/i
   );
   if (!match) return null;
   const suffix = (match[2] || '').match(/\(([a-z0-9]+)\)/gi) || [];
@@ -524,7 +524,7 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 }
 
 function parseModelTestBareSubQuestionHeading(line: string): ModelTestQuestionCandidate | null {
-  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){1,2})/i);
+  const match = String(line || '').match(/^\s*(\d{1,2})\s*((?:\([a-z0-9]+(?:\([a-z0-9]+\))?\)\s*){1,2})/i);
   if (!match) return null;
   const suffix = match[2].match(/\(([a-z0-9]+)\)/gi) || [];
   return toModelTestCandidate('Q' + match[1] + suffix.join(''));
@@ -604,6 +604,21 @@ function extractModelTestQuestionPaperInventory(questionPaperText?: string): Mod
     if (mcqHeading || objectiveHeading) {
       add(toModelTestCandidate('MCQ' + (mcqHeading || objectiveHeading)![1]));
       continue;
+    }
+
+    // Some PDF text extractors place the MCQ number alone on its own line
+    // and put the question stem on the following line. Accept only a
+    // sequential standalone number while already inside an objective section.
+    const standaloneObjectiveNumber = insideMcqSection
+      ? line.match(/^\s*(?:(?:QUESTION|MCQ)\s*)?(\d{1,2})\s*[.)]?\s*$/i)
+      : null;
+    if (standaloneObjectiveNumber) {
+      const number = Number(standaloneObjectiveNumber[1]);
+      if (number >= 1 && number <= 30 && (number === 1 || number === lastQuestionHeadingNumber + 1)) {
+        lastQuestionHeadingNumber = number;
+        add(toModelTestCandidate('MCQ' + number));
+        continue;
+      }
     }
 
     const bareSubQuestion = parseModelTestBareSubQuestionHeading(line);
