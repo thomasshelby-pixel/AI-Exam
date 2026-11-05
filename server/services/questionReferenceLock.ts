@@ -473,7 +473,7 @@ export function extractLockedQuestionSlice(
       'i'
     ).test(trimmed);
 
-    if (isStop && (capturedLines.length >= 2 || explicitNextMainQuestionHeader)) {
+    if ((isStop && capturedLines.length >= 2) || explicitNextMainQuestionHeader) {
       break;
     }
 
