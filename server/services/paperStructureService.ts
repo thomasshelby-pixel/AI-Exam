@@ -699,8 +699,8 @@ function extractModelTestMarkComponents(line: string): number[] {
 function splitModelTestMarkingSchemeCells(line: string): string[] {
   const value = String(line || '').trim();
   if (!value) return [];
-  if (value.includes('|')) return value.split('|').map((cell) => cell.trim()).filter(Boolean);
-  if (value.includes('\t')) return value.split(/\t+/).map((cell) => cell.trim()).filter(Boolean);
+  if (value.includes('|')) return value.split('|').map((cell) => cell.trim());
+  if (value.includes('\t')) return value.split(/\t+/).map((cell) => cell.trim());
   // PDF-to-TXT extractors often preserve table columns as multiple spaces.
   if (/\S\s{2,}\S/.test(value)) return value.split(/\s{2,}/).map((cell) => cell.trim()).filter(Boolean);
   return [];
