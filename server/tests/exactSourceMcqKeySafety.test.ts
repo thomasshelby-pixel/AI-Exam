@@ -52,9 +52,11 @@ Question 1(b): Compute tax liability.
 Division A - Multiple Choice Questions
 1. (C) The answer follows from the relevant provision.
 Division B - Descriptive Questions
+1. (A) This is a descriptive answer label, not an MCQ key.
 Question 1(a): Explain the relevant provision.
 `;
   const parsed = extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswers);
+  assert.equal(parsed.size, 1, 'A descriptive 1. (A) after Division B must not be added to the MCQ key map.');
   assert.equal(parsed.get('1')?.officialKey, 'C', 'The exact selected Suggested Answer key must be preserved.');
 }
 
