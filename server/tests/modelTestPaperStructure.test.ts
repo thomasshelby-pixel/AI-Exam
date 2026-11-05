@@ -1196,9 +1196,12 @@ assert.ok(overChoiceLimitGate.failedInvariants.some(message =>
 // A list of merger terms is factual input to a single parent question, not
 // four independently scored child questions. The final 14-mark instruction
 // must remain attached to Q4 rather than being mistaken for Q4(d).
-for (const subjectName of levelSubjectMatrix.INTERMEDIATE) {
+let modelTestCourseSubjectCases = 0;
+for (const [level, courseSubjects] of Object.entries(levelSubjectMatrix)) {
+for (const subjectName of courseSubjects) {
+modelTestCourseSubjectCases++;
 const instructionClauseParentTotalModelTest = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
+  level,
   subjectName,
   paper: 'Paper 1',
   materialType: 'MODEL_TEST_PAPER',
@@ -1251,7 +1254,7 @@ assert.equal(
 // If the lettered items are themselves tasks, retain them as separate IDs and
 // keep the evaluation blocked when the supplied scheme has no child maxima.
 const explicitTaskChildrenModelTest = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
+  level,
   subjectName,
   paper: 'Paper 1',
   materialType: 'MODEL_TEST_PAPER',
@@ -1291,6 +1294,9 @@ assert.equal(
   'A parent total must not silently cover lettered tasks with no child-specific maximum marks.',
 );
 }
+}
+assert.equal(modelTestCourseSubjectCases, 18,
+  'The common Model Test parser contract must run for every Foundation, Intermediate and Final subject.');
 
 console.log('Model Test dynamic paper structure tests passed.');
 
