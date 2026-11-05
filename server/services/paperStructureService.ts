@@ -503,7 +503,13 @@ function buildModelTestPaperStructure(options: {
       return candidateId !== parentId && candidateId.startsWith(`${parentId}(`);
     });
   });
-  subQuestions = deduplicateQuestionList(subQuestions);
+  subQuestions = deduplicateQuestionList(subQuestions).sort((left, right) => {
+    const questionOrder = Number(left.questionNumber) - Number(right.questionNumber);
+    if (questionOrder !== 0) return questionOrder;
+    if (!left.subQuestionNumber && right.subQuestionNumber) return -1;
+    if (left.subQuestionNumber && !right.subQuestionNumber) return 1;
+    return String(left.subQuestionNumber || '').localeCompare(String(right.subQuestionNumber || ''), undefined, { numeric: true });
+  });
 
   // Do not presume that Q1/Q5 are compulsory in every Model Test.
   // Only honor a compulsory/mandatory rule explicitly written in its source.
