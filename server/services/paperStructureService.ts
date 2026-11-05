@@ -106,10 +106,11 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   const mcqSectionHeader = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i;
   if (!mcqSectionHeader.test(suggestedAnswersText)) return result;
 
-  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
+  const divARegex = /(?:Division\s*A\b|Section\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
   const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
+  const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
   // ICAI answer keys sometimes group four MCQs inside each numbered question:
   // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
   // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
