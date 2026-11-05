@@ -505,7 +505,7 @@ function toModelTestCandidate(rawCode: string): ModelTestQuestionCandidate | nul
 
 function parseModelTestQuestionHeading(line: string): ModelTestQuestionCandidate | null {
   const match = String(line || '').match(
-    /^\s*(?:QUESTION(?:\s+NO\.?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
+    /^\s*(?:QUESTION(?:\s+(?:NO\.?|NUMBER)[:#]?)?|Q\.?|QUES(?:TION)?\.?)\s*(?:NO\.?[:#]?\s*)?(\d{1,2})\s*((?:\([a-z0-9]+\)\s*){0,2})/i
   );
   if (!match) return null;
   const suffix = (match[2] || '').match(/\(([a-z0-9]+)\)/gi) || [];
@@ -521,12 +521,12 @@ function parseModelTestBareQuestionHeading(line: string): ModelTestQuestionCandi
 function isModelTestMcqSectionHeading(line: string): boolean {
   const value = String(line || '').trim();
   return /\bMULTIPLE\s+CHOICE(?:\s+QUESTIONS?)?\b/i.test(value) ||
-    /^(?:SECTION\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:MCQ|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?\s*$/i.test(value);
+    /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:MCQS?|OBJECTIVE(?:\s+TYPE)?)(?:\s+QUESTIONS?)?(?:\s*\([^)]*\))?\s*$/i.test(value);
 }
 
 function isModelTestDescriptiveSectionHeading(line: string): boolean {
   const value = String(line || '').trim();
-  return /^(?:SECTION\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?\s*$/i.test(value);
+  return /^(?:(?:SECTION|DIVISION)\s+[A-Z0-9]+\s*[:\-–—]?\s*)?(?:DESCRIPTIVE|SUBJECTIVE|LONG\s+ANSWER)(?:\s+QUESTIONS?)?(?:\s*\([^)]*\))?\s*$/i.test(value);
 }
 
 function extractModelTestQuestionPaperInventory(questionPaperText?: string): ModelTestQuestionCandidate[] {
