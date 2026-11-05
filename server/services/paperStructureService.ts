@@ -106,7 +106,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   const mcqSectionHeader = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i;
   if (!mcqSectionHeader.test(suggestedAnswersText)) return result;
 
-  const divARegex = /(?:Division\s*A\b|Section\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
+  const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
   const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
