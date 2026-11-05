@@ -1085,6 +1085,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
                       {(
                         (inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 ||
+                        (inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 ||
                         (inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 ||
                         (inspectFullText.sourceInventoryAudit.missingMaximumMarks || []).length > 0
                       ) && (
@@ -1093,6 +1094,11 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                           {(inspectFullText.sourceInventoryAudit.missingMarkQuestionIds || []).length > 0 && (
                             <p className="text-[11px] text-rose-800">
                               Missing Marking Scheme allocation: {inspectFullText.sourceInventoryAudit.missingMarkQuestionIds.join(', ')}
+                            </p>
+                          )}
+                          {(inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds || []).length > 0 && (
+                            <p className="text-[11px] text-rose-800">
+                              Official Suggested Answer key missing: {inspectFullText.sourceInventoryAudit.missingMcqKeyQuestionIds.join(', ')}
                             </p>
                           )}
                           {(inspectFullText.sourceInventoryAudit.markingSchemeOnlyQuestionIds || []).length > 0 && (
