@@ -43,6 +43,21 @@ export function decideFreeTrialEligibility(input: FreeTrialSignalDecisionInput):
   return { eligible: true, reason: 'FIRST_CLAIM' };
 }
 
+/**
+ * Manual free-trial restore is available only for explicitly reviewable blocks.
+ * REUSED_DEVICE requires a conscious Super Admin override; the underlying
+ * hashed device claim is never deleted, so other accounts remain protected.
+ */
+export function canManuallyRestoreFreeTrialForReason(reason: unknown): boolean {
+  const normalized = String(reason || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^PROFILE_COMPLETION_/, '');
+  return normalized === '' ||
+    normalized === 'UNKNOWN_LEGACY_BLOCK' ||
+    normalized === 'REUSED_DEVICE';
+}
+
 export function isSignalOwnedByAnotherUser(
   snapshotExists: boolean,
   signalOwnerId: string | null | undefined,
