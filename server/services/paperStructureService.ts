@@ -749,7 +749,7 @@ function modelTestParentHasInstructionClauseList(questionPaperText: string | und
     || /\bthe\s+following\s+(?:terms?|conditions?|adjustments?)\s+(?:apply|are\s+applicable|shall\s+apply)\b/i.exec(body);
   if (!leadIn) return false;
 
-  // Require an actual list of factual clauses, not merely alphabetic task labels.
+  // Require at least two lettered clauses after the lead-in.
   const clauseStarts: number[] = [];
   for (let index = 0; index < parentLines.length; index++) {
     if (/^\s{0,8}\([a-h]\)\s+\S/i.test(parentLines[index])) clauseStarts.push(index);
@@ -759,20 +759,24 @@ function modelTestParentHasInstructionClauseList(questionPaperText: string | und
   const firstClausePosition = parentLines.slice(0, clauseStarts[0]).join(' ').length;
   if (leadInPosition < 0 || leadInPosition > firstClausePosition) return false;
 
-  const taskOpening = /^\s*(?:what|who|when|where|why|how|calculate|compute|determine|prepare|draft|pass|state|explain|discuss|describe|comment|identify|give|show|work\s+out|ascertain|record|journalise|journalize|account\s+for|write|list|enumerate|analyse|analyze|examine| distinguish)\b/i;
+  // Find a separate combined task after the facts. The task must not be one
+  // of the labelled items themselves.
+  const taskOpening = /^\s*(?:you\s+are\s+required\s+to|what|who|when|where|why|how|calculate|compute|determine|prepare|draft|pass\s+necessary|state|explain|discuss|describe|comment|identify|give|show|work\s+out|ascertain|record|journalise|journalize|account\s+for|write|list|enumerate|analyse|analyze|examine)\b/i;
+  const terminalInstructionIndex = parentLines.findIndex((line, index) =>
+    index > clauseStarts[clauseStarts.length - 1] && taskOpening.test(line));
+  if (terminalInstructionIndex < 0) return false;
+
   const factualPredicate = /\b(?:is|are|was|were|will\s+be|shall\s+be|would\s+be|to\s+be|has\s+to\s+be|have\s+to\s+be|must\s+be|should\s+be)\b/i;
+  const taskInfinitive = /\b(?:required|required\s+by|must|should|has|have)\s+to\s+(?:calculate|compute|determine|prepare|draft|pass|state|explain|discuss|describe|show|record|write|identify|analyse|analyze|examine)\b|\bto\s+be\s+(?:calculated|computed|determined|prepared|drafted|explained|discussed|shown|recorded|analysed|analyzed)\b/i;
   for (let index = 0; index < clauseStarts.length; index++) {
-    const clauseEnd = clauseStarts[index + 1] ?? parentLines.length;
+    const clauseEnd = clauseStarts[index + 1] ?? terminalInstructionIndex;
     const clauseLines = parentLines.slice(clauseStarts[index], clauseEnd);
     const clauseText = clauseLines.join(' ').replace(/\s+/g, ' ').replace(/^\s*\([a-h]\)\s*/i, '');
-    if (!clauseText || clauseText.includes('?') || taskOpening.test(clauseText)) return false;
+    if (!clauseText || clauseText.includes('?') || taskOpening.test(clauseText) || taskInfinitive.test(clauseText)) return false;
     if (!factualPredicate.test(clauseText)) return false;
   }
 
-  // A separate combined task must follow the fact list (e.g. Prepare the
-  // acquisition entries and draft the post-absorption Balance Sheet).
-  const tail = parentLines.slice(clauseStarts[clauseStarts.length - 1] + 1).join(' ').replace(/\s+/g, ' ');
-  return /\b(?:you\s+are\s+required\s+to|prepare|draft|pass\s+necessary|calculate|compute|determine|show|record|journalise|journalize|work\s+out|ascertain|reconcile)\b/i.test(tail);
+  return true;
 }
 
 /** Parse Part I's numbered case-scenario MCQs without treating options as subparts. */
