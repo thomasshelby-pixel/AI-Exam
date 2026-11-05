@@ -1197,16 +1197,17 @@ console.log('Model Test dynamic paper structure tests passed.');
 // A list of merger terms is factual input to a single parent question, not
 // four independently scored child questions. The final 14-mark instruction
 // must remain attached to Q4 rather than being mistaken for Q4(d).
+for (const subjectName of levelSubjectMatrix.INTERMEDIATE) {
 const instructionClauseParentTotalModelTest = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
-  subjectName: 'Advanced Accounting',
+  subjectName,
   paper: 'Paper 1',
   materialType: 'MODEL_TEST_PAPER',
   officialPaperMaxMarks: 14,
   questionPaperText: [
     'MODEL TEST PAPER 1',
     'PART II - DESCRIPTIVE QUESTIONS',
-    'Question No. 4',
+    '4. The financial position of two companies Hari Ltd. and Vayu Ltd. as at 31st March, 2023 was as under.',
     'The financial position of two companies Hari Ltd. and Vayu Ltd. as at 31st March, 2023 was as under.',
     'Hari Ltd. absorbs Vayu Ltd. on the following terms:',
     '(a) 10% Preference Shareholders are to be paid at 10% premium by issue of 9% Preference Shares of Hari Ltd.',
@@ -1246,3 +1247,5 @@ assert.equal(
   'A parent-level instruction list with a verified parent maximum must pass the source preflight.',
 );
 
+
+}
