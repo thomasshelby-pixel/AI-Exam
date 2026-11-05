@@ -52,6 +52,20 @@ interface EvaluationResult {
   grade: string;
   version?: string;
   questions: QuestionEvaluation[];
+  coverageMap?: {
+    pages?: Array<{
+      pageNumber: number;
+      status: string;
+      rawSummary?: string;
+      questionLabelEvidence?: string;
+      readingConfidence?: number;
+      analysisFailure?: {
+        code: string;
+        message: string;
+        failedOnPage?: number;
+      };
+    }>;
+  };
   adminReview?: {
     reviewedBy: string;
     reviewedAt: string;
@@ -237,6 +251,8 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
   const reviewDiagnostics = Array.isArray(resultJson?.validationErrors)
     ? resultJson.validationErrors.filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
     : [];
+  const pageAnalysisDiagnostics = (resultJson?.coverageMap?.pages || [])
+    .filter((page) => Boolean(page.analysisFailure) || page.status === 'QUESTION_NOT_IDENTIFIED' || page.status === 'PAGE_UNREADABLE');
 
   // Compute live recalculated marks
   let liveTotalMarks = 0;
@@ -830,6 +846,34 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
                 {reviewDiagnostics.slice(0, 12).map((message, index) => (
                   <p key={index} className="text-xs text-slate-700 break-words">{message}</p>
                 ))}
+              </div>
+            )}
+            {pageAnalysisDiagnostics.length > 0 && (
+              <div className="rounded-lg border border-rose-200 bg-white p-3 space-y-2">
+                <p className="text-xs font-bold text-slate-800">Page-by-page analysis details</p>
+                {pageAnalysisDiagnostics.slice(0, 30).map((page) => (
+                  <div key={page.pageNumber} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
+                    <p className="text-xs font-semibold text-slate-800">
+                      Page {page.pageNumber} · {page.status}
+                      {page.analysisFailure?.code ? ` · ${page.analysisFailure.code}` : ''}
+                    </p>
+                    <p className="text-xs text-slate-600 break-words">
+                      {page.analysisFailure?.message || page.rawSummary || 'Question identity was not established.'}
+                    </p>
+                    {page.questionLabelEvidence && (
+                      <p className="text-xs text-slate-600 break-words">Question-label evidence: {page.questionLabelEvidence}</p>
+                    )}
+                    {typeof page.readingConfidence === 'number' && (
+                      <p className="text-[11px] text-slate-500">Question-label reading confidence (AI estimate): {Math.round(page.readingConfidence * 100)}%</p>
+                    )}
+                    {page.analysisFailure?.failedOnPage && page.analysisFailure.failedOnPage !== page.pageNumber && (
+                      <p className="text-[11px] text-amber-700">Analysis stopped after the failure on page {page.analysisFailure.failedOnPage}; this page was not sent to the AI provider.</p>
+                    )}
+                  </div>
+                ))}
+                {pageAnalysisDiagnostics.length > 30 && (
+                  <p className="text-xs text-slate-500">Showing first 30 of {pageAnalysisDiagnostics.length} affected pages.</p>
+                )}
               </div>
             )}
           </div>

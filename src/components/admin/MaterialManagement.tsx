@@ -26,6 +26,7 @@ import {
   FileUp,
   FileCheck,
   FileDown,
+  Copy,
   ShieldAlert,
   AlertTriangle,
   X,
@@ -414,6 +415,25 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
       onNotify?.(msg, 'error');
     } finally {
       setLoadingInspect(false);
+    }
+  };
+
+  // Copy the exact persisted reference ID; never generate an ID in the UI.
+  const handleCopyReferenceId = async (label: string, rawValue: unknown) => {
+    const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!value) {
+      onNotify?.(`${label} is not assigned to this material.`, 'error');
+      return;
+    }
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard access is unavailable in this browser context.');
+      }
+      await navigator.clipboard.writeText(value);
+      onNotify?.(`${label} copied.`, 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not copy reference ID';
+      onNotify?.(msg, 'error');
     }
   };
 
@@ -970,6 +990,53 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       </span>
                     </div>
                   </div>
+
+                  {/* Persisted Model Test reference IDs */}
+                  {inspectFullText.material_type === 'MODEL_TEST_PAPER' && (
+                    <section className="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h5 className="font-bold text-slate-900">Model Test Reference IDs</h5>
+                          <p className="text-[10px] text-slate-500">
+                            Exact IDs saved by the backend and used to bind the selected evaluation sources.
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700">
+                          Persisted IDs
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {[
+                          { label: 'Master Material ID', value: inspectFullText.id || inspectFullText.materialId },
+                          { label: 'Question Paper ID', value: inspectFullText.question_material_id || inspectFullText.questionMaterialId },
+                          { label: 'Suggested Answers ID', value: inspectFullText.suggested_answer_material_id || inspectFullText.suggestedAnswerMaterialId },
+                          { label: 'Marking Scheme ID', value: inspectFullText.marking_scheme_material_id || inspectFullText.markingSchemeMaterialId },
+                        ].map((entry) => {
+                          const referenceId = typeof entry.value === 'string' ? entry.value.trim() : '';
+                          return (
+                            <div key={entry.label} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="min-w-0">
+                                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">{entry.label}</span>
+                                <code className="block break-all font-mono text-[11px] text-slate-800">
+                                  {referenceId || 'Not assigned'}
+                                </code>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={!referenceId}
+                                onClick={() => handleCopyReferenceId(entry.label, referenceId)}
+                                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                title={referenceId ? `Copy ${entry.label}` : 'No persisted ID available'}
+                              >
+                                <Copy className="h-3 w-3" />
+                                Copy ID
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
 
                   {/* Question Paper Text */}
                   <div className="space-y-1">

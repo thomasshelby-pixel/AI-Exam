@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
-import { executeModelWithFallback } from '../models/modelRegistry.js';
+import { executeModelWithFallback, sanitizeSecretStrings } from '../models/modelRegistry.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
@@ -26,6 +26,10 @@ export interface PageCoverageModelOutput {
   status: PageAttemptStatus;
   hasHandwriting?: boolean;
   summary?: string;
+  /** Literal visual evidence used to identify the question label (margin/circle/header/etc.). */
+  questionLabelEvidence?: string;
+  /** Audit signal only; never used to override deterministic identity checks. */
+  readingConfidence?: number;
   detectedQuestions: Array<{
     questionNumber?: string;
     subQuestion?: string | null;
@@ -78,6 +82,21 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
   if (raw.summary !== undefined && summary === undefined) {
     warnings.push('The page auditor returned a non-text page summary.');
+  }
+  const questionLabelEvidence = typeof raw.questionLabelEvidence === 'string'
+    ? raw.questionLabelEvidence.trim().slice(0, 300)
+    : undefined;
+  if (raw.questionLabelEvidence !== undefined && questionLabelEvidence === undefined) {
+    warnings.push('The page auditor returned invalid question-label evidence.');
+  }
+  const readingConfidence = typeof raw.readingConfidence === 'number' &&
+    Number.isFinite(raw.readingConfidence) &&
+    raw.readingConfidence >= 0 &&
+    raw.readingConfidence <= 1
+      ? raw.readingConfidence
+      : undefined;
+  if (raw.readingConfidence !== undefined && readingConfidence === undefined) {
+    warnings.push('The page auditor returned an invalid reading-confidence value.');
   }
   const isContinuation = typeof raw.isContinuation === 'boolean' ? raw.isContinuation : undefined;
   if (raw.isContinuation !== undefined && isContinuation === undefined) {
@@ -215,6 +234,8 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     status,
     hasHandwriting: normalizedHandwriting,
     summary,
+    questionLabelEvidence,
+    readingConfidence,
     isContinuation,
     detectedQuestions,
     mcqSelections: selections,
@@ -347,6 +368,12 @@ export function resolveContextualQuestionIdentity(options: {
   };
 }
 
+export interface PageAnalysisFailure {
+  code: 'AI_PROVIDER_UNAVAILABLE' | 'AI_QUOTA_OR_BILLING' | 'AI_OUTPUT_INVALID' | 'AI_ANALYSIS_FAILED' | 'SKIPPED_AFTER_PROVIDER_FAILURE';
+  message: string;
+  failedOnPage?: number;
+}
+
 export interface PageCoverageRecord {
   pageNumber: number;
   status: PageAttemptStatus;
@@ -354,7 +381,19 @@ export interface PageCoverageRecord {
   rawSummary: string;
   hasHandwriting: boolean;
   mappingReviewReason?: string;
+  questionLabelEvidence?: string;
+  readingConfidence?: number;
+  /** Technical failure details are kept separate from handwriting/question ambiguity. */
+  analysisFailure?: PageAnalysisFailure;
 }
+
+export type PageCoverageAnalyzer = (
+  pageBase64: string,
+  pageNumber: number,
+  paperStructure: AuthoritativePaperStructure,
+  totalPages: number,
+  previousActiveQuestion?: string
+) => Promise<PageCoverageRecord>;
 
 export interface AttemptedQuestionMapping {
   fullQuestionCode: string;
@@ -384,7 +423,8 @@ export interface AnswerCoverageMap {
  */
 export async function buildAnswerSheetCoverageMap(
   pdfBuffer: Buffer,
-  paperStructure: AuthoritativePaperStructure
+  paperStructure: AuthoritativePaperStructure,
+  options: { analyzePage?: PageCoverageAnalyzer } = {}
 ): Promise<AnswerCoverageMap> {
   const pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
   const structureSignature = JSON.stringify({
@@ -413,17 +453,38 @@ export async function buildAnswerSheetCoverageMap(
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
   let activeQuestionContext: string | undefined = undefined;
+  let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
+  const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
 
-  // For each page, analyze with AI to detect question numbers, continuations, and content
+  // For each page, analyze with AI to detect question numbers, continuations, and content.
+  // Once the full provider fallback chain fails for one page, do not repeat that
+  // same expensive chain for every remaining page of this answer sheet.
   for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
     const pageNum = pageIdx + 1;
+    if (providerFailureCircuit) {
+      const skippedFailure: PageAnalysisFailure = {
+        code: 'SKIPPED_AFTER_PROVIDER_FAILURE',
+        failedOnPage: providerFailureCircuit.failedOnPage,
+        message: `Analysis was stopped after page ${providerFailureCircuit.failedOnPage} exhausted the configured AI fallback chain: ${providerFailureCircuit.failure.message}`,
+      };
+      pageRecords.push({
+        pageNumber: pageNum,
+        status: 'QUESTION_NOT_IDENTIFIED',
+        detectedQuestions: [],
+        rawSummary: `Page ${pageNum} was not analysed to prevent repeated provider calls after an AI service failure on page ${providerFailureCircuit.failedOnPage}.`,
+        hasHandwriting: true,
+        analysisFailure: skippedFailure,
+      });
+      continue;
+    }
+
     const singleDoc = await PDFDocument.create();
     const [copied] = await singleDoc.copyPages(origDoc, [pageIdx]);
     singleDoc.addPage(copied);
     const singleBytes = await singleDoc.save();
     const pageBase64 = Buffer.from(singleBytes).toString('base64');
 
-    const analysis = await analyzeSinglePageCoverage(
+    const analysis = await analyzePage(
       pageBase64,
       pageNum,
       paperStructure,
@@ -431,6 +492,11 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext
     );
     pageRecords.push(analysis);
+    if (analysis.analysisFailure) {
+      providerFailureCircuit = { failedOnPage: pageNum, failure: analysis.analysisFailure };
+      activeQuestionContext = undefined;
+      continue;
+    }
 
     // Track active question context for next page continuation
     const nonMcqs = analysis.detectedQuestions.filter(
@@ -532,6 +598,83 @@ export async function buildAnswerSheetCoverageMap(
  * Analyzes a single page of the answer sheet.
  * Uses structured heuristics and Gemini vision model to classify page content accurately.
  */
+export function buildPageCoveragePrompt(params: {
+  pageNumber: number;
+  totalPages: number;
+  paperStructure: AuthoritativePaperStructure;
+  previousActiveQuestion?: string;
+}): string {
+  const { pageNumber, totalPages, paperStructure, previousActiveQuestion } = params;
+  const validDescriptiveList = paperStructure.subQuestions
+    .filter((s) => !s.isMcq)
+    .map((s) => `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`)
+    .join('\n');
+  const validMcqList = (paperStructure.mcqs || [])
+    .map((m) => `${m.fullQuestionCode} — ${m.maximumMarks} marks`)
+    .join('\n');
+
+  return `
+Universal CA exam answer-sheet page reader and question mapper. Apply equally to Foundation,
+Intermediate and Final and every subject; never use a subject-specific question template.
+
+Read the visual scan of Page ${pageNumber}/${totalPages}, not extracted PDF text.
+
+SELECTED PAPER: ${paperStructure.paperTitle || 'CA examination paper'}
+AUTHORITATIVE DESCRIPTIVE IDS:
+${validDescriptiveList || 'None parsed'}
+AUTHORITATIVE MCQ IDS:
+${validMcqList || 'None parsed'}
+PREVIOUS PAGE ACTIVE QUESTION: ${previousActiveQuestion || 'None / first page'}
+
+HANDWRITING AND MAPPING:
+- Inspect the whole page, especially top/bottom and left/right margins, answer-block starts,
+  circles, underlines and headings. Labels may be faint, cursive, slanted, overwritten or in margins.
+- Read labels such as Q2, Q. 2, Question 2, 2(a), (a), and circled/margin-written numbers.
+  Distinguish question labels from printed page numbers, dates, roll numbers, scanner marks and amounts.
+- Read all answer formats: paragraphs, tables, journal/ledger entries, Dr/Cr columns,
+  calculations, formulas, working notes, diagrams, bullet points and case studies.
+- Validate the visible label against the authoritative IDs above. Return questionNumber as digits
+  only and subQuestion separately. Return every identifiable question on a mixed-question page.
+- A continuation may omit its heading. Reuse the previous active question only when the page
+  clearly continues it; never force an ambiguous new answer onto the previous question.
+- Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
+- Poor handwriting alone is not a reason to discard identifiable work. Preserve partially readable
+  attempts; do not guess unreadable figures, words, dates, sections or formulas.
+
+TASK:
+1. Identify every attempted question/sub-question and any visible MCQ selections.
+2. Set parentQuestionNumberVisible=true only when the parent label is visible on THIS page.
+3. Set isContinuation=true only for a clear continuation without a new label.
+4. Give literal questionLabelEvidence (e.g. "circled 2 in left margin") and readingConfidence 0–1.
+   Confidence is diagnostic only and must not override identity validation.
+5. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
+   CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
+
+Return valid JSON only:
+{
+  "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
+  "hasHandwriting": true,
+  "summary": "brief factual page summary",
+  "questionLabelEvidence": "literal label evidence and its location",
+  "readingConfidence": 0.0,
+  "detectedQuestions": [
+    {
+      "questionNumber": "2",
+      "subQuestion": "a",
+      "parentQuestionNumberVisible": true,
+      "isContinuation": false,
+      "snippet": "short answer evidence"
+    }
+  ],
+  "mcqSelections": { "1": "C" }
+}
+`;
+}
+
+/**
+ * Analyzes a single page of the answer sheet using a subject-neutral handwriting
+ * and question-identity prompt anchored to the selected authoritative question inventory.
+ */
 async function analyzeSinglePageCoverage(
   pageBase64: string,
   pageNumber: number,
@@ -539,54 +682,12 @@ async function analyzeSinglePageCoverage(
   totalPages: number = 1,
   previousActiveQuestion?: string
 ): Promise<PageCoverageRecord> {
-  const validDescriptiveList = paperStructure.subQuestions
-    .filter((s) => !s.isMcq)
-    .map((s) => s.fullQuestionCode)
-    .join(', ');
-  const validMcqList = (paperStructure.mcqs || []).map((m) => m.fullQuestionCode).join(', ');
-
-  const prompt = `
-You are an expert CA Exam Answer Sheet Page Auditor.
-Analyze Page ${pageNumber} of ${totalPages} of this CA student answer sheet.
-
-Context:
-- Subject: ${paperStructure.paperTitle || 'CA Examination Paper'}
-- Valid Descriptive Questions on this paper: ${validDescriptiveList || 'Standard CA questions'}
-- Valid MCQs on this paper: ${validMcqList || 'None'}
-- Active question from previous page: ${previousActiveQuestion || 'None (First page)'}
-
-Task:
-1. Identify all question/sub-question headings attempted on this page (e.g. from valid questions above).
-2. For EVERY detected descriptive question, report parentQuestionNumberVisible=true only when that parent number is visibly written on this page. If only a child label such as "(a)" is visible, report false; do not guess a parent number from the question paper or page number.
-3. If this page is a continuation of the previous page's answer and does NOT start a new question header, mark isContinuation: true and identify the previous active question.
-4. If multiple sub-questions are answered on this page (e.g. Q4(a) followed by Q4(b)), report ALL of them in detectedQuestions.
-5. Identify any MCQ answers written on this page with selected options (e.g. { "1": "C", "2": "D" }).
-6. Classify page status:
-   - ATTEMPTED_READABLE: Clear student handwritten solution
-   - ATTEMPTED_PARTIALLY_READABLE: Readable with minor handwriting difficulty
-   - ATTEMPTED_UNCLEAR: Heavily illegible or blurry
-   - CLEARLY_UNATTEMPTED: Blank page or crossed out entirely
-   - QUESTION_NOT_IDENTIFIED: Content is present but question number cannot be identified
-
-Return strictly valid JSON with this schema:
-{
-  "status": "ATTEMPTED_READABLE" | "ATTEMPTED_PARTIALLY_READABLE" | "ATTEMPTED_UNCLEAR" | "CLEARLY_UNATTEMPTED" | "QUESTION_NOT_IDENTIFIED",
-  "hasHandwriting": boolean,
-  "summary": string,
-  "detectedQuestions": [
-    {
-      "questionNumber": string,
-      "subQuestion": string | null,
-      "parentQuestionNumberVisible": boolean,
-      "isContinuation": boolean,
-      "snippet": string
-    }
-  ],
-  "mcqSelections": {
-    [key: string]: string
-  }
-}
-`;
+  const prompt = buildPageCoveragePrompt({
+    pageNumber,
+    totalPages,
+    paperStructure,
+    previousActiveQuestion,
+  });
 
   try {
     const res = await executeModelWithFallback({
@@ -710,29 +811,46 @@ Return strictly valid JSON with this schema:
       rawSummary: mappingReviewReason ? `${summary} Mapping review required: ${mappingReviewReason}` : summary,
       hasHandwriting,
       mappingReviewReason,
+      questionLabelEvidence: raw.questionLabelEvidence,
+      readingConfidence: raw.readingConfidence,
     };
   } catch (err: any) {
-    const errStr = err?.message || String(err);
-    const isCreditOrQuota =
-      errStr.includes('429') ||
-      errStr.includes('prepayment') ||
-      errStr.includes('credits are depleted') ||
-      errStr.includes('exceeded your current quota') ||
-      errStr.includes('plan and billing details') ||
-      errStr.includes('RESOURCE_EXHAUSTED');
+    const rawError = err?.message || String(err);
+    const safeError = sanitizeSecretStrings(rawError).replace(/[\r\n]+/g, ' ').slice(0, 240);
+    const lowerError = rawError.toLowerCase();
+    const isQuotaOrBilling =
+      lowerError.includes('429') ||
+      lowerError.includes('quota') ||
+      lowerError.includes('resource_exhausted') ||
+      lowerError.includes('prepayment') ||
+      lowerError.includes('credits are depleted') ||
+      lowerError.includes('insufficient_quota') ||
+      lowerError.includes('billing');
+    const isInvalidOutput =
+      lowerError.includes('model_output_validation_failed') ||
+      lowerError.includes('invalid json') ||
+      lowerError.includes('invalid schema') ||
+      lowerError.includes('empty output');
 
-    if (isCreditOrQuota) {
-      console.info(`[AnswerCoverageService] Page ${pageNumber}: AI quota/credits exhausted; preserving the page for question-mapping review.`);
-    } else {
-      console.warn(`[AnswerCoverageService] Notice on page ${pageNumber}: ${errStr.slice(0, 160)}`);
-    }
+    const failure: PageAnalysisFailure = {
+      code: isQuotaOrBilling
+        ? 'AI_QUOTA_OR_BILLING'
+        : isInvalidOutput
+          ? 'AI_OUTPUT_INVALID'
+          : lowerError.includes('unavailable') || lowerError.includes('timed out') || lowerError.includes('timeout')
+            ? 'AI_PROVIDER_UNAVAILABLE'
+            : 'AI_ANALYSIS_FAILED',
+      message: safeError,
+    };
+    console.warn(`[AnswerCoverageService] Page ${pageNumber} analysis failed (${failure.code}): ${safeError}`);
 
     return {
       pageNumber,
       status: 'QUESTION_NOT_IDENTIFIED',
       detectedQuestions: [],
-      rawSummary: `Page ${pageNumber} requires question-mapping review because automated page analysis failed: ${errStr.slice(0, 240)}`,
+      rawSummary: `Automated page analysis failed (${failure.code}): ${safeError}`,
       hasHandwriting: true,
+      analysisFailure: failure,
     };
   }
 }
