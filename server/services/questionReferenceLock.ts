@@ -484,9 +484,15 @@ export function extractLockedQuestionSlice(
   const snippet = capturedLines.join('\n').trim();
   const checksum = crypto.createHash('sha256').update(snippet).digest('hex');
 
+  // A correctly parent-scoped one-line answer (e.g. "(d) Short-term provision")
+  // can be authoritative even when shorter than 30 characters. Keep a lower
+  // threshold only for a matched sub-question, never for an unscoped hit.
+  const minimumMeaningfulLength = subQ ? 15 : 30;
+  const found = Boolean(matchedHeader) && snippet.length > minimumMeaningfulLength;
+
   return {
-    found: snippet.length > 30,
-    confidence: snippet.length > 30 ? 95 : 40,
+    found,
+    confidence: found ? (snippet.length > 30 ? 95 : 72) : 40,
     sectionHeader: matchedHeader || `${docType} for Q${qNum}${subQ ? `(${subQ})` : ''}`,
     snippet,
     characterCount: snippet.length,
