@@ -227,7 +227,7 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
     // Normalize both source spellings "Q6(a)(1)" and "Q6(a(1))" to the
     // same canonical identity. Keep the nested clause in subQuestion so
     // downstream parent/child matching remains deterministic.
-    const nestedSubQuestion = subQ?.match(/^([a-z0-9]+)\\(([0-9]+)\\)$/i);
+    const nestedSubQuestion = subQ?.match(/^([a-z0-9]+)\(([0-9]+)\)$/i);
     const canonicalId = nestedSubQuestion
       ? 'Q' + qNum + '(' + nestedSubQuestion[1] + ')(' + nestedSubQuestion[2] + ')'
       : subQ ? 'Q' + qNum + '(' + subQ + ')' : 'Q' + qNum;
