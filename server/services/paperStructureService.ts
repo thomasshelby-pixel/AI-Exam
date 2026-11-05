@@ -757,7 +757,7 @@ function extractModelTestObjectiveQuestionPaperInventory(questionPaperText?: str
     }
     if (!inObjectivePart) continue;
 
-    const root = line.match(/^\s{0,3}(\d{1,2})[.)]\s+\S.{2,}/);
+    const root = line.match(/^\s{0,3}(?:(?:QUESTION|Q)\s*(?:NO\.?\s*)?)?(\d{1,2})\s*[.)\-:]\s+\S.{2,}/i);
     if (root) {
       const number = Number(root[1]);
       if (number >= 1 && number <= 30 && (number === 1 || number === lastRootNumber + 1)) {
