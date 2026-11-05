@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
-import { executeModelWithFallback } from '../models/modelRegistry.js';
+import { executeModelWithFallback, sanitizeSecretStrings } from '../models/modelRegistry.js';
 import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
@@ -347,6 +347,12 @@ export function resolveContextualQuestionIdentity(options: {
   };
 }
 
+export interface PageAnalysisFailure {
+  code: 'AI_PROVIDER_UNAVAILABLE' | 'AI_QUOTA_OR_BILLING' | 'AI_OUTPUT_INVALID' | 'AI_ANALYSIS_FAILED' | 'SKIPPED_AFTER_PROVIDER_FAILURE';
+  message: string;
+  failedOnPage?: number;
+}
+
 export interface PageCoverageRecord {
   pageNumber: number;
   status: PageAttemptStatus;
@@ -354,7 +360,17 @@ export interface PageCoverageRecord {
   rawSummary: string;
   hasHandwriting: boolean;
   mappingReviewReason?: string;
+  /** Technical failure details are kept separate from handwriting/question ambiguity. */
+  analysisFailure?: PageAnalysisFailure;
 }
+
+export type PageCoverageAnalyzer = (
+  pageBase64: string,
+  pageNumber: number,
+  paperStructure: AuthoritativePaperStructure,
+  totalPages: number,
+  previousActiveQuestion?: string
+) => Promise<PageCoverageRecord>;
 
 export interface AttemptedQuestionMapping {
   fullQuestionCode: string;
@@ -384,7 +400,8 @@ export interface AnswerCoverageMap {
  */
 export async function buildAnswerSheetCoverageMap(
   pdfBuffer: Buffer,
-  paperStructure: AuthoritativePaperStructure
+  paperStructure: AuthoritativePaperStructure,
+  options: { analyzePage?: PageCoverageAnalyzer } = {}
 ): Promise<AnswerCoverageMap> {
   const pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
   const structureSignature = JSON.stringify({
@@ -413,17 +430,38 @@ export async function buildAnswerSheetCoverageMap(
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
   let activeQuestionContext: string | undefined = undefined;
+  let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
+  const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
 
-  // For each page, analyze with AI to detect question numbers, continuations, and content
+  // For each page, analyze with AI to detect question numbers, continuations, and content.
+  // Once the full provider fallback chain fails for one page, do not repeat that
+  // same expensive chain for every remaining page of this answer sheet.
   for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
     const pageNum = pageIdx + 1;
+    if (providerFailureCircuit) {
+      const skippedFailure: PageAnalysisFailure = {
+        code: 'SKIPPED_AFTER_PROVIDER_FAILURE',
+        failedOnPage: providerFailureCircuit.failedOnPage,
+        message: `Analysis was stopped after page ${providerFailureCircuit.failedOnPage} exhausted the configured AI fallback chain: ${providerFailureCircuit.failure.message}`,
+      };
+      pageRecords.push({
+        pageNumber: pageNum,
+        status: 'QUESTION_NOT_IDENTIFIED',
+        detectedQuestions: [],
+        rawSummary: `Page ${pageNum} was not analysed to prevent repeated provider calls after an AI service failure on page ${providerFailureCircuit.failedOnPage}.`,
+        hasHandwriting: true,
+        analysisFailure: skippedFailure,
+      });
+      continue;
+    }
+
     const singleDoc = await PDFDocument.create();
     const [copied] = await singleDoc.copyPages(origDoc, [pageIdx]);
     singleDoc.addPage(copied);
     const singleBytes = await singleDoc.save();
     const pageBase64 = Buffer.from(singleBytes).toString('base64');
 
-    const analysis = await analyzeSinglePageCoverage(
+    const analysis = await analyzePage(
       pageBase64,
       pageNum,
       paperStructure,
@@ -431,6 +469,11 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext
     );
     pageRecords.push(analysis);
+    if (analysis.analysisFailure) {
+      providerFailureCircuit = { failedOnPage: pageNum, failure: analysis.analysisFailure };
+      activeQuestionContext = undefined;
+      continue;
+    }
 
     // Track active question context for next page continuation
     const nonMcqs = analysis.detectedQuestions.filter(
@@ -712,27 +755,42 @@ Return strictly valid JSON with this schema:
       mappingReviewReason,
     };
   } catch (err: any) {
-    const errStr = err?.message || String(err);
-    const isCreditOrQuota =
-      errStr.includes('429') ||
-      errStr.includes('prepayment') ||
-      errStr.includes('credits are depleted') ||
-      errStr.includes('exceeded your current quota') ||
-      errStr.includes('plan and billing details') ||
-      errStr.includes('RESOURCE_EXHAUSTED');
+    const rawError = err?.message || String(err);
+    const safeError = sanitizeSecretStrings(rawError).replace(/[\\r\\n]+/g, ' ').slice(0, 240);
+    const lowerError = rawError.toLowerCase();
+    const isQuotaOrBilling =
+      lowerError.includes('429') ||
+      lowerError.includes('quota') ||
+      lowerError.includes('resource_exhausted') ||
+      lowerError.includes('prepayment') ||
+      lowerError.includes('credits are depleted') ||
+      lowerError.includes('insufficient_quota') ||
+      lowerError.includes('billing');
+    const isInvalidOutput =
+      lowerError.includes('model_output_validation_failed') ||
+      lowerError.includes('invalid json') ||
+      lowerError.includes('invalid schema') ||
+      lowerError.includes('empty output');
 
-    if (isCreditOrQuota) {
-      console.info(`[AnswerCoverageService] Page ${pageNumber}: AI quota/credits exhausted; preserving the page for question-mapping review.`);
-    } else {
-      console.warn(`[AnswerCoverageService] Notice on page ${pageNumber}: ${errStr.slice(0, 160)}`);
-    }
+    const failure: PageAnalysisFailure = {
+      code: isQuotaOrBilling
+        ? 'AI_QUOTA_OR_BILLING'
+        : isInvalidOutput
+          ? 'AI_OUTPUT_INVALID'
+          : lowerError.includes('unavailable') || lowerError.includes('timed out') || lowerError.includes('timeout')
+            ? 'AI_PROVIDER_UNAVAILABLE'
+            : 'AI_ANALYSIS_FAILED',
+      message: safeError,
+    };
+    console.warn(`[AnswerCoverageService] Page ${pageNumber} analysis failed (${failure.code}): ${safeError}`);
 
     return {
       pageNumber,
       status: 'QUESTION_NOT_IDENTIFIED',
       detectedQuestions: [],
-      rawSummary: `Page ${pageNumber} requires question-mapping review because automated page analysis failed: ${errStr.slice(0, 240)}`,
+      rawSummary: `Automated page analysis failed (${failure.code}): ${safeError}`,
       hasHandwriting: true,
+      analysisFailure: failure,
     };
   }
 }
