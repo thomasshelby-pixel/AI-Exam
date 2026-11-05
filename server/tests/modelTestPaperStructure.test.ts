@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
+import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
 
 const shared = {
   level: 'INTERMEDIATE',
@@ -1085,6 +1086,32 @@ assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?
 assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds,[]);
 assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.suggestedAnswerMissingQuestionIds,[]);
 assert.deepEqual(uploadedAdvancedAccountingModelTest.sourceInventoryDiagnostics?.suggestedAnswerOnlyQuestionIds,[]);
+
+assert.equal(uploadedAdvancedAccountingModelTest.questions.find(q=>q.questionNumber==='1')?.compulsory,true,
+  'Question 1 must remain compulsory as stated in the selected Marking Scheme.');
+assert.ok(uploadedAdvancedAccountingModelTest.subQuestions
+  .filter(q=>q.questionNumber==='1')
+  .every(q=>q.compulsory),
+  'Every printed leaf under compulsory Question 1 must be marked required.');
+assert.ok(uploadedAdvancedAccountingModelTest.subQuestions
+  .filter(q=>['2','3','4','5','6'].includes(q.questionNumber))
+  .every(q=>!q.compulsory),
+  'Questions 2–6 must remain optional because the source says attempt any four.');
+assert.equal(
+  uploadedAdvancedAccountingModelTest.questions.find(q=>q.questionNumber==='2')?.choiceRule,
+  'Attempt any four of Questions 2 to 6',
+  'The source attempt-selection rule must remain attached to the optional question group.',
+);
+const uploadedInventory = buildCanonicalQuestionInventory({
+  paperStructure: uploadedAdvancedAccountingModelTest,
+  totalPaperMaxMarks: 100,
+});
+assert.ok(uploadedInventory.items
+  .filter(item=>item.questionId.startsWith('MCQ'))
+  .every(item=>item.isRequiredOrOptional==='REQUIRED'));
+assert.equal(uploadedInventory.items.find(item=>item.questionId==='Q1(a)')?.isRequiredOrOptional,'REQUIRED');
+assert.equal(uploadedInventory.items.find(item=>item.questionId==='Q2')?.isRequiredOrOptional,'OPTIONAL');
+
 const uploadedGate = validatePreEvaluationGate({
   paperStructure: uploadedAdvancedAccountingModelTest,
   questionPaperText: 'Question Paper content is present and verified.',
