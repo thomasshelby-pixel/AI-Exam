@@ -1094,4 +1094,31 @@ const uploadedGate = validatePreEvaluationGate({
 });
 assert.equal(uploadedGate.passed,true,'Uploaded Advanced Accounting source inventory must reconcile before evaluation.');
 
+
+ // Objective numbering does not always start at 1. Preserve the exact printed
+ // identities when a PDF extracts a standalone MCQ sequence beginning at 9.
+ const objectiveSequenceStartingAboveOne = getAuthoritativePaperStructure({
+   level: 'INTERMEDIATE',
+   subjectName: 'Advanced Accounting',
+   paper: 'Paper 1',
+   materialType: 'MODEL_TEST_PAPER',
+   officialPaperMaxMarks: 20,
+   questionPaperText: "MODEL TEST PAPER\nPART I - Multiple Choice Questions (4 Marks)\n9\nSelect the correct accounting treatment.\n10\nChoose the correct journal entry.\n11\nIdentify the correct accounting principle.\n12\nSelect the correct valuation method.\nPART II - Descriptive Questions (16 Marks)\nQuestion 1 - Prepare the required financial statement. (16 Marks)",
+   suggestedAnswersText: "SUGGESTED ANSWERS\nMULTIPLE CHOICE QUESTIONS\n9. (a)\n10. (b)\n11. (c)\n12. (d)\nDESCRIPTIVE ANSWERS\nQuestion 1 - Full solution.",
+   markingSchemeText: "MARKING SCHEME\nMULTIPLE CHOICE QUESTIONS\nMCQs are marked at 1 Mark each.\nQuestion 9 - 1 Mark\nQuestion 10 - 1 Mark\nQuestion 11 - 1 Mark\nQuestion 12 - 1 Mark\nDESCRIPTIVE QUESTIONS\nQuestion 1 - 16 Marks",
+ });
+ assert.deepEqual(
+   objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.questionPaperQuestionIds,
+   ['MCQ9', 'MCQ10', 'MCQ11', 'MCQ12', 'Q1'],
+   'A standalone MCQ sequence beginning at 9 must retain MCQ9–MCQ12 rather than disappear or be renumbered.',
+ );
+ assert.deepEqual(
+   objectiveSequenceStartingAboveOne.mcqs.map(q => [q.fullQuestionCode,q.maximumMarks,q.officialKey]),
+   [['MCQ9',1,'A'],['MCQ10',1,'B'],['MCQ11',1,'C'],['MCQ12',1,'D']],
+ );
+ assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.missingMarkQuestionIds,[]);
+ assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.missingMcqKeyQuestionIds,[]);
+ assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.markingSchemeOnlyQuestionIds,[]);
+ assert.deepEqual(objectiveSequenceStartingAboveOne.sourceInventoryDiagnostics?.markingSchemeParentTotalMismatchQuestionIds,[]);
+
 console.log('Model Test dynamic paper structure tests passed.');
