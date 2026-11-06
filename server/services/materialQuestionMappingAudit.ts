@@ -27,10 +27,11 @@ export interface MaterialQuestionMappingAudit {
   diagnostics: string[];
 }
 
-const MCQ_ID_LINE = /^\\s*(?:MCQ|OBJECTIVE)(?:\\s*(?:NO\\.?)?)?\\s*(\\d{1,2})\\b/i;
+const MCQ_ID_LINE = /^\s*(?:MCQ|OBJECTIVE)(?:\s*(?:NO\.?)?)?\s*(\d{1,2})\b/i;
 const QUESTION_LINE =
   /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*\(([a-z0-9]+)\))?(?:\s*([.)\-:]))?\s*(.*)$/i;
 const NUMBERED_QUESTION_LINE = /^\s*(\d{1,2})\s*[.)]\s+(.{6,})$/;
+const NUMBERED_ANSWER_KEY_LINE = /^\s*\d{1,2}\s*[.)]\s*(?:\([a-d]\)|[a-d]\b)/i;
 const SUBQUESTION_LINE = /^\s*\(([a-z])\)\s+(.{4,})$/i;
 const MCQ_OPTION_LINE = /^\s*(?:\(([a-d])\)|([a-d])[).])\s+\S+/i;
 const SECTION_BOUNDARY =
@@ -85,7 +86,8 @@ function extractQuestionPaperInventory(text: string): {
       continue;
     }
 
-    if (NUMBERED_ANSWER_KEY_LINE.test(line)) continue;\n    match = line.match(NUMBERED_QUESTION_LINE);
+    if (NUMBERED_ANSWER_KEY_LINE.test(line)) continue;
+    match = line.match(NUMBERED_QUESTION_LINE);
     if (match) {
       const questionNumber = String(Number(match[1]));
       const stem = match[2].trim();
@@ -165,7 +167,8 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
     }
 
     if (allowNumberedHeadings) {
-      if (NUMBERED_ANSWER_KEY_LINE.test(trimmed)) continue;\n      match = trimmed.match(NUMBERED_QUESTION_LINE);
+      if (NUMBERED_ANSWER_KEY_LINE.test(trimmed)) continue;
+      match = trimmed.match(NUMBERED_QUESTION_LINE);
       if (match && !/^\([a-d]\)$/i.test(match[2].trim())) {
         ids.push(canonical(`Q${Number(match[1])}`));
       }
