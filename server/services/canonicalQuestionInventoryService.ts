@@ -119,7 +119,7 @@ export function buildCanonicalQuestionInventory(options: {
       maxMarks: sqMax,
       sourceOrder: sourceOrder++,
       alternativeGroupId: altGroup,
-      canonicalTextAnchor: sq.topic || `Question ${canonicalId}`,
+      canonicalTextAnchor: sq.questionText || sq.suggestedAnswerAnchor || sq.topic || `Question ${canonicalId}`,
       isAlternative: isAlt,
       isRequiredOrOptional: sq.compulsory ? 'REQUIRED' : 'OPTIONAL',
     });
@@ -160,7 +160,7 @@ export function buildCanonicalQuestionInventory(options: {
     }
   }
 
-  const hashContent = JSON.stringify(items.map((i) => `${i.questionId}:${i.maxMarks}:${i.questionType}`));
+  const hashContent = JSON.stringify(items.map((i) => `${i.questionId}:${i.maxMarks}:${i.questionType}:${i.canonicalTextAnchor || ''}`));
   const referenceHash = crypto.createHash('sha256').update(hashContent).digest('hex');
 
   return {
@@ -210,11 +210,13 @@ export function detectIndependentAttempts(options: {
 
   // 1. Ingest raw page occurrences and merge continuations
   let lastActiveParent = '';
-  let lastResolvedCode = '';
 
   for (const occ of rawPageOccurrences) {
     const rawCode = occ.questionCode.trim();
     if (!rawCode) continue;
+    const directCanonicalId = toCanonicalQuestionId(rawCode);
+    const hasExactInventoryMatch = inventoryMap.has(directCanonicalId) ||
+      inventoryMap.has(directCanonicalId.toLowerCase());
 
     // If rawCode is just a parent question (e.g. "Q6", "6", "Q7", "7") without sub-question,
     // check snippet text to detect specific sub-question letter like (a), (b), (c)
@@ -261,23 +263,13 @@ export function detectIndependentAttempts(options: {
       // and follows an active parent question (e.g. candidate did Q3(b), then wrote "(a)" with salary computation),
       // resolve to the active parent if candidate code exists in inventory and matches content or was unattempted.
       const subOnlyMatch = snip.match(/^\s*\(?([a-d])\)?(?:\s|\.|\:|\-)/i);
-      if (subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
+      if (!hasExactInventoryMatch && occ.isContinuation && subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
         const contextualCode = `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`;
         const candItem = inventoryMap.get(contextualCode.toLowerCase());
         if (candItem) {
           const currentCanon = toCanonicalQuestionId(rawCode);
           if (attempts.has(currentCanon) || !attempts.has(candItem.questionId)) {
             resolvedCode = candItem.questionId;
-          }
-        }
-      } else if (occ.isContinuation && lastResolvedCode && !rawCode.startsWith('MCQ')) {
-        // If marked as continuation and snippet completes the previous resolved question
-        const currentCanon = toCanonicalQuestionId(rawCode);
-        if (currentCanon !== lastResolvedCode && attempts.has(lastResolvedCode)) {
-          const lastItem = inventoryMap.get(lastResolvedCode.toLowerCase());
-          const anchor = (lastItem?.canonicalTextAnchor || '').toLowerCase();
-          if (anchor.includes('salary') && snipLower.includes('salary')) {
-            resolvedCode = lastResolvedCode;
           }
         }
       }
@@ -292,7 +284,6 @@ export function detectIndependentAttempts(options: {
 
     if (effectiveCanonId.startsWith('Q') && !parsed.isMcq) {
       lastActiveParent = parsed.parentQuestionId || effectiveCanonId.split('(')[0];
-      lastResolvedCode = effectiveCanonId;
     }
 
     const isCrossedWithoutReplacement = Boolean(occ.isCrossedOut && !occ.hasReplacement);

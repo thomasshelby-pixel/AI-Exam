@@ -15,6 +15,7 @@ import {
   parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
 } from './canonicalQuestionService.js';
+import { extractLockedQuestionSlice } from './questionReferenceLock.js';
 
 export interface PaperStructureSubQuestion {
   fullQuestionCode: string; // e.g. 'Q5(a)', 'Q5(b)', 'Q6(a)', 'MCQ1'
@@ -27,6 +28,10 @@ export interface PaperStructureSubQuestion {
   officialExplanation?: string;
   provision?: string;
   topic?: string;
+  /** Exact question wording extracted from the selected authoritative Question Paper. */
+  questionText?: string;
+  /** Compact answer-reference anchor extracted from the selected Suggested Answers. */
+  suggestedAnswerAnchor?: string;
   section: 'A' | 'B' | 'GENERAL';
   division?: 'A' | 'B';     // 'A' = MCQs, 'B' = Descriptive
 }
@@ -83,12 +88,60 @@ export function getAuthoritativePaperStructure(options: {
     textCombined.includes('rudra') ||
     textCombined.includes('dharani');
 
-  if (isTaxationPaper) {
-    return buildTaxationPaperStructure(options);
-  }
+  const structure = isTaxationPaper
+    ? buildTaxationPaperStructure(options)
+    : buildGenericPaperStructure(options);
 
-  // Generic algorithmic parser for other CA papers
-  return buildGenericPaperStructure(options);
+  // Preserve the exact selected materials alongside the canonical IDs. The
+  // page mapper needs real QP wording and SA anchors to identify answers in
+  // arbitrary order; IDs and maximum marks alone are not enough.
+  return attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText);
+}
+
+/**
+ * Enriches canonical question IDs with compact, question-scoped source text.
+ * Uses the same parent-scoped extraction rules as examiner reference locking,
+ * so an unrelated "(a)" or "(b)" elsewhere in the document cannot be borrowed.
+ */
+function attachQuestionSourceContext(
+  structure: AuthoritativePaperStructure,
+  questionPaperText: string,
+  suggestedAnswersText: string
+): AuthoritativePaperStructure {
+  const attach = (question: PaperStructureSubQuestion): PaperStructureSubQuestion => {
+    const qpSlice = extractLockedQuestionSlice(
+      questionPaperText,
+      question.questionNumber,
+      question.subQuestionNumber,
+      'QP'
+    );
+    const saSlice = extractLockedQuestionSlice(
+      suggestedAnswersText,
+      question.questionNumber,
+      question.subQuestionNumber,
+      'SA'
+    );
+
+    return {
+      ...question,
+      ...(qpSlice.found && qpSlice.snippet.trim()
+        ? { questionText: qpSlice.snippet.trim() }
+        : {}),
+      ...(saSlice.found && saSlice.snippet.trim()
+        ? { suggestedAnswerAnchor: saSlice.snippet.trim() }
+        : {}),
+    };
+  };
+
+  return {
+    ...structure,
+    subQuestions: (structure.subQuestions || []).map(attach),
+    mcqs: (structure.mcqs || []).map(attach),
+    questions: (structure.questions || []).map((question) => ({
+      ...question,
+      subQuestions: (question.subQuestions || []).map(attach),
+    })),
+  };
 }
 
 /**

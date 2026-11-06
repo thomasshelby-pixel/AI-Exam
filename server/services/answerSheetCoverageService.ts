@@ -35,6 +35,9 @@ export interface PageCoverageModelOutput {
     subQuestion?: string | null;
     parentQuestionNumberVisible?: boolean;
     isContinuation?: boolean;
+    authoritativeQuestionCode?: string;
+    mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION' | 'UNCERTAIN';
+    labelMismatch?: boolean;
     snippet?: string;
   }>;
   mcqSelections: Record<string, string>;
@@ -167,10 +170,28 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       if (question.snippet !== undefined && snippet === undefined) {
         warnings.push('A detected answer contained a non-text evidence snippet.');
       }
+      const authoritativeQuestionCode = typeof question.authoritativeQuestionCode === 'string'
+        ? question.authoritativeQuestionCode.trim().slice(0, 80)
+        : undefined;
+      if (question.authoritativeQuestionCode !== undefined && !authoritativeQuestionCode) {
+        warnings.push('A detected answer contained an invalid authoritative question code.');
+      }
+      const allowedMappingBases = new Set(['VISIBLE_LABEL', 'MATERIAL_CONTENT', 'CONTINUATION', 'UNCERTAIN']);
+      const mappingBasis = typeof question.mappingBasis === 'string' &&
+        allowedMappingBases.has(question.mappingBasis.trim().toUpperCase())
+          ? question.mappingBasis.trim().toUpperCase() as 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION' | 'UNCERTAIN'
+          : undefined;
+      if (question.mappingBasis !== undefined && !mappingBasis) {
+        warnings.push('A detected answer contained an invalid mapping basis.');
+      }
+      const labelMismatch = typeof question.labelMismatch === 'boolean' ? question.labelMismatch : undefined;
+      if (question.labelMismatch !== undefined && labelMismatch === undefined) {
+        warnings.push('A detected answer contained an invalid label-mismatch flag.');
+      }
 
       const contextualIdentity = parentVisible === false && Boolean(subQuestion);
       const explicitContinuation = continuation || isContinuation === true;
-      if (!questionNumber && !contextualIdentity && !explicitContinuation) {
+      if (!questionNumber && !contextualIdentity && !explicitContinuation && !authoritativeQuestionCode) {
         warnings.push('One attempted answer had no safely resolvable question identity and was left for manual mapping.');
         continue;
       }
@@ -180,6 +201,9 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         ...(subQuestion ? { subQuestion } : {}),
         ...(parentVisible !== undefined ? { parentQuestionNumberVisible: parentVisible } : {}),
         isContinuation: explicitContinuation,
+        ...(authoritativeQuestionCode ? { authoritativeQuestionCode } : {}),
+        ...(mappingBasis ? { mappingBasis } : {}),
+        ...(labelMismatch !== undefined ? { labelMismatch } : {}),
         ...(snippet !== undefined ? { snippet } : {}),
       });
     }
@@ -253,12 +277,15 @@ export interface DetectedQuestionOccurrence {
   snippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq?: boolean;
+  mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION';
+  labelMismatch?: boolean;
 }
 
 export interface ContextualQuestionResolution {
   canonicalId?: string;
   requiresReview: boolean;
   reason?: string;
+  warning?: string;
 }
 
 /**
@@ -272,6 +299,9 @@ export function resolveContextualQuestionIdentity(options: {
   isContinuation?: boolean;
   parentQuestionNumberVisible?: boolean;
   previousActiveQuestion?: string;
+  authoritativeQuestionCode?: string;
+  mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION' | 'UNCERTAIN';
+  labelMismatch?: boolean;
   paperSubQuestions: AuthoritativePaperStructure['subQuestions'];
 }): ContextualQuestionResolution {
   const {
@@ -280,6 +310,9 @@ export function resolveContextualQuestionIdentity(options: {
     isContinuation = false,
     parentQuestionNumberVisible,
     previousActiveQuestion,
+    authoritativeQuestionCode,
+    mappingBasis,
+    labelMismatch = false,
     paperSubQuestions,
   } = options;
   const detectedId = toCanonicalQuestionId(questionNumber, subQuestion, paperSubQuestions);
@@ -289,6 +322,37 @@ export function resolveContextualQuestionIdentity(options: {
   // not apply to them.
   if (detected.isMcq || subQuestion.toUpperCase() === 'MCQ') {
     return { canonicalId: detected.canonicalId, requiresReview: false };
+  }
+
+  // Source-grounded identity wins over the last page's answer context.
+  if (authoritativeQuestionCode) {
+    const normalized = parseCanonicalQuestionIdentity(
+      toCanonicalQuestionId(authoritativeQuestionCode, undefined, paperSubQuestions)
+    ).canonicalId;
+    const authoritativeMatch = paperSubQuestions.find((question) =>
+      !question.isMcq && toCanonicalQuestionId(
+        question.fullQuestionCode || question.questionNumber,
+        question.subQuestionNumber,
+        paperSubQuestions
+      ).toLowerCase() === normalized.toLowerCase()
+    );
+    if (!authoritativeMatch) {
+      return { requiresReview: true, reason: `The AI-selected question ${authoritativeQuestionCode} is not present in the selected authoritative question inventory.` };
+    }
+    if (!mappingBasis) {
+      return { requiresReview: true, reason: 'The AI supplied a question ID without stating whether it came from the visible label, source content, or a verified continuation.' };
+    }
+    if (mappingBasis === 'UNCERTAIN') {
+      return { requiresReview: true, reason: 'The AI marked the source-content question identity as uncertain.' };
+    }
+    if (mappingBasis === 'CONTINUATION' && !isContinuation) {
+      return { requiresReview: true, reason: 'The answer was mapped as a continuation but the continuation flag was not confirmed.' };
+    }
+    return {
+      canonicalId: authoritativeMatch.fullQuestionCode,
+      requiresReview: false,
+      ...(labelMismatch ? { warning: `The visible answer label conflicts with the source-content match to ${authoritativeMatch.fullQuestionCode}; examiner review is required.` } : {}),
+    };
   }
 
   const context = previousActiveQuestion
@@ -315,7 +379,20 @@ export function resolveContextualQuestionIdentity(options: {
   }
 
   if (!isContextAnchored) {
-    return { canonicalId: detected.canonicalId, requiresReview: false };
+    const exists = paperSubQuestions.some((question) =>
+      !question.isMcq && toCanonicalQuestionId(
+        question.fullQuestionCode || question.questionNumber,
+        question.subQuestionNumber,
+        paperSubQuestions
+      ).toLowerCase() === detected.canonicalId.toLowerCase()
+    );
+    return exists
+      ? { canonicalId: detected.canonicalId, requiresReview: false }
+      : { requiresReview: true, reason: `The detected question ${detected.canonicalId} does not exist in the selected authoritative inventory.` };
+  }
+
+  if (!isContinuation) {
+    return { requiresReview: true, reason: 'A missing parent label cannot be inferred from the previous page unless this answer is explicitly identified as a continuation.' };
   }
 
   if (!context || context.isMcq) {
@@ -387,12 +464,19 @@ export interface PageCoverageRecord {
   analysisFailure?: PageAnalysisFailure;
 }
 
+export interface PriorQuestionContext {
+  fullQuestionCode: string;
+  pages: number[];
+  snippet?: string;
+}
+
 export type PageCoverageAnalyzer = (
   pageBase64: string,
   pageNumber: number,
   paperStructure: AuthoritativePaperStructure,
   totalPages: number,
-  previousActiveQuestion?: string
+  previousActiveQuestion?: string,
+  priorQuestionContexts?: PriorQuestionContext[]
 ) => Promise<PageCoverageRecord>;
 
 export interface AttemptedQuestionMapping {
@@ -434,11 +518,15 @@ export async function buildAnswerSheetCoverageMap(
       questionId: question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
       maximumMarks: question.maximumMarks,
       isMcq: question.isMcq,
+      questionText: question.questionText || null,
+      suggestedAnswerAnchor: question.suggestedAnswerAnchor || null,
     })),
     mcqs: (paperStructure.mcqs || []).map((question) => ({
       questionId: question.fullQuestionCode || `MCQ${question.questionNumber}`,
       maximumMarks: question.maximumMarks,
       officialKey: question.officialKey || null,
+      questionText: question.questionText || null,
+      suggestedAnswerAnchor: question.suggestedAnswerAnchor || null,
     })),
   });
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
@@ -453,6 +541,7 @@ export async function buildAnswerSheetCoverageMap(
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
   let activeQuestionContext: string | undefined = undefined;
+  const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
   const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
 
@@ -484,12 +573,20 @@ export async function buildAnswerSheetCoverageMap(
     const singleBytes = await singleDoc.save();
     const pageBase64 = Buffer.from(singleBytes).toString('base64');
 
+    const priorQuestionContexts = Array.from(priorQuestionContextMap.values())
+      .slice(-24)
+      .map((context) => ({
+        fullQuestionCode: context.fullQuestionCode,
+        pages: [...context.pages],
+        snippet: String(context.snippet || '').slice(0, 140),
+      }));
     const analysis = await analyzePage(
       pageBase64,
       pageNum,
       paperStructure,
       totalPages,
-      activeQuestionContext
+      activeQuestionContext,
+      priorQuestionContexts
     );
     pageRecords.push(analysis);
     if (analysis.analysisFailure) {
@@ -498,7 +595,27 @@ export async function buildAnswerSheetCoverageMap(
       continue;
     }
 
-    // Track active question context for next page continuation
+    // Retain all earlier question contexts. A candidate may answer Q2, then Q1,
+    // then continue Q2 again; the last page alone is not enough context.
+    for (const detected of analysis.detectedQuestions) {
+      const key = detected.fullQuestionCode.toLowerCase();
+      const existing = priorQuestionContextMap.get(key);
+      if (existing) {
+        if (!existing.pages.includes(pageNum)) existing.pages.push(pageNum);
+        if (detected.snippet) {
+          existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join(' ').slice(-640);
+        }
+      } else {
+        priorQuestionContextMap.set(key, {
+          fullQuestionCode: detected.fullQuestionCode,
+          pages: [pageNum],
+          snippet: detected.snippet?.slice(0, 640),
+        });
+      }
+    }
+
+    // The immediately prior question is only a weak clue. The full context list
+    // above is supplied so non-adjacent continuations can be recognised safely.
     const nonMcqs = analysis.detectedQuestions.filter(
       (q) => !q.fullQuestionCode.startsWith('MCQ') && q.subQuestionNumber !== 'MCQ'
     );
@@ -603,14 +720,40 @@ export function buildPageCoveragePrompt(params: {
   totalPages: number;
   paperStructure: AuthoritativePaperStructure;
   previousActiveQuestion?: string;
+  priorQuestionContexts?: PriorQuestionContext[];
 }): string {
-  const { pageNumber, totalPages, paperStructure, previousActiveQuestion } = params;
+  const { pageNumber, totalPages, paperStructure, previousActiveQuestion, priorQuestionContexts = [] } = params;
+  const compactSourceText = (value: string | undefined, limit: number): string =>
+    String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
   const validDescriptiveList = paperStructure.subQuestions
     .filter((s) => !s.isMcq)
-    .map((s) => `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`)
+    .map((s) => {
+      const questionText = compactSourceText(s.questionText, 220);
+      const answerAnchor = compactSourceText(s.suggestedAnswerAnchor, 140);
+      return [
+        `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`,
+        questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
+        answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
+      ].filter(Boolean).join('\n');
+    })
     .join('\n');
   const validMcqList = (paperStructure.mcqs || [])
-    .map((m) => `${m.fullQuestionCode} — ${m.maximumMarks} marks`)
+    .map((m) => {
+      const questionText = compactSourceText(m.questionText, 180);
+      const answerAnchor = compactSourceText(m.suggestedAnswerAnchor, 120);
+      return [
+        `${m.fullQuestionCode} — ${m.maximumMarks} marks`,
+        questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
+        answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
+      ].filter(Boolean).join('\n');
+    })
+    .join('\n');
+  const priorContextList = priorQuestionContexts
+    .map((context) => {
+      const pages = context.pages.length ? context.pages.join(', ') : 'unknown';
+      const snippet = compactSourceText(context.snippet, 140);
+      return `- ${context.fullQuestionCode} (earlier page(s): ${pages})${snippet ? ` — earlier answer evidence: ${snippet}` : ''}`;
+    })
     .join('\n');
 
   return `
@@ -624,7 +767,27 @@ AUTHORITATIVE DESCRIPTIVE IDS:
 ${validDescriptiveList || 'None parsed'}
 AUTHORITATIVE MCQ IDS:
 ${validMcqList || 'None parsed'}
-PREVIOUS PAGE ACTIVE QUESTION: ${previousActiveQuestion || 'None / first page'}
+PREVIOUS PAGE ACTIVE QUESTION (weak clue only; not a question-order assumption): ${previousActiveQuestion || 'None / first page'}
+PRIOR DETECTED ANSWERS FROM ALL EARLIER PAGES (answer order is arbitrary):
+${priorContextList || 'No earlier mapped answers.'}
+
+QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
+- Students may answer questions in ANY order. Page 1 is not Q1; Page 2 is not Q2; do not use page number,
+  answer order, inventory order or the previous page's question as an identity shortcut.
+- Use the exact Question Paper text and Suggested Answer reference above as the authoritative material.
+  Compare the student's actual answer content (facts, figures, journal entries, treatment, case names,
+  calculations, headings and working notes) against ALL listed questions before selecting an ID.
+- For each answer block, select authoritativeQuestionCode from the supplied IDs. Prefer a clear visible
+  question label when it agrees with the material. If the label conflicts with a strong material match,
+  report the material match and set labelMismatch=true; do not silently hide the conflict.
+- One page may contain multiple independent questions. Split and map each answer block separately.
+- A continuation can refer to ANY earlier question, not necessarily the previous page's last question.
+  Compare it with PRIOR DETECTED ANSWERS FROM ALL EARLIER PAGES. Set isContinuation=true and use the
+  same canonical ID only when the handwriting/content clearly continues that earlier answer.
+- A bare '(a)' or '(b)' is not enough to infer a parent from the previous page. If neither source content
+  nor a visible parent establishes the identity, mark the answer UNCERTAIN for manual review.
+- The previous page active question is only a weak clue and must never override an explicit label or
+  a stronger match against the selected Question Paper / Suggested Answer.
 
 HANDWRITING AND MAPPING:
 - Inspect the whole page, especially top/bottom and left/right margins, answer-block starts,
@@ -637,11 +800,19 @@ HANDWRITING AND MAPPING:
   A/B/C/D letters in prose as MCQ attempts. An MCQ selection exists only when this student's page
   visibly shows an objective question identity and a chosen option A, B, C or D for that question.
   If the answer sheet contains no MCQ attempt, return an empty mcqSelections object.
-- Validate the visible label against the authoritative IDs above. Return questionNumber as digits
-  only and subQuestion separately. Return every identifiable question on a mixed-question page.
-- A continuation may omit its heading. Reuse the previous active question only when the page
-  clearly continues it; never force an ambiguous new answer onto the previous question.
+- Return every identifiable answer block on a mixed-question page. Keep visible label fields separate
+  from authoritativeQuestionCode, which must be one exact ID from the supplied inventory.
+- questionNumber and subQuestion must record only labels visibly written by the student on THIS page.
+  Do not fill them with a guessed question ID. For continuation or content-only matches, omit absent labels
+  and set authoritativeQuestionCode plus mappingBasis instead.
+- Use mappingBasis: VISIBLE_LABEL when the visible label agrees with the question, MATERIAL_CONTENT
+  when exact material content establishes identity, CONTINUATION for a verified continuation, or
+  UNCERTAIN when the identity cannot be safely established.
+- For a continuation, use a matching item from the full prior-answer list even when another question
+  was answered on an intervening page.
 - Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
+- If both exact QP wording and Suggested Answer reference are unavailable for a question, do not guess
+  its identity from subject stereotypes or a generic topic; require a clear visible label or mark UNCERTAIN.
 - Poor handwriting alone is not a reason to discard identifiable work. Preserve partially readable
   attempts; do not guess unreadable figures, words, dates, sections or formulas.
 
@@ -667,6 +838,9 @@ Return valid JSON only:
       "subQuestion": "a",
       "parentQuestionNumberVisible": true,
       "isContinuation": false,
+      "authoritativeQuestionCode": "Q2(a)",
+      "mappingBasis": "VISIBLE_LABEL",
+      "labelMismatch": false,
       "snippet": "short answer evidence"
     }
   ],
@@ -684,13 +858,15 @@ async function analyzeSinglePageCoverage(
   pageNumber: number,
   paperStructure: AuthoritativePaperStructure,
   totalPages: number = 1,
-  previousActiveQuestion?: string
+  previousActiveQuestion?: string,
+  priorQuestionContexts: PriorQuestionContext[] = []
 ): Promise<PageCoverageRecord> {
   const prompt = buildPageCoveragePrompt({
     pageNumber,
     totalPages,
     paperStructure,
     previousActiveQuestion,
+    priorQuestionContexts,
   });
 
   try {
@@ -735,8 +911,14 @@ async function analyzeSinglePageCoverage(
             ? dq.parentQuestionNumberVisible
             : undefined,
           previousActiveQuestion: pageActiveQuestionContext,
+          authoritativeQuestionCode: dq.authoritativeQuestionCode,
+          mappingBasis: dq.mappingBasis,
+          labelMismatch: dq.labelMismatch,
           paperSubQuestions: paperStructure.subQuestions,
         });
+        if (resolution.warning) {
+          mappingReviewReason = [mappingReviewReason, resolution.warning].filter(Boolean).join(' | ');
+        }
         if (resolution.requiresReview || !resolution.canonicalId) {
           const issue = resolution.reason || 'The detected answer requires question-mapping review.';
           mappingReviewReason = [mappingReviewReason, issue].filter(Boolean).join(' | ');
@@ -755,6 +937,8 @@ async function analyzeSinglePageCoverage(
           isContinuation: Boolean(dq.isContinuation),
           pageNumber,
           snippet: dq.snippet || summary,
+          ...(dq.mappingBasis && dq.mappingBasis !== 'UNCERTAIN' ? { mappingBasis: dq.mappingBasis } : {}),
+          ...(dq.labelMismatch !== undefined ? { labelMismatch: dq.labelMismatch } : {}),
         });
         pageActiveQuestionContext = parsed.isMcq ? pageActiveQuestionContext : parsed.canonicalId;
       }
