@@ -168,7 +168,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   provision?: string;
   sourceQuestionLabel?: string;
 }> {
-  const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
+  const result = new Map<string, { officialKey: string; explanation: string; provision?: string; sourceQuestionLabel?: string }>();
   if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
 
   // Combined-PYQ splitting deliberately duplicates an ambiguous source into
