@@ -46,7 +46,7 @@ const matched = buildMaterialQuestionMappingAudit({
   suggestedAnswersText: suggestedAnswers,
   markingSchemeText: markingScheme,
 });
-assert.equal(matched.status, 'MATCHED');
+assert.equal(matched.status, 'MATCHED', JSON.stringify(matched, null, 2));
 assert.deepEqual(matched.questionPaperMcqIds, ['MCQ1', 'MCQ2']);
 assert.deepEqual(matched.questionPaperDescriptiveIds, ['Q5(a)', 'Q5(b)']);
 assert.deepEqual(matched.questionPaperIds, ['MCQ1', 'MCQ2', 'Q5(a)', 'Q5(b)']);
