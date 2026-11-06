@@ -70,6 +70,8 @@ async function run() {
   assert.match(pagePrompt, /Students may answer questions in ANY order/i);
   assert.match(pagePrompt, /Page 1 is not Q1; Page 2 is not Q2/i);
   assert.match(pagePrompt, /A continuation can refer to ANY earlier question/i);
+  assert.match(pagePrompt, /omit authoritativeQuestionCode entirely/i);
+  assert.match(pagePrompt, /NEVER put words such as/i);
 
   const sourceStructure = getAuthoritativePaperStructure({
     subjectName: 'Advanced Accounting',
