@@ -575,7 +575,7 @@ export async function buildAnswerSheetCoverageMap(
       .map((context) => ({
         fullQuestionCode: context.fullQuestionCode,
         pages: [...context.pages],
-        snippet: String(context.snippet || '').slice(0, 320),
+        snippet: String(context.snippet || '').slice(0, 140),
       }));
     const analysis = await analyzePage(
       pageBase64,
@@ -725,8 +725,8 @@ export function buildPageCoveragePrompt(params: {
   const validDescriptiveList = paperStructure.subQuestions
     .filter((s) => !s.isMcq)
     .map((s) => {
-      const questionText = compactSourceText(s.questionText, 260);
-      const answerAnchor = compactSourceText(s.suggestedAnswerAnchor, 220);
+      const questionText = compactSourceText(s.questionText, 220);
+      const answerAnchor = compactSourceText(s.suggestedAnswerAnchor, 140);
       return [
         `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
@@ -736,8 +736,8 @@ export function buildPageCoveragePrompt(params: {
     .join('\n');
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => {
-      const questionText = compactSourceText(m.questionText, 260);
-      const answerAnchor = compactSourceText(m.suggestedAnswerAnchor, 180);
+      const questionText = compactSourceText(m.questionText, 180);
+      const answerAnchor = compactSourceText(m.suggestedAnswerAnchor, 120);
       return [
         `${m.fullQuestionCode} — ${m.maximumMarks} marks`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
@@ -748,7 +748,7 @@ export function buildPageCoveragePrompt(params: {
   const priorContextList = priorQuestionContexts
     .map((context) => {
       const pages = context.pages.length ? context.pages.join(', ') : 'unknown';
-      const snippet = compactSourceText(context.snippet, 260);
+      const snippet = compactSourceText(context.snippet, 140);
       return `- ${context.fullQuestionCode} (earlier page(s): ${pages})${snippet ? ` — earlier answer evidence: ${snippet}` : ''}`;
     })
     .join('\n');
@@ -799,12 +799,17 @@ HANDWRITING AND MAPPING:
   If the answer sheet contains no MCQ attempt, return an empty mcqSelections object.
 - Return every identifiable answer block on a mixed-question page. Keep visible label fields separate
   from authoritativeQuestionCode, which must be one exact ID from the supplied inventory.
+- questionNumber and subQuestion must record only labels visibly written by the student on THIS page.
+  Do not fill them with a guessed question ID. For continuation or content-only matches, omit absent labels
+  and set authoritativeQuestionCode plus mappingBasis instead.
 - Use mappingBasis: VISIBLE_LABEL when the visible label agrees with the question, MATERIAL_CONTENT
   when exact material content establishes identity, CONTINUATION for a verified continuation, or
   UNCERTAIN when the identity cannot be safely established.
 - For a continuation, use a matching item from the full prior-answer list even when another question
   was answered on an intervening page.
 - Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
+- If both exact QP wording and Suggested Answer reference are unavailable for a question, do not guess
+  its identity from subject stereotypes or a generic topic; require a clear visible label or mark UNCERTAIN.
 - Poor handwriting alone is not a reason to discard identifiable work. Preserve partially readable
   attempts; do not guess unreadable figures, words, dates, sections or formulas.
 
