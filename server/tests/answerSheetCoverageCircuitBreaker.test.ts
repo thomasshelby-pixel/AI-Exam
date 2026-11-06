@@ -9,6 +9,7 @@ import {
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
 import { buildCanonicalQuestionInventory, detectIndependentAttempts } from '../services/canonicalQuestionInventoryService.js';
+import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 
 async function createPdf(pageCount: number): Promise<Buffer> {
   const document = await PDFDocument.create();
@@ -58,7 +59,7 @@ async function run() {
   assert.match(pagePrompt, /left margin/i);
   assert.match(pagePrompt, /circled\/margin-written numbers/i);
   assert.match(pagePrompt, /faint, cursive/i);
-  assert.match(pagePrompt, /PREVIOUS PAGE ACTIVE QUESTION: Q2\(a\)/i);
+  assert.match(pagePrompt, /PREVIOUS PAGE ACTIVE QUESTION \(weak clue only; not a question-order assumption\): Q2\(a\)/i);
   assert.match(pagePrompt, /Never infer identity from PDF page index/i);
   assert.match(pagePrompt, /Do not classify descriptive question labels/i);
   assert.match(pagePrompt, /return an empty mcqSelections object/i);
@@ -68,6 +69,30 @@ async function run() {
   assert.match(pagePrompt, /Students may answer questions in ANY order/i);
   assert.match(pagePrompt, /Page 1 is not Q1; Page 2 is not Q2/i);
   assert.match(pagePrompt, /A continuation can refer to ANY earlier question/i);
+
+  const sourceStructure = getAuthoritativePaperStructure({
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    materialType: 'MODEL_TEST_PAPER',
+    questionPaperText: [
+      'ADVANCED ACCOUNTING - QUESTION PAPER',
+      'QUESTION 1(a) - 5 Marks',
+      'Explain the accounting treatment of impairment loss under AS 28.',
+      'QUESTION 2(a) - 5 Marks',
+      'Prepare a Balance Sheet after considering the given adjustments.',
+    ].join('\\n'),
+    suggestedAnswersText: [
+      'SUGGESTED ANSWERS',
+      'QUESTION 1(a)',
+      'Compare carrying amount with recoverable amount and recognise impairment loss.',
+      'QUESTION 2(a)',
+      'Prepare the Balance Sheet with correct classification of assets and liabilities.',
+    ].join('\\n'),
+    markingSchemeText: 'QUESTION 1(a) - 5 Marks\\nQUESTION 2(a) - 5 Marks',
+  });
+  const sourcedQ1 = sourceStructure.subQuestions.find((question) => question.fullQuestionCode === 'Q1(a)');
+  assert.ok(sourcedQ1?.questionText?.includes('impairment loss'), 'The exact QP question wording must be attached to the authoritative ID.');
+  assert.ok(sourcedQ1?.suggestedAnswerAnchor?.includes('recoverable amount'), 'The selected Suggested Answer must be attached as a reference anchor.');
 
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
