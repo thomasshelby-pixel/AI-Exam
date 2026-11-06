@@ -2467,8 +2467,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       UPDATE evaluation_materials
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
-          mtp_series = COALESCE(?, mtp_series),
-          model_test_number = COALESCE(?, model_test_number),
+          mtp_series = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, mtp_series) END,
+          model_test_number = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, model_test_number) END,
           source_format = COALESCE(?, source_format),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
@@ -2498,7 +2498,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     `).run(
       level || null,
       materialType || null,
+      effMatType !== 'MTP' ? 1 : 0,
       parsedMtpSeries !== undefined ? parsedMtpSeries : null,
+      effMatType !== 'MODEL_TEST_PAPER' ? 1 : 0,
       parsedModelTestNumber !== undefined ? parsedModelTestNumber : null,
       normPutSourceFormat,
       modelGroup || null,
