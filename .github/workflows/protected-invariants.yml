@@ -2,7 +2,11 @@ name: Protected production invariants
 
 on:
   pull_request:
+  # PR checks validate feature branches; push checks are reserved for main
+  # to avoid running the same expensive suite twice for every PR commit.
   push:
+    branches:
+      - main
 
 permissions:
   contents: read
