@@ -8,6 +8,7 @@ import {
 } from '../services/materialDuplicateProtectionService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { buildEvaluationReferenceSourceInstructions } from '../gemini.js';
+import { buildChunkReferenceSourceInstructions } from '../services/questionChunkEvaluator.js';
 
 // MTP retains the official two-series identity. The permissive normalizer is
 // intentionally kept for reading old records; write boundaries use the validator.
@@ -94,6 +95,24 @@ assert.match(modelPromptSource.referenceBasisLabel, /Model Test Paper 4/i);
 assert.match(modelPromptSource.referenceBasisInstruction, /NOT an MTP series/i);
 assert.match(modelPromptSource.referenceBasisInstruction, /Never substitute or borrow an MTP Series 1\/2 paper/i);
 assert.doesNotMatch(modelPromptSource.referenceBasisLabel, /MTP Series/i);
+
+const mtpChunkPrompt = buildChunkReferenceSourceInstructions({
+  sourceType: 'GLOBAL',
+  materialType: 'MTP',
+  mtpSeries: 2,
+});
+assert.match(mtpChunkPrompt.questionPaperHeading, /MTP SERIES 2/i);
+assert.match(mtpChunkPrompt.isolationInstruction, /not a Model Test Paper number/i);
+
+const modelChunkPrompt = buildChunkReferenceSourceInstructions({
+  sourceType: 'MODEL_TEST',
+  materialType: 'MODEL_TEST_PAPER',
+  mtpSeries: 1, // Deliberately pass a stale field to prove Model Test wins.
+  modelTestNumber: 4,
+});
+assert.match(modelChunkPrompt.questionPaperHeading, /MODEL TEST PAPER 4/i);
+assert.match(modelChunkPrompt.isolationInstruction, /not an MTP series/i);
+assert.doesNotMatch(modelChunkPrompt.isolationInstruction, /MTP Series 1\/2 question/i);
 
 // Runtime guards must not parse/pass an MTP series for a Model Test request,
 // and the final evaluator call must discard stale queued cross-type identifiers.
