@@ -106,7 +106,7 @@ function normalizeAuthoritativeQuestionCode(value: unknown): string | undefined 
   if (typeof value !== 'string') return undefined;
   const cleaned = value.trim().slice(0, 80);
   if (!cleaned) return undefined;
-  const normalized = cleaned.toUpperCase().replace(/[\\s_-]+/g, '');
+  const normalized = cleaned.toUpperCase().replace(/[\s_/-]+/g, '');
   return PLACEHOLDER_AUTHORITATIVE_QUESTION_CODES.has(normalized) ? undefined : cleaned;
 }
 
