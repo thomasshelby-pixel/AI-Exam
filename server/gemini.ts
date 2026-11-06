@@ -548,14 +548,89 @@ export interface EvaluateAnswerSheetParams {
   markingSchemeMaterialId?: string;
 }
 
+export interface EvaluationReferenceSourceInstructions {
+  referenceBasisLabel: string;
+  referenceBasisInstruction: string;
+  questionPaperHeading: string;
+  suggestedAnswersHeading: string;
+  markingSchemeHeading: string;
+}
+
+/**
+ * Build prompt labels/instructions from the exact material type. MTP Series and
+ * Model Test Number are different identifiers and must never be interchanged.
+ */
+export function buildEvaluationReferenceSourceInstructions(
+  params: Pick<EvaluateAnswerSheetParams, 'materialType' | 'mtpSeries' | 'modelTestNumber'>,
+): EvaluationReferenceSourceInstructions {
+  const isFacultyMock = params.materialType === 'FACULTY_MOCK_TEST';
+  const isMtp = params.materialType === 'MTP';
+  const isModelTest = params.materialType === 'MODEL_TEST_PAPER';
+  const modelTestNumber = Number.isInteger(Number(params.modelTestNumber))
+    ? Number(params.modelTestNumber)
+    : 'UNSPECIFIED';
+  const mtpSeries = params.mtpSeries === 1 || params.mtpSeries === 2
+    ? params.mtpSeries
+    : 'UNSPECIFIED';
+
+  if (isFacultyMock) {
+    return {
+      referenceBasisLabel: 'selected Faculty Mock Question Paper and uploaded TXT evaluation reference',
+      referenceBasisInstruction: 'Use only the exact selected Faculty Mock Question Paper and its private TXT evaluation reference. Do not substitute or supplement it with global ICAI PYQ/MTP keys, another faculty mock, or another mock number.',
+      questionPaperHeading: 'SELECTED FACULTY MOCK QUESTION PAPER',
+      suggestedAnswersHeading: 'FACULTY-PROVIDED EVALUATION REFERENCE (TXT: SUGGESTED ANSWERS AND MARKING GUIDANCE)',
+      markingSchemeHeading: 'FACULTY-PROVIDED MARKING SCHEME (PARSED FROM THE SAME PRIVATE TXT REFERENCE)',
+    };
+  }
+
+  if (isModelTest) {
+    return {
+      referenceBasisLabel: `selected Model Test Paper ${modelTestNumber} Question Paper, Suggested Answers and Marking Scheme`,
+      referenceBasisInstruction: `Use only the exact selected Model Test Paper ${modelTestNumber} Question Paper, Suggested Answers and Marking Scheme supplied below. The Model Test number is NOT an MTP series. Never substitute or borrow an MTP Series 1/2 paper, MTP answer key, PYQ, or another Model Test Paper.`,
+      questionPaperHeading: `SELECTED MODEL TEST PAPER ${modelTestNumber} QUESTION PAPER`,
+      suggestedAnswersHeading: `MODEL TEST PAPER ${modelTestNumber} SUGGESTED ANSWERS`,
+      markingSchemeHeading: `MODEL TEST PAPER ${modelTestNumber} MARKING SCHEME`,
+    };
+  }
+
+  if (isMtp) {
+    return {
+      referenceBasisLabel: `selected official ICAI MTP Series ${mtpSeries} Question Paper, Suggested Answers and Marking Scheme`,
+      referenceBasisInstruction: `Use only the exact selected ICAI MTP Series ${mtpSeries} Question Paper, Suggested Answers and Marking Scheme supplied below. MTP Series 1/2 is not a Model Test Paper number. Never substitute another MTP series, a Model Test Paper, or a PYQ.`,
+      questionPaperHeading: `OFFICIAL ICAI MTP SERIES ${mtpSeries} QUESTION PAPER`,
+      suggestedAnswersHeading: `OFFICIAL ICAI MTP SERIES ${mtpSeries} SUGGESTED ANSWERS`,
+      markingSchemeHeading: `OFFICIAL ICAI MTP SERIES ${mtpSeries} MARKING SCHEME`,
+    };
+  }
+
+  if (params.materialType === 'PYQ') {
+    return {
+      referenceBasisLabel: 'selected official ICAI Past Year Question Paper, Suggested Answers and Marking Scheme',
+      referenceBasisInstruction: 'Use only the exact selected official ICAI Past Year Question Paper, Suggested Answers and Marking Scheme supplied below. Do not substitute MTP or Model Test references.',
+      questionPaperHeading: 'OFFICIAL ICAI PAST YEAR QUESTION PAPER',
+      suggestedAnswersHeading: 'OFFICIAL ICAI PAST YEAR SUGGESTED ANSWERS',
+      markingSchemeHeading: 'OFFICIAL ICAI PAST YEAR MARKING SCHEME',
+    };
+  }
+
+  return {
+    referenceBasisLabel: 'verified official ICAI Question Paper, Suggested Answers and Marking Scheme',
+    referenceBasisInstruction: 'Use only the verified official reference materials supplied in this evaluation.',
+    questionPaperHeading: 'OFFICIAL REFERENCE QUESTION PAPER',
+    suggestedAnswersHeading: 'OFFICIAL SUGGESTED GUIDELINE ANSWERS',
+    markingSchemeHeading: 'MARKING SCHEME GUIDELINES',
+  };
+}
+
 /**
  * Performs rigorous, step-marked AI evaluation of a CA Answer Sheet against official ICAI materials.
  */
 export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): Promise<EvaluationResult> {
   const ai = getGemini();
 
-  // SERVER-SIDE INTEGRITY GATE: Validate mtpSeries across the entire EvaluationEvidencePackage
-  if (params.materialType === 'MTP' || (params.mtpSeries !== undefined && params.mtpSeries !== null)) {
+  // SERVER-SIDE INTEGRITY GATE: MTP series checks apply only to MTP material.
+  // A stale/default mtpSeries must never route a Model Test Paper into the MTP gate.
+  if (params.materialType === 'MTP') {
     const qpText = params.referenceQuestionPaperText || '';
     const saText = params.referenceSuggestedAnswersText || '';
     const msText = params.markingSchemeText || '';
@@ -788,22 +863,13 @@ Negative marking (-${penaltyMarks}) applies strictly to incorrect multiple choic
 - Unattempted / Blank MCQ = STRICTLY 0 marks (NEVER deduct marks for unattempted questions)
 Zero negative marking applies for this paper.`;
 
-  const isFacultyMockReference = params.materialType === 'FACULTY_MOCK_TEST';
-  const referenceBasisLabel = isFacultyMockReference
-    ? 'selected Faculty Mock Question Paper and uploaded TXT evaluation reference'
-    : 'verified official ICAI Question Paper, Suggested Answers and Marking Scheme';
-  const referenceBasisInstruction = isFacultyMockReference
-    ? 'the exact selected Faculty Mock Question Paper and the private TXT reference attached to that mock. Do not substitute or supplement it with global ICAI PYQ/MTP keys, another faculty mock, or another mock number.'
-    : 'the verified official ICAI reference materials supplied in this evaluation.';
-  const questionPaperHeading = isFacultyMockReference
-    ? 'SELECTED FACULTY MOCK QUESTION PAPER'
-    : 'OFFICIAL REFERENCE QUESTION PAPER';
-  const suggestedAnswersHeading = isFacultyMockReference
-    ? 'FACULTY-PROVIDED EVALUATION REFERENCE (TXT: SUGGESTED ANSWERS AND MARKING GUIDANCE)'
-    : 'OFFICIAL SUGGESTED GUIDELINE ANSWERS';
-  const markingSchemeHeading = isFacultyMockReference
-    ? 'FACULTY-PROVIDED MARKING SCHEME (PARSED FROM THE SAME PRIVATE TXT REFERENCE)'
-    : 'MARKING SCHEME GUIDELINES';
+  const {
+    referenceBasisLabel,
+    referenceBasisInstruction,
+    questionPaperHeading,
+    suggestedAnswersHeading,
+    markingSchemeHeading,
+  } = buildEvaluationReferenceSourceInstructions(params);
 
   const checkingStrictness = params.checkingMode === 'strict'
     ? `MODE: Strict Head Examiner (Conservative on Working Notes)
@@ -885,8 +951,17 @@ EVALUATION PARAMETERS:
 - Level: CA ${params.level}
 - Subject: ${params.subjectName}
 - Paper Type: ${params.materialType}
+- MTP Series: ${params.materialType === 'MTP' ? `Series ${params.mtpSeries ?? 'UNSPECIFIED'}` : 'NOT APPLICABLE'}
+- Model Test Number: ${params.materialType === 'MODEL_TEST_PAPER' ? params.modelTestNumber ?? 'UNSPECIFIED' : 'NOT APPLICABLE'}
 - Attempt: ${params.attempt || 'Current Attempt'}
 - Evaluation Standard: ${checkingStrictness}
+
+SOURCE TYPE ISOLATION (MANDATORY):
+- MTP is identified by MTP Series 1 or 2. Its series number is not a Model Test number.
+- MODEL_TEST_PAPER is identified by its independent Model Test Number. That number is not an MTP series.
+- For Model Test evaluations, use only the selected Model Test Paper's Question Paper, Suggested Answers and Marking Scheme below. Do not borrow any MTP/PYQ content or another Model Test's references.
+- For MTP evaluations, use only the selected MTP series references below. Do not borrow any Model Test/PYQ content or another MTP series.
+- The exact Paper Type and selected source metadata take precedence over wording such as "mock" in a title.
 
 ${mcqInstruction}
 
