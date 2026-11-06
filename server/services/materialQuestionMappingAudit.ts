@@ -169,8 +169,18 @@ function extractQuestionPaperInventory(text: string): {
 function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean): string[] {
   if (!text?.trim()) return [];
   const ids: string[] = [];
+  const lines = text.replace(/\r/g, '').split('\n');
+  const explicitMcqNumbers = new Set<string>();
+  const explicitDescriptiveNumbers = new Set<string>();
 
-  for (const line of text.replace(/\r/g, '').split('\n')) {
+  for (const line of lines) {
+    const mcqMatch = line.trim().match(MCQ_ID_LINE);
+    if (mcqMatch) explicitMcqNumbers.add(String(Number(mcqMatch[1])));
+    const descriptiveMatch = line.trim().match(QUESTION_LINE);
+    if (descriptiveMatch) explicitDescriptiveNumbers.add(String(Number(descriptiveMatch[1])));
+  }
+
+  for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || SECTION_BOUNDARY.test(trimmed)) continue;
 
@@ -198,6 +208,15 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
 
   const marked = extractSubQuestionsFromText(text);
   for (const item of marked) {
+    const questionNumber = String(Number(item.questionNumber));
+    // The shared evaluation parser can see the trailing "Q1" inside "MCQ1".
+    // Suppress only that generic parent identity in this read-only audit when
+    // an explicit MCQ ID exists and no explicit descriptive Question 1 exists.
+    if (
+      !item.subQuestionNumber &&
+      explicitMcqNumbers.has(questionNumber) &&
+      !explicitDescriptiveNumbers.has(questionNumber)
+    ) continue;
     ids.push(canonical(item.fullQuestionCode || item.questionNumber));
   }
   return removeParentWhenChildrenExist(ids);
