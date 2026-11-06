@@ -84,7 +84,7 @@ function extractQuestionPaperInventory(text: string): {
       continue;
     }
 
-    match = line.match(NUMBERED_QUESTION_LINE);
+    if (NUMBERED_ANSWER_KEY_LINE.test(line)) continue;\n    match = line.match(NUMBERED_QUESTION_LINE);
     if (match) {
       const questionNumber = String(Number(match[1]));
       const stem = match[2].trim();
@@ -158,7 +158,7 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
     }
 
     if (allowNumberedHeadings) {
-      match = trimmed.match(NUMBERED_QUESTION_LINE);
+      if (NUMBERED_ANSWER_KEY_LINE.test(trimmed)) continue;\n      match = trimmed.match(NUMBERED_QUESTION_LINE);
       if (match && !/^\([a-d]\)$/i.test(match[2].trim())) {
         ids.push(canonical(`Q${Number(match[1])}`));
       }
