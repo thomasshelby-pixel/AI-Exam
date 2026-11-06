@@ -7,6 +7,7 @@ import {
   normalizeMtpSeriesNumber,
 } from '../services/materialDuplicateProtectionService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
+import { buildEvaluationReferenceSourceInstructions } from '../gemini.js';
 
 // MTP retains the official two-series identity. The permissive normalizer is
 // intentionally kept for reading old records; write boundaries use the validator.
@@ -74,4 +75,46 @@ assert.equal(getMaxModelTestNumberForLevel('FOUNDATION'), 10);
 assert.equal(getMaxModelTestNumberForLevel('INTERMEDIATE'), 8);
 assert.equal(getMaxModelTestNumberForLevel('FINAL'), 8);
 
-console.log('MTP two-series / Model Test separation regression tests passed.');
+// Prompt-level source isolation: the exact same generic evaluator rubric receives
+// different authoritative source instructions for MTP and Model Test.
+const mtpPromptSource = buildEvaluationReferenceSourceInstructions({
+  materialType: 'MTP',
+  mtpSeries: 2,
+});
+assert.match(mtpPromptSource.referenceBasisLabel, /MTP Series 2/i);
+assert.match(mtpPromptSource.referenceBasisInstruction, /not a Model Test Paper number/i);
+assert.doesNotMatch(mtpPromptSource.referenceBasisInstruction, /Model Test Paper 2 Question Paper/i);
+
+const modelPromptSource = buildEvaluationReferenceSourceInstructions({
+  materialType: 'MODEL_TEST_PAPER',
+  mtpSeries: 1, // Deliberately pass a stale field to prove material type wins.
+  modelTestNumber: 4,
+});
+assert.match(modelPromptSource.referenceBasisLabel, /Model Test Paper 4/i);
+assert.match(modelPromptSource.referenceBasisInstruction, /NOT an MTP series/i);
+assert.match(modelPromptSource.referenceBasisInstruction, /Never substitute or borrow an MTP Series 1\/2 paper/i);
+assert.doesNotMatch(modelPromptSource.referenceBasisLabel, /MTP Series/i);
+
+// Runtime guards must not parse/pass an MTP series for a Model Test request,
+// and the final evaluator call must discard stale queued cross-type identifiers.
+const studentRouteSource = readFileSync(
+  new URL('../routes/studentRoutes.ts', import.meta.url),
+  'utf8',
+);
+assert.match(studentRouteSource, /const parsedMtpSeries = materialType === 'MTP'/);
+
+const asyncEvaluationSource = readFileSync(
+  new URL('../services/asyncEvaluationService.ts', import.meta.url),
+  'utf8',
+);
+assert.match(asyncEvaluationSource, /mtpSeries: job\.materialType === 'MTP' \? job\.mtpSeries : undefined/);
+assert.match(asyncEvaluationSource, /modelTestNumber: job\.materialType === 'MODEL_TEST_PAPER' \? job\.modelTestNumber : undefined/);
+
+const geminiSource = readFileSync(
+  new URL('../gemini.ts', import.meta.url),
+  'utf8',
+);
+assert.match(geminiSource, /if \(params\.materialType === 'MTP'\) \{/);
+assert.doesNotMatch(geminiSource, /params\.materialType === 'MTP' \|\| \(params\.mtpSeries/);
+
+console.log('MTP two-series / Model Test separation and AI prompt isolation tests passed.');
