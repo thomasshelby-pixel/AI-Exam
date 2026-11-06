@@ -19,6 +19,7 @@ import {
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
+import { restoreDurableEvaluationJobPayload, serializeDurableEvaluationJobPayload } from './durableEvaluationJobPayload.js';
 import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
@@ -132,17 +133,7 @@ function getEvaluationQueueTerminalStatus(evaluationStatus: string): DurableEval
 }
 
 function getSafeJsonPayload(job: EvaluationJobData): Record<string, any> {
-  const {
-    fileBase64: _fileBase64,
-    pdfBuf: _pdfBuf,
-    originalFileStorageConfirmed: _originalFileStorageConfirmed,
-    ...payload
-  } = job;
-  const serialized = JSON.stringify(payload);
-  if (Buffer.byteLength(serialized, 'utf8') > 850_000) {
-    throw new Error('EVALUATION_QUEUE_PAYLOAD_TOO_LARGE: Reference material is too large for the durable job record. Contact support before retrying.');
-  }
-  return JSON.parse(serialized);
+  return serializeDurableEvaluationJobPayload(job as any);
 }
 
 async function ensureDurableOriginalFiles(job: EvaluationJobData): Promise<string | null> {
@@ -356,25 +347,21 @@ async function hydrateDurableEvaluationJob(record: DurableEvaluationQueueRecord)
     throw new Error('EVALUATION_ORIGINAL_FILE_MISSING: The answer-sheet PDF is not available in durable Cloud Storage.');
   }
 
-  let fileBase64 = original.buffer.toString('base64');
-  let mimeType = String(record.payload.mimeType || 'application/pdf');
+  let originalUploadBuffer: Buffer | null = null;
   if (record.sourceUploadFileId) {
     const source = await getPersistentFile(record.sourceUploadFileId, `${record.sourceUploadFileId}.pdf`);
     if (!source?.buffer?.length) {
       throw new Error('EVALUATION_SOURCE_UPLOAD_MISSING: The original uploaded image is not available in durable Cloud Storage.');
     }
-    fileBase64 = source.buffer.toString('base64');
-  } else {
-    mimeType = 'application/pdf';
+    originalUploadBuffer = source.buffer;
   }
+  const binary = restoreDurableEvaluationJobPayload(record.payload || {}, original.buffer, originalUploadBuffer);
 
   return {
     ...(record.payload as any),
     evaluationId: record.evaluationId,
-    fileBase64,
-    mimeType,
+    ...binary,
     filename: String(record.payload.filename || `${record.evaluationId}_original.pdf`),
-    pdfBuf: original.buffer,
     originalFileStorageConfirmed: true,
   } as EvaluationJobData;
 }
