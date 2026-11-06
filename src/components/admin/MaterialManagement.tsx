@@ -849,7 +849,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                         )}
                         {m.material_type === 'MODEL_TEST_PAPER' && (
                           <span className="px-1.5 py-0.2 text-[9px] font-extrabold rounded bg-indigo-100 text-indigo-700">
-                            Model {m.model_test_number || m.modelTestNumber || '?'}
+                            Model Test {m.model_test_number || m.modelTestNumber || '?'}
                           </span>
                         )}
                         {m.material_type === 'PYQ' && (
@@ -1394,7 +1394,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                       className="w-full px-3 py-2 border border-indigo-300 rounded-lg bg-indigo-50/50 text-indigo-800 font-semibold focus:outline-none focus:border-indigo-600"
                     >
                       {Array.from({ length: maxModelTestNumber }, (_, index) => index + 1).map((number) => (
-                        <option key={number} value={number}>Model {number}</option>
+                        <option key={number} value={number}>Model Test {number}</option>
                       ))}
                     </select>
                   </div>
