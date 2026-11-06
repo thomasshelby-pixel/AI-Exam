@@ -4,6 +4,7 @@ import path from 'node:path';
 import { db } from '../db.js';
 import { permanentlyDeleteFromFirestore, syncRecordToFirestore } from './firestoreSyncService.js';
 import { deletePersistentFile, deleteEvaluationCloudFiles } from './persistentStorageService.js';
+import { refundEvaluationCreditAtomic } from './studentCreditService.js';
 
 export interface DeleteEvaluationOptions {
   reason?: string;
@@ -236,6 +237,42 @@ export function deleteEvaluation(
     if (inst) instituteName = inst.name;
   }
 
+  // A terminal failed/review-required evaluation must not lose its credit
+  // when the record is administratively deleted. Refund first, while the
+  // exact evaluation_id debit link still exists. PROCESSING/COMPLETED rows
+  // are intentionally not refunded by deletion.
+  let creditRefundedBeforeDelete = false;
+  const terminalRefundStatuses = new Set([
+    'FAILED',
+    'REJECTED',
+    'NEEDS_REVIEW',
+    'PERSISTENCE_FAILED',
+    'CANCELLED',
+  ]);
+  const entitlementSource = String(evaluation.entitlement_source || '').trim().toUpperCase();
+  if (
+    terminalRefundStatuses.has(String(evaluation.status || '').trim().toUpperCase()) &&
+    ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource)
+  ) {
+    try {
+      creditRefundedBeforeDelete = refundEvaluationCreditAtomic({
+        userId: String(evaluation.student_id),
+        evaluationId: realEvaluationId,
+        entitlementSource,
+      });
+      if (creditRefundedBeforeDelete) {
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?')
+          .run(realEvaluationId);
+      }
+    } catch (refundError) {
+      const error: any = new Error('Evaluation was not deleted because its consumed credit could not be safely restored.');
+      error.statusCode = 409;
+      error.code = 'EVALUATION_CREDIT_REFUND_FAILED';
+      error.cause = refundError;
+      throw error;
+    }
+  }
+
   // 3. Remove disk files directly associated with this evaluation ID
   const uploadDirs = [
     path.join(process.cwd(), 'uploads'),
@@ -274,8 +311,9 @@ export function deleteEvaluation(
     // 4B. Nullify evaluation reference in support tickets so student support history is preserved
     db.prepare('UPDATE support_tickets SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
 
-    // 4C. Nullify evaluation reference in credit ledger to keep credit accounting clean
-    db.prepare('UPDATE credit_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
+    // 4C. Preserve evaluation_id in credit_ledger as a durable historical link.
+    // It is not a foreign key; keeping it enables audit/refund reconciliation
+    // after the evaluation row itself has been removed.
 
     // 4D. Nullify evaluation reference in institute usage ledger
     db.prepare('UPDATE institute_usage_ledger SET evaluation_id = NULL WHERE evaluation_id = ?').run(realEvaluationId);
@@ -307,6 +345,8 @@ export function deleteEvaluation(
       grade: evaluation.grade,
       accountClassification: evaluation.account_classification,
       entitlementSource: evaluation.entitlement_source,
+      creditRefundedBeforeDelete,
+      evaluationCreatedAt: evaluation.created_at || null,
       reason: options?.reason || 'Administrative cleanup',
       notes: options?.notes || null,
       filesRemovedCount: filesRemoved,

@@ -112,6 +112,45 @@ export function getCurrentServerMonth(): string {
  * - DO NOT modify paidCredits.
  * - Idempotent and thread-safe: Prevents duplicate resets for the same month.
  */
+/**
+ * Includes historical ledger rows whose evaluation_id was cleared by older
+ * evaluation-deletion code. Unlinked debits/refunds are aggregated because
+ * the individual evaluation record no longer exists; linked records retain
+ * their normal exactly-once, per-evaluation latest-entry accounting.
+ */
+function getMonthlyFreeEvaluationsUsedFromLedger(userId: string, monthStart: string): number {
+  const rows = db.prepare(`
+    SELECT evaluation_id, source, amount
+    FROM credit_ledger
+    WHERE student_id = ?
+      AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
+      AND datetime(created_at) >= datetime(?)
+    ORDER BY rowid ASC
+  `).all(userId, monthStart) as Array<{
+    evaluation_id: string | null;
+    source: string;
+    amount: number;
+  }>;
+
+  const latestByEvaluation = new Map<string, { source: string; amount: number }>();
+  let unlinkedNetUsage = 0;
+  for (const row of rows) {
+    if (row.evaluation_id) {
+      latestByEvaluation.set(row.evaluation_id, row);
+    } else if (row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0) {
+      unlinkedNetUsage += 1;
+    } else if (row.source === 'REFUND_MONTHLY_FREE' && Number(row.amount) > 0) {
+      unlinkedNetUsage -= 1;
+    }
+  }
+
+  const linkedUsage = [...latestByEvaluation.values()].filter((row) =>
+    row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
+  ).length;
+
+  return Math.max(0, linkedUsage + Math.max(0, unlinkedNetUsage));
+}
+
 export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEvaluationStatus {
   const currentMonth = getCurrentServerMonth();
 
@@ -175,20 +214,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
 
     if (identityVerified) {
       const monthStart = `${currentMonth}-01 00:00:00`;
-      const rows = db.prepare(`
-        SELECT evaluation_id, source, amount
-        FROM credit_ledger
-        WHERE student_id = ?
-          AND evaluation_id IS NOT NULL
-          AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
-          AND datetime(created_at) >= datetime(?)
-        ORDER BY rowid ASC
-      `).all(userId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
-      const latest = new Map<string, { source: string; amount: number }>();
-      for (const row of rows) latest.set(row.evaluation_id, row);
-      const ledgerUsed = [...latest.values()].filter((row) =>
-        row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
-      ).length;
+      const ledgerUsed = getMonthlyFreeEvaluationsUsedFromLedger(userId, monthStart);
 
       if (ledgerUsed <= 2) {
         const repair = db.prepare(`
@@ -241,20 +267,7 @@ export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEv
   // stale profile data, not two evaluations consumed. Never repair blocked accounts.
   if (!trialBlocked && Number(profile.monthly_free_evaluations_limit || 0) > 0 && resetMonth === currentMonth) {
     const monthStart = `${currentMonth}-01 00:00:00`;
-    const ledgerRows = db.prepare(`
-      SELECT evaluation_id, source, amount
-      FROM credit_ledger
-      WHERE student_id = ?
-        AND evaluation_id IS NOT NULL
-        AND source IN ('FREE_MONTHLY_EVALUATION', 'REFUND_MONTHLY_FREE')
-        AND datetime(created_at) >= datetime(?)
-      ORDER BY rowid ASC
-    `).all(userId, monthStart) as Array<{ evaluation_id: string; source: string; amount: number }>;
-    const latestByEvaluation = new Map<string, { source: string; amount: number }>();
-    for (const row of ledgerRows) latestByEvaluation.set(row.evaluation_id, row);
-    const ledgerUsed = [...latestByEvaluation.values()].filter((row) =>
-      row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
-    ).length;
+    const ledgerUsed = getMonthlyFreeEvaluationsUsedFromLedger(userId, monthStart);
     const storedUsed = Math.max(0, Number(profile.monthly_free_evaluations_used) || 0);
     if (storedUsed !== ledgerUsed && ledgerUsed <= Number(profile.monthly_free_evaluations_limit)) {
       db.prepare(`
