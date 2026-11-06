@@ -1084,36 +1084,62 @@ export function refundEvaluationCreditAtomic(params: {
   userId: string;
   evaluationId?: string;
   entitlementSource: string;
-}): void {
+}): boolean {
   const { userId, evaluationId, entitlementSource } = params;
-  const evalRefId = evaluationId || 'unknown_eval';
-  const refundSource = entitlementSource === 'PROMO'
-    ? 'REFUND_PROMO'
-    : (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY'
-      ? 'REFUND_MONTHLY_FREE'
-      : 'REFUND_PURCHASED_CREDIT');
-  let transactionStarted = false;
+  if (!evaluationId) {
+    console.warn('[StudentCreditService] Refusing to refund an evaluation entitlement without an evaluation ID.');
+    return false;
+  }
 
+  const evalRefId = evaluationId;
+  const normalizedSource = String(entitlementSource || '').trim().toUpperCase();
+  const isPromo = normalizedSource === 'PROMO';
+  const isMonthlyFree = normalizedSource === 'PERSONAL_FREE' || normalizedSource === 'FREE_MONTHLY';
+  const isPurchased = normalizedSource === 'PERSONAL_PURCHASED_CREDIT' || normalizedSource === 'PAID_CREDIT';
+  if (!isPromo && !isMonthlyFree && !isPurchased) return false;
+
+  const refundSource = isPromo
+    ? 'REFUND_PROMO'
+    : (isMonthlyFree ? 'REFUND_MONTHLY_FREE' : 'REFUND_PURCHASED_CREDIT');
+  const debitSource = isPromo
+    ? 'CONSUMED_PROMO_AI30'
+    : (isMonthlyFree ? 'FREE_MONTHLY_EVALUATION' : 'CONSUMED_EVALUATION');
+
+  let transactionStarted = false;
   try {
     db.exec('BEGIN IMMEDIATE;');
     transactionStarted = true;
 
-    // A background job can be replayed after a crash. With an evaluation ID,
-    // the refund ledger is the idempotency record for that one consumed item.
-    if (evaluationId) {
-      const existingRefund = db.prepare(`
-        SELECT id FROM credit_ledger
-        WHERE student_id = ? AND evaluation_id = ? AND source = ?
-        LIMIT 1
-      `).get(userId, evalRefId, refundSource);
-      if (existingRefund) {
-        db.exec('COMMIT;');
-        transactionStarted = false;
-        return;
-      }
+    // A refund is valid only for a real negative debit attached to this exact
+    // evaluation. This protects document rejections before acceptance, failed
+    // requests that never consumed a credit, and malformed retry callbacks.
+    const existingRefund = db.prepare(`
+      SELECT id FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ? AND source = ?
+      LIMIT 1
+    `).get(userId, evalRefId, refundSource);
+    if (existingRefund) {
+      db.exec('COMMIT;');
+      transactionStarted = false;
+      if (isMonthlyFree) ensureMonthlyFreeEvaluationsReset(userId);
+      else if (isPurchased) getValidStudentCreditBalance(userId);
+      syncStudentCreditsToFirestore(userId).catch(() => {});
+      return true;
     }
 
-    if (entitlementSource === 'PROMO') {
+    const debit = db.prepare(`
+      SELECT id, note, created_at FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ? AND source = ? AND amount < 0
+      ORDER BY rowid DESC
+      LIMIT 1
+    `).get(userId, evalRefId, debitSource) as { id: string; note?: string; created_at?: string } | undefined;
+    if (!debit) {
+      db.exec('COMMIT;');
+      transactionStarted = false;
+      return false;
+    }
+
+    if (isPromo) {
       const redemption = db.prepare(`
         SELECT id, referral_code, max_evaluations, evaluations_used, evaluations_remaining
         FROM referral_redemptions
@@ -1121,91 +1147,100 @@ export function refundEvaluationCreditAtomic(params: {
         ORDER BY updated_at DESC LIMIT 1
       `).get(userId) as any;
 
-      if (redemption) {
-        const newUsed = Math.max(0, (redemption.evaluations_used ?? 1) - 1);
-        const newRemaining = (redemption.evaluations_remaining ?? 0) + 1;
-        db.prepare(`
-          UPDATE referral_redemptions
-          SET evaluations_used = ?,
-              evaluations_remaining = ?,
-              status = 'ACTIVE',
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(newUsed, newRemaining, redemption.id);
-
-        const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
-        db.prepare(`
-          INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
-          VALUES (?, ?, 1, 'REFUND_PROMO', ?, ?, 'Restored 1 promotional evaluation due to evaluation processing failure')
-        `).run(ledgerId, userId, newRemaining, evalRefId);
-
-        db.exec('COMMIT;');
-        transactionStarted = false;
-
-        const updatedRow = db.prepare('SELECT * FROM referral_redemptions WHERE id = ?').get(redemption.id) as any;
-        if (updatedRow) {
-          syncRecordToFirestore('referral_redemptions', redemption.id, updatedRow).catch(() => {});
-        }
-        syncStudentCreditsToFirestore(userId).catch(() => {});
-        return;
+      if (!redemption) {
+        throw new Error(`Cannot restore promotional entitlement for ${evalRefId}: redemption record is missing.`);
       }
-    } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'FREE_MONTHLY') {
-      db.prepare(`
-        UPDATE student_profiles
-        SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,
-            free_evaluations_used = CASE WHEN free_evaluations_used > 0 THEN free_evaluations_used - 1 ELSE 0 END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-      `).run(userId);
 
-      const status = ensureMonthlyFreeEvaluationsReset(userId);
+      const maxEvaluations = Math.max(0, Number(redemption.max_evaluations) || 0);
+      const newUsed = Math.max(0, (Number(redemption.evaluations_used) || 0) - 1);
+      const newRemaining = Math.min(
+        maxEvaluations || Number.MAX_SAFE_INTEGER,
+        Math.max(0, Number(redemption.evaluations_remaining) || 0) + 1,
+      );
+      db.prepare(`
+        UPDATE referral_redemptions
+        SET evaluations_used = ?,
+            evaluations_remaining = ?,
+            status = 'ACTIVE',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(newUsed, newRemaining, redemption.id);
+
+      const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+        VALUES (?, ?, 1, 'REFUND_PROMO', ?, ?, 'Restored 1 promotional evaluation due to evaluation processing failure')
+      `).run(ledgerId, userId, newRemaining, evalRefId);
+    } else if (isMonthlyFree) {
+      // Update the profile counters and write the positive ledger entry in the
+      // same transaction. Do NOT call ensureMonthlyFreeEvaluationsReset here:
+      // it reconciles against the ledger before this refund entry exists and
+      // would immediately count the just-refunded debit again.
+      const profileBefore = db.prepare(`
+        SELECT monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month
+        FROM student_profiles WHERE user_id = ?
+      `).get(userId) as {
+        monthly_free_evaluations_used: number;
+        monthly_free_evaluations_limit: number;
+        free_evaluation_reset_month?: string | null;
+      } | undefined;
+      if (!profileBefore) {
+        throw new Error(`Cannot restore monthly free entitlement for ${evalRefId}: student profile is missing.`);
+      }
+
+      // A free evaluation belongs to the month in which its debit was recorded.
+      // Never reduce the current month's counter when refunding a failed attempt
+      // from an earlier month after the student's quota has already reset.
+      const debitMonth = String(debit.created_at || '').slice(0, 7);
+      const currentMonth = getCurrentServerMonth();
+      const debitBelongsToCurrentMonth =
+        debitMonth === currentMonth &&
+        String(profileBefore.free_evaluation_reset_month || '') === currentMonth;
+
+      if (debitBelongsToCurrentMonth) {
+        db.prepare(`
+          UPDATE student_profiles
+          SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,
+              free_evaluations_used = CASE WHEN free_evaluations_used > 0 THEN free_evaluations_used - 1 ELSE 0 END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+        `).run(userId);
+      }
+
+      const profileAfter = db.prepare(`
+        SELECT monthly_free_evaluations_used, monthly_free_evaluations_limit
+        FROM student_profiles WHERE user_id = ?
+      `).get(userId) as { monthly_free_evaluations_used: number; monthly_free_evaluations_limit: number };
+      const used = Math.max(0, Number(profileAfter.monthly_free_evaluations_used) || 0);
+      const limit = Math.max(0, Number(profileAfter.monthly_free_evaluations_limit) || 0);
+      const freeRemaining = Math.max(0, limit - used);
+
       const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
         INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
         VALUES (?, ?, 1, 'REFUND_MONTHLY_FREE', ?, ?, 'Restored 1 monthly free evaluation due to evaluation processing failure')
-      `).run(ledgerId, userId, status.freeEvaluationsRemaining, evalRefId);
-    } else if (entitlementSource === 'PERSONAL_PURCHASED_CREDIT' || entitlementSource === 'PAID_CREDIT') {
-      const ledgerEntry = db.prepare(`
-        SELECT note FROM credit_ledger
-        WHERE student_id = ? AND evaluation_id = ? AND source = 'CONSUMED_EVALUATION'
-        ORDER BY created_at DESC LIMIT 1
-      `).get(userId, evalRefId) as { note: string } | undefined;
-
-      let lotIdToRefund: string | null = null;
-      if (ledgerEntry && ledgerEntry.note) {
-        const match = ledgerEntry.note.match(/Lot (crd_[a-zA-Z0-9]+)/);
-        if (match) lotIdToRefund = match[1];
+      `).run(ledgerId, userId, freeRemaining, evalRefId);
+    } else {
+      // Restore the exact FEFO lot originally debited. Never credit a different
+      // or newest lot as a fallback if the debit-to-lot link is unavailable.
+      const match = String(debit.note || '').match(/Lot (crd_[a-zA-Z0-9]+)/);
+      const lotIdToRefund = match?.[1];
+      if (!lotIdToRefund) {
+        throw new Error(`Cannot restore purchased credit for ${evalRefId}: consumed credit lot ID is missing from its ledger entry.`);
       }
 
-      if (lotIdToRefund) {
-        db.prepare(`
-          UPDATE student_credit_purchases
-          SET credits_remaining = credits_remaining + 1,
-              status = 'ACTIVE',
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ? AND user_id = ?
-        `).run(lotIdToRefund, userId);
-      } else {
-        db.prepare(`
-          UPDATE student_credit_purchases
-          SET credits_remaining = credits_remaining + 1,
-              status = 'ACTIVE',
-              updated_at = CURRENT_TIMESTAMP
-          WHERE user_id = ? AND id = (
-            SELECT id FROM student_credit_purchases WHERE user_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1
-          )
-        `).run(userId, userId);
+      const lotUpdate = db.prepare(`
+        UPDATE student_credit_purchases
+        SET credits_remaining = credits_remaining + 1,
+            status = 'ACTIVE',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+      `).run(lotIdToRefund, userId);
+      if (Number(lotUpdate.changes || 0) !== 1) {
+        throw new Error(`Cannot restore purchased credit for ${evalRefId}: original credit lot ${lotIdToRefund} was not found.`);
       }
 
       const totalRemaining = getValidStudentCreditBalance(userId);
-      db.prepare(`
-        UPDATE student_profiles
-        SET purchased_credits = ?,
-            paid_credits = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-      `).run(totalRemaining, totalRemaining, userId);
-
       const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
         INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
@@ -1215,14 +1250,22 @@ export function refundEvaluationCreditAtomic(params: {
 
     db.exec('COMMIT;');
     transactionStarted = false;
+
+    // Reconcile monthly quota only after both the debit and refund ledger rows
+    // are committed. The current evaluation then resolves to zero net usage.
+    if (isMonthlyFree) {
+      ensureMonthlyFreeEvaluationsReset(userId);
+    }
     syncStudentCreditsToFirestore(userId).catch(() => {});
+    return true;
   } catch (err) {
     if (transactionStarted) {
       try { db.exec('ROLLBACK;'); } catch (rollbackErr) {
         console.warn(`[StudentCreditService] Rollback error refunding credit for user ${userId}:`, rollbackErr);
       }
     }
-    console.warn(`[StudentCreditService] Error refunding credit for user ${userId}:`, err);
+    console.warn(`[StudentCreditService] Error refunding credit for user ${userId}, evaluation ${evalRefId}:`, err);
+    throw err;
   }
 }
 

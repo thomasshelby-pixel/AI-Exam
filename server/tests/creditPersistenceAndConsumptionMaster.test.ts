@@ -75,8 +75,48 @@ async function runMasterCreditSuite() {
   let profile = db.prepare('SELECT purchased_credits, paid_credits FROM student_profiles WHERE user_id = ?').get(testStudentId) as any;
   assert(profile.purchased_credits === 10 && profile.paid_credits === 10, 'student_profiles reflects 10 credits');
 
-  // 3. Exhaust monthly free evaluations first to test paid credit consumption
-  console.log('\n--- 3. Consuming 2 Monthly Free Evaluations ---');
+  // 3. Failed free evaluations must return their monthly entitlement exactly once.
+  console.log('\n--- 3. Verifying Two Failed Free Evaluations Restore Both Quota Slots ---');
+  const failedFreeEval1 = 'eval_failed_free_refund_1';
+  const failedFreeDebit1 = consumeEvaluationEntitlementAtomic({ userId: testStudentId, evaluationId: failedFreeEval1 });
+  assert(failedFreeDebit1.source === 'PERSONAL_FREE', 'First failed evaluation reserves a monthly free evaluation');
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(testStudentId) as any).monthly_free_evaluations_used) === 1,
+    'Monthly free usage is 1 while the first evaluation is processing'
+  );
+  assert(
+    refundEvaluationCreditAtomic({ userId: testStudentId, evaluationId: failedFreeEval1, entitlementSource: 'PERSONAL_FREE' }) === true,
+    'First failed evaluation restores its monthly free entitlement'
+  );
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(testStudentId) as any).monthly_free_evaluations_used) === 0,
+    'Monthly free usage returns to 0 immediately after the refund'
+  );
+  assert(getStudentCreditDetailedSummary(testStudentId).freeEvaluationsRemaining === 2,
+    'Both monthly free evaluations are available after the first failed evaluation');
+
+  const failedFreeEval2 = 'eval_failed_free_refund_2';
+  const failedFreeDebit2 = consumeEvaluationEntitlementAtomic({ userId: testStudentId, evaluationId: failedFreeEval2 });
+  assert(failedFreeDebit2.source === 'PERSONAL_FREE', 'Second failed evaluation also reserves a monthly free evaluation');
+  assert(
+    refundEvaluationCreditAtomic({ userId: testStudentId, evaluationId: failedFreeEval2, entitlementSource: 'PERSONAL_FREE' }) === true,
+    'Second failed evaluation restores its monthly free entitlement'
+  );
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(testStudentId) as any).monthly_free_evaluations_used) === 0,
+    'Monthly free usage remains 0 after both evaluations fail'
+  );
+  assert(getStudentCreditDetailedSummary(testStudentId).freeEvaluationsRemaining === 2,
+    'Two failed evaluations do not exhaust or reduce the monthly free quota');
+  assert(
+    refundEvaluationCreditAtomic({ userId: testStudentId, evaluationId: failedFreeEval2, entitlementSource: 'PERSONAL_FREE' }) === true,
+    'Repeating the same failed-evaluation refund is treated as already settled'
+  );
+  assert(getStudentCreditDetailedSummary(testStudentId).freeEvaluationsRemaining === 2,
+    'Repeated refund does not create a third free evaluation');
+
+  // 4. Exhaust monthly free evaluations first to test paid credit consumption
+  console.log('\n--- 4. Consuming 2 Monthly Free Evaluations ---');
   const free1 = consumeEvaluationEntitlementAtomic({ userId: testStudentId, evaluationId: 'eval_free_1' });
   assert(free1.source === 'PERSONAL_FREE' && free1.freeRemaining === 1, 'First evaluation consumes monthly free quota (1 remaining)');
 
@@ -86,7 +126,7 @@ async function runMasterCreditSuite() {
   balance = getValidStudentCreditBalance(testStudentId);
   assert(balance === 10, 'Paid credits remained untouched at 10 during free quota consumption');
 
-  // 4. Consume 1 Paid Credit: 10 -> 9
+  // 5. Consume 1 Paid Credit: 10 -> 9
   console.log('\n--- 4. Consuming 1 Paid Credit (10 -> 9) ---');
   const evalId1 = `eval_paid_001_${crypto.randomBytes(4).toString('hex')}`;
   const consumePaid1 = consumeEvaluationEntitlementAtomic({ userId: testStudentId, evaluationId: evalId1 });
@@ -107,7 +147,7 @@ async function runMasterCreditSuite() {
   assert(ledgerEntries.length === 1 && ledgerEntries[0].amount === -1, 'credit_ledger recorded exactly 1 debit of -1');
   assert(ledgerEntries[0].balance_after === 9, 'credit_ledger records balance_after as 9');
 
-  // 5. Idempotency Check: Retrying the exact same evaluation does NOT deduct again
+  // 6. Idempotency Check: Retrying the exact same evaluation does NOT deduct again
   console.log('\n--- 5. Idempotency Guard on Network Retry / Remount ---');
   const retryResult = consumeEvaluationEntitlementAtomic({ userId: testStudentId, evaluationId: evalId1 });
   assert(retryResult.paidCredits === 9, 'Retry returns 9 without duplicate deduction');
@@ -115,7 +155,7 @@ async function runMasterCreditSuite() {
   balance = getValidStudentCreditBalance(testStudentId);
   assert(balance === 9, 'Balance remains strictly 9 after retry');
 
-  // 6. Simulated Deployment / Container Restart Hydration
+  // 7. Simulated Deployment / Container Restart Hydration
   console.log('\n--- 6. Simulating Fresh Deployment / Container Restart Hydration ---');
   // Run hydration from Firestore (which connects to the real Firestore db)
   try {
@@ -136,7 +176,7 @@ async function runMasterCreditSuite() {
   profile = db.prepare('SELECT purchased_credits, paid_credits FROM student_profiles WHERE user_id = ?').get(testStudentId) as any;
   assert(profile.purchased_credits === 9, 'student_profiles.purchased_credits remains 9 after reconciliation');
 
-  // 7. Consume Remaining Credits Down to 0
+  // 8. Consume Remaining Credits Down to 0
   console.log('\n--- 7. Consuming Remaining 9 Credits Down to 0 ---');
   for (let i = 1; i <= 9; i++) {
     const eid = `eval_batch_${i}_${crypto.randomBytes(4).toString('hex')}`;
@@ -150,7 +190,7 @@ async function runMasterCreditSuite() {
   const lotFinished = db.prepare('SELECT credits_remaining, status FROM student_credit_purchases WHERE id = ?').get(purchaseLot.lotId) as any;
   assert(lotFinished.credits_remaining === 0 && lotFinished.status === 'CONSUMED', 'Lot has credits_remaining = 0 and status = CONSUMED');
 
-  // 8. Durability of 0 Balance Across Restarts & Reconciliations
+  // 9. Durability of 0 Balance Across Restarts & Reconciliations
   console.log('\n--- 8. Verifying 0 Balance Durability Across Restarts (Never Resets to 10) ---');
   try {
     await hydrateFromFirestore({ requireComplete: false });
@@ -163,7 +203,7 @@ async function runMasterCreditSuite() {
   profile = db.prepare('SELECT purchased_credits, paid_credits FROM student_profiles WHERE user_id = ?').get(testStudentId) as any;
   assert(profile.purchased_credits === 0 && profile.paid_credits === 0, 'student_profiles remains 0 after restart');
 
-  // 9. Rejection on Insufficient Credits
+  // 10. Rejection on Insufficient Credits
   console.log('\n--- 9. Verifying Rejection when Balance is 0 ---');
   let thrown = false;
   try {
@@ -177,7 +217,7 @@ async function runMasterCreditSuite() {
   }
   assert(thrown, 'Attempting evaluation with 0 credits fails as expected');
 
-  // 10. Refund Processing
+  // 11. Refund Processing
   console.log('\n--- 10. Verifying Evaluation Processing Failure Refund ---');
   // First grant 1 new credit
   recordCreditPurchase({
@@ -193,12 +233,91 @@ async function runMasterCreditSuite() {
   assert(getValidStudentCreditBalance(testStudentId) === 0, 'Balance is 0 after consumption');
 
   // Now trigger atomic refund due to background processing failure
-  refundEvaluationCreditAtomic({
-    userId: testStudentId,
-    evaluationId: refundEvalId,
-    entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-  });
+  assert(
+    refundEvaluationCreditAtomic({
+      userId: testStudentId,
+      evaluationId: refundEvalId,
+      entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+    }) === true,
+    'Failed paid-credit evaluation restores its original purchased lot'
+  );
   assert(getValidStudentCreditBalance(testStudentId) === 1, 'Balance is restored to 1 after refund');
+  assert(
+    refundEvaluationCreditAtomic({
+      userId: testStudentId,
+      evaluationId: refundEvalId,
+      entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+    }) === true,
+    'Repeated refund for the same evaluation is idempotent'
+  );
+  assert(getValidStudentCreditBalance(testStudentId) === 1, 'Repeated paid-credit refund does not increase balance beyond 1');
+
+  // A terminal rejection without a matching debit must never mint a credit.
+  assert(
+    refundEvaluationCreditAtomic({
+      userId: testStudentId,
+      evaluationId: 'eval_without_credit_debit',
+      entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+    }) === false,
+    'Evaluation with no matching credit debit is not refunded'
+  );
+  assert(getValidStudentCreditBalance(testStudentId) === 1, 'No-debit refund attempt leaves paid-credit balance unchanged');
+
+  // Prior-month failures must not reduce free evaluations already used successfully
+  // in the current month. Use a separate student so later tests remain isolated.
+  console.log('\n--- Verifying Prior-Month Refund Does Not Reduce Current-Month Usage ---');
+  const monthTestStudentId = `usr_test_month_refund_${crypto.randomBytes(6).toString('hex')}`;
+  const monthTestEmail = `test_month_refund_${crypto.randomBytes(4).toString('hex')}@example.com`;
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status)
+    VALUES (?, ?, 'hash', 'Month Refund Test Student', 'STUDENT', 'ACTIVE')
+  `).run(monthTestStudentId, monthTestEmail);
+  db.prepare(`
+    INSERT INTO student_profiles (
+      user_id, icai_registration_number, ca_level,
+      free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+      purchased_credits, paid_credits
+    ) VALUES (?, 'WRO1234568', 'INTERMEDIATE', 0, 0, 2, 0, 0)
+  `).run(monthTestStudentId);
+
+  const currentMonthEval = 'eval_current_month_kept';
+  assert(
+    consumeEvaluationEntitlementAtomic({ userId: monthTestStudentId, evaluationId: currentMonthEval }).source === 'PERSONAL_FREE',
+    'Successful current-month evaluation consumes one free slot'
+  );
+  const previousMonthFailedEval = 'eval_previous_month_failed';
+  assert(
+    consumeEvaluationEntitlementAtomic({ userId: monthTestStudentId, evaluationId: previousMonthFailedEval }).source === 'PERSONAL_FREE',
+    'Failed evaluation originally consumes a free slot'
+  );
+  const previousMonth = new Date();
+  previousMonth.setDate(1);
+  previousMonth.setMonth(previousMonth.getMonth() - 1);
+  db.prepare(`
+    UPDATE credit_ledger
+    SET created_at = ?
+    WHERE student_id = ? AND evaluation_id = ? AND source = 'FREE_MONTHLY_EVALUATION'
+  `).run(previousMonth.toISOString(), monthTestStudentId, previousMonthFailedEval);
+
+  ensureMonthlyFreeEvaluationsReset(monthTestStudentId);
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(monthTestStudentId) as any).monthly_free_evaluations_used) === 1,
+    'Monthly reset retains the one successful evaluation from the current month'
+  );
+  assert(
+    refundEvaluationCreditAtomic({ userId: monthTestStudentId, evaluationId: previousMonthFailedEval, entitlementSource: 'PERSONAL_FREE' }) === true,
+    'Prior-month failed evaluation refund is recorded'
+  );
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(monthTestStudentId) as any).monthly_free_evaluations_used) === 1,
+    'Prior-month refund does not reduce current-month successful usage'
+  );
+  assert(getStudentCreditDetailedSummary(monthTestStudentId).freeEvaluationsRemaining === 1,
+    'Only the unused current-month free slot remains');
+
+  db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(monthTestStudentId);
+  db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(monthTestStudentId);
+  db.prepare('DELETE FROM users WHERE id = ?').run(monthTestStudentId);
 
   // Clean up test data
   console.log('\n--- Cleaning up test records ---');
