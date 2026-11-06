@@ -109,7 +109,7 @@ async function run() {
     const refundCountBeforeRepeat = db.prepare(`
       SELECT COUNT(*) AS count FROM credit_ledger
       WHERE student_id = ? AND evaluation_id = ? AND source = 'REFUND_MONTHLY_FREE'
-    `).get(studentId, reviewEvaluationId) as any;
+    `).get(legacyStudentId, reviewEvaluationId) as any;
     assert.equal(Number(refundCountBeforeRepeat.count), 1, 'Exactly one refund ledger entry exists for NEEDS_REVIEW');
 
     const secondResponse = await request();
@@ -122,7 +122,7 @@ async function run() {
     const refundCountAfterRepeat = db.prepare(`
       SELECT COUNT(*) AS count FROM credit_ledger
       WHERE student_id = ? AND evaluation_id = ? AND source = 'REFUND_MONTHLY_FREE'
-    `).get(studentId, reviewEvaluationId) as any;
+    `).get(legacyStudentId, reviewEvaluationId) as any;
     assert.equal(Number(refundCountAfterRepeat.count), 1, 'Repeated reconciliation remains idempotent');
 
     const detailResponse = await fetch(`${baseUrl}/api/admin/students/${studentId}`, {
