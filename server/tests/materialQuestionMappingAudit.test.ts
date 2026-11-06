@@ -105,7 +105,7 @@ assert.ok(unreadable.diagnostics.some((message) => message.includes('could not b
 
 const missingMarkingScheme = buildMaterialQuestionMappingAudit({
   questionPaperText: questionPaper,
-  suggestedAnswers,
+  suggestedAnswersText: suggestedAnswers,
   markingSchemeText: 'General marking principles: award marks for relevant steps and explanations.',
 });
 assert.equal(missingMarkingScheme.status, 'PARTIAL');
