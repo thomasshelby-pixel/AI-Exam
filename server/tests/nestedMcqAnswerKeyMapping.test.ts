@@ -80,7 +80,7 @@ const questionPaperText = [
   '4. Which standalone objective answer is correct?',
   'Division B',
   '1. (a) Descriptive question text must not be included in an MCQ stem.',
-].join('\\n');
+].join('\n');
 const paperWithQuestionStems = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
   subjectName: 'Advanced Accounting',
