@@ -18,7 +18,7 @@ import {
 } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile, deletePersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
-import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
+import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction, setFirestoreDoc } from './firestoreDbService.js';
 import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
@@ -265,6 +265,23 @@ export function updateEvaluationProgress(
 
     if (update.changes !== 1 && isTerminalEvaluationStatus(getEvaluationStatus(evaluationId))) {
       throw new Error(`TERMINAL_EVALUATION_STATE_PRESERVED:${getEvaluationStatus(evaluationId)}`);
+    }
+
+    // Keep a compact Firestore queue status snapshot for student polling routed
+    // to a different App Hosting instance with a stale SQLite cache.
+    if (update.changes === 1 && process.env.NODE_ENV === 'production') {
+      const safePercentage = Math.min(100, Math.max(0, Math.round(percentage)));
+      void setFirestoreDoc(DURABLE_EVALUATION_QUEUE_COLLECTION, evaluationId, {
+        evaluationStatus: status,
+        progressStage: stage,
+        progressPercentage: safePercentage,
+        progressMessage: String(message || '').slice(0, 500),
+        evaluationProgressUpdatedAt: new Date().toISOString(),
+      }).then((saved) => {
+        if (!saved) console.warn(`[AsyncEval] Could not publish live progress snapshot for ${evaluationId}.`);
+      }).catch((error) => {
+        console.warn(`[AsyncEval] Could not publish live progress snapshot for ${evaluationId}:`, error);
+      });
     }
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('TERMINAL_EVALUATION_STATE_PRESERVED:')) throw err;
@@ -1481,14 +1498,32 @@ async function claimDurableEvaluationJob(evaluationId: string): Promise<
 function getDurableEvaluationFinalQueueStatus(evaluationId: string): {
   queueStatus: 'COMPLETED' | 'NEEDS_REVIEW' | 'FAILED' | 'QUEUED';
   evaluationStatus: string;
+  progressStage: string;
+  progressPercentage: number;
+  progressMessage: string;
 } {
-  const evaluationStatus = getEvaluationStatus(evaluationId);
-  if (evaluationStatus === 'COMPLETED') return { queueStatus: 'COMPLETED', evaluationStatus };
-  if (evaluationStatus === 'NEEDS_REVIEW') return { queueStatus: 'NEEDS_REVIEW', evaluationStatus };
+  const row = db.prepare(`
+    SELECT status, progress_stage, progress_percentage, progress_message
+    FROM evaluations WHERE id = ?
+  `).get(evaluationId) as {
+    status?: string;
+    progress_stage?: string;
+    progress_percentage?: number;
+    progress_message?: string;
+  } | undefined;
+  const evaluationStatus = String(row?.status || '').toUpperCase();
+  if (evaluationStatus === 'COMPLETED') return { queueStatus: 'COMPLETED', evaluationStatus, progressStage: String(row?.progress_stage || 'COMPLETED'), progressPercentage: Number(row?.progress_percentage || 100), progressMessage: String(row?.progress_message || 'Evaluation completed.') };
+  if (evaluationStatus === 'NEEDS_REVIEW') return { queueStatus: 'NEEDS_REVIEW', evaluationStatus, progressStage: String(row?.progress_stage || 'NEEDS_REVIEW'), progressPercentage: Number(row?.progress_percentage || 100), progressMessage: String(row?.progress_message || 'Evaluation preserved for review.') };
   if (['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(evaluationStatus)) {
-    return { queueStatus: 'FAILED', evaluationStatus };
+    return { queueStatus: 'FAILED', evaluationStatus, progressStage: String(row?.progress_stage || 'FAILED'), progressPercentage: Number(row?.progress_percentage || 100), progressMessage: String(row?.progress_message || 'Evaluation failed.') };
   }
-  return { queueStatus: 'QUEUED', evaluationStatus: evaluationStatus || 'UNKNOWN' };
+  return {
+    queueStatus: 'QUEUED',
+    evaluationStatus: evaluationStatus || 'UNKNOWN',
+    progressStage: String(row?.progress_stage || 'QUEUED'),
+    progressPercentage: Number(row?.progress_percentage || 5),
+    progressMessage: String(row?.progress_message || 'Evaluation is queued.'),
+  };
 }
 
 async function markDurableQueueFinished(
@@ -1500,6 +1535,9 @@ async function markDurableQueueFinished(
   const leaseUpdated = await updateDurableQueueLease(evaluationId, workerId, {
     status: finalStatus.queueStatus,
     evaluationStatus: finalStatus.evaluationStatus,
+    progressStage: finalStatus.progressStage,
+    progressPercentage: finalStatus.progressPercentage,
+    progressMessage: finalStatus.progressMessage,
     finishedAt: finalStatus.queueStatus === 'QUEUED' ? null : new Date().toISOString(),
     workerId: null,
     heartbeatAt: null,
@@ -1577,6 +1615,10 @@ async function setQueueRecordTerminal(evaluationId: string, status: 'FAILED' | '
     if (!snapshot.exists) return;
     transaction.set(DURABLE_EVALUATION_QUEUE_COLLECTION, evaluationId, {
       status,
+      evaluationStatus: status,
+      progressStage: status,
+      progressPercentage: 100,
+      progressMessage: lastError || (status === 'COMPLETED' ? 'Evaluation completed.' : status === 'NEEDS_REVIEW' ? 'Evaluation preserved for review.' : 'Evaluation failed.'),
       workerId: null,
       heartbeatAt: null,
       leaseExpiresAt: null,
