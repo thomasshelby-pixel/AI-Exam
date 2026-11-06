@@ -378,7 +378,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const seen = new Set<string>();
 
   // Regex 1: Explicit question indicators: "QUESTION 4(b) – 3 MARKS", "Q4(b) [3 Marks]", "Question 6(a)(2) - 3 Marks"
-  const regex1 = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\))?\s*(?:[-–—:]|\b|is|\.)\s*(?:(?:for|carrying)?\s*)?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  const regex1 = /\b(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\))?\s*(?:[-–—:]|\b|is|\.)\s*(?:(?:for|carrying)?\s*)?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
   let match: RegExpExecArray | null;
   while ((match = regex1.exec(text)) !== null) {
     const qNum = match[1];
