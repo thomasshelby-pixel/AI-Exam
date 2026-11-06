@@ -197,7 +197,7 @@ async function persistDurableEvaluationQueueRecord(
     lastError: null,
   };
 
-  return await runFirestoreTransaction(async (transaction) => {
+  const persisted = await runFirestoreTransaction(async (transaction) => {
     const existingSnapshot = await transaction.get(DURABLE_QUEUE_COLLECTION, job.evaluationId);
     const existing = existingSnapshot.data() || {};
     if (existingSnapshot.exists) {
@@ -214,6 +214,25 @@ async function persistDurableEvaluationQueueRecord(
     transaction.set(DURABLE_QUEUE_COLLECTION, job.evaluationId, record as any);
     return true;
   });
+
+  if (persisted === true) return true;
+  if (persisted === false) {
+    // A false result means a duplicate active job only after confirming the
+    // authoritative document. A transaction timeout also returns a falsey
+    // fallback in the Firestore adapter and must never be acknowledged as queued.
+    const existing = await getFirestoreDoc<DurableEvaluationQueueRecord>(
+      DURABLE_QUEUE_COLLECTION,
+      job.evaluationId,
+      { failOnError: true },
+    );
+    const status = String(existing?.status || '').toUpperCase();
+    const leaseUntil = Date.parse(String(existing?.leaseExpiresAt || ''));
+    if (status === 'QUEUED' || (status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now())) {
+      return false;
+    }
+  }
+
+  throw new Error('EVALUATION_QUEUE_PERSISTENCE_UNCONFIRMED: Firestore did not confirm that the durable evaluation job was saved. Please retry; the evaluation has not been started.');
 }
 
 async function claimDurableEvaluationQueueRecord(evaluationId: string): Promise<DurableEvaluationQueueRecord | null> {
@@ -281,6 +300,10 @@ async function finishDurableEvaluationQueueRecord(
 ): Promise<void> {
   await updateDurableEvaluationQueueRecord(evaluationId, {
     status,
+    // The job snapshot is no longer needed once its evaluation reaches a
+    // terminal state. Drop large QP/SA/MS text from Firestore to control storage.
+    payload: {},
+    sourceUploadFileId: null,
     leaseOwner: null,
     leaseExpiresAt: null,
     nextAttemptAt: null,
