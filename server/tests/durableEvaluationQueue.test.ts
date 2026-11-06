@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  canSafelyReplayDurableQueueRecord,
   isDurableQueueLeaseExpired,
   serializeEvaluationJobForDurableQueue,
 } from '../services/asyncEvaluationService.js';
@@ -68,6 +69,36 @@ assert.equal(
   isDurableQueueLeaseExpired({ status: 'COMPLETED' }, now),
   false,
   'Terminal jobs are not claimable'
+);
+assert.equal(
+  canSafelyReplayDurableQueueRecord({
+    status: 'RUNNING',
+    leaseExpiresAt: new Date(now - 1_000).toISOString(),
+    executionStartedAt: null,
+    attemptCount: 1,
+  }, now),
+  true,
+  'A stale worker that had not entered the AI pipeline can be safely resumed'
+);
+assert.equal(
+  canSafelyReplayDurableQueueRecord({
+    status: 'RUNNING',
+    leaseExpiresAt: new Date(now - 1_000).toISOString(),
+    executionStartedAt: new Date(now - 10_000).toISOString(),
+    attemptCount: 1,
+  }, now),
+  false,
+  'A stale worker that already entered the AI pipeline is not replayed to avoid duplicate Gemini charges'
+);
+assert.equal(
+  canSafelyReplayDurableQueueRecord({
+    status: 'RUNNING',
+    leaseExpiresAt: new Date(now - 1_000).toISOString(),
+    executionStartedAt: null,
+    attemptCount: 3,
+  }, now),
+  false,
+  'A job that exhausted safe pre-execution retries is not retried again'
 );
 
 console.log('Durable evaluation queue lease and payload tests passed.');
