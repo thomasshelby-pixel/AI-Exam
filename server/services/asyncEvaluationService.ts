@@ -1270,6 +1270,7 @@ interface DurableEvaluationQueueRecord {
   workerId?: string | null;
   heartbeatAt?: string | null;
   leaseExpiresAt?: string | null;
+  executionStartedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   lastError?: string | null;
@@ -1426,12 +1427,23 @@ async function claimDurableEvaluationJob(evaluationId: string): Promise<
 
     const attempts = Number(current.attemptCount || 0);
     const normalizedRecord = { ...current, evaluationId } as DurableEvaluationQueueRecord;
-    if (attempts >= DURABLE_QUEUE_MAX_ATTEMPTS) {
+
+    // Once the AI pipeline has started, replaying after a lost lease could incur
+    // duplicate Gemini calls. Fail/refund exactly once instead of auto-restarting it.
+    const workerDiedAfterExecutionStarted =
+      status === 'RUNNING' &&
+      isDurableQueueLeaseExpired(current, Date.now()) &&
+      Boolean(current.executionStartedAt);
+    if (workerDiedAfterExecutionStarted || attempts >= DURABLE_QUEUE_MAX_ATTEMPTS) {
+      const lastError = workerDiedAfterExecutionStarted
+        ? 'The worker lease expired after the AI evaluation pipeline had started. Automatic replay was blocked to prevent duplicate AI charges; the evaluation was failed and its exact entitlement will be restored.'
+        : `The evaluation worker lease expired ${attempts} times before execution started. Automatic retries stopped.`;
       transaction.set(DURABLE_EVALUATION_QUEUE_COLLECTION, evaluationId, {
         status: 'FAILED',
         workerId: durableQueueWorkerId,
-        lastError: `The evaluation worker lease expired ${attempts} times. Automatic retries stopped to prevent duplicate evaluation charges.`,
+        lastError,
         leaseExpiresAt: null,
+        heartbeatAt: null,
         updatedAt: new Date().toISOString(),
       });
       return { state: 'EXHAUSTED' as const, record: normalizedRecord };
@@ -1639,6 +1651,13 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
         fileBase64: pdfBuf.toString('base64'),
       } as EvaluationJobData;
 
+      const executionClaimed = await updateDurableQueueLease(evaluationId, durableQueueWorkerId, {
+        executionStartedAt: new Date().toISOString(),
+        executionStage: 'AI_PIPELINE_STARTED',
+      });
+      if (!executionClaimed) {
+        throw new Error('The durable worker lease was lost before AI execution started; no Gemini call was launched.');
+      }
       executionStarted = true;
       console.log(`[AsyncEval] Restored durable job ${evaluationId} (attempt ${record.attemptCount}).`);
       await executeEvaluationJob(job);
