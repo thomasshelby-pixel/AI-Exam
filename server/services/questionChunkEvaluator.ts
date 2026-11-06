@@ -240,7 +240,7 @@ export interface ChunkReferenceSourceInstructions {
 
 export type ChunkReferenceSourceIdentity = Pick<
   LockedQuestionReference['referenceTrace'],
-  'sourceType' | 'materialType' | 'mtpSeries' | 'modelTestNumber'
+  'sourceType' | 'materialType' | 'mtpSeries' | 'modelTestNumber' | 'facultyMockTestId'
 >;
 
 /**
@@ -278,11 +278,12 @@ export function buildChunkReferenceSourceInstructions(
   }
 
   if (source.sourceType === 'FACULTY_MOCK') {
+    const facultyMockId = String(source.facultyMockTestId || '').trim() || 'EXACT_SELECTED_MOCK';
     return {
-      questionPaperHeading: 'VERIFIED SELECTED FACULTY MOCK QUESTION PAPER EXTRACT',
-      suggestedAnswersHeading: 'VERIFIED FACULTY MOCK TXT SUGGESTED ANSWER EXTRACT',
-      markingSchemeHeading: 'VERIFIED FACULTY MOCK TXT MARKING SCHEME EXTRACT',
-      isolationInstruction: 'Use only the exact selected Faculty Mock Question Paper and its private TXT reference. Never borrow a global ICAI PYQ/MTP answer, another faculty mock, or another mock number.',
+      questionPaperHeading: `VERIFIED FACULTY MOCK ${facultyMockId} QUESTION PAPER EXTRACT`,
+      suggestedAnswersHeading: `VERIFIED FACULTY MOCK ${facultyMockId} PRIVATE TXT SUGGESTED ANSWER EXTRACT`,
+      markingSchemeHeading: `VERIFIED FACULTY MOCK ${facultyMockId} PRIVATE TXT MARKING SCHEME EXTRACT`,
+      isolationInstruction: `Use only the exact selected Faculty Mock with ID ${facultyMockId} and its private TXT reference. The Question Paper, Suggested Answers and Marking Scheme must all belong to this same mock. Never borrow a global ICAI PYQ/MTP answer, another faculty mock, or another mock number.`,
     };
   }
 
