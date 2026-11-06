@@ -515,11 +515,15 @@ export async function buildAnswerSheetCoverageMap(
       questionId: question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
       maximumMarks: question.maximumMarks,
       isMcq: question.isMcq,
+      questionText: question.questionText || null,
+      suggestedAnswerAnchor: question.suggestedAnswerAnchor || null,
     })),
     mcqs: (paperStructure.mcqs || []).map((question) => ({
       questionId: question.fullQuestionCode || `MCQ${question.questionNumber}`,
       maximumMarks: question.maximumMarks,
       officialKey: question.officialKey || null,
+      questionText: question.questionText || null,
+      suggestedAnswerAnchor: question.suggestedAnswerAnchor || null,
     })),
   });
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
