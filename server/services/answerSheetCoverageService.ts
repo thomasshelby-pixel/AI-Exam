@@ -46,6 +46,45 @@ export interface PageCoverageModelOutput {
   mappingWarnings: string[];
 }
 
+/** Keep nested source labels distinct: Q1(i), Q1(ii), Q1(iii), and Q1(iv)
+ * must not all collapse to the parent number 1. */
+function normalizeMcqSelectionLabel(raw: string): string {
+  const original = String(raw || '').trim();
+  const hasQuestionPrefix = /^Q\.?\s*\d/i.test(original);
+  const value = original
+    .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\.?)\s*/i, '')
+    .replace(/\s+/g, '');
+  const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
+  if (!match) return '';
+  const suffix = match[2] ? '(' + match[2].toLowerCase() + ')' : '';
+  return (hasQuestionPrefix ? 'Q' : '') + match[1] + suffix;
+}
+
+/** Resolve a source-labeled Model Test response to the flattened MCQ index. */
+export function resolveMcqSelectionNumber(
+  rawKey: string,
+  mcqs: AuthoritativePaperStructure['mcqs']
+): string | undefined {
+  const raw = String(rawKey || '').trim();
+  const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,2})$/i) || raw.match(/^(\d{1,2})$/);
+  if (flatMatch) {
+    const flatNumber = flatMatch[1];
+    return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
+      ? flatNumber
+      : undefined;
+  }
+
+  const normalized = normalizeMcqSelectionLabel(raw);
+  if (!normalized) return undefined;
+  const sourceComparable = normalized.replace(/^Q(?=\d)/i, '');
+  const matchingSource = (mcqs || []).find((mcq) =>
+    Boolean(mcq.sourceQuestionLabel) && normalizeMcqSelectionLabel(mcq.sourceQuestionLabel!) === sourceComparable
+  );
+  return matchingSource
+    ? String(matchingSource.questionNumber).replace(/[^0-9]/g, '') || undefined
+    : undefined;
+}
+
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
 export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverageModelOutput {
   let clean = String(rawText || '').trim();
@@ -216,11 +255,11 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     warnings.push('The page auditor returned an invalid MCQ selection list; affected MCQs were left for review.');
   } else {
     for (const [rawQuestionNumber, rawOption] of Object.entries(raw.mcqSelections || {})) {
-      const normalizedNumber = String(rawQuestionNumber).replace(/[^0-9]/g, '');
+      const normalizedNumber = normalizeMcqSelectionLabel(String(rawQuestionNumber));
       const option = typeof rawOption === 'string'
         ? rawOption.trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()\s]/g, '')
         : '';
-      if (!normalizedNumber || !/^[A-D]$/.test(option)) {
+      if (!normalizedNumber || !/^Q?[0-9]{1,2}(?:\([a-z0-9]+\))?$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
         warnings.push('An MCQ selection had an invalid question number or option and was left for review.');
         continue;
       }
@@ -742,7 +781,7 @@ export function buildPageCoveragePrompt(params: {
       const questionText = compactSourceText(m.questionText, 180);
       const answerAnchor = compactSourceText(m.suggestedAnswerAnchor, 120);
       return [
-        `${m.fullQuestionCode} — ${m.maximumMarks} marks`,
+        `${m.fullQuestionCode}${m.sourceQuestionLabel ? ` — source label: ${m.sourceQuestionLabel}` : ''} — ${m.maximumMarks} marks`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
         answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
       ].filter(Boolean).join('\n');
@@ -800,6 +839,10 @@ HANDWRITING AND MAPPING:
   A/B/C/D letters in prose as MCQ attempts. An MCQ selection exists only when this student's page
   visibly shows an objective question identity and a chosen option A, B, C or D for that question.
   If the answer sheet contains no MCQ attempt, return an empty mcqSelections object.
+- Model Test MCQs can be flattened from nested source labels. Use the crosswalk shown beside each
+  MCQ ID: for example, MCQ4 may be source Question 1(iv), while MCQ13 may be standalone Question 4.
+  A student response labelled Q1(iv) or (iv) under Q1 maps to MCQ4, not MCQ1. Return flattened
+  MCQ numbers in mcqSelections. Never collapse several Roman-numeral parts under one parent number.
 - Return every identifiable answer block on a mixed-question page. Keep visible label fields separate
   from authoritativeQuestionCode, which must be one exact ID from the supplied inventory.
 - questionNumber and subQuestion must record only labels visibly written by the student on THIS page.
@@ -944,21 +987,35 @@ async function analyzeSinglePageCoverage(
       }
     }
 
-    // Add MCQ entries
+    // Map both flattened IDs and original nested Model Test labels to canonical MCQs.
     if (raw.mcqSelections && typeof raw.mcqSelections === 'object') {
+      const mappedSelections = new Map<string, string>();
       for (const [mcqKey, opt] of Object.entries(raw.mcqSelections)) {
-        const num = mcqKey.replace(/[^0-9]/g, '');
-        if (!num) continue;
-        const code = `MCQ${num}`;
+        const num = resolveMcqSelectionNumber(mcqKey, paperStructure.mcqs || []);
+        if (!num) {
+          mappingReviewReason = [mappingReviewReason, `MCQ response label \"${mcqKey}\" did not match a source label or flat MCQ ID in the selected paper.`].filter(Boolean).join(' | ');
+          continue;
+        }
+        const choice = String(opt).trim().toUpperCase();
+        const existing = mappedSelections.get(num);
+        if (existing && existing !== choice) {
+          mappedSelections.delete(num);
+          mappingReviewReason = [mappingReviewReason, `Conflicting responses were mapped to MCQ${num}; manual review is required.`].filter(Boolean).join(' | ');
+          continue;
+        }
+        mappedSelections.set(num, choice);
+      }
+      for (const [num, opt] of mappedSelections) {
         detectedQuestions.push({
-          fullQuestionCode: code,
+          fullQuestionCode: `MCQ${num}`,
           questionNumber: num,
           subQuestionNumber: 'MCQ',
           status,
           isContinuation: false,
           pageNumber,
           snippet: `MCQ ${num} selected option: ${opt}`,
-          studentSelectedOption: String(opt).trim().toUpperCase(),
+          studentSelectedOption: opt,
+          isMcq: true,
         });
       }
     }

@@ -32,6 +32,8 @@ export interface PaperStructureSubQuestion {
   questionText?: string;
   /** Compact answer-reference anchor extracted from the selected Suggested Answers. */
   suggestedAnswerAnchor?: string;
+  /** Original label in the source MCQ section, including nested Roman numbering. */
+  sourceQuestionLabel?: string;
   section: 'A' | 'B' | 'GENERAL';
   division?: 'A' | 'B';     // 'A' = MCQs, 'B' = Descriptive
 }
@@ -109,6 +111,24 @@ function attachQuestionSourceContext(
   suggestedAnswersText: string
 ): AuthoritativePaperStructure {
   const attach = (question: PaperStructureSubQuestion): PaperStructureSubQuestion => {
+    if (question.isMcq && question.sourceQuestionLabel) {
+      const objectiveSource = extractObjectiveQuestionPaperBlock(questionPaperText);
+      const sourceLabelMatch = question.sourceQuestionLabel.match(/^(?:QUESTION\s*)?(\d{1,2})(?:\s*\(\s*([a-z0-9]+)\s*\))?$/i);
+      const qpMcqSlice = sourceLabelMatch
+        ? extractLockedQuestionSlice(objectiveSource, sourceLabelMatch[1], sourceLabelMatch[2], 'QP')
+        : undefined;
+      const answerAnchor = [
+        `${question.sourceQuestionLabel}: official option (${question.officialKey || 'UNVERIFIED'})`,
+        question.officialExplanation || '',
+        question.provision ? `Provision: ${question.provision}` : '',
+      ].filter(Boolean).join(' — ');
+      return {
+        ...question,
+        ...(qpMcqSlice?.found && qpMcqSlice.snippet.trim() ? { questionText: qpMcqSlice.snippet.trim() } : {}),
+        ...(question.officialKey ? { suggestedAnswerAnchor: answerAnchor } : {}),
+      };
+    }
+
     const qpSlice = extractLockedQuestionSlice(
       questionPaperText,
       question.questionNumber,
@@ -144,6 +164,20 @@ function attachQuestionSourceContext(
   };
 }
 
+/** Restrict MCQ QP extraction to the objective/Division A block so a later
+ * descriptive question with the same parent number cannot become its stem. */
+function extractObjectiveQuestionPaperBlock(questionPaperText: string): string {
+  const text = String(questionPaperText || '').replace(/\r/g, '');
+  if (!text.trim()) return '';
+  const startRegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)/i;
+  const endRegex = /(?:Division\s*B\b|Descriptive\s*Questions\b|Section\s*B\b)/i;
+  const start = text.search(startRegex);
+  if (start < 0) return '';
+  const tail = text.slice(start);
+  const relativeEnd = tail.slice(1).search(endRegex);
+  return relativeEnd >= 0 ? tail.slice(0, relativeEnd + 1) : tail;
+}
+
 /**
  * Extracts verified MCQ answer keys, explanations, and statutory provisions
  * directly from the authoritative Suggested Answers text stored on the server.
@@ -152,8 +186,9 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   officialKey: string;
   explanation: string;
   provision?: string;
+  sourceQuestionLabel?: string;
 }> {
-  const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
+  const result = new Map<string, { officialKey: string; explanation: string; provision?: string; sourceQuestionLabel?: string }>();
   if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
 
   // Combined-PYQ splitting deliberately duplicates an ambiguous source into
@@ -240,6 +275,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
         officialKey: entry.key,
         explanation,
         provision: provisionMatch?.[0],
+        sourceQuestionLabel: entry.sourceLabel,
       });
     });
     return result;
@@ -260,6 +296,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
         officialKey: rawKey,
         explanation: rawExplanation,
         provision: provisionMatch?.[0],
+        sourceQuestionLabel: `Question ${qNum}`,
       });
     }
   }
@@ -578,6 +615,8 @@ function buildGenericPaperStructure(options: {
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,
+      officialExplanation: data.explanation,
+      sourceQuestionLabel: data.sourceQuestionLabel,
       topic: `Multiple Choice Question ${qNum}`,
       section: parseInt(qNum, 10) > 8 ? 'B' : 'A',
       division: 'A',

@@ -340,7 +340,13 @@ export function extractLockedQuestionSlice(
       if (subQ) {
         startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
       } else {
-        startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\b`, 'i'));
+        // Match standalone numeric QP headings at line start. A word boundary
+        // after a literal period never matches (both '.' and the following
+        // whitespace are non-word characters), which previously dropped Q4.
+        startRegexes.push(new RegExp(
+          `^\\s*(?:(?:QUESTION\\s*(?:NO\\.?)?\\s*|Q\\.?\\s*)${qNum}\\b|${qNum}\\.(?:\\s+|$))`,
+          'i'
+        ));
       }
     }
   }
@@ -420,6 +426,12 @@ export function extractLockedQuestionSlice(
     let line = lines[i];
     const trimmed = line.trim();
     const lower = trimmed.toLowerCase();
+
+    // A Division A Question Paper slice must not absorb Division B descriptive
+    // questions that restart their own numbering sequence.
+    if (docType === 'QP' && /^Division\s+B\b/i.test(trimmed)) {
+      break;
+    }
 
     let isStop = false;
 

@@ -54,6 +54,20 @@ assert.equal(q2d.found, true, 'Q2(d) must resolve under Q2 when its own parent i
 assert.match(q2d.snippet, /Short-term provision/i);
 assert.doesNotMatch(q2d.snippet, /Qualitative characteristics/i);
 
+const standaloneQ4Paper = [
+  'MODEL TEST PAPER 1 QUESTION PAPER',
+  'Division A (30 Marks)',
+  '4. Which standalone objective answer is correct?',
+  '(a) First option',
+  '(b) Second option',
+  'Division B',
+  '1. Descriptive question follows.',
+].join('\n');
+const lockedStandaloneQ4 = extractLockedQuestionSlice(standaloneQ4Paper, '4', undefined, 'QP');
+assert.equal(lockedStandaloneQ4.found, true, 'A standalone numeric QP heading like "4. ..." must be extractable.');
+assert.match(lockedStandaloneQ4.snippet, /standalone objective answer/i);
+assert.doesNotMatch(lockedStandaloneQ4.snippet, /Descriptive question follows/i);
+
 const falseQ6d = extractLockedQuestionSlice(suggestedAnswers, '6', 'd', 'SA');
 assert.equal(falseQ6d.found, false, 'Q6(d) must not borrow the unrelated Q2(d) short-term provision line');
 assert.equal(falseQ6d.snippet, '');
