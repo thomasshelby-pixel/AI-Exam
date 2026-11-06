@@ -113,7 +113,7 @@ function attachQuestionSourceContext(
   const attach = (question: PaperStructureSubQuestion): PaperStructureSubQuestion => {
     if (question.isMcq && question.sourceQuestionLabel) {
       const objectiveSource = extractObjectiveQuestionPaperBlock(questionPaperText);
-      const sourceLabelMatch = question.sourceQuestionLabel.match(/^(?:QUESTION\\s*)?(\\d{1,2})(?:\\s*\\(\\s*([a-z0-9]+)\\s*\\))?$/i);
+      const sourceLabelMatch = question.sourceQuestionLabel.match(/^(?:QUESTION\s*)?(\d{1,2})(?:\s*\(\s*([a-z0-9]+)\s*\))?$/i);
       const qpMcqSlice = sourceLabelMatch
         ? extractLockedQuestionSlice(objectiveSource, sourceLabelMatch[1], sourceLabelMatch[2], 'QP')
         : undefined;
