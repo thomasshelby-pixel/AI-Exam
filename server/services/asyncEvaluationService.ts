@@ -100,6 +100,7 @@ const DURABLE_QUEUE_INSTANCE_ID = [
   crypto.randomUUID(),
 ].join(':');
 let durableQueueRecoveryTimer: NodeJS.Timeout | null = null;
+const durableQueueNudgeTimes = new Map<string, number>();
 
 type DurableEvaluationQueueRecord = {
   evaluationId: string;
@@ -481,6 +482,53 @@ async function processDurableEvaluationQueue(initialJobId?: string, initialJob?:
       console.error(`[DurableEvalQueue] Failed to launch queued evaluation ${record.evaluationId}:`, error)
     );
   }
+}
+
+/**
+ * A status poll can wake an interrupted job after a new App Hosting instance
+ * has started. The Firestore lease transaction remains the single-writer guard.
+ * Poll-triggered reads are throttled per evaluation to keep Firestore usage low.
+ */
+export function nudgeDurableEvaluationQueue(evaluationId: string): void {
+  if (!isProductionEvaluationQueue() || !evaluationId) return;
+  if (activeJobs.has(evaluationId) || durableQueueStartingJobs.has(evaluationId)) return;
+
+  const now = Date.now();
+  const lastNudge = durableQueueNudgeTimes.get(evaluationId) || 0;
+  if (now - lastNudge < 10_000) return;
+  durableQueueNudgeTimes.set(evaluationId, now);
+
+  if (durableQueueNudgeTimes.size > 2_000) {
+    for (const [id, timestamp] of durableQueueNudgeTimes) {
+      if (now - timestamp > 60 * 60 * 1000) durableQueueNudgeTimes.delete(id);
+    }
+  }
+
+  void getFirestoreDoc<DurableEvaluationQueueRecord>(
+    DURABLE_QUEUE_COLLECTION,
+    evaluationId,
+    { failOnError: true },
+  ).then(async (record) => {
+    if (!record || isDurableQueueTerminal(record.status)) {
+      durableQueueNudgeTimes.delete(evaluationId);
+      return;
+    }
+
+    const status = String(record.status || '').toUpperCase();
+    const leaseUntil = Date.parse(String(record.leaseExpiresAt || ''));
+    const leaseExpired = !Number.isFinite(leaseUntil) || leaseUntil <= Date.now();
+    const retryAt = Date.parse(String(record.nextAttemptAt || ''));
+    const retryReady = !Number.isFinite(retryAt) || retryAt <= Date.now();
+    const resumable =
+      (status === 'QUEUED' && retryReady) ||
+      (status === 'RUNNING' && leaseExpired);
+
+    if (resumable) {
+      await runDurableEvaluationQueueRecord(evaluationId);
+    }
+  }).catch((error) => {
+    console.warn(`[DurableEvalQueue] Status-poll recovery check failed for ${evaluationId}:`, error);
+  });
 }
 
 export function startDurableEvaluationQueueRecovery(): void {
