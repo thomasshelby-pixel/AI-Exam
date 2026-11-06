@@ -112,6 +112,11 @@ function attachQuestionSourceContext(
 ): AuthoritativePaperStructure {
   const attach = (question: PaperStructureSubQuestion): PaperStructureSubQuestion => {
     if (question.isMcq && question.sourceQuestionLabel) {
+      const objectiveSource = extractObjectiveQuestionPaperBlock(questionPaperText);
+      const sourceLabelMatch = question.sourceQuestionLabel.match(/^(?:QUESTION\\s*)?(\\d{1,2})(?:\\s*\\(\\s*([a-z0-9]+)\\s*\\))?$/i);
+      const qpMcqSlice = sourceLabelMatch
+        ? extractLockedQuestionSlice(objectiveSource, sourceLabelMatch[1], sourceLabelMatch[2], 'QP')
+        : undefined;
       const answerAnchor = [
         `${question.sourceQuestionLabel}: official option (${question.officialKey || 'UNVERIFIED'})`,
         question.officialExplanation || '',
@@ -119,6 +124,7 @@ function attachQuestionSourceContext(
       ].filter(Boolean).join(' — ');
       return {
         ...question,
+        ...(qpMcqSlice?.found && qpMcqSlice.snippet.trim() ? { questionText: qpMcqSlice.snippet.trim() } : {}),
         ...(question.officialKey ? { suggestedAnswerAnchor: answerAnchor } : {}),
       };
     }
@@ -156,6 +162,20 @@ function attachQuestionSourceContext(
       subQuestions: (question.subQuestions || []).map(attach),
     })),
   };
+}
+
+/** Restrict MCQ QP extraction to the objective/Division A block so a later
+ * descriptive question with the same parent number cannot become its stem. */
+function extractObjectiveQuestionPaperBlock(questionPaperText: string): string {
+  const text = String(questionPaperText || '').replace(/\r/g, '');
+  if (!text.trim()) return '';
+  const startRegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)/i;
+  const endRegex = /(?:Division\s*B\b|Descriptive\s*Questions\b|Section\s*B\b)/i;
+  const start = text.search(startRegex);
+  if (start < 0) return '';
+  const tail = text.slice(start);
+  const relativeEnd = tail.slice(1).search(endRegex);
+  return relativeEnd >= 0 ? tail.slice(0, relativeEnd + 1) : tail;
 }
 
 /**
