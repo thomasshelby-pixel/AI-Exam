@@ -1510,6 +1510,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Fingerprint the normalized file to detect exact answer-sheet reuse across free-tier accounts.
     let pdfBuf = Buffer.from(fileBase64, 'base64');
     let answerSheetSha256 = '';
+    let originalFileStorageConfirmed = false;
     try {
       const uploadsDir = path.join(process.cwd(), 'uploads');
       if (!fs.existsSync(uploadsDir)) {
@@ -1542,7 +1543,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       fs.writeFileSync(originalFilePath, pdfBuf);
 
       // Persist to Firebase Cloud Storage (Metadata in Cloud Firestore)
-      await savePersistentFile(
+      const originalFileMetadata = await savePersistentFile(
         `${evaluationId}_original`,
         `${evaluationId}_original.pdf`,
         'application/pdf',
@@ -1553,9 +1554,14 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           evaluationId,
           instituteId: (req.user as any)?.instituteId || null,
         }
-      ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+      );
+      originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+      if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+        throw new Error('The answer sheet could not be verified in Cloud Storage. Please retry; no evaluation credit has been consumed.');
+      }
     } catch (saveErr) {
-      console.warn('Could not cache original file to disk:', saveErr);
+      console.warn('Could not durably store original answer sheet:', saveErr);
+      if (process.env.NODE_ENV === 'production') throw saveErr;
     }
 
     // Fetch active evaluation settings
@@ -1784,7 +1790,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
 
     // Step E: Enqueue Asynchronous Background Evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName: studentName || req.user!.fullName,
@@ -1825,6 +1831,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       requestedEvalSource,
       personalEntitlement,
       creditAlreadyConsumed,
+      originalFileStorageConfirmed,
     });
     // Once enqueueEvaluation returns, the background worker owns final status
     // and entitlement settlement. The request catch must not refund a running job.
@@ -4757,7 +4764,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    await savePersistentFile(
+    const originalFileMetadata = await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
@@ -4768,7 +4775,11 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
         evaluationId,
         instituteId: test.institute_id || null,
       }
-    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+    );
+    const originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+    if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+      throw new Error('The institute answer sheet could not be verified in Cloud Storage. Please retry.');
+    }
 
     // Generate canonical human-friendly Evaluation ID & continuous sequence
     const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
@@ -4803,7 +4814,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
@@ -4832,6 +4843,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       resolvedSponsoringInstituteId: test.institute_id,
       resolvedInstituteName: null,
       requestedEvalSource: 'INSTITUTE',
+      originalFileStorageConfirmed,
     });
 
     return res.json({
@@ -4900,7 +4912,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    await savePersistentFile(
+    const originalFileMetadata = await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
@@ -4911,7 +4923,11 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
         evaluationId,
         instituteId: material.institute_id || null,
       }
-    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+    );
+    const originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+    if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+      throw new Error('The institute answer sheet could not be verified in Cloud Storage. Please retry.');
+    }
 
     // Generate canonical human-friendly Evaluation ID & continuous sequence
     const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
@@ -4945,7 +4961,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
@@ -4974,6 +4990,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       resolvedSponsoringInstituteId: material.institute_id,
       resolvedInstituteName: material.institute_name,
       requestedEvalSource: 'INSTITUTE',
+      originalFileStorageConfirmed,
     });
 
     return res.json({
