@@ -10,7 +10,9 @@ async function run() {
 
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const studentId = `usr_admin_reconcile_${suffix}`;
+  const legacyStudentId = `usr_admin_reconcile_legacy_${suffix}`;
   const email = `admin_reconcile_${suffix}@example.com`;
+  const legacyEmail = email.toUpperCase();
   const reviewEvaluationId = `eval_admin_review_${suffix}`;
   const processingEvaluationId = `eval_admin_processing_${suffix}`;
   const currentMonth = getCurrentServerMonth();
@@ -41,8 +43,22 @@ async function run() {
         user_id, icai_registration_number, ca_level,
         free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
         free_trial_blocked, free_evaluation_reset_month, purchased_credits, paid_credits
-      ) VALUES (?, 'WRO9876543', 'INTERMEDIATE', 2, 2, 2, 0, ?, 0, 0)
+      ) VALUES (?, 'WRO9876543', 'INTERMEDIATE', 1, 1, 2, 0, ?, 0, 0)
     `).run(studentId, currentMonth);
+
+    db.prepare(`
+      INSERT INTO users (
+        id, email, password_hash, full_name, role, status, email_verified, account_classification
+      ) VALUES (?, ?, 'test-hash', 'Admin Reconcile Legacy Student', 'STUDENT', 'ACTIVE', 1, 'NORMAL')
+    `).run(legacyStudentId, legacyEmail);
+
+    db.prepare(`
+      INSERT INTO student_profiles (
+        user_id, icai_registration_number, ca_level,
+        free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+        free_trial_blocked, free_evaluation_reset_month, purchased_credits, paid_credits
+      ) VALUES (?, 'WRO9876544', 'INTERMEDIATE', 1, 1, 2, 0, ?, 0, 0)
+    `).run(legacyStudentId, currentMonth);
 
     db.prepare(`
       INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note, created_at)
@@ -50,7 +66,7 @@ async function run() {
         (?, ?, -1, 'FREE_MONTHLY_EVALUATION', 1, ?, 'Consumed monthly free evaluation', CURRENT_TIMESTAMP),
         (?, ?, -1, 'FREE_MONTHLY_EVALUATION', 0, ?, 'Consumed monthly free evaluation', CURRENT_TIMESTAMP)
     `).run(
-      `cld_review_${suffix}`, studentId, reviewEvaluationId,
+      `cld_review_${suffix}`, legacyStudentId, reviewEvaluationId,
       `cld_processing_${suffix}`, studentId, processingEvaluationId
     );
 
@@ -63,7 +79,7 @@ async function run() {
          'review.pdf', 'standard', 'NEEDS_REVIEW', 'PERSONAL_FREE', 1),
         (?, ?, 'INTERMEDIATE', 'PYQ', 'inter_advanced_accounting', 'Advanced Accounting', 'Paper 1', 'May 2027',
          'processing.pdf', 'standard', 'PROCESSING', 'PERSONAL_FREE', 1)
-    `).run(reviewEvaluationId, studentId, processingEvaluationId, studentId);
+    `).run(reviewEvaluationId, legacyStudentId, processingEvaluationId, studentId);
 
     const request = () => fetch(
       `${baseUrl}/api/admin/students?search=${encodeURIComponent(email)}`,
@@ -109,12 +125,19 @@ async function run() {
     `).get(studentId, reviewEvaluationId) as any;
     assert.equal(Number(refundCountAfterRepeat.count), 1, 'Repeated reconciliation remains idempotent');
 
+    const detailResponse = await fetch(`${baseUrl}/api/admin/students/${studentId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(detailResponse.status, 200, 'Admin student detail should load');
+    const detailBody = await detailResponse.json() as any;
+    assert.equal(detailBody.recentEvaluations.length, 2, 'Student detail includes current and same-email legacy evaluation records');
+
     console.log('✅ Admin credit reconciliation passed: NEEDS_REVIEW refunded once; PROCESSING remains charged.');
   } finally {
-    db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(studentId);
-    db.prepare('DELETE FROM evaluations WHERE student_id = ?').run(studentId);
-    db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(studentId);
-    db.prepare('DELETE FROM users WHERE id = ?').run(studentId);
+    db.prepare('DELETE FROM credit_ledger WHERE student_id IN (?, ?)').run(studentId, legacyStudentId);
+    db.prepare('DELETE FROM evaluations WHERE student_id IN (?, ?)').run(studentId, legacyStudentId);
+    db.prepare('DELETE FROM student_profiles WHERE user_id IN (?, ?)').run(studentId, legacyStudentId);
+    db.prepare('DELETE FROM users WHERE id IN (?, ?)').run(studentId, legacyStudentId);
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
