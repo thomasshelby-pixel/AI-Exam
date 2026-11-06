@@ -231,6 +231,78 @@ export function parseAndValidateQuestionChunkOutput(rawText: string, maxMarks: n
 /**
  * Evaluates a single attempted descriptive sub-question using targeted page images and reference material.
  */
+export interface ChunkReferenceSourceInstructions {
+  questionPaperHeading: string;
+  suggestedAnswersHeading: string;
+  markingSchemeHeading: string;
+  isolationInstruction: string;
+}
+
+export type ChunkReferenceSourceIdentity = Pick<
+  LockedQuestionReference['referenceTrace'],
+  'sourceType' | 'materialType' | 'mtpSeries' | 'modelTestNumber'
+>;
+
+/**
+ * Per-question grading is a separate AI call from the top-level evaluator.
+ * Give it the same explicit MTP-vs-Model-Test source boundary as the main prompt.
+ */
+export function buildChunkReferenceSourceInstructions(
+  source: ChunkReferenceSourceIdentity,
+): ChunkReferenceSourceInstructions {
+  const materialType = String(source.materialType || '').trim().toUpperCase();
+  if (materialType === 'MODEL_TEST_PAPER') {
+    const modelNumber = Number.isInteger(Number(source.modelTestNumber))
+      && source.modelTestNumber !== undefined
+      && source.modelTestNumber !== null
+      ? Number(source.modelTestNumber)
+      : 'UNSPECIFIED';
+    return {
+      questionPaperHeading: `VERIFIED MODEL TEST PAPER ${modelNumber} QUESTION PAPER EXTRACT`,
+      suggestedAnswersHeading: `VERIFIED MODEL TEST PAPER ${modelNumber} SUGGESTED ANSWER EXTRACT`,
+      markingSchemeHeading: `VERIFIED MODEL TEST PAPER ${modelNumber} MARKING SCHEME EXTRACT`,
+      isolationInstruction: `This is Model Test Paper ${modelNumber}, not an MTP series. Use only this exact Model Test Paper's question, suggested answer and marking scheme. Never borrow an MTP Series 1/2 reference, a PYQ, or another Model Test Paper.`,
+    };
+  }
+
+  if (materialType === 'MTP') {
+    const series = source.mtpSeries === 1 || source.mtpSeries === 2
+      ? source.mtpSeries
+      : 'UNSPECIFIED';
+    return {
+      questionPaperHeading: `VERIFIED ICAI MTP SERIES ${series} QUESTION PAPER EXTRACT`,
+      suggestedAnswersHeading: `VERIFIED ICAI MTP SERIES ${series} SUGGESTED ANSWER EXTRACT`,
+      markingSchemeHeading: `VERIFIED ICAI MTP SERIES ${series} MARKING SCHEME EXTRACT`,
+      isolationInstruction: `This is MTP Series ${series}, not a Model Test Paper number. Use only this exact MTP series' question, suggested answer and marking scheme. Never borrow another MTP series, a Model Test Paper, or a PYQ.`,
+    };
+  }
+
+  if (source.sourceType === 'FACULTY_MOCK') {
+    return {
+      questionPaperHeading: 'VERIFIED SELECTED FACULTY MOCK QUESTION PAPER EXTRACT',
+      suggestedAnswersHeading: 'VERIFIED FACULTY MOCK TXT SUGGESTED ANSWER EXTRACT',
+      markingSchemeHeading: 'VERIFIED FACULTY MOCK TXT MARKING SCHEME EXTRACT',
+      isolationInstruction: 'Use only the exact selected Faculty Mock Question Paper and its private TXT reference. Never borrow a global ICAI PYQ/MTP answer, another faculty mock, or another mock number.',
+    };
+  }
+
+  if (materialType === 'PYQ') {
+    return {
+      questionPaperHeading: 'VERIFIED ICAI PAST YEAR QUESTION PAPER EXTRACT',
+      suggestedAnswersHeading: 'VERIFIED ICAI PAST YEAR SUGGESTED ANSWER EXTRACT',
+      markingSchemeHeading: 'VERIFIED ICAI PAST YEAR MARKING SCHEME EXTRACT',
+      isolationInstruction: 'Use only the selected official ICAI Past Year Question Paper, Suggested Answers and Marking Scheme. Do not substitute an MTP or Model Test reference.',
+    };
+  }
+
+  return {
+    questionPaperHeading: 'VERIFIED QUESTION PAPER EXTRACT',
+    suggestedAnswersHeading: 'VERIFIED SUGGESTED ANSWER EXTRACT',
+    markingSchemeHeading: 'VERIFIED STEP-MARKING SCHEME EXTRACT',
+    isolationInstruction: 'Use only the exact question, suggested answer and marking scheme extracts supplied below.',
+  };
+}
+
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
@@ -260,6 +332,7 @@ export async function evaluateQuestionChunk(
     ctx.markingSchemeText,
     ctx.referenceMetadata
   );
+  const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
   const referenceDisposition = assessQuestionReferenceForEvaluation(snippets);
   if (!referenceDisposition.canScoreProvisionally) {
     throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${referenceDisposition.reason || 'authoritative Suggested Answer reference could not be locked'} Question: ${fullCode}; human review required.`);
@@ -353,14 +426,17 @@ Requested Display Mode: ${checkingMode}
 Base scoring instruction: Use the same balanced, source-grounded Standard ICAI step-marking for this question regardless of the requested display mode. Do not apply extra Strict deductions or Moderate bonuses here. The deterministic multi-mode marking engine applies Strict/Moderate adjustments exactly once after all base question marks have been reconciled.
 MAXIMUM MARKS FOR THIS QUESTION: EXACTLY ${maxMarks} MARKS (Do NOT alter or exceed this limit!).
 
---- VERIFIED QUESTION PAPER EXTRACT ---
-${snippets.qpSnippet || 'Official Question Extract'}
+SOURCE TYPE ISOLATION:
+${sourceInstructions.isolationInstruction}
 
---- VERIFIED ICAI SUGGESTED ANSWER EXTRACT ---
-${snippets.saSnippet || 'Official Suggested Answer Extract'}
+--- ${sourceInstructions.questionPaperHeading} ---
+${snippets.qpSnippet || 'Question Extract'}
 
---- VERIFIED STEP-MARKING SCHEME EXTRACT ---
-${snippets.msSnippet || 'Official Step-Marking Scheme Extract'}
+--- ${sourceInstructions.suggestedAnswersHeading} ---
+${snippets.saSnippet || 'Suggested Answer Extract'}
+
+--- ${sourceInstructions.markingSchemeHeading} ---
+${snippets.msSnippet || 'Step-Marking Scheme Extract'}
 ${transformationContextText}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
