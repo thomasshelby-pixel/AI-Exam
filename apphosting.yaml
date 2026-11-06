@@ -5,6 +5,8 @@ runConfig:
   maxInstances: 10
   concurrency: 80
   cpu: 1
+  # Keep active background evaluation workers running between HTTP requests.
+  cpuAlwaysAllocated: true
   memoryMiB: 1024
 
 scripts:
