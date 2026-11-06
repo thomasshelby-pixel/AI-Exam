@@ -49,30 +49,35 @@ export interface PageCoverageModelOutput {
 /** Keep nested source labels distinct: Q1(i), Q1(ii), Q1(iii), and Q1(iv)
  * must not all collapse to the parent number 1. */
 function normalizeMcqSelectionLabel(raw: string): string {
-  const value = String(raw || '').trim()
+  const original = String(raw || '').trim();
+  const hasQuestionPrefix = /^Q\.?\s*\d/i.test(original);
+  const value = original
     .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\.?)\s*/i, '')
     .replace(/\s+/g, '');
   const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
-  return match ? (match[2] ? `${match[1]}(${match[2].toLowerCase()})` : match[1]) : '';
+  if (!match) return '';
+  const suffix = match[2] ? \`(\${match[2].toLowerCase()})\` : '';
+  return \`\${hasQuestionPrefix ? 'Q' : ''}\${match[1]}\${suffix}\`;
 }
 
-/** Resolve a source-labeled Model Test response to the flattened MCQ index.
- * Example: Question 1(iv) -> MCQ4, while standalone Question 4 -> MCQ13. */
+/** Resolve a source-labeled Model Test response to the flattened MCQ index. */
 export function resolveMcqSelectionNumber(
   rawKey: string,
   mcqs: AuthoritativePaperStructure['mcqs']
 ): string | undefined {
   const normalized = normalizeMcqSelectionLabel(rawKey);
   if (!normalized) return undefined;
+  const sourceComparable = normalized.replace(/^Q(?=\d)/i, '');
   const matchingSource = (mcqs || []).find((mcq) =>
-    Boolean(mcq.sourceQuestionLabel) && normalizeMcqSelectionLabel(mcq.sourceQuestionLabel!) === normalized
+    Boolean(mcq.sourceQuestionLabel) && normalizeMcqSelectionLabel(mcq.sourceQuestionLabel!) === sourceComparable
   );
   if (matchingSource) return String(matchingSource.questionNumber).replace(/[^0-9]/g, '') || undefined;
   const raw = String(rawKey || '').trim();
   const isFlatIdentifier = /^(?:MCQ|OBJECTIVE)\s*\d{1,2}$/i.test(raw) || /^\d{1,2}$/.test(raw);
-  if (!isFlatIdentifier || !/^\d{1,2}$/.test(normalized)) return undefined;
-  return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === normalized)
-    ? normalized
+  const flatNumber = normalized.replace(/^Q(?=\d)/i, '');
+  if (!isFlatIdentifier || !/^\d{1,2}$/.test(flatNumber)) return undefined;
+  return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
+    ? flatNumber
     : undefined;
 }
 
@@ -250,7 +255,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       const option = typeof rawOption === 'string'
         ? rawOption.trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()\s]/g, '')
         : '';
-      if (!normalizedNumber || !/^[0-9]{1,2}(?:\\([a-z0-9]+\\))?$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
+      if (!normalizedNumber || !/^Q?[0-9]{1,2}(?:\([a-z0-9]+\))?$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
         warnings.push('An MCQ selection had an invalid question number or option and was left for review.');
         continue;
       }
