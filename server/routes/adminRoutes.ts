@@ -4275,17 +4275,18 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         );
         if (!hasLocalReferencePair) {
           const cloudMaterial = await getFirestoreDoc<any>('evaluation_materials', requestedMaterialId).catch(() => null);
+          const cloudMaterialId = String(cloudMaterial?.id || requestedMaterialId);
           const hasExactCloudPair = Boolean(
             cloudMaterial &&
-            String(cloudMaterial.id || '') === requestedMaterialId &&
+            cloudMaterialId === requestedMaterialId &&
             String(cloudMaterial.question_paper_text || '').trim() &&
             String(cloudMaterial.suggested_answers_text || '').trim()
           );
           if (hasExactCloudPair) {
-            material = cloudMaterial;
+            material = { ...cloudMaterial, id: requestedMaterialId };
             try {
-              syncMaterialRowToSqlite(cloudMaterial);
-              material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId) || cloudMaterial;
+              syncMaterialRowToSqlite(material);
+              material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId) || material;
             } catch (cacheRestoreError) {
               console.warn('[AdminRecovery] Exact Firestore source found but SQLite cache refresh failed:', requestedMaterialId, cacheRestoreError);
             }
