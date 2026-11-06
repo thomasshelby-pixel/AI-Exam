@@ -64,6 +64,11 @@ const selectorMarkup = materialManagementSource.slice(selectorStart, selectorEnd
 const optionValues = Array.from(selectorMarkup.matchAll(/<option value=\{(\d+)\}>/g), (match) => Number(match[1]));
 assert.deepEqual(optionValues, [1, 2]);
 assert.doesNotMatch(selectorMarkup, /Model Test/i);
+assert.match(
+  materialManagementSource,
+  /<option key=\{number\} value=\{number\}>Model Test \{number\}<\\/option>/,
+  'The separate Model Test selector must identify its own numbering explicitly',
+);
 
 // Model Test numbering is still configured independently by CA level.
 assert.equal(getMaxModelTestNumberForLevel('FOUNDATION'), 10);
