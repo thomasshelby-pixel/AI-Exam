@@ -188,6 +188,9 @@ jobs:
       - name: Model Test source identity and inventory regression
         run: node_modules/.bin/tsx server/tests/modelTestPaperStructure.test.ts
 
+      - name: Model Test component source-ID binding regression
+        run: node_modules/.bin/tsx server/tests/modelTestComponentSourceBinding.test.ts
+
       - name: MTP two-series and Model Test separation regression
         run: node_modules/.bin/tsx server/tests/mtpSeriesBoundary.test.ts
 

@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { normalizeMtpSeries } from './materialLookupService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
+import { resolveMaterialComponentSourceIds } from './materialComponentSourceIds.js';
 
 export interface MaterialManifestItem {
   materialId: string;
@@ -371,6 +372,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
   const qpChecksum = computeSha256(qpText);
   const saChecksum = computeSha256(saText);
   const msChecksum = computeSha256(msText);
+  const componentSourceIds = resolveMaterialComponentSourceIds(rawMaterial, msText);
 
   const manifest: MaterialSourceManifest = {
     evaluationId: request.evaluationId,
@@ -387,19 +389,19 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     officialPaperMaxMarks,
     materialVerificationStatus: 'VERIFIED',
     retrievedAt: new Date().toISOString(),
-    sourceFormat: (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY',
-    combinedSourceMaterialId: rawMaterial.source_format === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${rawMaterial.id}`) : undefined,
-    questionMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${rawMaterial.id}`) : undefined,
-    suggestedAnswerMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.suggested_answer_material_id || `mat_sa_${rawMaterial.id}`) : undefined,
-    markingSchemeMaterialId: msText.length > 0 ? (rawMaterial.marking_scheme_material_id || `mat_ms_${rawMaterial.id}`) : undefined,
+    sourceFormat: componentSourceIds.sourceFormat,
+    combinedSourceMaterialId: componentSourceIds.combinedSourceMaterialId,
+    questionMaterialId: componentSourceIds.questionMaterialId,
+    suggestedAnswerMaterialId: componentSourceIds.suggestedAnswerMaterialId,
+    markingSchemeMaterialId: componentSourceIds.markingSchemeMaterialId,
     questionPaper: {
-      materialId: rawMaterial.id,
+      materialId: componentSourceIds.questionMaterialId || componentSourceIds.combinedSourceMaterialId || rawMaterial.id,
       version: rawMaterial.version || '1.0',
       checksum: qpChecksum,
       textLength: qpText.length,
     },
     suggestedAnswers: {
-      materialId: rawMaterial.id,
+      materialId: componentSourceIds.suggestedAnswerMaterialId || componentSourceIds.combinedSourceMaterialId || rawMaterial.id,
       version: rawMaterial.version || '1.0',
       checksum: saChecksum,
       textLength: saText.length,
@@ -408,7 +410,7 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
 
   if (msText.length > 0) {
     manifest.markingScheme = {
-      materialId: rawMaterial.id,
+      materialId: componentSourceIds.markingSchemeMaterialId || componentSourceIds.combinedSourceMaterialId || rawMaterial.id,
       version: rawMaterial.version || '1.0',
       checksum: msChecksum,
       textLength: msText.length,
@@ -423,11 +425,11 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     officialPaperMaxMarks,
     mtpSeries: normalizedSeries,
     modelTestNumber: normalizedModelTestNumber,
-    sourceFormat: (rawMaterial.source_format || 'SEPARATE') as 'SEPARATE' | 'COMBINED' | 'LEGACY',
-    combinedSourceMaterialId: rawMaterial.source_format === 'COMBINED' ? (rawMaterial.combined_source_material_id || rawMaterial.file_id || `mat_comb_${rawMaterial.id}`) : undefined,
-    questionMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.question_material_id || rawMaterial.file_id || `mat_qp_${rawMaterial.id}`) : undefined,
-    suggestedAnswerMaterialId: rawMaterial.source_format === 'SEPARATE' ? (rawMaterial.suggested_answer_material_id || `mat_sa_${rawMaterial.id}`) : undefined,
-    markingSchemeMaterialId: msText.length > 0 ? (rawMaterial.marking_scheme_material_id || `mat_ms_${rawMaterial.id}`) : undefined,
+    sourceFormat: componentSourceIds.sourceFormat,
+    combinedSourceMaterialId: componentSourceIds.combinedSourceMaterialId,
+    questionMaterialId: componentSourceIds.questionMaterialId,
+    suggestedAnswerMaterialId: componentSourceIds.suggestedAnswerMaterialId,
+    markingSchemeMaterialId: componentSourceIds.markingSchemeMaterialId,
     questionPaperTitle: rawMaterial.question_paper_title || 'ICAI Official Material',
     questionPaperText: qpText,
     suggestedAnswersText: saText,
