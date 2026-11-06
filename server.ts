@@ -27,6 +27,7 @@ import {
 import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
 import { hydrateFeatureControlsFromFirestore } from './server/services/featureControlPersistenceService.js';
 import { closeFirestoreCleanly } from './server/services/firestoreDbService.js';
+import { startDurableEvaluationQueueRecovery, stopDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
 import { initMfaRecoveryTables } from './server/services/mfaRecoveryService.js';
 import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
@@ -311,6 +312,9 @@ export default {};
     console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
 
+  // Resume persisted evaluations after Firestore hydration and start serving traffic.
+  startDurableEvaluationQueueRecovery();
+
   // Best-effort reconciliation for existing students. This does not block server
   // readiness and creates readable students_by_code/{ST-...} lookup documents.
   void syncAllStudentReadableIdentityViewsToFirestore()
@@ -323,6 +327,7 @@ export default {};
 
   const handleShutdown = (signal: string) => {
     console.log(`[Server] Graceful shutdown initiated (${signal}).`);
+    stopDurableEvaluationQueueRecovery();
     server.close(async () => {
       console.log('[Server] HTTP connections closed. Closing database cleanly...');
       closeDatabaseCleanly();
