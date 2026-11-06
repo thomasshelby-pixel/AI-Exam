@@ -429,7 +429,7 @@ export function extractLockedQuestionSlice(
 
     // A Division A Question Paper slice must not absorb Division B descriptive
     // questions that restart their own numbering sequence.
-    if (docType === 'QP' && /^Division\\s+B\\b/i.test(trimmed)) {
+    if (docType === 'QP' && /^Division\s+B\b/i.test(trimmed)) {
       break;
     }
 
