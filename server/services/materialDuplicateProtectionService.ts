@@ -150,6 +150,16 @@ export function normalizeMtpSeriesNumber(rawSeries: any): number | null {
   return null;
 }
 
+/**
+ * Official MTP upload/evaluation supports exactly two series.
+ * Keep normalizeMtpSeriesNumber permissive for reading legacy records; use this
+ * validator at write boundaries so historical metadata is never silently rewritten.
+ */
+export function isSupportedMtpSeriesNumber(rawSeries: unknown): boolean {
+  const series = normalizeMtpSeriesNumber(rawSeries);
+  return series === 1 || series === 2;
+}
+
 export function formatMtpSeriesDisplay(seriesNumber: number | null | undefined): string {
   if (!seriesNumber) return 'Series 1';
   return `Series ${seriesNumber}`;
