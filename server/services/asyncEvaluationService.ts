@@ -1239,9 +1239,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     } catch (syncErr) {
       console.warn(`[AsyncEval] Could not sync failed evaluation ${evaluationId}:`, syncErr);
     }
-  } finally {
-    activeJobs.delete(evaluationId);
-  }
+}
 }
 
 const DURABLE_EVALUATION_QUEUE_COLLECTION = 'evaluation_jobs';
@@ -1569,6 +1567,7 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
 
   const existingEvaluationStatus = getEvaluationStatus(evaluationId);
   if (isTerminalEvaluationStatus(existingEvaluationStatus)) {
+    activeJobClaims.delete(evaluationId);
     await setQueueRecordTerminal(
       evaluationId,
       existingEvaluationStatus === 'COMPLETED' ? 'COMPLETED' :
@@ -1734,9 +1733,11 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
       5,
       'Evaluation job queued in the local development worker.'
     );
-    const promise = executeEvaluationJob(job).catch((error) => {
-      console.error(`[AsyncEval] Unhandled local evaluation job error ${job.evaluationId}:`, error);
-    });
+    const promise = executeEvaluationJob(job)
+      .catch((error) => {
+        console.error(`[AsyncEval] Unhandled local evaluation job error ${job.evaluationId}:`, error);
+      })
+      .finally(() => activeJobs.delete(job.evaluationId));
     activeJobs.set(job.evaluationId, promise);
     return;
   }
