@@ -686,7 +686,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
           if (
             job.creditAlreadyConsumed && !job.isRecoveryRetry &&
-            (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+            (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
           ) {
             try {
               refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
@@ -1144,9 +1144,25 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
     const currentStatus = getEvaluationStatus(evaluationId);
     if (isTerminalEvaluationStatus(currentStatus)) {
-      // A failed/stale worker must never undo a rejection, completed result or review
-      // decision already stored by another request.
-      console.info(`[AsyncEval] Preserving terminal status ${currentStatus} for ${evaluationId}; ignoring stale worker failure.`);
+      // Preserve the terminal evaluation state, but reconcile any entitlement
+      // left debited by an earlier/competing failure path. The credit ledger makes
+      // this safe to call repeatedly and refuses refunds without a matching debit.
+      if (
+        currentStatus !== 'COMPLETED' &&
+        !job.isRecoveryRetry &&
+        (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+      ) {
+        try {
+          const restored = refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+          if (restored) {
+            db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+            await syncStudentCreditsToFirestore(studentId);
+          }
+        } catch (refundErr) {
+          console.warn(`[AsyncEval] Terminal-state entitlement repair failed for ${evaluationId} (${currentStatus}):`, refundErr);
+        }
+      }
+      console.info(`[AsyncEval] Preserving terminal status ${currentStatus} for ${evaluationId}; no stale status mutation applied.`);
       return;
     }
 
@@ -1168,6 +1184,21 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     if (failureUpdate.changes !== 1) {
       const latestStatus = getEvaluationStatus(evaluationId);
       if (isTerminalEvaluationStatus(latestStatus)) {
+        if (
+          latestStatus !== 'COMPLETED' &&
+          !job.isRecoveryRetry &&
+          (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+        ) {
+          try {
+            const restored = refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+            if (restored) {
+              db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+              await syncStudentCreditsToFirestore(studentId);
+            }
+          } catch (refundErr) {
+            console.warn(`[AsyncEval] Failure-claim race entitlement repair failed for ${evaluationId}:`, refundErr);
+          }
+        }
         console.info(`[AsyncEval] Preserving terminal status ${latestStatus} for ${evaluationId} after failure-claim race.`);
         return;
       }
