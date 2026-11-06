@@ -417,8 +417,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         if (job.creditAlreadyConsumed && !job.isRecoveryRetry &&
           (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
           try {
-            refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
-            await syncStudentCreditsToFirestore(studentId);
+            const restored = refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+            if (restored) {
+              db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+              await syncStudentCreditsToFirestore(studentId);
+            }
           } catch (refundErr) {
             console.warn(`[AsyncEval] Rejection refund error for ${evaluationId}:`, refundErr);
           }
@@ -689,8 +692,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
             (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
           ) {
             try {
-              refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
-              await syncStudentCreditsToFirestore(studentId);
+              const restored = refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+              if (restored) {
+                db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+                await syncStudentCreditsToFirestore(studentId);
+              }
             } catch (refundErr) {
               console.warn(`[AsyncEval] MTP integrity failure refund error for ${evaluationId}:`, refundErr);
             }
@@ -1211,12 +1217,15 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // Refund only after successfully recording this job's FAILED transition.
     if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
       try {
-        refundEvaluationCreditAtomic({
+        const restored = refundEvaluationCreditAtomic({
           userId: studentId,
           evaluationId,
           entitlementSource,
         });
-        await syncStudentCreditsToFirestore(studentId);
+        if (restored) {
+          db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+          await syncStudentCreditsToFirestore(studentId);
+        }
       } catch (refundErr) {
         console.warn(`[AsyncEval] Refund error for ${evaluationId}:`, refundErr);
       }
