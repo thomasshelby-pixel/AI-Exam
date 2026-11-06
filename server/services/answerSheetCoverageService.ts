@@ -339,6 +339,9 @@ export function resolveContextualQuestionIdentity(options: {
     if (!authoritativeMatch) {
       return { requiresReview: true, reason: `The AI-selected question ${authoritativeQuestionCode} is not present in the selected authoritative question inventory.` };
     }
+    if (!mappingBasis) {
+      return { requiresReview: true, reason: 'The AI supplied a question ID without stating whether it came from the visible label, source content, or a verified continuation.' };
+    }
     if (mappingBasis === 'UNCERTAIN') {
       return { requiresReview: true, reason: 'The AI marked the source-content question identity as uncertain.' };
     }
