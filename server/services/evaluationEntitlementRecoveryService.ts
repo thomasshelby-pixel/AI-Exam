@@ -45,10 +45,10 @@ export function restoreFailedEvaluationEntitlementsForStudent(studentId: string,
 
       db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(failed.id));
       syncStudentCreditsToFirestore(String(failed.student_id)).catch((error) =>
-        console.warn('[StudentRoutes] Could not sync repaired evaluation entitlement:', failed.id, error)
+        console.warn('[EvaluationEntitlementRecovery] Could not sync repaired evaluation entitlement:', failed.id, error)
       );
     } catch (refundError) {
-      console.error('[StudentRoutes] Could not restore terminal failed evaluation entitlement:', failed.id, refundError);
+      console.error('[EvaluationEntitlementRecovery] Could not restore terminal failed evaluation entitlement:', failed.id, refundError);
     }
   }
 }
