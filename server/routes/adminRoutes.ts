@@ -28,6 +28,7 @@ import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { canManuallyRestoreFreeTrialForReason } from '../services/freeTrialAbuseService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
@@ -85,7 +86,7 @@ import { generateDetailedReportPdf, isEvaluationPendingReview } from '../service
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
-import { findAuthoritativeMaterialWithFallback, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
+import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
   checkMaterialDuplicate,
   computeMaterialUniqueKey,
@@ -2597,6 +2598,17 @@ router.delete('/materials/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Material not found' });
     }
 
+    const linkedEvaluations = db.prepare(
+      'SELECT COUNT(*) AS count FROM evaluations WHERE material_id = ?'
+    ).get(materialId) as { count: number };
+    if (Number(linkedEvaluations?.count || 0) > 0) {
+      return res.status(409).json({
+        code: 'MATERIAL_IN_USE_BY_EVALUATIONS',
+        error: 'This material is linked to existing evaluations and cannot be permanently deleted. Set it to INACTIVE to stop new submissions while preserving historical recovery.',
+        linkedEvaluations: Number(linkedEvaluations.count),
+      });
+    }
+
     // 1. Delete associated files from Firebase Cloud Storage and clean up Firestore file_storage_metadata
     let filesDeleted = 0;
     try {
@@ -3152,6 +3164,15 @@ router.get('/students', (req: AuthRequest, res: Response) => {
     query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
     const rawStudents = db.prepare(query).all(...params) as any[];
 
+    // Reconcile terminal failed/review-required evaluations before showing quota balances.
+    // The credit ledger is the source of truth; PROCESSING rows are never refunded here.
+    for (const student of rawStudents) {
+      restoreFailedEvaluationEntitlementsForStudent(
+        String(student.id),
+        String(student.email || '').toLowerCase().trim()
+      );
+    }
+
     // Authoritative enrichment using existing student evaluation entitlement and credit status systems
     const students = rawStudents.map((st) => {
       const entitlement = getStudentEntitlement(st.id, 'PUBLIC');
@@ -3268,6 +3289,11 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
     if (!studentRaw) {
       return res.status(404).json({ error: 'Student not found.' });
     }
+
+    restoreFailedEvaluationEntitlementsForStudent(
+      studentId,
+      String(studentRaw.email || '').toLowerCase().trim()
+    );
 
     // Recent evaluations
     const recentEvals = db.prepare(`
@@ -4227,7 +4253,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       if (requestedMaterialId && materialSource === 'INSTITUTE') {
         material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(requestedMaterialId) as any;
       } else if (requestedMaterialId) {
-        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(requestedMaterialId) as any;
+        // This is the exact material already bound when the evaluation was accepted.
+        // Archived materials remain valid historical inputs for a safe recovery retry.
+        material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId);
       }
 
       // A missing foreign key is recoverable: match against the evaluation's own
