@@ -228,6 +228,57 @@ function repairLegacyFinalizationRejectionsForStudent(studentId: string, student
 }
 
 /**
+ * Self-heal consumed entitlements for failed/rejected/review-required evaluations.
+ * This covers older submissions whose worker exited after persisting a terminal
+ * status but before completing the refund. The credit ledger is authoritative:
+ * rejected uploads that never consumed a credit have no debit row and are ignored.
+ */
+function restoreFailedEvaluationEntitlementsForStudent(studentId: string, studentEmail: string): void {
+  const failedRows = db.prepare(`
+    SELECT e.id, e.student_id, e.entitlement_source
+    FROM evaluations e
+    LEFT JOIN users u ON u.id = e.student_id
+    WHERE ${buildStudentOwnershipSql('e', 'u')}
+      AND UPPER(COALESCE(e.status, '')) IN ('FAILED', 'REJECTED', 'NEEDS_REVIEW', 'PERSISTENCE_FAILED', 'CANCELLED')
+      AND UPPER(COALESCE(e.entitlement_source, '')) IN ('PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT')
+      AND EXISTS (
+        SELECT 1
+        FROM credit_ledger l
+        WHERE l.student_id = e.student_id
+          AND l.evaluation_id = e.id
+          AND l.amount < 0
+          AND (
+            (UPPER(e.entitlement_source) = 'PROMO' AND l.source = 'CONSUMED_PROMO_AI30')
+            OR (UPPER(e.entitlement_source) = 'PERSONAL_FREE' AND l.source = 'FREE_MONTHLY_EVALUATION')
+            OR (UPPER(e.entitlement_source) = 'PERSONAL_PURCHASED_CREDIT' AND l.source = 'CONSUMED_EVALUATION')
+          )
+      )
+  `).all(...getStudentOwnershipParams(studentId, studentEmail)) as Array<{
+    id: string;
+    student_id: string;
+    entitlement_source: string;
+  }>;
+
+  for (const failed of failedRows) {
+    try {
+      const restored = refundEvaluationCreditAtomic({
+        userId: String(failed.student_id),
+        evaluationId: String(failed.id),
+        entitlementSource: String(failed.entitlement_source).toUpperCase(),
+      });
+      if (!restored) continue;
+
+      db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(String(failed.id));
+      syncStudentCreditsToFirestore(String(failed.student_id)).catch((error) =>
+        console.warn('[StudentRoutes] Could not sync repaired evaluation entitlement:', failed.id, error)
+      );
+    } catch (refundError) {
+      console.error('[StudentRoutes] Could not restore terminal failed evaluation entitlement:', failed.id, refundError);
+    }
+  }
+}
+
+/**
  * Authoritative check across student_disclaimer_acknowledgements and student_disclaimers
  */
 export function isStudentDisclaimerAcknowledged(studentId: string, studentEmail: string, version: string = CURRENT_DISCLAIMER_VERSION): boolean {
@@ -490,6 +541,8 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
 router.get('/dashboard', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
+    const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    restoreFailedEvaluationEntitlementsForStudent(studentId, studentEmail);
     const entitlement = getStudentEntitlement(studentId);
 
     // Profile info
@@ -1042,6 +1095,10 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       : `eval_${crypto.randomBytes(8).toString('hex')}`;
   let facultyMockFreeCopyClaimed = false;
   let facultyMockPaidCopyOrderId: string | null = null;
+  let creditAlreadyConsumed = false;
+  let asyncEvaluationAccepted = false;
+  let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
+    'PERSONAL_FREE';
 
   try {
     const {
@@ -1196,8 +1253,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let resolvedSponsoringEnrollmentId: string | null = null;
     let resolvedSponsoringBatchId: string | null = null;
     let resolvedInstituteName: string | null = null;
-    let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
-      isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
+    entitlementSource = isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
     let personalEntitlement: any = null;
     let preloadedMat: any = null;
     let facultyMockRecord: any = null;
@@ -1755,7 +1811,6 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
 
     // Step D.2: Atomic Credit Deduction on Acceptance (Only for personal evaluations)
-    let creditAlreadyConsumed = false;
     if (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
       try {
         const deductionResult = consumeEvaluationEntitlementAtomic({
@@ -1821,6 +1876,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       personalEntitlement,
       creditAlreadyConsumed,
     });
+    // Once enqueueEvaluation returns, the background worker owns final status
+    // and entitlement settlement. The request catch must not refund a running job.
+    asyncEvaluationAccepted = true;
 
     return res.json({
       success: true,
@@ -1839,7 +1897,26 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       UPDATE evaluations
       SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(errMsg.slice(0, 500), evaluationId);
+
+    // A synchronous enqueue/setup failure happens after the acceptance-time debit
+    // but before the worker owns the job. Restore that exact entitlement here.
+    if (
+      creditAlreadyConsumed &&
+      !asyncEvaluationAccepted &&
+      (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
+    ) {
+      try {
+        const restored = refundEvaluationCreditAtomic({ userId: studentId, evaluationId, entitlementSource });
+        if (restored) {
+          db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+          await syncStudentCreditsToFirestore(studentId);
+        }
+      } catch (refundErr) {
+        console.error(`[StudentRoutes] Could not restore entitlement after submission setup failed (${evaluationId}):`, refundErr);
+      }
+    }
 
     // If this request failed before it was accepted by the async evaluator,
     // release the free-copy claim or paid copy so a genuine retry is possible.
@@ -1909,6 +1986,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    restoreFailedEvaluationEntitlementsForStudent(studentId, studentEmail);
     repairLegacyFinalizationRejectionsForStudent(studentId, studentEmail);
     const { search, subject, status, evaluationSource, instituteId } = req.query;
 
@@ -2185,7 +2263,9 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     }
 
     if (String(record.student_id || '') === studentId) {
-      repairLegacyFinalizationRejectionsForStudent(studentId, req.user!.email?.toLowerCase().trim() || '');
+      const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+      restoreFailedEvaluationEntitlementsForStudent(studentId, studentEmail);
+      repairLegacyFinalizationRejectionsForStudent(studentId, studentEmail);
       record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
     }
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
@@ -4965,6 +5045,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
 router.get('/credit-lots', (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
+    restoreFailedEvaluationEntitlementsForStudent(studentId, req.user!.email?.toLowerCase().trim() || '');
     const status = getStudentCreditStatus(studentId);
     return res.json({
       success: true,
